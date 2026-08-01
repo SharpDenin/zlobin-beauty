@@ -1,0 +1,134 @@
+package store
+
+import (
+	"context"
+	"errors"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
+)
+
+type Store struct{ pool *pgxpool.Pool }
+
+func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+func (s *Store) UpsertMaster(ctx context.Context, m domain.MasterProfile) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+ON CONFLICT (user_id) DO UPDATE SET
+  organization_id=EXCLUDED.organization_id,
+  branch_id=EXCLUDED.branch_id,
+  display_name=EXCLUDED.display_name,
+  bio=EXCLUDED.bio,
+  specializations=EXCLUDED.specializations,
+  city=EXCLUDED.city,
+  published=EXCLUDED.published,
+  updated_at=EXCLUDED.updated_at`,
+		m.ID, m.UserID, m.OrganizationID, m.BranchID, m.DisplayName, m.Bio, m.Specializations, m.City,
+		m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetMasterByUser(ctx context.Context, userID uuid.UUID) (*domain.MasterProfile, error) {
+	return s.scanMaster(s.pool.QueryRow(ctx, `
+SELECT id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at
+FROM master_profiles WHERE user_id=$1`, userID))
+}
+
+func (s *Store) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterProfile, error) {
+	return s.scanMaster(s.pool.QueryRow(ctx, `
+SELECT id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at
+FROM master_profiles WHERE id=$1`, id))
+}
+
+func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
+	var m domain.MasterProfile
+	if err := row.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (s *Store) SearchMasters(ctx context.Context, city, q string, limit int) ([]domain.MasterProfile, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at
+FROM master_profiles
+WHERE published = TRUE
+  AND ($1 = '' OR city ILIKE $1)
+  AND ($2 = '' OR display_name ILIKE '%' || $2 || '%' OR EXISTS (SELECT 1 FROM unnest(specializations) s WHERE s ILIKE '%' || $2 || '%'))
+ORDER BY rating_avg DESC, display_name
+LIMIT $3`, city, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.MasterProfile
+	for rows.Next() {
+		var m domain.MasterProfile
+		if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateService(ctx context.Context, item domain.ServiceItem) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO services(id, organization_id, name, category, duration_minutes, price_minor, currency, published, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		item.ID, item.OrganizationID, item.Name, item.Category, item.DurationMinutes, item.PriceMinor, item.Currency, item.Published, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+func (s *Store) AttachService(ctx context.Context, masterID, serviceID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO master_services(master_id, service_id) VALUES ($1,$2)
+ON CONFLICT DO NOTHING`, masterID, serviceID)
+	return err
+}
+
+func (s *Store) ListMasterServices(ctx context.Context, masterID uuid.UUID) ([]domain.ServiceItem, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT s.id, s.organization_id, s.name, s.category, s.duration_minutes,
+       COALESCE(ms.price_minor_override, s.price_minor), s.currency, s.published, s.created_at, s.updated_at
+FROM master_services ms
+JOIN services s ON s.id = ms.service_id
+WHERE ms.master_id=$1 AND s.published=TRUE
+ORDER BY s.name`, masterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ServiceItem
+	for rows.Next() {
+		var item domain.ServiceItem
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.Published, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceItem, error) {
+	row := s.pool.QueryRow(ctx, `
+SELECT id, organization_id, name, category, duration_minutes, price_minor, currency, published, created_at, updated_at
+FROM services WHERE id=$1`, id)
+	var item domain.ServiceItem
+	if err := row.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.Published, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}

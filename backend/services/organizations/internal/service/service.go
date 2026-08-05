@@ -134,6 +134,14 @@ func (s *Service) GetBranch(ctx context.Context, id uuid.UUID) (*domain.Branch, 
 	return b, nil
 }
 
+func (s *Service) HasActiveMembership(ctx context.Context, orgID, userID uuid.UUID, roles ...string) (bool, error) {
+	ok, err := s.store.HasMembership(ctx, orgID, userID, roles...)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ok, nil
+}
+
 func apperrOrNil(err error) error {
 	if err != nil {
 		return apperr.Internal(err)

@@ -2,6 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,21 +18,32 @@ import (
 )
 
 type Service struct {
-	store *store.Store
-	now   func() time.Time
+	store             *store.Store
+	organizationsURL  string
+	internalToken     string
+	httpClient        *http.Client
+	now               func() time.Time
 }
 
-func New(st *store.Store) *Service { return &Service{store: st, now: time.Now} }
+func New(st *store.Store) *Service {
+	return &Service{store: st, httpClient: &http.Client{Timeout: 5 * time.Second}, now: time.Now}
+}
+
+func (s *Service) WithOrganizations(organizationsURL, internalToken string) *Service {
+	s.organizationsURL = strings.TrimRight(organizationsURL, "/")
+	s.internalToken = internalToken
+	return s
+}
 
 type UpsertMasterInput struct {
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	BranchID       *uuid.UUID
-	DisplayName    string
-	Bio            string
+	UserID          uuid.UUID
+	OrganizationID  uuid.UUID
+	BranchID        *uuid.UUID
+	DisplayName     string
+	Bio             string
 	Specializations []string
-	City           string
-	Published      bool
+	City            string
+	Published       bool
 }
 
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
@@ -35,6 +51,9 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	city := strings.TrimSpace(in.City)
 	if name == "" || city == "" {
 		return nil, apperr.Validation("display_name and city are required")
+	}
+	if err := s.requireMembership(ctx, in.OrganizationID, in.UserID, "owner", "admin", "master"); err != nil {
+		return nil, err
 	}
 	now := s.now().UTC()
 	existing, err := s.store.GetMasterByUser(ctx, in.UserID)
@@ -93,6 +112,17 @@ func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterPr
 	return m, services, nil
 }
 
+func (s *Service) GetMasterByUserID(ctx context.Context, userID uuid.UUID) (*domain.MasterProfile, error) {
+	m, err := s.store.GetMasterByUser(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if m == nil {
+		return nil, apperr.NotFound("master not found")
+	}
+	return m, nil
+}
+
 func (s *Service) GetMyMaster(ctx context.Context, userID uuid.UUID) (*domain.MasterProfile, []domain.ServiceItem, error) {
 	m, err := s.store.GetMasterByUser(ctx, userID)
 	if err != nil {
@@ -133,6 +163,9 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 	if in.PriceMinor < 0 {
 		return nil, apperr.Validation("price_minor must be >= 0")
 	}
+	if err := s.requireMembership(ctx, in.OrganizationID, in.ActorUserID, "owner", "admin", "master"); err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 	item := domain.ServiceItem{
 		ID: ids.New(), OrganizationID: in.OrganizationID, Name: name, Category: category,
@@ -169,4 +202,40 @@ func (s *Service) GetService(ctx context.Context, id uuid.UUID) (*domain.Service
 		return nil, apperr.NotFound("service not found")
 	}
 	return item, nil
+}
+
+func (s *Service) requireMembership(ctx context.Context, orgID, userID uuid.UUID, roles ...string) error {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return apperr.Internal(fmt.Errorf("organizations membership check is not configured"))
+	}
+	q := url.Values{}
+	q.Set("organization_id", orgID.String())
+	q.Set("user_id", userID.String())
+	for _, role := range roles {
+		q.Add("role", role)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/internal/memberships/check?"+q.Encode(), nil)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return apperr.Internal(fmt.Errorf("membership check status %d: %s", resp.StatusCode, string(body)))
+	}
+	var out struct {
+		Active bool `json:"active"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return apperr.Internal(err)
+	}
+	if !out.Active {
+		return apperr.Forbidden("not a member of organization")
+	}
+	return nil
 }

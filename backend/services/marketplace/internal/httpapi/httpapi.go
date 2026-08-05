@@ -23,6 +23,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/masters", a.search)
 	mux.HandleFunc("GET /v1/masters/{id}", a.getMaster)
+	mux.HandleFunc("GET /v1/masters/by-user/{userID}", a.getMasterByUser)
 	mux.Handle("GET /v1/me/master", auth(http.HandlerFunc(a.myMaster)))
 	mux.Handle("PUT /v1/me/master", auth(http.HandlerFunc(a.upsertMaster)))
 	mux.Handle("POST /v1/services", auth(http.HandlerFunc(a.createService)))
@@ -60,6 +61,20 @@ func (a *API) getMaster(w http.ResponseWriter, r *http.Request) {
 		svcOut = append(svcOut, serviceDTO(s))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"master": masterDTO(*m), "services": svcOut})
+}
+
+func (a *API) getMasterByUser(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	m, err := a.svc.GetMasterByUserID(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, masterDTO(*m))
 }
 
 func (a *API) myMaster(w http.ResponseWriter, r *http.Request) {

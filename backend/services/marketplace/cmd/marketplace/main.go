@@ -43,13 +43,18 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	api := httpapi.New(service.New(st), log)
+	svc := service.New(st).WithOrganizations(os.Getenv("ORGANIZATIONS_URL"), os.Getenv("INTERNAL_TOKEN"))
+	api := httpapi.New(svc, log)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))
 	api.Routes(mux, cfg.JWTSecret)
 	handler := httpx.WithRequestID(httpx.SecurityHeaders(httpx.CORS(cfg.CORSOrigins)(httpx.MaxBytes(1<<20)(httpx.AccessLog(log)(mux)))))
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Addr: cfg.HTTPAddr, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
+	}
 	go func() {
 		log.Info("listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

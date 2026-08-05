@@ -27,6 +27,8 @@ func main() {
 	organizations := mustProxy(getenv("ORGANIZATIONS_URL", "http://organizations:8080"))
 	marketplace := mustProxy(getenv("MARKETPLACE_URL", "http://marketplace:8080"))
 	booking := mustProxy(getenv("BOOKING_URL", "http://booking:8080"))
+	clients := mustProxy(getenv("CLIENTS_URL", "http://clients:8080"))
+	communications := mustProxy(getenv("COMMUNICATIONS_URL", "http://communications:8080"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
@@ -44,10 +46,22 @@ func main() {
 	mux.Handle("/v1/me/working-hours", booking)
 	mux.Handle("/v1/appointments", booking)
 	mux.Handle("/v1/appointments/", booking)
+	mux.Handle("/v1/clients", clients)
+	mux.Handle("/v1/clients/", clients)
+	mux.Handle("/v1/client-cards", clients)
+	mux.Handle("/v1/client-cards/", clients)
+	mux.Handle("/v1/notifications", communications)
+	mux.Handle("/v1/notifications/", communications)
+	mux.Handle("/v1/reviews", communications)
+	mux.Handle("/v1/reviews/", communications)
 	mux.Handle("/v1/masters", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		marketplace.ServeHTTP(w, r)
 	}))
 	mux.Handle("/v1/masters/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/reviews") {
+			communications.ServeHTTP(w, r)
+			return
+		}
 		if strings.Contains(r.URL.Path, "/slots") {
 			booking.ServeHTTP(w, r)
 			return
@@ -65,7 +79,11 @@ func main() {
 		),
 	)
 
-	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Addr: addr, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
+	}
 	go func() {
 		log.Info("listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -87,6 +105,20 @@ func mustProxy(raw string) http.Handler {
 		panic(err)
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
+	original := p.ModifyResponse
+	p.ModifyResponse = func(resp *http.Response) error {
+		// Gateway owns browser CORS; drop upstream CORS to avoid duplicate ACAO.
+		resp.Header.Del("Access-Control-Allow-Origin")
+		resp.Header.Del("Access-Control-Allow-Credentials")
+		resp.Header.Del("Access-Control-Allow-Headers")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Expose-Headers")
+		resp.Header.Del("Access-Control-Max-Age")
+		if original != nil {
+			return original(resp)
+		}
+		return nil
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Host = u.Host
 		p.ServeHTTP(w, r)

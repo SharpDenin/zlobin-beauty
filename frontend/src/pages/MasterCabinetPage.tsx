@@ -13,25 +13,25 @@ type OrgItem = {
 }
 
 const orgSchema = z.object({
-  name: z.string().min(2),
-  branch_name: z.string().min(2),
-  city: z.string().min(2),
-  address_line: z.string().min(3),
+  name: z.string().min(2, 'Минимум 2 символа'),
+  branch_name: z.string().min(2, 'Минимум 2 символа'),
+  city: z.string().min(2, 'Укажите город'),
+  address_line: z.string().min(3, 'Укажите адрес'),
 })
 
 const masterSchema = z.object({
-  display_name: z.string().min(2),
-  city: z.string().min(2),
+  display_name: z.string().min(2, 'Укажите имя'),
+  city: z.string().min(2, 'Укажите город'),
   bio: z.string().optional(),
   specializations: z.string().optional(),
   published: z.boolean(),
 })
 
 const serviceSchema = z.object({
-  name: z.string().min(2),
-  category: z.string().min(2),
-  duration_minutes: z.coerce.number().int().positive(),
-  price_rubles: z.coerce.number().positive(),
+  name: z.string().min(2, 'Укажите название'),
+  category: z.string().min(2, 'Укажите категорию'),
+  duration_minutes: z.coerce.number().int().positive('Длительность должна быть больше 0'),
+  price_rubles: z.coerce.number().positive('Цена должна быть больше 0'),
 })
 
 export function MasterCabinetPage() {
@@ -145,7 +145,7 @@ export function MasterCabinetPage() {
         },
       }),
     onSuccess: async () => {
-      setOk('Расписание: пн–пт 10:00–19:00')
+      setOk('Расписание: пн–пт 10:00–19:00 (часовой пояс филиала)')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['working-hours'] })
     },
@@ -157,11 +157,12 @@ export function MasterCabinetPage() {
       <h1>Кабинет мастера</h1>
       <p>Настройка салона, профиля, услуг и расписания для приёма записей.</p>
       {error && <div className="state-box error">{error}</div>}
-      {ok && <div className="state-box" style={{ color: 'var(--color-success)' }}>{ok}</div>}
+      {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">
         <h2>1. Салон</h2>
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
+        {orgs.isError && <div className="state-box error">Не удалось загрузить организации</div>}
         {orgs.data && orgs.data.items.length > 0 ? (
           <div className="stack-sm">
             {orgs.data.items.map((item) => (
@@ -171,26 +172,51 @@ export function MasterCabinetPage() {
               </div>
             ))}
           </div>
-        ) : (
+        ) : (!orgs.isLoading && !orgs.isError) ? (
           <form className="stack" onSubmit={orgForm.handleSubmit((v) => createOrg.mutate(v))}>
-            <div className="field"><label>Название</label><input {...orgForm.register('name')} /></div>
-            <div className="field"><label>Филиал</label><input {...orgForm.register('branch_name')} /></div>
-            <div className="field"><label>Город</label><input {...orgForm.register('city')} /></div>
-            <div className="field"><label>Адрес</label><input {...orgForm.register('address_line')} /></div>
-            <button className="btn btn-primary" type="submit" disabled={createOrg.isPending}>Создать салон</button>
+            <div className="field">
+              <label>Название</label>
+              <input aria-invalid={Boolean(orgForm.formState.errors.name)} {...orgForm.register('name')} />
+              {orgForm.formState.errors.name && <span className="error">{orgForm.formState.errors.name.message}</span>}
+            </div>
+            <div className="field">
+              <label>Филиал</label>
+              <input aria-invalid={Boolean(orgForm.formState.errors.branch_name)} {...orgForm.register('branch_name')} />
+              {orgForm.formState.errors.branch_name && <span className="error">{orgForm.formState.errors.branch_name.message}</span>}
+            </div>
+            <div className="field">
+              <label>Город</label>
+              <input aria-invalid={Boolean(orgForm.formState.errors.city)} {...orgForm.register('city')} />
+              {orgForm.formState.errors.city && <span className="error">{orgForm.formState.errors.city.message}</span>}
+            </div>
+            <div className="field">
+              <label>Адрес</label>
+              <input aria-invalid={Boolean(orgForm.formState.errors.address_line)} {...orgForm.register('address_line')} />
+              {orgForm.formState.errors.address_line && <span className="error">{orgForm.formState.errors.address_line.message}</span>}
+            </div>
+            <button className="btn btn-primary btn-block" type="submit" disabled={createOrg.isPending}>Создать салон</button>
           </form>
-        )}
+        ) : null}
       </section>
 
       <section className="card stack">
         <h2>2. Профиль мастера</h2>
+        {master.isError && <div className="state-box">Профиль ещё не создан — заполните форму ниже</div>}
         <form className="stack" onSubmit={masterForm.handleSubmit((v) => saveMaster.mutate(v))}>
-          <div className="field"><label>Имя в поиске</label><input {...masterForm.register('display_name')} /></div>
-          <div className="field"><label>Город</label><input {...masterForm.register('city')} /></div>
+          <div className="field">
+            <label>Имя в поиске</label>
+            <input aria-invalid={Boolean(masterForm.formState.errors.display_name)} {...masterForm.register('display_name')} />
+            {masterForm.formState.errors.display_name && <span className="error">{masterForm.formState.errors.display_name.message}</span>}
+          </div>
+          <div className="field">
+            <label>Город</label>
+            <input aria-invalid={Boolean(masterForm.formState.errors.city)} {...masterForm.register('city')} />
+            {masterForm.formState.errors.city && <span className="error">{masterForm.formState.errors.city.message}</span>}
+          </div>
           <div className="field"><label>О себе</label><textarea {...masterForm.register('bio')} /></div>
           <div className="field"><label>Специализации через запятую</label><input {...masterForm.register('specializations')} placeholder="Колорист, Парикмахер" /></div>
           <label className="row"><input type="checkbox" {...masterForm.register('published')} /><span>Опубликовать в поиске</span></label>
-          <button className="btn btn-primary" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
+          <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
         </form>
         {master.data && <p className="muted">Профиль: {master.data.master.published ? 'опубликован' : 'скрыт'} · услуг: {master.data.services.length}</p>}
       </section>
@@ -198,22 +224,42 @@ export function MasterCabinetPage() {
       <section className="card stack">
         <h2>3. Услуга</h2>
         <form className="stack" onSubmit={serviceForm.handleSubmit((v) => createService.mutate(v))}>
-          <div className="field"><label>Название</label><input {...serviceForm.register('name')} placeholder="Окрашивание волос" /></div>
-          <div className="field"><label>Категория</label><input {...serviceForm.register('category')} /></div>
-          <div className="field"><label>Длительность, мин</label><input type="number" {...serviceForm.register('duration_minutes')} /></div>
-          <div className="field"><label>Цена, ₽</label><input type="number" {...serviceForm.register('price_rubles')} /></div>
-          <button className="btn btn-primary" type="submit" disabled={createService.isPending}>Добавить услугу</button>
+          <div className="field">
+            <label>Название</label>
+            <input aria-invalid={Boolean(serviceForm.formState.errors.name)} {...serviceForm.register('name')} placeholder="Окрашивание волос" />
+            {serviceForm.formState.errors.name && <span className="error">{serviceForm.formState.errors.name.message}</span>}
+          </div>
+          <div className="field">
+            <label>Категория</label>
+            <input aria-invalid={Boolean(serviceForm.formState.errors.category)} {...serviceForm.register('category')} />
+            {serviceForm.formState.errors.category && <span className="error">{serviceForm.formState.errors.category.message}</span>}
+          </div>
+          <div className="field">
+            <label>Длительность, мин</label>
+            <input type="number" aria-invalid={Boolean(serviceForm.formState.errors.duration_minutes)} {...serviceForm.register('duration_minutes')} />
+            {serviceForm.formState.errors.duration_minutes && <span className="error">{serviceForm.formState.errors.duration_minutes.message}</span>}
+          </div>
+          <div className="field">
+            <label>Цена, ₽</label>
+            <input type="number" aria-invalid={Boolean(serviceForm.formState.errors.price_rubles)} {...serviceForm.register('price_rubles')} />
+            {serviceForm.formState.errors.price_rubles && <span className="error">{serviceForm.formState.errors.price_rubles.message}</span>}
+          </div>
+          <button className="btn btn-primary btn-block" type="submit" disabled={createService.isPending}>Добавить услугу</button>
         </form>
       </section>
 
       <section className="card stack">
         <h2>4. Расписание</h2>
-        <p>Сейчас можно задать стандартное окно пн–пт 10:00–19:00 (UTC-день). Слоты клиенту считаются на сервере.</p>
-        <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
+        <p>Стандартное окно пн–пт 10:00–19:00 в часовом поясе филиала. Слоты считает сервер.</p>
+        {hours.isError && <div className="state-box error">Не удалось загрузить расписание</div>}
+        <button className="btn btn-primary btn-block" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
           Установить пн–пт 10:00–19:00
         </button>
         {hours.data && hours.data.items.length > 0 && (
           <p className="muted">Сохранено интервалов: {hours.data.items.length}</p>
+        )}
+        {hours.data && hours.data.items.length === 0 && (
+          <div className="state-box">Расписание ещё не задано</div>
         )}
       </section>
     </main>

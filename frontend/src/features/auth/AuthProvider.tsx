@@ -1,5 +1,5 @@
-import { createContext, useContext, useMemo, useState, useEffect, type ReactNode } from 'react'
-import { apiRequest } from '@/shared/api/client'
+import { createContext, useContext, useMemo, useState, useEffect, useRef, type ReactNode } from 'react'
+import { apiRequest, bindAuthBridge } from '@/shared/api/client'
 
 export type User = {
   id: string
@@ -36,10 +36,15 @@ function loadStored(): { accessToken: string; refreshToken: string; user: User }
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) return null
   try {
-    return JSON.parse(raw)
+    return JSON.parse(raw) as { accessToken: string; refreshToken: string; user: User }
   } catch {
     return null
   }
+}
+
+export function hasMasterAccess(user: User | null | undefined): boolean {
+  if (!user) return false
+  return user.roles.some((r) => r === 'master' || r === 'salon_owner' || r === 'system_admin')
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -48,32 +53,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(stored?.accessToken ?? null)
   const [refreshToken, setRefreshToken] = useState<string | null>(stored?.refreshToken ?? null)
   const [loading, setLoading] = useState(Boolean(stored?.accessToken))
+  const sessionRef = useRef({ accessToken, refreshToken, user })
+
+  useEffect(() => {
+    sessionRef.current = { accessToken, refreshToken, user }
+  }, [accessToken, refreshToken, user])
+
+  useEffect(() => {
+    bindAuthBridge({
+      getSession: () => {
+        const s = sessionRef.current
+        if (!s.accessToken || !s.refreshToken) return null
+        return { accessToken: s.accessToken, refreshToken: s.refreshToken }
+      },
+      setSession: (next) => {
+        if (next.user) setUser(next.user as User)
+        setAccessToken(next.accessToken)
+        setRefreshToken(next.refreshToken)
+        const u = (next.user as User | undefined) ?? sessionRef.current.user
+        if (u) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            accessToken: next.accessToken,
+            refreshToken: next.refreshToken,
+            user: u,
+          }))
+        }
+      },
+      clearSession: () => {
+        setUser(null)
+        setAccessToken(null)
+        setRefreshToken(null)
+        localStorage.removeItem(STORAGE_KEY)
+      },
+    })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     async function hydrate() {
-      if (!accessToken) {
+      const snap = loadStored()
+      if (!snap?.accessToken) {
         setLoading(false)
         return
       }
       try {
-        const me = await apiRequest<User>('/v1/auth/me', { token: accessToken })
+        const me = await apiRequest<User>('/v1/auth/me', { token: snap.accessToken, skipAuthRefresh: true })
         if (!cancelled) {
           setUser(me)
-          persist({ accessToken, refreshToken: refreshToken!, user: me })
+          setAccessToken(snap.accessToken)
+          setRefreshToken(snap.refreshToken)
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...snap, user: me }))
         }
       } catch {
-        if (refreshToken) {
-          try {
-            const next = await apiRequest<AuthResponse>('/v1/auth/refresh', {
-              body: { refresh_token: refreshToken },
-            })
-            if (!cancelled) applyAuth(next)
-          } catch {
-            if (!cancelled) clear()
-          }
-        } else if (!cancelled) {
-          clear()
+        try {
+          const next = await apiRequest<AuthResponse>('/v1/auth/refresh', {
+            body: { refresh_token: snap.refreshToken },
+            skipAuthRefresh: true,
+          })
+          if (!cancelled) applyAuth(next)
+        } catch {
+          if (!cancelled) clear()
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -85,15 +124,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  function persist(next: { accessToken: string; refreshToken: string; user: User }) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  }
-
   function applyAuth(res: AuthResponse) {
     setUser(res.user)
     setAccessToken(res.access_token)
     setRefreshToken(res.refresh_token)
-    persist({ accessToken: res.access_token, refreshToken: res.refresh_token, user: res.user })
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      accessToken: res.access_token,
+      refreshToken: res.refresh_token,
+      user: res.user,
+    }))
   }
 
   function clear() {
@@ -109,19 +148,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshToken,
     loading,
     async login(email, password) {
-      const res = await apiRequest<AuthResponse>('/v1/auth/login', { body: { email, password } })
+      const res = await apiRequest<AuthResponse>('/v1/auth/login', {
+        body: { email, password },
+        skipAuthRefresh: true,
+      })
       applyAuth(res)
     },
     async register(input) {
-      const res = await apiRequest<AuthResponse>('/v1/auth/register', { body: input })
+      const res = await apiRequest<AuthResponse>('/v1/auth/register', {
+        body: input,
+        skipAuthRefresh: true,
+      })
       applyAuth(res)
     },
     async logout() {
       if (refreshToken) {
         try {
-          await apiRequest('/v1/auth/logout', { body: { refresh_token: refreshToken } })
+          await apiRequest('/v1/auth/logout', {
+            body: { refresh_token: refreshToken },
+            skipAuthRefresh: true,
+          })
         } catch {
-          // ignore network logout errors; local session still clears
+          // local clear still required
         }
       }
       clear()

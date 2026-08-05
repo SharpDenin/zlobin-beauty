@@ -1,0 +1,276 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/domain"
+	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/service"
+	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
+	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
+)
+
+type API struct {
+	svc *service.Service
+	log *slog.Logger
+}
+
+func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, log: log} }
+
+func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
+	auth := httpx.BearerAuth(jwtSecret)
+	mux.HandleFunc("POST /v1/internal/visits/from-appointment", a.fromAppointment)
+	// Literal prefixes avoid ServeMux conflicts between "{id}/visits" and "by-appointment/{id}".
+	mux.Handle("GET /v1/clients/mine", auth(http.HandlerFunc(a.mine)))
+	mux.Handle("GET /v1/clients/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
+	mux.Handle("GET /v1/clients/id/{id}", auth(http.HandlerFunc(a.getCard)))
+	mux.Handle("GET /v1/clients/id/{id}/visits", auth(http.HandlerFunc(a.visits)))
+	mux.Handle("POST /v1/clients/id/{id}/notes", auth(http.HandlerFunc(a.addNote)))
+	mux.Handle("POST /v1/clients/id/{id}/formulas", auth(http.HandlerFunc(a.addFormula)))
+	mux.Handle("GET /v1/clients/id/{id}/formulas", auth(http.HandlerFunc(a.formulas)))
+	mux.Handle("POST /v1/clients/id/{id}/consents", auth(http.HandlerFunc(a.consent)))
+	// Aliases under /v1/client-cards for the same handlers.
+	mux.Handle("GET /v1/client-cards/mine", auth(http.HandlerFunc(a.mine)))
+	mux.Handle("GET /v1/client-cards/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
+	mux.Handle("GET /v1/client-cards/id/{id}", auth(http.HandlerFunc(a.getCard)))
+	mux.Handle("GET /v1/client-cards/id/{id}/visits", auth(http.HandlerFunc(a.visits)))
+	mux.Handle("POST /v1/client-cards/id/{id}/notes", auth(http.HandlerFunc(a.addNote)))
+	mux.Handle("POST /v1/client-cards/id/{id}/formulas", auth(http.HandlerFunc(a.addFormula)))
+	mux.Handle("GET /v1/client-cards/id/{id}/formulas", auth(http.HandlerFunc(a.formulas)))
+	mux.Handle("POST /v1/client-cards/id/{id}/consents", auth(http.HandlerFunc(a.consent)))
+}
+
+func (a *API) fromAppointment(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	var req struct {
+		AppointmentID  string    `json:"appointment_id"`
+		OrganizationID string    `json:"organization_id"`
+		MasterUserID   string    `json:"master_user_id"`
+		ClientUserID   string    `json:"client_user_id"`
+		ServiceName    string    `json:"service_name"`
+		PriceMinor     int64     `json:"price_minor"`
+		Currency       string    `json:"currency"`
+		StartedAt      time.Time `json:"started_at"`
+		CompletedAt    time.Time `json:"completed_at"`
+		DisplayName    string    `json:"display_name"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	apptID, err1 := uuid.Parse(req.AppointmentID)
+	orgID, err2 := uuid.Parse(req.OrganizationID)
+	masterID, err3 := uuid.Parse(req.MasterUserID)
+	clientID, err4 := uuid.Parse(req.ClientUserID)
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid ids"))
+		return
+	}
+	card, err := a.svc.FromAppointment(r.Context(), service.FromAppointmentInput{
+		AppointmentID: apptID, OrganizationID: orgID, MasterUserID: masterID, ClientUserID: clientID,
+		ServiceName: req.ServiceName, PriceMinor: req.PriceMinor, Currency: req.Currency,
+		StartedAt: req.StartedAt, CompletedAt: req.CompletedAt, DisplayName: req.DisplayName,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, cardDTO(*card))
+}
+
+func (a *API) mine(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var orgID *uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &id
+	}
+	items, err := a.svc.ListMine(r.Context(), claims.UserID, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, c := range items {
+		out = append(out, cardDTO(c))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) byAppointment(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("appointmentID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	card, err := a.svc.ByAppointment(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, cardDTO(*card))
+}
+
+func (a *API) getCard(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	card, err := a.svc.GetCard(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, cardDTO(*card))
+}
+
+func (a *API) visits(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListVisits(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, v := range items {
+		out = append(out, map[string]any{
+			"id": v.ID.String(), "service_name": v.ServiceName, "price_minor": v.PriceMinor,
+			"completed_at": v.CompletedAt, "appointment_id": v.AppointmentID.String(),
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) addNote(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		VisitID string `json:"visit_id"`
+		Body    string `json:"body"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	visitID, err := uuid.Parse(req.VisitID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid visit_id"))
+		return
+	}
+	if err := a.svc.AddNote(r.Context(), id, claims.UserID, visitID, req.Body); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) addFormula(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Name       string          `json:"name"`
+		Brand      string          `json:"brand"`
+		Components json.RawMessage `json:"components"`
+		Oxidizer   string          `json:"oxidizer"`
+		Ratio      string          `json:"ratio"`
+		Comment    string          `json:"comment"`
+		VisitID    *string         `json:"visit_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	var visitID *uuid.UUID
+	if req.VisitID != nil && *req.VisitID != "" {
+		v, err := uuid.Parse(*req.VisitID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid visit_id"))
+			return
+		}
+		visitID = &v
+	}
+	f, err := a.svc.AddFormula(r.Context(), id, claims.UserID, req.Name, req.Brand, req.Components, req.Oxidizer, req.Ratio, req.Comment, visitID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"id": f.ID.String(), "name": f.Name, "brand": f.Brand, "oxidizer": f.Oxidizer, "ratio": f.Ratio, "comment": f.Comment, "created_at": f.CreatedAt,
+	})
+}
+
+func (a *API) formulas(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListFormulas(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, f := range items {
+		out = append(out, map[string]any{
+			"id": f.ID.String(), "name": f.Name, "brand": f.Brand, "oxidizer": f.Oxidizer, "ratio": f.Ratio, "comment": f.Comment, "created_at": f.CreatedAt,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) consent(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		ConsentType string `json:"consent_type"`
+		Granted     bool   `json:"granted"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	if err := a.svc.SetConsent(r.Context(), id, claims.UserID, req.ConsentType, req.Granted); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func cardDTO(c domain.ClientCard) map[string]any {
+	return map[string]any{
+		"id": c.ID.String(), "organization_id": c.OrganizationID.String(), "user_id": c.UserID.String(),
+		"display_name": c.DisplayName, "phone": c.Phone, "email": c.Email, "preferences": c.Preferences,
+	}
+}

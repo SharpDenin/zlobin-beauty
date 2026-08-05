@@ -12,12 +12,13 @@ import (
 )
 
 type API struct {
-	svc *service.Service
-	log *slog.Logger
+	svc           *service.Service
+	log           *slog.Logger
+	internalToken string
 }
 
-func New(svc *service.Service, log *slog.Logger) *API {
-	return &API{svc: svc, log: log}
+func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
+	return &API{svc: svc, log: log, internalToken: internalToken}
 }
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
@@ -25,7 +26,34 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/organizations", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/organizations/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("POST /v1/organizations/{orgID}/masters", auth(http.HandlerFunc(a.addMaster)))
-	mux.Handle("GET /v1/branches/{branchID}", auth(http.HandlerFunc(a.getBranch)))
+	// Branch metadata (timezone, city, etc.) is read by other services
+	// (e.g. booking resolving a master's timezone), so this stays public.
+	mux.HandleFunc("GET /v1/branches/{branchID}", a.getBranch)
+	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
+}
+
+func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
+	expected := a.internalToken
+	if expected == "" || r.Header.Get("X-Internal-Token") != expected {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	orgID, err1 := uuid.Parse(r.URL.Query().Get("organization_id"))
+	userID, err2 := uuid.Parse(r.URL.Query().Get("user_id"))
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id and user_id are required"))
+		return
+	}
+	roles := r.URL.Query()["role"]
+	if len(roles) == 0 {
+		roles = []string{"owner", "admin", "master", "staff"}
+	}
+	ok, err := a.svc.HasActiveMembership(r.Context(), orgID, userID, roles...)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"active": ok})
 }
 
 type createReq struct {

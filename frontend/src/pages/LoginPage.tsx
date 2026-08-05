@@ -13,17 +13,16 @@ const schema = z.object({
 
 type Form = z.infer<typeof schema>
 
-export function LoginPage() {
+export function LoginPage({ redirectTo = '/' }: { redirectTo?: string }) {
   const { login } = useAuth()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
+  const { register, handleSubmit, formState: { errors, isSubmitting }, setFocus } = useForm<Form>({
     resolver: zodResolver(schema),
   })
 
   return (
-    <div className="app-shell app-shell--auth">
-      <div className="page page-narrow stack">
+    <div className="page page-narrow stack" style={{ paddingTop: 48 }}>
         <div className="brand">Zlobin Beauty</div>
         <h1>Вход</h1>
         <p>Войдите, чтобы искать мастеров и управлять записями.</p>
@@ -33,20 +32,21 @@ export function LoginPage() {
             setError(null)
             try {
               await login(values.email, values.password)
-              navigate('/')
+              navigate(redirectTo || '/')
             } catch (e) {
               setError(e instanceof ApiError ? e.message : 'Не удалось войти')
+              setFocus('email')
             }
-          })}
+          }, () => setFocus(errors.email ? 'email' : 'password'))}
         >
           <div className="field">
             <label htmlFor="email">Email</label>
-            <input id="email" type="email" autoComplete="email" {...register('email')} />
+            <input id="email" type="email" autoComplete="email" aria-invalid={Boolean(errors.email)} {...register('email')} />
             {errors.email && <span className="error">{errors.email.message}</span>}
           </div>
           <div className="field">
             <label htmlFor="password">Пароль</label>
-            <input id="password" type="password" autoComplete="current-password" {...register('password')} />
+            <input id="password" type="password" autoComplete="current-password" aria-invalid={Boolean(errors.password)} {...register('password')} />
             {errors.password && <span className="error">{errors.password.message}</span>}
           </div>
           {error && <div className="state-box error">{error}</div>}
@@ -55,7 +55,6 @@ export function LoginPage() {
           </button>
         </form>
         <p>Нет аккаунта? <Link to="/register">Зарегистрироваться</Link></p>
-      </div>
     </div>
   )
 }

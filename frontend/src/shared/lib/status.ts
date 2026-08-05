@@ -12,3 +12,12 @@ const map: Record<string, string> = {
 export function statusLabel(status: string) {
   return map[status] ?? status
 }
+
+export function statusBadgeClass(status: string) {
+  if (status === 'confirmed') return 'badge-confirmed'
+  if (status === 'pending_confirmation') return 'badge-pending'
+  if (status === 'in_progress') return 'badge-progress'
+  if (status === 'completed') return 'badge-done'
+  if (status.startsWith('cancelled') || status === 'no_show') return 'badge-cancelled'
+  return 'badge-default'
+}

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { formatMoney } from '@/shared/lib/money'
 
 type Service = {
   id: string
@@ -26,10 +27,6 @@ type MasterDetails = {
 }
 
 type Slot = { starts_at: string; ends_at: string }
-
-function formatMoney(minor: number) {
-  return `${Math.round(minor / 100)} ₽`
-}
 
 export function MasterPage() {
   const { id } = useParams()
@@ -56,9 +53,18 @@ export function MasterPage() {
     queryKey: ['slots', masterQuery.data?.master.user_id, date, selectedService?.duration_minutes],
     queryFn: () =>
       apiRequest<{ items: Slot[] }>(
-        `/v1/masters/${masterQuery.data!.master.user_id}/slots?date=${date}&duration_minutes=${selectedService!.duration_minutes}`,
+        `/v1/masters/${masterQuery.data!.master.user_id}/slots?date=${date}&duration_minutes=${selectedService!.duration_minutes}&timezone=Europe/Moscow`,
       ),
     enabled: Boolean(masterQuery.data?.master.user_id && selectedService),
+  })
+
+  const reviewsQuery = useQuery({
+    queryKey: ['master-reviews', masterQuery.data?.master.user_id],
+    queryFn: () =>
+      apiRequest<{ items: Array<{ id: string; master_rating: number; result_rating: number; comment: string; created_at: string }> }>(
+        `/v1/masters/${masterQuery.data!.master.user_id}/reviews`,
+      ),
+    enabled: Boolean(masterQuery.data?.master.user_id),
   })
 
   const book = useMutation({
@@ -151,7 +157,7 @@ export function MasterPage() {
               )
             })}
           </div>
-          {message && <div className="state-box" style={{ color: 'var(--color-success)' }}>{message}</div>}
+          {message && <div className="state-box success">{message}</div>}
           {error && <div className="state-box error">{error}</div>}
           <button
             className="btn btn-primary btn-block"
@@ -163,6 +169,27 @@ export function MasterPage() {
           </button>
         </section>
       )}
+
+      <section className="card stack">
+        <h2>Отзывы</h2>
+        {reviewsQuery.isLoading && <div className="state-box">Загрузка отзывов…</div>}
+        {reviewsQuery.isError && <div className="state-box">Не удалось загрузить отзывы</div>}
+        {reviewsQuery.data && reviewsQuery.data.items.length === 0 && (
+          <div className="state-box">Пока нет опубликованных отзывов</div>
+        )}
+        <div className="list">
+          {reviewsQuery.data?.items.map((r) => (
+            <article key={r.id} className="list-item">
+              <div className="row between">
+                <strong>Мастер {r.master_rating}/5</strong>
+                <span className="muted">Результат {r.result_rating}/5</span>
+              </div>
+              {r.comment && <p>{r.comment}</p>}
+              <p className="muted">{new Date(r.created_at).toLocaleDateString('ru-RU')}</p>
+            </article>
+          ))}
+        </div>
+      </section>
     </main>
   )
 }

@@ -55,19 +55,30 @@ type WorkingHours struct {
 }
 
 type Appointment struct {
-	ID               uuid.UUID
-	OrganizationID   uuid.UUID
-	BranchID         uuid.UUID
-	MasterUserID     uuid.UUID
-	ClientUserID     uuid.UUID
-	ServiceID        uuid.UUID
-	ServiceName      string
-	DurationMinutes  int
-	PriceMinor       int64
-	Currency         string
-	Status           string
-	StartsAt         time.Time
-	EndsAt           time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID              uuid.UUID
+	OrganizationID  uuid.UUID
+	BranchID        uuid.UUID
+	MasterUserID    uuid.UUID
+	ClientUserID    uuid.UUID
+	ServiceID       uuid.UUID
+	ServiceName     string
+	DurationMinutes int
+	PriceMinor      int64
+	Currency        string
+	Status          string
+	CancelReason    string
+	StartsAt        time.Time
+	EndsAt          time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type StatusHistory struct {
+	ID            uuid.UUID
+	AppointmentID uuid.UUID
+	FromStatus    *string
+	ToStatus      string
+	ActorUserID   uuid.UUID
+	Reason        string
+	CreatedAt     time.Time
 }

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -27,7 +28,13 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
+	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
+	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
+	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
+	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
+	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
+	mux.Handle("POST /v1/appointments/{id}/no-show", auth(http.HandlerFunc(a.noShow)))
 }
 
 func (a *API) setHours(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +101,12 @@ func (a *API) slots(w http.ResponseWriter, r *http.Request) {
 		}
 		duration = d
 	}
-	slots, err := a.svc.FreeSlots(r.Context(), masterUserID, day, duration)
+	tz, err := a.svc.ResolveTimezone(r.Context(), masterUserID, r.URL.Query().Get("timezone"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	slots, err := a.svc.FreeSlots(r.Context(), masterUserID, day, duration, tz)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -193,13 +205,124 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
 }
 
+func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	item, err := a.svc.Cancel(r.Context(), id, claims.UserID, req.Reason)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) reschedule(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		StartsAt time.Time `json:"starts_at"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	item, err := a.svc.Reschedule(r.Context(), id, claims.UserID, req.StartsAt)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) start(w http.ResponseWriter, r *http.Request) {
+	a.simpleAction(w, r, a.svc.Start)
+}
+
+func (a *API) complete(w http.ResponseWriter, r *http.Request) {
+	a.simpleAction(w, r, a.svc.Complete)
+}
+
+func (a *API) noShow(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	item, err := a.svc.NoShow(r.Context(), id, claims.UserID, req.Reason)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) history(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.History(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, h := range items {
+		var from any
+		if h.FromStatus != nil {
+			from = *h.FromStatus
+		}
+		out = append(out, map[string]any{
+			"from_status": from, "to_status": h.ToStatus, "reason": h.Reason, "created_at": h.CreatedAt,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) simpleAction(w http.ResponseWriter, r *http.Request, fn func(context.Context, uuid.UUID, uuid.UUID) (*domain.Appointment, error)) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := fn(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
 func appointmentDTO(a domain.Appointment) map[string]any {
 	return map[string]any{
 		"id": a.ID.String(), "organization_id": a.OrganizationID.String(), "branch_id": a.BranchID.String(),
 		"master_user_id": a.MasterUserID.String(), "client_user_id": a.ClientUserID.String(),
 		"service_id": a.ServiceID.String(), "service_name": a.ServiceName,
 		"duration_minutes": a.DurationMinutes, "price_minor": a.PriceMinor, "currency": a.Currency,
-		"status": a.Status, "starts_at": a.StartsAt, "ends_at": a.EndsAt,
+		"status": a.Status, "cancel_reason": a.CancelReason, "starts_at": a.StartsAt, "ends_at": a.EndsAt,
 		"created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
 }

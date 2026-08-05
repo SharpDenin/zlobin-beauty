@@ -102,6 +102,21 @@ func BearerAuth(secret string) func(http.Handler) http.Handler {
 	}
 }
 
+// InternalAuth guards service-to-service endpoints with a shared secret
+// token, checked against the X-Internal-Token header. If token is empty
+// (not configured), all requests are rejected.
+func InternalAuth(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token == "" || r.Header.Get("X-Internal-Token") != token {
+				WriteError(w, r, nil, apperr.Unauthorized("invalid internal token"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func OptionalBearerAuth(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

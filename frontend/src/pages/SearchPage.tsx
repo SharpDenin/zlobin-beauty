@@ -27,21 +27,21 @@ export function SearchPage() {
     <main className="page stack">
       <h1>Поиск мастеров</h1>
       <form
-        className="card row"
+        className="card search-form"
         onSubmit={(e) => {
           e.preventDefault()
-          setSubmitted({ city, q })
+          setSubmitted({ city: city.trim() || 'Москва', q: q.trim() })
         }}
       >
-        <div className="field" style={{ flex: 1, minWidth: 140 }}>
+        <div className="field">
           <label htmlFor="city">Город</label>
           <input id="city" value={city} onChange={(e) => setCity(e.target.value)} />
         </div>
-        <div className="field" style={{ flex: 2, minWidth: 180 }}>
+        <div className="field">
           <label htmlFor="q">Имя или специализация</label>
           <input id="q" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <button className="btn btn-primary" type="submit" style={{ alignSelf: 'end' }}>Искать</button>
+        <button className="btn btn-primary" type="submit">Искать</button>
       </form>
 
       {query.isLoading && <div className="state-box">Ищем мастеров…</div>}

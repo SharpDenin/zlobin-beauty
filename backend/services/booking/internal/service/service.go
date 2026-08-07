@@ -3,13 +3,16 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
@@ -22,6 +25,7 @@ type Service struct {
 	organizationsURL   string
 	clientsURL         string
 	communicationsURL  string
+	commerceURL       string
 	internalToken      string
 	httpClient         *http.Client
 	now                func() time.Time
@@ -34,6 +38,11 @@ func New(st *store.Store, marketplaceURL string) *Service {
 		httpClient:     &http.Client{Timeout: 5 * time.Second},
 		now:            time.Now,
 	}
+}
+
+func (s *Service) WithCommerce(commerceURL string) *Service {
+	s.commerceURL = strings.TrimRight(commerceURL, "/")
+	return s
 }
 
 func (s *Service) WithIntegrations(organizationsURL, clientsURL, communicationsURL, internalToken string) *Service {
@@ -389,6 +398,7 @@ func (s *Service) Complete(ctx context.Context, appointmentID, actorUserID uuid.
 	}
 	s.notifyVisitCompleted(ctx, a)
 	s.createVisitRecord(ctx, a)
+	s.consumeStockForAppointment(ctx, a, actorUserID)
 	return a, nil
 }
 
@@ -561,6 +571,35 @@ func (s *Service) createVisitRecord(ctx context.Context, a *domain.Appointment) 
 	_ = resp.Body.Close()
 }
 
+func (s *Service) consumeStockForAppointment(ctx context.Context, a *domain.Appointment, actorUserID uuid.UUID) {
+	if s.commerceURL == "" || s.internalToken == "" {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"organization_id": a.OrganizationID.String(),
+		"service_id":      a.ServiceID.String(),
+		"appointment_id":  a.ID.String(),
+		"actor_user_id":   actorUserID.String(),
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.commerceURL+"/v1/internal/stock/consume-appointment", strings.NewReader(string(payload)))
+	if err != nil {
+		slog.Warn("commerce consume-appointment request failed", "appointment_id", a.ID, "error", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		slog.Warn("commerce consume-appointment call failed", "appointment_id", a.ID, "error", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		slog.Warn("commerce consume-appointment rejected", "appointment_id", a.ID, "status", resp.StatusCode, "body", string(body))
+	}
+}
+
 func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appointment, error) {
 	a, err := s.store.GetAppointment(ctx, id)
 	if err != nil {
@@ -578,6 +617,23 @@ func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appoint
 func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string) ([]domain.Appointment, error) {
 	asMaster := role == "master"
 	items, err := s.store.ListForUser(ctx, userID, asMaster)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Appointment{}
+	}
+	return items, nil
+}
+
+func (s *Service) ListOrgAppointmentsInRange(ctx context.Context, orgID uuid.UUID, from, to time.Time, statuses []string) ([]domain.Appointment, error) {
+	if orgID == uuid.Nil {
+		return nil, apperr.Validation("organization_id is required")
+	}
+	if !to.After(from) {
+		return nil, apperr.Validation("to must be after from")
+	}
+	items, err := s.store.ListByOrgInRange(ctx, orgID, from.UTC(), to.UTC(), statuses)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -609,4 +665,67 @@ func (s *Service) fetchMaster(ctx context.Context, masterID uuid.UUID) (*masterP
 		return nil, apperr.Internal(err)
 	}
 	return &payload, nil
+}
+
+func (s *Service) ListAppointmentPhotos(ctx context.Context, appointmentID, actor uuid.UUID) ([]domain.AppointmentPhoto, error) {
+	if _, err := s.Get(ctx, appointmentID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListAppointmentPhotos(ctx, appointmentID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.AppointmentPhoto{}
+	}
+	return items, nil
+}
+
+func (s *Service) AddAppointmentPhoto(ctx context.Context, appointmentID, actor, mediaID uuid.UUID, kind string) (*domain.AppointmentPhoto, error) {
+	a, err := s.Get(ctx, appointmentID, actor)
+	if err != nil {
+		return nil, err
+	}
+	if a.MasterUserID != actor {
+		return nil, apperr.Forbidden("only the master can upload visit photos")
+	}
+	kind = strings.TrimSpace(kind)
+	if kind != "before" && kind != "after" {
+		return nil, apperr.Validation("kind must be before or after")
+	}
+	if mediaID == uuid.Nil {
+		return nil, apperr.Validation("media_id is required")
+	}
+	now := s.now().UTC()
+	p := domain.AppointmentPhoto{
+		ID: ids.New(), AppointmentID: appointmentID, MediaID: mediaID, Kind: kind, CreatedBy: actor, CreatedAt: now,
+	}
+	if err := s.store.CreateAppointmentPhoto(ctx, p); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &p, nil
+}
+
+func (s *Service) DeleteAppointmentPhoto(ctx context.Context, photoID, actor uuid.UUID) error {
+	p, err := s.store.GetAppointmentPhoto(ctx, photoID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if p == nil {
+		return apperr.NotFound("photo not found")
+	}
+	a, err := s.Get(ctx, p.AppointmentID, actor)
+	if err != nil {
+		return err
+	}
+	if a.MasterUserID != actor {
+		return apperr.Forbidden("only the master can delete visit photos")
+	}
+	if err := s.store.DeleteAppointmentPhoto(ctx, photoID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound("photo not found")
+		}
+		return apperr.Internal(err)
+	}
+	return nil
 }

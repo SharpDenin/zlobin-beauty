@@ -25,11 +25,19 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.Handle("POST /v1/organizations", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/organizations/mine", auth(http.HandlerFunc(a.mine)))
+	mux.Handle("GET /v1/organizations/{orgID}/readiness", auth(http.HandlerFunc(a.orgReadiness)))
+	mux.Handle("PATCH /v1/organizations/{orgID}", auth(http.HandlerFunc(a.updateOrg)))
 	mux.Handle("POST /v1/organizations/{orgID}/masters", auth(http.HandlerFunc(a.addMaster)))
+	mux.Handle("GET /v1/branches/{branchID}/readiness", auth(http.HandlerFunc(a.branchReadiness)))
+	mux.Handle("PATCH /v1/branches/{branchID}", auth(http.HandlerFunc(a.updateBranch)))
+	mux.Handle("POST /v1/branches/{branchID}/photos", auth(http.HandlerFunc(a.addBranchPhoto)))
+	mux.Handle("DELETE /v1/branches/{branchID}/photos/{photoID}", auth(http.HandlerFunc(a.deleteBranchPhoto)))
 	// Branch metadata (timezone, city, etc.) is read by other services
 	// (e.g. booking resolving a master's timezone), so this stays public.
 	mux.HandleFunc("GET /v1/branches/{branchID}", a.getBranch)
+	mux.HandleFunc("GET /v1/branches/{branchID}/photos", a.listBranchPhotos)
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
+	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
 }
 
 func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +62,33 @@ func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"active": ok})
+}
+
+func (a *API) branchPublication(w http.ResponseWriter, r *http.Request) {
+	expected := a.internalToken
+	if expected == "" || r.Header.Get("X-Internal-Token") != expected {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	b, err := a.svc.GetBranch(r.Context(), branchID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	org, err := a.svc.GetOrg(r.Context(), b.OrganizationID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"branch_published": b.Published,
+		"org_published":    org.Published,
+	})
 }
 
 type createReq struct {
@@ -112,6 +147,98 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (a *API) orgReadiness(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	ready, err := a.svc.OrgReadiness(r.Context(), orgID, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, ready)
+}
+
+type patchOrgReq struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Published   *bool   `json:"published"`
+}
+
+func (a *API) updateOrg(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req patchOrgReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	org, err := a.svc.UpdateOrg(r.Context(), service.UpdateOrgInput{
+		ActorID: claims.UserID, OrgID: orgID,
+		Name: req.Name, Description: req.Description, Published: req.Published,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, orgDTO(*org))
+}
+
+type patchBranchReq struct {
+	Name        *string `json:"name"`
+	City        *string `json:"city"`
+	AddressLine *string `json:"address_line"`
+	Phone       *string `json:"phone"`
+	Timezone    *string `json:"timezone"`
+	Published   *bool   `json:"published"`
+}
+
+func (a *API) updateBranch(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	var req patchBranchReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	b, err := a.svc.UpdateBranch(r.Context(), service.UpdateBranchInput{
+		ActorID: claims.UserID, BranchID: branchID,
+		Name: req.Name, City: req.City, AddressLine: req.AddressLine,
+		Phone: req.Phone, Timezone: req.Timezone, Published: req.Published,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, branchDTO(*b))
+}
+
+func (a *API) branchReadiness(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	ready, err := a.svc.BranchReadiness(r.Context(), branchID, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, ready)
+}
+
 type addMasterReq struct {
 	UserID string `json:"user_id"`
 }
@@ -156,7 +283,8 @@ func (a *API) getBranch(w http.ResponseWriter, r *http.Request) {
 
 func orgDTO(o domain.Organization) map[string]any {
 	return map[string]any{
-		"id": o.ID.String(), "name": o.Name, "type": o.Type, "status": o.Status,
+		"id": o.ID.String(), "name": o.Name, "description": o.Description,
+		"type": o.Type, "status": o.Status, "published": o.Published,
 		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
 	}
 }
@@ -164,7 +292,74 @@ func orgDTO(o domain.Organization) map[string]any {
 func branchDTO(b domain.Branch) map[string]any {
 	return map[string]any{
 		"id": b.ID.String(), "organization_id": b.OrganizationID.String(), "name": b.Name,
-		"city": b.City, "address_line": b.AddressLine, "timezone": b.Timezone,
-		"cancel_window_hours": b.CancelWindowHours, "auto_confirm": b.AutoConfirm,
+		"city": b.City, "address_line": b.AddressLine, "phone": b.Phone, "timezone": b.Timezone,
+		"cancel_window_hours": b.CancelWindowHours, "auto_confirm": b.AutoConfirm, "published": b.Published,
 	}
+}
+
+func branchPhotoDTO(p domain.BranchPhoto) map[string]any {
+	return map[string]any{
+		"id": p.ID.String(), "branch_id": p.BranchID.String(), "media_id": p.MediaID.String(),
+		"sort_order": p.SortOrder, "created_at": p.CreatedAt,
+	}
+}
+
+func (a *API) listBranchPhotos(w http.ResponseWriter, r *http.Request) {
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	items, err := a.svc.ListBranchPhotos(r.Context(), branchID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, p := range items {
+		out = append(out, branchPhotoDTO(p))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) addBranchPhoto(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	var req struct {
+		MediaID   string `json:"media_id"`
+		SortOrder int    `json:"sort_order"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	mediaID, err := uuid.Parse(req.MediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid media_id"))
+		return
+	}
+	p, err := a.svc.AddBranchPhoto(r.Context(), claims.UserID, branchID, mediaID, req.SortOrder)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, branchPhotoDTO(*p))
+}
+
+func (a *API) deleteBranchPhoto(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	photoID, err := uuid.Parse(r.PathValue("photoID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo id"))
+		return
+	}
+	if err := a.svc.DeleteBranchPhoto(r.Context(), claims.UserID, photoID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

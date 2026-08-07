@@ -7,7 +7,7 @@ if (-not (Test-Path $envFile)) { Copy-Item (Join-Path $root ".env.example") $env
 
 New-Item -ItemType Directory -Force -Path (Join-Path $root ".logs") | Out-Null
 
-docker compose up -d postgres nats
+docker compose up -d postgres nats minio
 
 Write-Host "Waiting for postgres..."
 $ready = $false
@@ -37,6 +37,18 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'communications') THEN
     CREATE DATABASE communications OWNER communications;
   END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'commerce') THEN
+    CREATE USER commerce WITH PASSWORD 'commerce';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'commerce') THEN
+    CREATE DATABASE commerce OWNER commerce;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'media') THEN
+    CREATE USER media WITH PASSWORD 'media';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'media') THEN
+    CREATE DATABASE media OWNER media;
+  END IF;
 END
 `$`$;
 "@ | Out-Null
@@ -65,16 +77,30 @@ Start-GoSvc "identity" "./services/identity/cmd/identity" 8101 "postgres://ident
 Start-GoSvc "organizations" "./services/organizations/cmd/organizations" 8102 "postgres://organizations:organizations@localhost:5433/organizations?sslmode=disable"
 Start-GoSvc "marketplace" "./services/marketplace/cmd/marketplace" 8103 "postgres://marketplace:marketplace@localhost:5433/marketplace?sslmode=disable" @{
   ORGANIZATIONS_URL = "http://127.0.0.1:8102"
+  BOOKING_URL = "http://127.0.0.1:8104"
 }
 Start-GoSvc "booking" "./services/booking/cmd/booking" 8104 "postgres://booking:booking@localhost:5433/booking?sslmode=disable" @{
   MARKETPLACE_URL = "http://127.0.0.1:8103"
   ORGANIZATIONS_URL = "http://127.0.0.1:8102"
   CLIENTS_URL = "http://127.0.0.1:8105"
   COMMUNICATIONS_URL = "http://127.0.0.1:8106"
+  COMMERCE_URL = "http://127.0.0.1:8107"
 }
 Start-GoSvc "clients" "./services/clients/cmd/clients" 8105 "postgres://clients:clients@localhost:5433/clients?sslmode=disable"
 Start-GoSvc "communications" "./services/communications/cmd/communications" 8106 "postgres://communications:communications@localhost:5433/communications?sslmode=disable" @{
   BOOKING_URL = "http://127.0.0.1:8104"
+}
+Start-GoSvc "commerce" "./services/commerce/cmd/commerce" 8107 "postgres://commerce:commerce@localhost:5433/commerce?sslmode=disable" @{
+  ORGANIZATIONS_URL = "http://127.0.0.1:8102"
+  BOOKING_URL = "http://127.0.0.1:8104"
+  INTERNAL_TOKEN = $internal
+}
+Start-GoSvc "media" "./services/media/cmd/media" 8108 "postgres://media:media@localhost:5433/media?sslmode=disable" @{
+  MINIO_ENDPOINT = "localhost:9000"
+  MINIO_ACCESS_KEY = "minioadmin"
+  MINIO_SECRET_KEY = "minioadmin"
+  MINIO_BUCKET = "zlobin-media"
+  MINIO_USE_SSL = "false"
 }
 
 Start-Sleep -Seconds 2
@@ -87,6 +113,8 @@ $env:MARKETPLACE_URL = "http://127.0.0.1:8103"
 $env:BOOKING_URL = "http://127.0.0.1:8104"
 $env:CLIENTS_URL = "http://127.0.0.1:8105"
 $env:COMMUNICATIONS_URL = "http://127.0.0.1:8106"
+$env:COMMERCE_URL = "http://127.0.0.1:8107"
+$env:MEDIA_URL = "http://127.0.0.1:8108"
 Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 Remove-Item Env:MIGRATIONS_DIR -ErrorAction SilentlyContinue
 Start-Process -FilePath "go" -ArgumentList @("run", "./gateway/cmd/gateway") -WorkingDirectory (Join-Path $root "backend") `

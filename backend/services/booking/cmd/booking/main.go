@@ -49,8 +49,8 @@ func main() {
 		os.Getenv("CLIENTS_URL"),
 		os.Getenv("COMMUNICATIONS_URL"),
 		os.Getenv("INTERNAL_TOKEN"),
-	)
-	api := httpapi.New(svc, log)
+	).WithCommerce(os.Getenv("COMMERCE_URL"))
+	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

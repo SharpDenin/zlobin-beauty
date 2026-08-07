@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
+	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 )
 
 type Store struct{ pool *pgxpool.Pool }
@@ -16,10 +17,14 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
+const masterCols = `id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
+    experience_years, education, photo_media_id, rating_avg, rating_count, published, created_at, updated_at`
+
 func (s *Store) UpsertMaster(ctx context.Context, m domain.MasterProfile) error {
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
+  experience_years, education, photo_media_id, rating_avg, rating_count, published, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 ON CONFLICT (user_id) DO UPDATE SET
   organization_id=EXCLUDED.organization_id,
   branch_id=EXCLUDED.branch_id,
@@ -27,28 +32,28 @@ ON CONFLICT (user_id) DO UPDATE SET
   bio=EXCLUDED.bio,
   specializations=EXCLUDED.specializations,
   city=EXCLUDED.city,
+  experience_years=EXCLUDED.experience_years,
+  education=EXCLUDED.education,
+  photo_media_id=EXCLUDED.photo_media_id,
   published=EXCLUDED.published,
   updated_at=EXCLUDED.updated_at`,
 		m.ID, m.UserID, m.OrganizationID, m.BranchID, m.DisplayName, m.Bio, m.Specializations, m.City,
-		m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
+		m.ExperienceYears, m.Education, m.PhotoMediaID, m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
 	return err
 }
 
 func (s *Store) GetMasterByUser(ctx context.Context, userID uuid.UUID) (*domain.MasterProfile, error) {
-	return s.scanMaster(s.pool.QueryRow(ctx, `
-SELECT id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at
-FROM master_profiles WHERE user_id=$1`, userID))
+	return s.scanMaster(s.pool.QueryRow(ctx, `SELECT `+masterCols+` FROM master_profiles WHERE user_id=$1`, userID))
 }
 
 func (s *Store) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterProfile, error) {
-	return s.scanMaster(s.pool.QueryRow(ctx, `
-SELECT id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at
-FROM master_profiles WHERE id=$1`, id))
+	return s.scanMaster(s.pool.QueryRow(ctx, `SELECT `+masterCols+` FROM master_profiles WHERE id=$1`, id))
 }
 
 func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
 	var m domain.MasterProfile
-	if err := row.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
+		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -58,13 +63,14 @@ func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
 }
 
 func (s *Store) SearchMasters(ctx context.Context, city, q string, limit int) ([]domain.MasterProfile, error) {
+	// Branch publication is enforced in service.Search via organizations internal API.
 	rows, err := s.pool.Query(ctx, `
-SELECT id, user_id, organization_id, branch_id, display_name, bio, specializations, city, rating_avg, rating_count, published, created_at, updated_at
+SELECT `+masterCols+`
 FROM master_profiles
 WHERE published = TRUE
   AND ($1 = '' OR city ILIKE $1)
   AND ($2 = '' OR display_name ILIKE '%' || $2 || '%' OR EXISTS (SELECT 1 FROM unnest(specializations) s WHERE s ILIKE '%' || $2 || '%'))
-ORDER BY rating_avg DESC, display_name
+ORDER BY rating_avg DESC, rating_count DESC, id
 LIMIT $3`, city, q, limit)
 	if err != nil {
 		return nil, err
@@ -73,7 +79,8 @@ LIMIT $3`, city, q, limit)
 	var out []domain.MasterProfile
 	for rows.Next() {
 		var m domain.MasterProfile
-		if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
+			&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -119,6 +126,41 @@ ORDER BY s.name`, masterID)
 	return out, rows.Err()
 }
 
+func (s *Store) CountPopularServices(ctx context.Context, limit int) ([]domain.ServiceItem, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT s.id, s.organization_id, s.name, s.category, s.duration_minutes, s.price_minor, s.currency, s.published, s.created_at, s.updated_at,
+       mp.branch_id
+FROM services s
+JOIN master_services ms ON ms.service_id = s.id
+JOIN master_profiles mp ON mp.id = ms.master_id AND mp.published = TRUE
+WHERE s.published = TRUE
+ORDER BY s.created_at DESC
+LIMIT $1`, limit*3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[uuid.UUID]struct{}{}
+	var out []domain.ServiceItem
+	for rows.Next() {
+		var item domain.ServiceItem
+		var branchID *uuid.UUID
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.Published, &item.CreatedAt, &item.UpdatedAt, &branchID); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[item.ID]; ok {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		item.BranchID = branchID
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceItem, error) {
 	row := s.pool.QueryRow(ctx, `
 SELECT id, organization_id, name, category, duration_minutes, price_minor, currency, published, created_at, updated_at
@@ -131,4 +173,63 @@ FROM services WHERE id=$1`, id)
 		return nil, err
 	}
 	return &item, nil
+}
+
+// --- service categories ---
+
+const serviceCategoryCols = `id, name, slug, sort_order, created_at`
+
+func (s *Store) ListServiceCategories(ctx context.Context) ([]domain.ServiceCategory, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+serviceCategoryCols+` FROM service_categories ORDER BY sort_order, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ServiceCategory
+	for rows.Next() {
+		var c domain.ServiceCategory
+		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.SortOrder, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateServiceCategory(ctx context.Context, c domain.ServiceCategory) (*domain.ServiceCategory, error) {
+	var out domain.ServiceCategory
+	err := s.pool.QueryRow(ctx, `
+INSERT INTO service_categories(id, name, slug, sort_order, created_at)
+VALUES ($1,$2,$3,$4,$5)
+RETURNING `+serviceCategoryCols,
+		c.ID, c.Name, c.Slug, c.SortOrder, c.CreatedAt,
+	).Scan(&out.ID, &out.Name, &out.Slug, &out.SortOrder, &out.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Store) UpdateServiceCategory(ctx context.Context, c domain.ServiceCategory) error {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE service_categories SET name=$2, slug=$3, sort_order=$4 WHERE id=$1`,
+		c.ID, c.Name, c.Slug, c.SortOrder)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("service category not found")
+	}
+	return nil
+}
+
+func (s *Store) DeleteServiceCategory(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM service_categories WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("service category not found")
+	}
+	return nil
 }

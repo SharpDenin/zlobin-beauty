@@ -23,6 +23,9 @@ CREATE DATABASE communications OWNER communications;
 CREATE USER reporting WITH PASSWORD 'reporting';
 CREATE DATABASE reporting OWNER reporting;
 
+CREATE USER media WITH PASSWORD 'media';
+CREATE DATABASE media OWNER media;
+
 -- Extensions that require superuser for service DBs.
 \connect identity
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

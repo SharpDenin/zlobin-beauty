@@ -19,57 +19,107 @@ Services: identity, organizations, marketplace, booking, gateway. Frontend React
 
 Local host ports: Go `8101–8104`, gateway `8090` (8080 occupied). Compose: Postgres `5433`, NATS.
 
-## Quality pass + Stage 2 (in progress, 2026-08-01)
+## Quality pass + Stage 2 (complete enough for visits/reviews)
 
-### Quality / production hardening
+- Appointment lifecycle, notifications, reviews, client cards.
+- Playwright Stage 1+2 on phone-390 green.
+- Visit photos / MinIO still deferred to wave B.
 
-- Auth refresh single-flight; humanized API errors; session redirect.
-- Adaptive shell: safe-area, bottom nav by role, mobile logout, design tokens.
-- Marketplace membership check via organizations internal API (`GET /v1/internal/memberships/check`).
-- Booking: timezone-aware slots, atomic status transitions, cancel/reschedule/start/complete/no-show + history.
-- Server timeouts; Playwright e2e skeleton for breakpoints + Stage 1 flow.
-- Audit: `docs/quality-audit.md`.
+## Wave A–D (2026-08-05) — fill + mockup coverage
 
-### Stage 2 implemented so far
+### Документация
 
-| Area | Status |
-|------|--------|
-| Appointment lifecycle (cancel/reschedule/start/complete/no-show/history) | Done (booking) |
-| Notifications (DB inbox) | Done (`communications`) |
-| Reviews (completed visit only, one per appointment) | Done (`communications`) |
-| Client card + visits + notes + formulas + consents | Done (`clients`) |
-| Gateway routes for client-cards / notifications / reviews | Done |
-| Frontend: appointment detail, client card, notifications, profile, reviews on master | Done |
-| Playwright Stage 2 visit→review flow | Pending run |
-| Visit photos / MinIO | Deferred (R5) |
-| Email/SMS | Not wired (no provider settings) |
+- `docs/dashboard-coverage.md` — сопоставление 12 макетов, KPI-источники, фейковые места, волны A–G.
 
-### New migrations
+### Онбординг / публикация
 
-| Service | File |
-|---------|------|
-| booking | `002_stage2.sql` (status history, cancel_reason) |
-| clients | `001_init.sql` |
-| communications | `001_init.sql` |
+| Возможность | Статус |
+|-------------|--------|
+| Master readiness `GET /v1/me/master/readiness` + блок публикации | готово |
+| Org/branch readiness + PATCH publish (только при checklist) | готово |
+| Поиск мастеров учитывает `branch.published` | готово |
+| Popular services учитывает branch publication | готово |
+| UI checklist в кабинете мастера | готово |
 
-### How to run
+### Commerce (Stage 3 foundation)
 
-```text
-powershell -File scripts/dev-local.ps1
-# clients :8105, communications :8106, INTERNAL_TOKEN=dev-internal-token
-cd frontend
-$env:VITE_API_BASE_URL="http://localhost:8090"
-npm run dev
-```
+Сервис `commerce` :8107 / Compose; БД `commerce`.
 
-### Remaining for Stage 2 criterion
+| API | Статус |
+|-----|--------|
+| Locations, products, stock movements (receipt/write_off/…) | готово |
+| Stock list + status (sufficient/low/critical/out) | готово |
+| Stock forecast (deficit; demand from booking org-range) | готово |
+| Consumption norms | готово |
+| Supplier orders + transition + accept → receipt movements | готово |
+| Supplier dashboard KPI (оборот, заказы, товары, критические; delta %) | готово |
 
-- API Stage 2 smoke verified: `E2E_OK status=completed visits=1 notifications=5`.
-- Playwright phone-390: Stage 1 + Stage 2 UI paths green (`npm run test:e2e -- --project=phone-390`).
-- Gateway strips upstream CORS headers (fixes duplicate ACAO breaking browser login).
-- Visit photos / MinIO still deferred.
-- Then Stage 3 (salon staff, inventory, supplier).
+### Media (wave B foundation)
 
-## Stages 3–4
+Сервис `media` :8108 + MinIO; БД `media`. Bucket `zlobin-media`, объекты приватные.
 
-Not started.
+| API | Статус |
+|-----|--------|
+| `POST /v1/media` (multipart, sha256, 5 MiB) | готово |
+| `GET /v1/media/{id}` / `/content` / `DELETE` | готово |
+| `photo_media_id` на профиле мастера + UI загрузки | готово |
+| Портфолио / салон / доставка UI | не реализовано |
+
+### Frontend
+
+| Экран | Статус |
+|-------|--------|
+| Home: masters/services/appointments из API, empty states | частично (город пока «Москва») |
+| Master cabinet: org/master readiness, publish branch, фото | готово |
+| Warehouse `/warehouse` | готово (товары, приёмка, прогноз, заказ поставщику, CSV import) |
+| Supplier panel `/supplier` | готово (KPI с сервера; пустая база = нули) |
+| Salon reports `/reports` | готово (KPI + CSV; null = недостаточно данных) |
+| Shop `/shop` | готово (каталог, корзина, checkout, заказы, reorder) |
+| Rep `/rep` | готово (список доставок без фиктивной карты, complete → debt) |
+
+### Wave E–F (2026-08-06)
+
+- Migration `002_client_shop.sql`: carts, client_orders, debt_ledger, status history
+- Shop API under `/v1/commerce/shop/*`, rep under `/v1/commerce/rep/*`, CSV import under `/v1/commerce/imports/*`
+- Повтор заказа: актуальные цены/наличие; multi-supplier cart rejected
+- Задолженность считается ledger-ом, не редактируется вручную
+
+### Wave G (2026-08-06)
+
+- `GET /v1/reports/salon` + `GET /v1/reports/salon.csv` (booking): оборот, визиты, средний чек, повторы, загрузка мастеров, удовлетворённость, delta vs prev period
+- `GET /v1/internal/reviews/stats` (communications): агрегат отзывов для salon report
+- Stock reserve at checkout + forecast demand from confirmed/in_progress appointments (commerce, sibling)
+- UI `/reports` для master/owner
+
+### Wave H (2026-08-06)
+
+- Complete визита → `POST /v1/internal/stock/consume-appointment` (нормы → consumption, идемпотентно)
+- Нормы расхода UI на `/warehouse`
+- Справочники system_admin: `/admin/catalogs` + API service/product categories
+- Портфолио мастера (`004_portfolio.sql`) + просмотр на карточке мастера
+- Рекомендации товаров мастера → блок в `/shop`
+- Media: authenticated read для profile/portfolio/product/salon
+
+### Wave I (2026-08-06)
+
+- Единицы измерения: `units_of_measure` + CRUD `/v1/commerce/units` + UI в `/admin/catalogs`
+- Варианты объёма: `products.parent_id`; каталог показывает корневые; detail отдаёт `variants`
+- Warehouse: выбор unit из справочника, volume_label, привязка варианта к родителю
+- Media: публичный GET metadata/content для profile/salon/portfolio/product (без логина)
+- Фото филиала: `branch_photos` + API + UI в кабинете мастера
+
+### Wave J (2026-08-06)
+
+- Город в профиле: `users.city` + `PATCH /v1/auth/me`; Home/Search берут город из профиля
+- Фото до/после визита: `appointment_photos` + API; UI на карточке записи
+- Сегменты клиентов: `new/active/lapsed` в `GET /v1/clients/mine?segment=`; страница `/clients`
+- Онбординг поставщика: создание org `type=supplier` на `/supplier`; панель фильтрует supplier-орги
+
+### Следующее
+
+1. Отдельный reporting projected read-model / audit journal
+2. Фото товара в магазине
+3. ABC/покупатели у поставщика
+4. Избранное / фильтры поиска (цена, рейтинг)
+
+См. `docs/dashboard-coverage.md`.

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/domain"
@@ -25,6 +26,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	internal := httpx.InternalAuth(a.internalToken)
 	mux.Handle("POST /v1/internal/notifications", internal(http.HandlerFunc(a.createNotification)))
+	mux.Handle("GET /v1/internal/reviews/stats", internal(http.HandlerFunc(a.reviewStats)))
 	mux.Handle("GET /v1/notifications", auth(http.HandlerFunc(a.listNotifications)))
 	mux.Handle("POST /v1/notifications/{id}/read", auth(http.HandlerFunc(a.markRead)))
 	mux.Handle("POST /v1/reviews", auth(http.HandlerFunc(a.createReview)))
@@ -64,6 +66,40 @@ func (a *API) createNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (a *API) reviewStats(w http.ResponseWriter, r *http.Request) {
+	var masterIDs []uuid.UUID
+	for _, raw := range r.URL.Query()["master_user_id"] {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+			return
+		}
+		masterIDs = append(masterIDs, id)
+	}
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	if fromStr == "" || toStr == "" {
+		httpx.WriteError(w, r, a.log, apperr.Validation("from and to are required (RFC3339)"))
+		return
+	}
+	from, err := time.Parse(time.RFC3339, fromStr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid from timestamp"))
+		return
+	}
+	to, err := time.Parse(time.RFC3339, toStr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid to timestamp"))
+		return
+	}
+	stats, err := a.svc.ReviewStats(r.Context(), masterIDs, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"avg": stats.Avg, "count": stats.Count})
 }
 
 func (a *API) listNotifications(w http.ResponseWriter, r *http.Request) {

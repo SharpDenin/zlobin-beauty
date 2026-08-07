@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { apiRequest } from '@/shared/api/client'
+import { useAuth } from '@/features/auth/AuthProvider'
 
 type Master = {
   id: string
@@ -14,9 +15,17 @@ type Master = {
 }
 
 export function SearchPage() {
-  const [city, setCity] = useState('Москва')
+  const { user } = useAuth()
+  const defaultCity = user?.city?.trim() || 'Москва'
+  const [city, setCity] = useState(defaultCity)
   const [q, setQ] = useState('')
-  const [submitted, setSubmitted] = useState({ city: 'Москва', q: '' })
+  const [submitted, setSubmitted] = useState({ city: defaultCity, q: '' })
+
+  useEffect(() => {
+    const next = user?.city?.trim() || 'Москва'
+    setCity(next)
+    setSubmitted((prev) => (prev.q ? prev : { city: next, q: '' }))
+  }, [user?.city])
 
   const query = useQuery({
     queryKey: ['masters', submitted],
@@ -30,7 +39,7 @@ export function SearchPage() {
         className="card search-form"
         onSubmit={(e) => {
           e.preventDefault()
-          setSubmitted({ city: city.trim() || 'Москва', q: q.trim() })
+          setSubmitted({ city: city.trim() || defaultCity, q: q.trim() })
         }}
       >
         <div className="field">
@@ -51,13 +60,13 @@ export function SearchPage() {
       )}
       <div className="list">
         {query.data?.items.map((m) => (
-          <Link key={m.id} to={`/masters/${m.id}`} className="list-item">
+          <Link key={m.id} to={`/masters/${m.user_id}`} className="list-item">
             <div className="row between">
               <strong>{m.display_name}</strong>
               <span className="badge badge-default">{m.city}</span>
             </div>
-            <p>{m.specializations.join(', ') || 'Без специализаций'}</p>
-            <p>Рейтинг {m.rating_avg.toFixed(1)} · {m.rating_count} отзывов</p>
+            <p>{m.specializations.join(', ') || 'Специализации не указаны'}</p>
+            <p className="muted">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</p>
           </Link>
         ))}
       </div>

@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { MediaImage } from '@/shared/ui/MediaImage'
 
 type Appointment = {
   id: string
@@ -52,6 +53,28 @@ export function AppointmentDetailPage() {
     retry: false,
   })
 
+  const photos = useQuery({
+    queryKey: ['appointment-photos', id],
+    queryFn: () =>
+      apiRequest<{ items: Array<{ id: string; media_id: string; kind: string }> }>(
+        `/v1/appointments/${id}/photos`,
+        { token: accessToken },
+      ),
+    enabled: Boolean(id && accessToken),
+  })
+
+  const [photoUploading, setPhotoUploading] = useState(false)
+
+  const deletePhoto = useMutation({
+    mutationFn: (photoId: string) =>
+      apiRequest(`/v1/appointments/${id}/photos/${photoId}`, { method: 'DELETE', token: accessToken }),
+    onSuccess: async () => {
+      setOk('Фото удалено')
+      await qc.invalidateQueries({ queryKey: ['appointment-photos', id] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
+  })
+
   const cancelForm = useForm<z.infer<typeof cancelSchema>>({ resolver: zodResolver(cancelSchema) })
   const rescheduleForm = useForm<z.infer<typeof rescheduleSchema>>({ resolver: zodResolver(rescheduleSchema) })
   const reviewForm = useForm<z.infer<typeof reviewSchema>>({
@@ -89,6 +112,37 @@ export function AppointmentDetailPage() {
   const canComplete = isMaster && a.status === 'in_progress'
   const canNoShow = isMaster && a.status === 'confirmed'
   const canReview = isClient && a.status === 'completed'
+  const canUploadPhotos = isMaster && ['confirmed', 'in_progress', 'completed'].includes(a.status)
+
+  async function uploadVisitPhoto(file: File, kind: 'before' | 'after') {
+    if (!accessToken || !id) return
+    setPhotoUploading(true)
+    setError(null)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('purpose', 'before_after')
+      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: form,
+      })
+      const uploadData = await uploadRes.json().catch(() => ({}))
+      if (!uploadRes.ok) {
+        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
+      }
+      await apiRequest(`/v1/appointments/${id}/photos`, {
+        token: accessToken,
+        body: { media_id: uploadData.id as string, kind },
+      })
+      setOk(kind === 'before' ? 'Фото «до» добавлено' : 'Фото «после» добавлено')
+      await qc.invalidateQueries({ queryKey: ['appointment-photos', id] })
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото')
+    } finally {
+      setPhotoUploading(false)
+    }
+  }
 
   return (
     <main className="page stack">
@@ -150,6 +204,65 @@ export function AppointmentDetailPage() {
             </div>
             <button className="btn btn-secondary btn-block" type="submit" disabled={act.isPending}>Перенести</button>
           </form>
+        )}
+      </section>
+
+      <section className="card stack">
+        <h2>Фото до / после</h2>
+        <p className="muted">Видят мастер и клиент этой записи. Загрузка — только мастер.</p>
+        {photos.isLoading && <div className="state-box">Загрузка фото…</div>}
+        <div className="list">
+          {photos.data?.items.map((p) => (
+            <article key={p.id} className="list-item stack-sm">
+              <strong>{p.kind === 'before' ? 'До' : 'После'}</strong>
+              <MediaImage mediaId={p.media_id} token={accessToken} alt={p.kind} className="portfolio-thumb" />
+              {isMaster && (
+                <button
+                  className="btn btn-secondary btn-compact"
+                  type="button"
+                  disabled={deletePhoto.isPending}
+                  onClick={() => deletePhoto.mutate(p.id)}
+                >
+                  Удалить
+                </button>
+              )}
+            </article>
+          ))}
+        </div>
+        {photos.data && photos.data.items.length === 0 && (
+          <div className="state-box">Фото визита пока нет</div>
+        )}
+        {canUploadPhotos && (
+          <div className="row">
+            <div className="field">
+              <label htmlFor="photo-before">Добавить «до»</label>
+              <input
+                id="photo-before"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={photoUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) void uploadVisitPhoto(file, 'before')
+                  e.target.value = ''
+                }}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="photo-after">Добавить «после»</label>
+              <input
+                id="photo-after"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={photoUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) void uploadVisitPhoto(file, 'after')
+                  e.target.value = ''
+                }}
+              />
+            </div>
+          </div>
         )}
       </section>
 

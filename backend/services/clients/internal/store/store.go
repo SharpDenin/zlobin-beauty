@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -97,6 +98,37 @@ ORDER BY c.updated_at DESC`, masterUserID, orgID)
 	}
 	defer rows.Close()
 	return scanCards(rows)
+}
+
+type VisitStats struct {
+	VisitCount   int
+	FirstVisitAt *time.Time
+	LastVisitAt  *time.Time
+}
+
+func (s *Store) VisitStatsForCards(ctx context.Context, cardIDs []uuid.UUID) (map[uuid.UUID]VisitStats, error) {
+	out := make(map[uuid.UUID]VisitStats, len(cardIDs))
+	if len(cardIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT client_card_id, COUNT(*)::int, MIN(completed_at), MAX(completed_at)
+FROM visits
+WHERE client_card_id = ANY($1)
+GROUP BY client_card_id`, cardIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var st VisitStats
+		if err := rows.Scan(&id, &st.VisitCount, &st.FirstVisitAt, &st.LastVisitAt); err != nil {
+			return nil, err
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetVisitByAppointment(ctx context.Context, appointmentID uuid.UUID) (*domain.Visit, error) {

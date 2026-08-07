@@ -19,6 +19,7 @@ type User struct {
 	Phone         *string
 	PasswordHash  string
 	DisplayName   string
+	City          string
 	Status        string
 	EmailVerified bool
 	PhoneVerified bool

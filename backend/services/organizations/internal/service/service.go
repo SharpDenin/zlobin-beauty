@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
@@ -34,6 +36,25 @@ type CreateOrgInput struct {
 type OrgBundle struct {
 	Organization domain.Organization
 	Branch       domain.Branch
+}
+
+type UpdateOrgInput struct {
+	ActorID     uuid.UUID
+	OrgID       uuid.UUID
+	Name        *string
+	Description *string
+	Published   *bool
+}
+
+type UpdateBranchInput struct {
+	ActorID     uuid.UUID
+	BranchID    uuid.UUID
+	Name        *string
+	City        *string
+	AddressLine *string
+	Phone       *string
+	Timezone    *string
+	Published   *bool
 }
 
 func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, error) {
@@ -123,6 +144,17 @@ func (s *Service) AddMasterMembership(ctx context.Context, orgID, actorID, maste
 	}))
 }
 
+func (s *Service) GetOrg(ctx context.Context, id uuid.UUID) (*domain.Organization, error) {
+	o, err := s.store.GetOrg(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if o == nil {
+		return nil, apperr.NotFound("organization not found")
+	}
+	return o, nil
+}
+
 func (s *Service) GetBranch(ctx context.Context, id uuid.UUID) (*domain.Branch, error) {
 	b, err := s.store.GetBranch(ctx, id)
 	if err != nil {
@@ -142,8 +174,272 @@ func (s *Service) HasActiveMembership(ctx context.Context, orgID, userID uuid.UU
 	return ok, nil
 }
 
+func (s *Service) requireOwnerAdmin(ctx context.Context, orgID, actorID uuid.UUID) error {
+	ok, err := s.store.HasMembership(ctx, orgID, actorID, "owner", "admin")
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !ok {
+		return apperr.Forbidden("not allowed")
+	}
+	return nil
+}
+
+func (s *Service) OrgReadiness(ctx context.Context, orgID, actorID uuid.UUID) (*domain.Readiness, error) {
+	if err := s.requireOwnerAdmin(ctx, orgID, actorID); err != nil {
+		return nil, err
+	}
+	org, err := s.store.GetOrg(ctx, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if org == nil {
+		return nil, apperr.NotFound("organization not found")
+	}
+	branches, err := s.store.ListBranches(ctx, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return evaluateOrgReadiness(*org, branches), nil
+}
+
+func (s *Service) BranchReadiness(ctx context.Context, branchID, actorID uuid.UUID) (*domain.Readiness, error) {
+	b, err := s.store.GetBranch(ctx, branchID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if b == nil {
+		return nil, apperr.NotFound("branch not found")
+	}
+	if err := s.requireOwnerAdmin(ctx, b.OrganizationID, actorID); err != nil {
+		return nil, err
+	}
+	return evaluateBranchReadiness(*b), nil
+}
+
+func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Organization, error) {
+	if err := s.requireOwnerAdmin(ctx, in.OrgID, in.ActorID); err != nil {
+		return nil, err
+	}
+	org, err := s.store.GetOrg(ctx, in.OrgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if org == nil {
+		return nil, apperr.NotFound("organization not found")
+	}
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			return nil, apperr.Validation("name cannot be empty")
+		}
+		org.Name = name
+	}
+	if in.Description != nil {
+		org.Description = strings.TrimSpace(*in.Description)
+	}
+	if in.Published != nil {
+		if *in.Published {
+			branches, err := s.store.ListBranches(ctx, org.ID)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			ready := evaluateOrgReadiness(*org, branches)
+			if !ready.Ready {
+				return nil, apperr.Validation("organization is not ready for publication: " + strings.Join(ready.Missing, ", "))
+			}
+		}
+		org.Published = *in.Published
+	}
+	org.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateOrg(ctx, *org); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("organization not found")
+		}
+		return nil, apperr.Internal(err)
+	}
+	return org, nil
+}
+
+func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*domain.Branch, error) {
+	b, err := s.store.GetBranch(ctx, in.BranchID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if b == nil {
+		return nil, apperr.NotFound("branch not found")
+	}
+	if err := s.requireOwnerAdmin(ctx, b.OrganizationID, in.ActorID); err != nil {
+		return nil, err
+	}
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			return nil, apperr.Validation("name cannot be empty")
+		}
+		b.Name = name
+	}
+	if in.City != nil {
+		city := strings.TrimSpace(*in.City)
+		if city == "" {
+			return nil, apperr.Validation("city cannot be empty")
+		}
+		b.City = city
+	}
+	if in.AddressLine != nil {
+		addr := strings.TrimSpace(*in.AddressLine)
+		if addr == "" {
+			return nil, apperr.Validation("address_line cannot be empty")
+		}
+		b.AddressLine = addr
+	}
+	if in.Phone != nil {
+		b.Phone = strings.TrimSpace(*in.Phone)
+	}
+	if in.Timezone != nil {
+		tz := strings.TrimSpace(*in.Timezone)
+		if tz == "" {
+			return nil, apperr.Validation("timezone cannot be empty")
+		}
+		b.Timezone = tz
+	}
+	if in.Published != nil {
+		if *in.Published {
+			ready := evaluateBranchReadiness(*b)
+			if !ready.Ready {
+				return nil, apperr.Validation("branch is not ready for publication: " + strings.Join(ready.Missing, ", "))
+			}
+		}
+		b.Published = *in.Published
+	}
+	b.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateBranch(ctx, *b); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("branch not found")
+		}
+		return nil, apperr.Internal(err)
+	}
+	return b, nil
+}
+
+func evaluateBranchReadiness(b domain.Branch) *domain.Readiness {
+	checks := []domain.ReadinessCheck{
+		{Key: "branch_name", Label: "Название филиала", OK: nonEmpty(b.Name)},
+		{Key: "branch_city", Label: "Город", OK: nonEmpty(b.City)},
+		{Key: "branch_address", Label: "Адрес", OK: nonEmpty(b.AddressLine)},
+		{Key: "branch_phone", Label: "Телефон", OK: nonEmpty(b.Phone)},
+		{Key: "branch_timezone", Label: "Часовой пояс", OK: nonEmpty(b.Timezone)},
+	}
+	return finalizeReadiness(checks)
+}
+
+func evaluateOrgReadiness(org domain.Organization, branches []domain.Branch) *domain.Readiness {
+	checks := []domain.ReadinessCheck{
+		{Key: "org_name", Label: "Название салона", OK: nonEmpty(org.Name)},
+		{Key: "org_branch", Label: "Хотя бы один филиал", OK: len(branches) > 0},
+	}
+	branchReady := false
+	for _, b := range branches {
+		br := evaluateBranchReadiness(b)
+		if br.Ready {
+			branchReady = true
+			break
+		}
+	}
+	checks = append(checks, domain.ReadinessCheck{
+		Key: "branch_ready", Label: "Филиал с полным адресом и телефоном", OK: branchReady,
+	})
+	// Working hours live in booking (master schedule); branch publication checks address fields only.
+	return finalizeReadiness(checks)
+}
+
+func finalizeReadiness(checks []domain.ReadinessCheck) *domain.Readiness {
+	var missing []string
+	for i := range checks {
+		if !checks[i].OK {
+			missing = append(missing, checks[i].Key)
+			checks[i].Missing = checks[i].Label
+		}
+	}
+	if missing == nil {
+		missing = []string{}
+	}
+	return &domain.Readiness{Ready: len(missing) == 0, Missing: missing, Checks: checks}
+}
+
+func nonEmpty(s string) bool { return strings.TrimSpace(s) != "" }
+
 func apperrOrNil(err error) error {
 	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) ListBranchPhotos(ctx context.Context, branchID uuid.UUID) ([]domain.BranchPhoto, error) {
+	b, err := s.store.GetBranch(ctx, branchID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if b == nil {
+		return nil, apperr.NotFound("branch not found")
+	}
+	items, err := s.store.ListBranchPhotos(ctx, branchID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.BranchPhoto{}
+	}
+	return items, nil
+}
+
+func (s *Service) AddBranchPhoto(ctx context.Context, actorID, branchID, mediaID uuid.UUID, sortOrder int) (*domain.BranchPhoto, error) {
+	b, err := s.store.GetBranch(ctx, branchID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if b == nil {
+		return nil, apperr.NotFound("branch not found")
+	}
+	if err := s.requireOwnerAdmin(ctx, b.OrganizationID, actorID); err != nil {
+		return nil, err
+	}
+	if mediaID == uuid.Nil {
+		return nil, apperr.Validation("media_id is required")
+	}
+	now := s.now().UTC()
+	p := domain.BranchPhoto{
+		ID: ids.New(), BranchID: branchID, MediaID: mediaID, SortOrder: sortOrder, CreatedAt: now,
+	}
+	if err := s.store.CreateBranchPhoto(ctx, p); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &p, nil
+}
+
+func (s *Service) DeleteBranchPhoto(ctx context.Context, actorID, photoID uuid.UUID) error {
+	p, err := s.store.GetBranchPhoto(ctx, photoID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if p == nil {
+		return apperr.NotFound("branch photo not found")
+	}
+	b, err := s.store.GetBranch(ctx, p.BranchID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if b == nil {
+		return apperr.NotFound("branch not found")
+	}
+	if err := s.requireOwnerAdmin(ctx, b.OrganizationID, actorID); err != nil {
+		return err
+	}
+	if err := s.store.DeleteBranchPhoto(ctx, photoID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound("branch photo not found")
+		}
 		return apperr.Internal(err)
 	}
 	return nil

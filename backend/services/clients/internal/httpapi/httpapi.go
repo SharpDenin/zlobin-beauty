@@ -95,14 +95,15 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 		}
 		orgID = &id
 	}
-	items, err := a.svc.ListMine(r.Context(), claims.UserID, orgID)
+	segment := r.URL.Query().Get("segment")
+	items, err := a.svc.ListMine(r.Context(), claims.UserID, orgID, segment)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, c := range items {
-		out = append(out, cardDTO(c))
+		out = append(out, cardListDTO(c))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -273,4 +274,21 @@ func cardDTO(c domain.ClientCard) map[string]any {
 		"id": c.ID.String(), "organization_id": c.OrganizationID.String(), "user_id": c.UserID.String(),
 		"display_name": c.DisplayName, "phone": c.Phone, "email": c.Email, "preferences": c.Preferences,
 	}
+}
+
+func cardListDTO(item domain.ClientCardListItem) map[string]any {
+	dto := cardDTO(item.Card)
+	dto["segment"] = item.Segment
+	dto["visit_count"] = item.VisitCount
+	if item.LastVisitAt != nil {
+		dto["last_visit_at"] = *item.LastVisitAt
+	} else {
+		dto["last_visit_at"] = nil
+	}
+	if item.FirstVisitAt != nil {
+		dto["first_visit_at"] = *item.FirstVisitAt
+	} else {
+		dto["first_visit_at"] = nil
+	}
+	return dto
 }

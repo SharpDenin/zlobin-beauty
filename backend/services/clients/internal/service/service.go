@@ -108,8 +108,8 @@ func (s *Service) GetCard(ctx context.Context, id, actor uuid.UUID) (*domain.Cli
 }
 
 // ListMine returns the client's own card(s) plus any cards the caller has
-// served as a master, optionally filtered to a single organization.
-func (s *Service) ListMine(ctx context.Context, actor uuid.UUID, orgID *uuid.UUID) ([]domain.ClientCard, error) {
+// served as a master, optionally filtered to a single organization and segment.
+func (s *Service) ListMine(ctx context.Context, actor uuid.UUID, orgID *uuid.UUID, segment string) ([]domain.ClientCardListItem, error) {
 	own, err := s.store.ListCardsForUser(ctx, actor)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -119,7 +119,7 @@ func (s *Service) ListMine(ctx context.Context, actor uuid.UUID, orgID *uuid.UUI
 		return nil, apperr.Internal(err)
 	}
 	seen := make(map[uuid.UUID]struct{}, len(own)+len(served))
-	out := make([]domain.ClientCard, 0, len(own)+len(served))
+	cards := make([]domain.ClientCard, 0, len(own)+len(served))
 	for _, c := range own {
 		if orgID != nil && c.OrganizationID != *orgID {
 			continue
@@ -128,16 +128,51 @@ func (s *Service) ListMine(ctx context.Context, actor uuid.UUID, orgID *uuid.UUI
 			continue
 		}
 		seen[c.ID] = struct{}{}
-		out = append(out, c)
+		cards = append(cards, c)
 	}
 	for _, c := range served {
 		if _, ok := seen[c.ID]; ok {
 			continue
 		}
 		seen[c.ID] = struct{}{}
-		out = append(out, c)
+		cards = append(cards, c)
+	}
+	ids := make([]uuid.UUID, 0, len(cards))
+	for _, c := range cards {
+		ids = append(ids, c.ID)
+	}
+	stats, err := s.store.VisitStatsForCards(ctx, ids)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	now := s.now().UTC()
+	segment = strings.TrimSpace(strings.ToLower(segment))
+	out := make([]domain.ClientCardListItem, 0, len(cards))
+	for _, c := range cards {
+		st := stats[c.ID]
+		item := domain.ClientCardListItem{
+			Card: c, VisitCount: st.VisitCount, FirstVisitAt: st.FirstVisitAt, LastVisitAt: st.LastVisitAt,
+			Segment: classifySegment(st, now),
+		}
+		if segment != "" && item.Segment != segment {
+			continue
+		}
+		out = append(out, item)
 	}
 	return out, nil
+}
+
+func classifySegment(st store.VisitStats, now time.Time) string {
+	if st.VisitCount == 0 || st.LastVisitAt == nil {
+		return "unknown"
+	}
+	if st.FirstVisitAt != nil && now.Sub(*st.FirstVisitAt) <= 30*24*time.Hour {
+		return "new"
+	}
+	if now.Sub(*st.LastVisitAt) <= 90*24*time.Hour {
+		return "active"
+	}
+	return "lapsed"
 }
 
 func (s *Service) ByAppointment(ctx context.Context, appointmentID, actor uuid.UUID) (*domain.ClientCard, error) {

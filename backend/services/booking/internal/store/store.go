@@ -214,3 +214,79 @@ func scanAppointments(rows pgx.Rows) ([]domain.Appointment, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListByOrgInRange returns appointments for an organization overlapping [from, to).
+// Statuses default to confirmed and in_progress for future demand forecasting.
+func (s *Store) ListByOrgInRange(ctx context.Context, orgID uuid.UUID, from, to time.Time, statuses []string) ([]domain.Appointment, error) {
+	if len(statuses) == 0 {
+		statuses = []string{domain.StatusConfirmed, domain.StatusInProgress}
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
+       duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at
+FROM appointments
+WHERE organization_id=$1
+  AND status = ANY($4)
+  AND starts_at < $3 AND ends_at > $2
+ORDER BY starts_at`, orgID, from, to, statuses)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAppointments(rows)
+}
+
+// --- appointment photos ---
+
+const appointmentPhotoCols = `id, appointment_id, media_id, kind, created_by, created_at`
+
+func (s *Store) ListAppointmentPhotos(ctx context.Context, appointmentID uuid.UUID) ([]domain.AppointmentPhoto, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT `+appointmentPhotoCols+` FROM appointment_photos
+WHERE appointment_id=$1 ORDER BY kind ASC, created_at ASC`, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.AppointmentPhoto
+	for rows.Next() {
+		var p domain.AppointmentPhoto
+		if err := rows.Scan(&p.ID, &p.AppointmentID, &p.MediaID, &p.Kind, &p.CreatedBy, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateAppointmentPhoto(ctx context.Context, p domain.AppointmentPhoto) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO appointment_photos(id, appointment_id, media_id, kind, created_by, created_at)
+VALUES ($1,$2,$3,$4,$5,$6)`,
+		p.ID, p.AppointmentID, p.MediaID, p.Kind, p.CreatedBy, p.CreatedAt)
+	return err
+}
+
+func (s *Store) GetAppointmentPhoto(ctx context.Context, id uuid.UUID) (*domain.AppointmentPhoto, error) {
+	var p domain.AppointmentPhoto
+	err := s.pool.QueryRow(ctx, `SELECT `+appointmentPhotoCols+` FROM appointment_photos WHERE id=$1`, id).
+		Scan(&p.ID, &p.AppointmentID, &p.MediaID, &p.Kind, &p.CreatedBy, &p.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *Store) DeleteAppointmentPhoto(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM appointment_photos WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}

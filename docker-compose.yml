@@ -85,8 +85,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       MIGRATIONS_DIR: /migrations
       ORGANIZATIONS_URL: http://organizations:8080
+      BOOKING_URL: http://booking:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       LOG_LEVEL: info
     volumes:
       - ./backend/services/marketplace/migrations:/migrations:ro
@@ -111,6 +112,7 @@ services:
       ORGANIZATIONS_URL: http://organizations:8080
       CLIENTS_URL: http://clients:8080
       COMMUNICATIONS_URL: http://communications:8080
+      COMMERCE_URL: http://commerce:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       CORS_ORIGINS: http://localhost:5173
       LOG_LEVEL: info
@@ -144,6 +146,30 @@ services:
       postgres:
         condition: service_healthy
 
+  commerce:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/commerce/cmd/commerce
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://commerce:commerce@postgres:5432/commerce?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
+      MIGRATIONS_DIR: /migrations
+      ORGANIZATIONS_URL: http://organizations:8080
+      BOOKING_URL: http://booking:8080
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      CORS_ORIGINS: http://localhost:5173
+      LOG_LEVEL: info
+    volumes:
+      - ./backend/services/commerce/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      organizations:
+        condition: service_started
+
   communications:
     build:
       context: ./backend
@@ -165,6 +191,33 @@ services:
       postgres:
         condition: service_healthy
 
+  media:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/media/cmd/media
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://media:media@postgres:5432/media?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
+      MIGRATIONS_DIR: /migrations
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: zlobin-media
+      MINIO_USE_SSL: "false"
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      CORS_ORIGINS: http://localhost:5173
+      LOG_LEVEL: info
+    volumes:
+      - ./backend/services/media/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
   gateway:
     build:
       context: ./backend
@@ -180,6 +233,8 @@ services:
       BOOKING_URL: http://booking:8080
       CLIENTS_URL: http://clients:8080
       COMMUNICATIONS_URL: http://communications:8080
+      COMMERCE_URL: http://commerce:8080
+      MEDIA_URL: http://media:8080
       CORS_ORIGINS: http://localhost:5173
       LOG_LEVEL: info
     ports:
@@ -191,6 +246,8 @@ services:
       - booking
       - clients
       - communications
+      - commerce
+      - media
 
   bootstrap-admin:
     profiles: ["bootstrap"]

@@ -82,3 +82,12 @@ type StatusHistory struct {
 	Reason        string
 	CreatedAt     time.Time
 }
+
+type AppointmentPhoto struct {
+	ID            uuid.UUID
+	AppointmentID uuid.UUID
+	MediaID       uuid.UUID
+	Kind          string // before | after
+	CreatedBy     uuid.UUID
+	CreatedAt     time.Time
+}

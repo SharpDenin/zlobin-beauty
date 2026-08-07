@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
+import { MediaImage } from '@/shared/ui/MediaImage'
 
 type Service = {
   id: string
@@ -67,6 +68,15 @@ export function MasterPage() {
     enabled: Boolean(masterQuery.data?.master.user_id),
   })
 
+  const portfolioQuery = useQuery({
+    queryKey: ['master-portfolio', id],
+    queryFn: () =>
+      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string }> }>(
+        `/v1/masters/${id}/portfolio`,
+      ),
+    enabled: Boolean(id),
+  })
+
   const book = useMutation({
     mutationFn: async () => {
       if (!accessToken) throw new ApiError('Требуется вход', 'unauthorized', 401)
@@ -106,6 +116,23 @@ export function MasterPage() {
         </div>
         <p>{master.specializations.join(', ')}</p>
         <p>{master.bio || 'Мастер ещё не добавил описание.'}</p>
+      </section>
+
+      <section className="card stack">
+        <h2>Портфолио</h2>
+        {portfolioQuery.isLoading && <div className="state-box">Загрузка портфолио…</div>}
+        {portfolioQuery.isError && <div className="state-box">Не удалось загрузить портфолио</div>}
+        {portfolioQuery.data && portfolioQuery.data.items.length === 0 && (
+          <div className="state-box">Мастер ещё не добавил работы в портфолио</div>
+        )}
+        <div className="portfolio-grid">
+          {portfolioQuery.data?.items.map((item) => (
+            <figure key={item.id} className="portfolio-item">
+              <MediaImage mediaId={item.media_id} token={accessToken} alt={item.caption || 'Работа'} className="portfolio-thumb" />
+              {item.caption && <figcaption>{item.caption}</figcaption>}
+            </figure>
+          ))}
+        </div>
       </section>
 
       <section className="card stack">

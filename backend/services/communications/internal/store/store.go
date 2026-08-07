@@ -77,6 +77,33 @@ func (s *Store) ListPublicByMaster(ctx context.Context, masterID uuid.UUID) ([]d
 	return s.scanReviews(ctx, `SELECT id, appointment_id, client_user_id, master_user_id, master_rating, result_rating, comment, publish_allowed, hidden, created_at FROM reviews WHERE master_user_id=$1 AND publish_allowed=TRUE AND hidden=FALSE ORDER BY created_at DESC`, masterID)
 }
 
+type ReviewStats struct {
+	Avg   *float64
+	Count int64
+}
+
+func (s *Store) ReviewStatsForMasters(ctx context.Context, masterIDs []uuid.UUID, from, to time.Time) (*ReviewStats, error) {
+	if len(masterIDs) == 0 {
+		return &ReviewStats{Count: 0}, nil
+	}
+	row := s.pool.QueryRow(ctx, `
+SELECT AVG((master_rating + result_rating)::float / 2), COUNT(*)::bigint
+FROM reviews
+WHERE master_user_id = ANY($1)
+  AND publish_allowed = TRUE
+  AND hidden = FALSE
+  AND created_at >= $2 AND created_at < $3`, masterIDs, from, to)
+	var avg *float64
+	var count int64
+	if err := row.Scan(&avg, &count); err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		avg = nil
+	}
+	return &ReviewStats{Avg: avg, Count: count}, nil
+}
+
 func (s *Store) scanReviews(ctx context.Context, q string, arg any) ([]domain.Review, error) {
 	rows, err := s.pool.Query(ctx, q, arg)
 	if err != nil {

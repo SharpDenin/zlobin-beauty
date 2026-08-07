@@ -1,0 +1,222 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
+import { z } from 'zod'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useState } from 'react'
+import { apiRequest, ApiError } from '@/shared/api/client'
+import { useAuth } from '@/features/auth/AuthProvider'
+
+type Category = { id: string; name: string; slug: string }
+type Unit = { id: string; code: string; name: string }
+
+const categorySchema = z.object({
+  name: z.string().min(2),
+  slug: z.string().optional(),
+})
+
+const unitSchema = z.object({
+  code: z.string().min(1),
+  name: z.string().min(1),
+})
+
+export function AdminCatalogsPage() {
+  const { accessToken } = useAuth()
+  const qc = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
+
+  const serviceCategories = useQuery({
+    queryKey: ['service-categories'],
+    queryFn: () => apiRequest<{ items: Category[] }>('/v1/service-categories', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
+  const productCategories = useQuery({
+    queryKey: ['product-categories'],
+    queryFn: () => apiRequest<{ items: Category[] }>('/v1/commerce/product-categories', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
+  const units = useQuery({
+    queryKey: ['commerce-units'],
+    queryFn: () => apiRequest<{ items: Unit[] }>('/v1/commerce/units', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
+  const serviceForm = useForm<z.infer<typeof categorySchema>>({
+    resolver: zodResolver(categorySchema),
+    defaultValues: { name: '', slug: '' },
+  })
+
+  const productForm = useForm<z.infer<typeof categorySchema>>({
+    resolver: zodResolver(categorySchema),
+    defaultValues: { name: '', slug: '' },
+  })
+
+  const unitForm = useForm<z.infer<typeof unitSchema>>({
+    resolver: zodResolver(unitSchema),
+    defaultValues: { code: '', name: '' },
+  })
+
+  const createServiceCategory = useMutation({
+    mutationFn: (v: z.infer<typeof categorySchema>) =>
+      apiRequest('/v1/service-categories', {
+        token: accessToken,
+        body: { name: v.name, slug: v.slug || undefined },
+      }),
+    onSuccess: async () => {
+      setOk('Категория услуг создана')
+      serviceForm.reset()
+      await qc.invalidateQueries({ queryKey: ['service-categories'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+  })
+
+  const createProductCategory = useMutation({
+    mutationFn: (v: z.infer<typeof categorySchema>) =>
+      apiRequest('/v1/commerce/product-categories', {
+        token: accessToken,
+        body: { name: v.name, slug: v.slug || undefined },
+      }),
+    onSuccess: async () => {
+      setOk('Категория товаров создана')
+      productForm.reset()
+      await qc.invalidateQueries({ queryKey: ['product-categories'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+  })
+
+  const createUnit = useMutation({
+    mutationFn: (v: z.infer<typeof unitSchema>) =>
+      apiRequest('/v1/commerce/units', {
+        token: accessToken,
+        body: { code: v.code, name: v.name },
+      }),
+    onSuccess: async () => {
+      setOk('Единица измерения создана')
+      unitForm.reset()
+      await qc.invalidateQueries({ queryKey: ['commerce-units'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+  })
+
+  const deleteServiceCategory = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/service-categories/${id}`, { method: 'DELETE', token: accessToken }),
+    onSuccess: async () => {
+      setOk('Категория услуг удалена')
+      await qc.invalidateQueries({ queryKey: ['service-categories'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+  })
+
+  const deleteProductCategory = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/commerce/product-categories/${id}`, { method: 'DELETE', token: accessToken }),
+    onSuccess: async () => {
+      setOk('Категория товаров удалена')
+      await qc.invalidateQueries({ queryKey: ['product-categories'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+  })
+
+  const deleteUnit = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/commerce/units/${id}`, { method: 'DELETE', token: accessToken }),
+    onSuccess: async () => {
+      setOk('Единица измерения удалена')
+      await qc.invalidateQueries({ queryKey: ['commerce-units'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+  })
+
+  return (
+    <main className="page stack">
+      <h1>Справочники</h1>
+      <p className="muted">Управление глобальными категориями услуг и товаров, единицами измерения (system_admin).</p>
+      {error && <div className="state-box error">{error}</div>}
+      {ok && <div className="state-box success">{ok}</div>}
+
+      <section className="card stack">
+        <h2>Категории услуг</h2>
+        <form className="stack" onSubmit={serviceForm.handleSubmit((v) => createServiceCategory.mutate(v))}>
+          <div className="field"><label>Название</label><input {...serviceForm.register('name')} /></div>
+          <div className="field"><label>Slug (опционально)</label><input {...serviceForm.register('slug')} placeholder="auto" /></div>
+          <button className="btn btn-primary" type="submit" disabled={createServiceCategory.isPending}>Создать</button>
+        </form>
+        <div className="list">
+          {serviceCategories.data?.items.map((c) => (
+            <article key={c.id} className="list-item row between">
+              <div>
+                <strong>{c.name}</strong>
+                <p className="muted">{c.slug}</p>
+              </div>
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                disabled={deleteServiceCategory.isPending}
+                onClick={() => deleteServiceCategory.mutate(c.id)}
+              >
+                Удалить
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Категории товаров</h2>
+        <form className="stack" onSubmit={productForm.handleSubmit((v) => createProductCategory.mutate(v))}>
+          <div className="field"><label>Название</label><input {...productForm.register('name')} /></div>
+          <div className="field"><label>Slug (опционально)</label><input {...productForm.register('slug')} placeholder="auto" /></div>
+          <button className="btn btn-primary" type="submit" disabled={createProductCategory.isPending}>Создать</button>
+        </form>
+        <div className="list">
+          {productCategories.data?.items.map((c) => (
+            <article key={c.id} className="list-item row between">
+              <div>
+                <strong>{c.name}</strong>
+                <p className="muted">{c.slug}</p>
+              </div>
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                disabled={deleteProductCategory.isPending}
+                onClick={() => deleteProductCategory.mutate(c.id)}
+              >
+                Удалить
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Единицы измерения</h2>
+        <form className="stack" onSubmit={unitForm.handleSubmit((v) => createUnit.mutate(v))}>
+          <div className="field"><label>Код</label><input {...unitForm.register('code')} placeholder="ml" /></div>
+          <div className="field"><label>Название</label><input {...unitForm.register('name')} placeholder="мл" /></div>
+          <button className="btn btn-primary" type="submit" disabled={createUnit.isPending}>Создать</button>
+        </form>
+        <div className="list">
+          {units.data?.items.map((u) => (
+            <article key={u.id} className="list-item row between">
+              <div>
+                <strong>{u.name}</strong>
+                <p className="muted">{u.code}</p>
+              </div>
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                disabled={deleteUnit.isPending}
+                onClick={() => deleteUnit.mutate(u.id)}
+              >
+                Удалить
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+    </main>
+  )
+}

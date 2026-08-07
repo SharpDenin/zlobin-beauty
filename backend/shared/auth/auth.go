@@ -106,6 +106,18 @@ func IssueAccessToken(secret string, userID, sessionID uuid.UUID, roles []string
 	return signed, exp, err
 }
 
+func HasRole(claims *Claims, role string) bool {
+	if claims == nil {
+		return false
+	}
+	for _, r := range claims.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
 func ParseAccessToken(secret, token string) (*Claims, error) {
 	parsed, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodHS256 {

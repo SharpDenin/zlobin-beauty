@@ -6,6 +6,7 @@ export type User = {
   email: string | null
   phone: string | null
   display_name: string
+  city: string
   roles: string[]
   status: string
 }
@@ -26,6 +27,7 @@ type AuthState = {
   login: (email: string, password: string) => Promise<void>
   register: (input: { email: string; password: string; display_name: string; as_master?: boolean }) => Promise<void>
   logout: () => Promise<void>
+  updateUser: (user: User) => void
 }
 
 const STORAGE_KEY = 'zb.auth'
@@ -45,6 +47,11 @@ function loadStored(): { accessToken: string; refreshToken: string; user: User }
 export function hasMasterAccess(user: User | null | undefined): boolean {
   if (!user) return false
   return user.roles.some((r) => r === 'master' || r === 'salon_owner' || r === 'system_admin')
+}
+
+export function hasSystemAdmin(user: User | null | undefined): boolean {
+  if (!user) return false
+  return user.roles.includes('system_admin')
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -173,6 +180,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
       clear()
+    },
+    updateUser(next) {
+      setUser(next)
+      const snap = sessionRef.current
+      if (snap.accessToken && snap.refreshToken) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          accessToken: snap.accessToken,
+          refreshToken: snap.refreshToken,
+          user: next,
+        }))
+      }
     },
   }), [user, accessToken, refreshToken, loading])
 

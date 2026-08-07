@@ -29,6 +29,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("POST /v1/auth/refresh", a.refresh)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
 	mux.Handle("GET /v1/auth/me", authMW(http.HandlerFunc(a.me)))
+	mux.Handle("PATCH /v1/auth/me", authMW(http.HandlerFunc(a.updateMe)))
 }
 
 type registerReq struct {
@@ -53,6 +54,7 @@ type userDTO struct {
 	Email       *string  `json:"email"`
 	Phone       *string  `json:"phone"`
 	DisplayName string   `json:"display_name"`
+	City        string   `json:"city"`
 	Roles       []string `json:"roles"`
 	Status      string   `json:"status"`
 }
@@ -75,6 +77,7 @@ func toUserDTO(u domain.User) userDTO {
 		Email:       u.Email,
 		Phone:       u.Phone,
 		DisplayName: u.DisplayName,
+		City:        u.City,
 		Roles:       roles,
 		Status:      u.Status,
 	}
@@ -154,6 +157,30 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := a.svc.Me(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, toUserDTO(*user))
+}
+
+func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.ClaimsFrom(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("unauthorized"))
+		return
+	}
+	var req struct {
+		DisplayName *string `json:"display_name"`
+		City        *string `json:"city"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	user, err := a.svc.UpdateProfile(r.Context(), claims.UserID, service.UpdateProfileInput{
+		DisplayName: req.DisplayName, City: req.City,
+	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

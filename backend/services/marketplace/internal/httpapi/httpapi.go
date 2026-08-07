@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
@@ -24,10 +25,17 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/masters", a.search)
 	mux.HandleFunc("GET /v1/masters/{id}", a.getMaster)
 	mux.HandleFunc("GET /v1/masters/by-user/{userID}", a.getMasterByUser)
+	mux.HandleFunc("GET /v1/services/popular", a.popularServices)
 	mux.Handle("GET /v1/me/master", auth(http.HandlerFunc(a.myMaster)))
+	mux.Handle("GET /v1/me/master/readiness", auth(http.HandlerFunc(a.readiness)))
 	mux.Handle("PUT /v1/me/master", auth(http.HandlerFunc(a.upsertMaster)))
 	mux.Handle("POST /v1/services", auth(http.HandlerFunc(a.createService)))
 	mux.HandleFunc("GET /v1/services/{id}", a.getService)
+	mux.HandleFunc("GET /v1/service-categories", a.listServiceCategories)
+	mux.Handle("POST /v1/service-categories", auth(http.HandlerFunc(a.createServiceCategory)))
+	mux.Handle("PUT /v1/service-categories/{id}", auth(http.HandlerFunc(a.updateServiceCategory)))
+	mux.Handle("DELETE /v1/service-categories/{id}", auth(http.HandlerFunc(a.deleteServiceCategory)))
+	a.registerPortfolioRoutes(mux, auth)
 }
 
 func (a *API) search(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +106,34 @@ type upsertMasterReq struct {
 	Bio             string   `json:"bio"`
 	Specializations []string `json:"specializations"`
 	City            string   `json:"city"`
+	ExperienceYears int      `json:"experience_years"`
+	Education       string   `json:"education"`
+	PhotoMediaID    string   `json:"photo_media_id"`
 	Published       bool     `json:"published"`
+}
+
+func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	ready, err := a.svc.MasterReadiness(r.Context(), claims.UserID, token)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, ready)
+}
+
+func (a *API) popularServices(w http.ResponseWriter, r *http.Request) {
+	items, err := a.svc.PopularServices(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, s := range items {
+		out = append(out, serviceDTO(s))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
@@ -122,10 +157,21 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 		}
 		branchID = &id
 	}
+	var photoMediaID *uuid.UUID
+	if req.PhotoMediaID != "" {
+		id, err := uuid.Parse(req.PhotoMediaID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+			return
+		}
+		photoMediaID = &id
+	}
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	m, err := a.svc.UpsertMaster(r.Context(), service.UpsertMasterInput{
 		UserID: claims.UserID, OrganizationID: orgID, BranchID: branchID,
 		DisplayName: req.DisplayName, Bio: req.Bio, Specializations: req.Specializations,
-		City: req.City, Published: req.Published,
+		City: req.City, ExperienceYears: req.ExperienceYears, Education: req.Education,
+		PhotoMediaID: photoMediaID, Published: req.Published, AccessToken: token,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -185,6 +231,10 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	if m.BranchID != nil {
 		branchID = m.BranchID.String()
 	}
+	var photoMediaID any
+	if m.PhotoMediaID != nil {
+		photoMediaID = m.PhotoMediaID.String()
+	}
 	specs := m.Specializations
 	if specs == nil {
 		specs = []string{}
@@ -192,7 +242,9 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	return map[string]any{
 		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": m.OrganizationID.String(),
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
-		"city": m.City, "rating_avg": m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
+		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
+		"photo_media_id": photoMediaID,
+		"rating_avg": m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
 	}
 }
 
@@ -206,4 +258,79 @@ func serviceDTO(s domain.ServiceItem) map[string]any {
 
 func formatMoney(minor int64) string {
 	return strconv.FormatInt(minor/100, 10) + " ₽"
+}
+
+func serviceCategoryDTO(c domain.ServiceCategory) map[string]any {
+	return map[string]any{
+		"id": c.ID.String(), "name": c.Name, "slug": c.Slug,
+		"sort_order": c.SortOrder, "created_at": c.CreatedAt,
+	}
+}
+
+func (a *API) listServiceCategories(w http.ResponseWriter, r *http.Request) {
+	items, err := a.svc.ListServiceCategories(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, c := range items {
+		out = append(out, serviceCategoryDTO(c))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) createServiceCategory(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	c, err := a.svc.CreateServiceCategory(r.Context(), claims, req.Name, req.Slug)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, serviceCategoryDTO(*c))
+}
+
+func (a *API) updateServiceCategory(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	c, err := a.svc.UpdateServiceCategory(r.Context(), claims, id, req.Name, req.Slug)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, serviceCategoryDTO(*c))
+}
+
+func (a *API) deleteServiceCategory(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.DeleteServiceCategory(r.Context(), claims, id); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

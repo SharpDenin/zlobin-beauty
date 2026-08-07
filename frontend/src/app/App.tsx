@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/features/auth/AuthProvider'
-import { AppShell, RequireAuth, RequireMaster } from '@/app/layout'
+import { AppShell, RequireAdmin, RequireAuth, RequireMaster } from '@/app/layout'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { HomePage } from '@/pages/HomePage'
@@ -11,8 +11,15 @@ import { AppointmentsPage } from '@/pages/AppointmentsPage'
 import { MasterCabinetPage } from '@/pages/MasterCabinetPage'
 import { AppointmentDetailPage } from '@/pages/AppointmentDetailPage'
 import { ClientCardPage } from '@/pages/ClientCardPage'
+import { ClientsPage } from '@/pages/ClientsPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
+import { WarehousePage } from '@/pages/WarehousePage'
+import { SupplierDashboardPage } from '@/pages/SupplierDashboardPage'
+import { SalonReportsPage } from '@/pages/SalonReportsPage'
+import { ShopPage } from '@/pages/ShopPage'
+import { RepPage } from '@/pages/RepPage'
+import { AdminCatalogsPage } from '@/pages/AdminCatalogsPage'
 import type { ReactNode } from 'react'
 
 const queryClient = new QueryClient({
@@ -57,8 +64,17 @@ export function App() {
                 <Route path="/clients/:id" element={<ClientCardPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/shop" element={<ShopPage />} />
+                <Route path="/rep" element={<RepPage />} />
+                <Route element={<RequireAdmin />}>
+                  <Route path="/admin/catalogs" element={<AdminCatalogsPage />} />
+                </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
+                  <Route path="/clients" element={<ClientsPage />} />
+                  <Route path="/warehouse" element={<WarehousePage />} />
+                  <Route path="/supplier" element={<SupplierDashboardPage />} />
+                  <Route path="/reports" element={<SalonReportsPage />} />
                 </Route>
               </Route>
             </Route>

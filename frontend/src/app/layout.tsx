@@ -1,11 +1,24 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
-import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
   const location = useLocation()
   if (loading) return <div className="state-box page">Загрузка…</div>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  return <Outlet />
+}
+
+export function RequireAdmin() {
+  const { user, loading } = useAuth()
+  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (!hasSystemAdmin(user)) {
+    return (
+      <main className="page">
+        <div className="state-box error">Раздел доступен только системным администраторам</div>
+      </main>
+    )
+  }
   return <Outlet />
 }
 
@@ -26,13 +39,25 @@ export function AppShell() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const isMaster = hasMasterAccess(user)
+  const isAdmin = hasSystemAdmin(user)
 
   const links = [
     { to: '/', label: 'Главная' },
     { to: '/search', label: 'Поиск' },
     { to: '/appointments', label: 'Записи' },
+    { to: '/shop', label: 'Магазин' },
     { to: '/notifications', label: 'События' },
-    ...(isMaster ? [{ to: '/master', label: 'Кабинет' }] : []),
+    ...(isMaster
+      ? [
+          { to: '/master', label: 'Кабинет' },
+          { to: '/clients', label: 'Клиенты' },
+          { to: '/warehouse', label: 'Склад' },
+          { to: '/supplier', label: 'Поставщик' },
+          { to: '/reports', label: 'Отчёты' },
+        ]
+      : []),
+    ...(isAdmin ? [{ to: '/admin/catalogs', label: 'Справочники' }] : []),
+    { to: '/rep', label: 'Доставки' },
     { to: '/profile', label: 'Профиль' },
   ]
 

@@ -19,6 +19,15 @@ type ClientCard struct {
 	UpdatedAt      time.Time
 }
 
+// ClientCardListItem is a card with visit aggregates for master CRM segments.
+type ClientCardListItem struct {
+	Card         ClientCard
+	Segment      string // new | active | lapsed | unknown
+	VisitCount   int
+	LastVisitAt  *time.Time
+	FirstVisitAt *time.Time
+}
+
 type Visit struct {
 	ID             uuid.UUID
 	ClientCardID   uuid.UUID

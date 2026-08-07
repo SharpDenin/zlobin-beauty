@@ -148,6 +148,17 @@ func (s *Service) ListMasterPublic(ctx context.Context, masterID uuid.UUID) ([]d
 	return items, nil
 }
 
+func (s *Service) ReviewStats(ctx context.Context, masterIDs []uuid.UUID, from, to time.Time) (*store.ReviewStats, error) {
+	if !to.After(from) {
+		return nil, apperr.Validation("to must be after from")
+	}
+	stats, err := s.store.ReviewStatsForMasters(ctx, masterIDs, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return stats, nil
+}
+
 func wrap(err error) error {
 	if err != nil {
 		return apperr.Internal(err)

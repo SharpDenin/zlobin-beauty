@@ -14,15 +14,17 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
+	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
 type Service struct {
-	store             *store.Store
-	organizationsURL  string
-	internalToken     string
-	httpClient        *http.Client
-	now               func() time.Time
+	store            *store.Store
+	organizationsURL string
+	bookingURL       string
+	internalToken    string
+	httpClient       *http.Client
+	now              func() time.Time
 }
 
 func New(st *store.Store) *Service {
@@ -35,6 +37,11 @@ func (s *Service) WithOrganizations(organizationsURL, internalToken string) *Ser
 	return s
 }
 
+func (s *Service) WithBooking(bookingURL string) *Service {
+	s.bookingURL = strings.TrimRight(bookingURL, "/")
+	return s
+}
+
 type UpsertMasterInput struct {
 	UserID          uuid.UUID
 	OrganizationID  uuid.UUID
@@ -43,7 +50,11 @@ type UpsertMasterInput struct {
 	Bio             string
 	Specializations []string
 	City            string
+	ExperienceYears int
+	Education       string
+	PhotoMediaID    *uuid.UUID
 	Published       bool
+	AccessToken     string
 }
 
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
@@ -51,6 +62,9 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	city := strings.TrimSpace(in.City)
 	if name == "" || city == "" {
 		return nil, apperr.Validation("display_name and city are required")
+	}
+	if in.ExperienceYears < 0 {
+		return nil, apperr.Validation("experience_years must be >= 0")
 	}
 	if err := s.requireMembership(ctx, in.OrganizationID, in.UserID, "owner", "admin", "master"); err != nil {
 		return nil, err
@@ -63,7 +77,8 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	m := domain.MasterProfile{
 		UserID: in.UserID, OrganizationID: in.OrganizationID, BranchID: in.BranchID,
 		DisplayName: name, Bio: strings.TrimSpace(in.Bio), Specializations: in.Specializations,
-		City: city, Published: in.Published, UpdatedAt: now,
+		City: city, ExperienceYears: in.ExperienceYears, Education: strings.TrimSpace(in.Education),
+		PhotoMediaID: in.PhotoMediaID, Published: in.Published, UpdatedAt: now,
 	}
 	if m.Specializations == nil {
 		m.Specializations = []string{}
@@ -76,11 +91,111 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		m.CreatedAt = existing.CreatedAt
 		m.RatingAvg = existing.RatingAvg
 		m.RatingCount = existing.RatingCount
+		if in.PhotoMediaID == nil {
+			m.PhotoMediaID = existing.PhotoMediaID
+		}
+	}
+	if m.Published {
+		ready, err := s.evaluateReadiness(ctx, &m, in.AccessToken)
+		if err != nil {
+			return nil, err
+		}
+		if !ready.Ready {
+			return nil, apperr.Validation("profile is not ready for publication: " + strings.Join(ready.Missing, ", "))
+		}
 	}
 	if err := s.store.UpsertMaster(ctx, m); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	return &m, nil
+}
+
+func (s *Service) MasterReadiness(ctx context.Context, userID uuid.UUID, accessToken string) (*domain.Readiness, error) {
+	m, err := s.store.GetMasterByUser(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if m == nil {
+		return &domain.Readiness{
+			Ready: false, Missing: []string{"profile"},
+			Checks: []domain.ReadinessCheck{{Key: "profile", Label: "Профиль мастера", OK: false, Missing: "Создайте профиль"}},
+		}, nil
+	}
+	return s.evaluateReadiness(ctx, m, accessToken)
+}
+
+func (s *Service) evaluateReadiness(ctx context.Context, m *domain.MasterProfile, accessToken string) (*domain.Readiness, error) {
+	checks := []domain.ReadinessCheck{
+		{Key: "display_name", Label: "Имя для публикации", OK: strings.TrimSpace(m.DisplayName) != ""},
+		{Key: "city", Label: "Город", OK: strings.TrimSpace(m.City) != ""},
+		{Key: "specializations", Label: "Специализация", OK: len(m.Specializations) > 0},
+		{Key: "bio", Label: "Описание (от 10 символов)", OK: len([]rune(strings.TrimSpace(m.Bio))) >= 10},
+		{Key: "experience", Label: "Опыт (лет)", OK: m.ExperienceYears > 0},
+	}
+	svcs, err := s.store.ListMasterServices(ctx, m.ID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	checks = append(checks, domain.ReadinessCheck{Key: "service", Label: "Хотя бы одна услуга", OK: len(svcs) > 0})
+	hasHours := false
+	if s.bookingURL != "" && accessToken != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.bookingURL+"/v1/me/working-hours", nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+accessToken)
+			resp, err := s.httpClient.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				if resp.StatusCode < 300 {
+					var payload struct {
+						Items []struct {
+							Weekday int `json:"weekday"`
+						} `json:"items"`
+					}
+					_ = json.Unmarshal(body, &payload)
+					hasHours = len(payload.Items) > 0
+				}
+			}
+		}
+	}
+	checks = append(checks, domain.ReadinessCheck{Key: "schedule", Label: "Расписание", OK: hasHours})
+	var missing []string
+	for i := range checks {
+		if !checks[i].OK {
+			missing = append(missing, checks[i].Key)
+			checks[i].Missing = checks[i].Label
+		}
+	}
+	if missing == nil {
+		missing = []string{}
+	}
+	return &domain.Readiness{Ready: len(missing) == 0, Missing: missing, Checks: checks}, nil
+}
+
+func (s *Service) PopularServices(ctx context.Context) ([]domain.ServiceItem, error) {
+	items, err := s.store.CountPopularServices(ctx, 12)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	out := make([]domain.ServiceItem, 0, len(items))
+	for _, item := range items {
+		if item.BranchID == nil {
+			// Masters without branch stay visible by master.published only (Stage 1).
+			out = append(out, item)
+			continue
+		}
+		ok, err := s.isBranchPublished(ctx, *item.BranchID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, item)
+		}
+	}
+	if out == nil {
+		out = []domain.ServiceItem{}
+	}
+	return out, nil
 }
 
 func (s *Service) Search(ctx context.Context, city, q string) ([]domain.MasterProfile, error) {
@@ -89,9 +204,19 @@ func (s *Service) Search(ctx context.Context, city, q string) ([]domain.MasterPr
 		return nil, apperr.Internal(err)
 	}
 	if items == nil {
-		items = []domain.MasterProfile{}
+		return []domain.MasterProfile{}, nil
 	}
-	return items, nil
+	out := make([]domain.MasterProfile, 0, len(items))
+	for _, m := range items {
+		visible, err := s.isMasterPubliclyVisible(ctx, m)
+		if err != nil {
+			return nil, err
+		}
+		if visible {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterProfile, []domain.ServiceItem, error) {
@@ -100,6 +225,13 @@ func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterPr
 		return nil, nil, apperr.Internal(err)
 	}
 	if m == nil || !m.Published {
+		return nil, nil, apperr.NotFound("master not found")
+	}
+	visible, err := s.isMasterPubliclyVisible(ctx, *m)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !visible {
 		return nil, nil, apperr.NotFound("master not found")
 	}
 	services, err := s.store.ListMasterServices(ctx, m.ID)
@@ -204,6 +336,48 @@ func (s *Service) GetService(ctx context.Context, id uuid.UUID) (*domain.Service
 	return item, nil
 }
 
+func (s *Service) isMasterPubliclyVisible(ctx context.Context, m domain.MasterProfile) (bool, error) {
+	if !m.Published {
+		return false, nil
+	}
+	if m.BranchID == nil {
+		// Masters without branch binding rely on master.published only (Stage1).
+		return true, nil
+	}
+	return s.isBranchPublished(ctx, *m.BranchID)
+}
+
+func (s *Service) isBranchPublished(ctx context.Context, branchID uuid.UUID) (bool, error) {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return true, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.organizationsURL+"/v1/internal/branches/"+branchID.String()+"/publication", nil)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 300 {
+		return false, apperr.Internal(fmt.Errorf("branch publication check status %d: %s", resp.StatusCode, string(body)))
+	}
+	var out struct {
+		BranchPublished bool `json:"branch_published"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return false, apperr.Internal(err)
+	}
+	return out.BranchPublished, nil
+}
+
 func (s *Service) requireMembership(ctx context.Context, orgID, userID uuid.UUID, roles ...string) error {
 	if s.organizationsURL == "" || s.internalToken == "" {
 		return apperr.Internal(fmt.Errorf("organizations membership check is not configured"))
@@ -236,6 +410,83 @@ func (s *Service) requireMembership(ctx context.Context, orgID, userID uuid.UUID
 	}
 	if !out.Active {
 		return apperr.Forbidden("not a member of organization")
+	}
+	return nil
+}
+
+func slugify(name string) string {
+	s := strings.TrimSpace(strings.ToLower(name))
+	s = strings.ReplaceAll(s, " ", "-")
+	if s == "" {
+		return ids.New().String()[:8]
+	}
+	return s
+}
+
+func (s *Service) ListServiceCategories(ctx context.Context) ([]domain.ServiceCategory, error) {
+	items, err := s.store.ListServiceCategories(ctx)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.ServiceCategory{}
+	}
+	return items, nil
+}
+
+func (s *Service) CreateServiceCategory(ctx context.Context, claims *auth.Claims, name, slug string) (*domain.ServiceCategory, error) {
+	if !auth.HasRole(claims, "system_admin") {
+		return nil, apperr.Forbidden("system_admin role required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, apperr.Validation("name is required")
+	}
+	if slug = strings.TrimSpace(slug); slug == "" {
+		slug = slugify(name)
+	}
+	now := s.now().UTC()
+	c := domain.ServiceCategory{ID: ids.New(), Name: name, Slug: slug, CreatedAt: now}
+	out, err := s.store.CreateServiceCategory(ctx, c)
+	if err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
+}
+
+func (s *Service) UpdateServiceCategory(ctx context.Context, claims *auth.Claims, id uuid.UUID, name, slug string) (*domain.ServiceCategory, error) {
+	if !auth.HasRole(claims, "system_admin") {
+		return nil, apperr.Forbidden("system_admin role required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, apperr.Validation("name is required")
+	}
+	if slug = strings.TrimSpace(slug); slug == "" {
+		slug = slugify(name)
+	}
+	c := domain.ServiceCategory{ID: id, Name: name, Slug: slug}
+	if err := s.store.UpdateServiceCategory(ctx, c); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	return &c, nil
+}
+
+func (s *Service) DeleteServiceCategory(ctx context.Context, claims *auth.Claims, id uuid.UUID) error {
+	if !auth.HasRole(claims, "system_admin") {
+		return apperr.Forbidden("system_admin role required")
+	}
+	if err := s.store.DeleteServiceCategory(ctx, id); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return ae
+		}
+		return apperr.Internal(err)
 	}
 	return nil
 }

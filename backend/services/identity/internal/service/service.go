@@ -224,6 +224,33 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (*domain.User, error
 	return user, nil
 }
 
+type UpdateProfileInput struct {
+	DisplayName *string
+	City        *string
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, in UpdateProfileInput) (*domain.User, error) {
+	user, err := s.Me(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if in.DisplayName != nil {
+		name := strings.TrimSpace(*in.DisplayName)
+		if name == "" {
+			return nil, apperr.Validation("display_name cannot be empty")
+		}
+		user.DisplayName = name
+	}
+	if in.City != nil {
+		user.City = strings.TrimSpace(*in.City)
+	}
+	user.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateUserProfile(ctx, user.ID, user.DisplayName, user.City, user.UpdatedAt); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return user, nil
+}
+
 func (s *Service) BootstrapAdmin(ctx context.Context, email, password, displayName string) (*domain.User, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	displayName = strings.TrimSpace(displayName)

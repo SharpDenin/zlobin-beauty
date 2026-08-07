@@ -14,14 +14,18 @@ import (
 )
 
 type API struct {
-	svc *service.Service
-	log *slog.Logger
+	svc           *service.Service
+	log           *slog.Logger
+	internalToken string
 }
 
-func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, log: log} }
+func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
+	return &API{svc: svc, log: log, internalToken: internalToken}
+}
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
+	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
@@ -35,6 +39,49 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
 	mux.Handle("POST /v1/appointments/{id}/no-show", auth(http.HandlerFunc(a.noShow)))
+	mux.Handle("GET /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.listPhotos)))
+	mux.Handle("POST /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.addPhoto)))
+	mux.Handle("DELETE /v1/appointments/{id}/photos/{photoID}", auth(http.HandlerFunc(a.deletePhoto)))
+	a.registerReportRoutes(mux, auth)
+}
+
+func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	if fromStr == "" || toStr == "" {
+		httpx.WriteError(w, r, a.log, apperr.Validation("from and to are required (RFC3339)"))
+		return
+	}
+	from, err := time.Parse(time.RFC3339, fromStr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid from timestamp"))
+		return
+	}
+	to, err := time.Parse(time.RFC3339, toStr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid to timestamp"))
+		return
+	}
+	statuses := r.URL.Query()["status"]
+	items, err := a.svc.ListOrgAppointmentsInRange(r.Context(), orgID, from, to, statuses)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, appointmentDTO(item))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) setHours(w http.ResponseWriter, r *http.Request) {
@@ -325,4 +372,72 @@ func appointmentDTO(a domain.Appointment) map[string]any {
 		"status": a.Status, "cancel_reason": a.CancelReason, "starts_at": a.StartsAt, "ends_at": a.EndsAt,
 		"created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
+}
+
+func appointmentPhotoDTO(p domain.AppointmentPhoto) map[string]any {
+	return map[string]any{
+		"id": p.ID.String(), "appointment_id": p.AppointmentID.String(), "media_id": p.MediaID.String(),
+		"kind": p.Kind, "created_by": p.CreatedBy.String(), "created_at": p.CreatedAt,
+	}
+}
+
+func (a *API) listPhotos(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListAppointmentPhotos(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, p := range items {
+		out = append(out, appointmentPhotoDTO(p))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) addPhoto(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		MediaID string `json:"media_id"`
+		Kind    string `json:"kind"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	mediaID, err := uuid.Parse(req.MediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid media_id"))
+		return
+	}
+	p, err := a.svc.AddAppointmentPhoto(r.Context(), id, claims.UserID, mediaID, req.Kind)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, appointmentPhotoDTO(*p))
+}
+
+func (a *API) deletePhoto(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	photoID, err := uuid.Parse(r.PathValue("photoID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo id"))
+		return
+	}
+	if err := a.svc.DeleteAppointmentPhoto(r.Context(), photoID, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

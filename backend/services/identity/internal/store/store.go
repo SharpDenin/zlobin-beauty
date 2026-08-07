@@ -32,9 +32,9 @@ func (s *Store) CreateUser(ctx context.Context, u domain.User) error {
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-INSERT INTO users (id, email, phone, password_hash, display_name, status, email_verified, phone_verified, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		u.ID, u.Email, u.Phone, u.PasswordHash, u.DisplayName, u.Status, u.EmailVerified, u.PhoneVerified, u.CreatedAt, u.UpdatedAt)
+INSERT INTO users (id, email, phone, password_hash, display_name, city, status, email_verified, phone_verified, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		u.ID, u.Email, u.Phone, u.PasswordHash, u.DisplayName, u.City, u.Status, u.EmailVerified, u.PhoneVerified, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert user: %w", err)
 	}
@@ -56,10 +56,10 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*domain.User, er
 
 func (s *Store) getUser(ctx context.Context, where string, arg any) (*domain.User, error) {
 	row := s.pool.QueryRow(ctx, `
-SELECT id, email, phone, password_hash, display_name, status, email_verified, phone_verified, created_at, updated_at
+SELECT id, email, phone, password_hash, display_name, city, status, email_verified, phone_verified, created_at, updated_at
 FROM users WHERE `+where, arg)
 	var u domain.User
-	if err := row.Scan(&u.ID, &u.Email, &u.Phone, &u.PasswordHash, &u.DisplayName, &u.Status, &u.EmailVerified, &u.PhoneVerified, &u.CreatedAt, &u.UpdatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.Phone, &u.PasswordHash, &u.DisplayName, &u.City, &u.Status, &u.EmailVerified, &u.PhoneVerified, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -71,6 +71,19 @@ FROM users WHERE `+where, arg)
 	}
 	u.Roles = roles
 	return &u, nil
+}
+
+func (s *Store) UpdateUserProfile(ctx context.Context, id uuid.UUID, displayName, city string, updatedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE users SET display_name=$2, city=$3, updated_at=$4 WHERE id=$1`,
+		id, displayName, city, updatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) roles(ctx context.Context, userID uuid.UUID) ([]string, error) {

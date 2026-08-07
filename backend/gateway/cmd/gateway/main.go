@@ -29,6 +29,8 @@ func main() {
 	booking := mustProxy(getenv("BOOKING_URL", "http://booking:8080"))
 	clients := mustProxy(getenv("CLIENTS_URL", "http://clients:8080"))
 	communications := mustProxy(getenv("COMMUNICATIONS_URL", "http://communications:8080"))
+	commerce := mustProxy(getenv("COMMERCE_URL", "http://commerce:8080"))
+	media := mustProxy(getenv("MEDIA_URL", "http://media:8080"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
@@ -41,11 +43,15 @@ func main() {
 	mux.Handle("/v1/organizations/", organizations)
 	mux.Handle("/v1/branches/", organizations)
 	mux.Handle("/v1/me/master", marketplace)
+	mux.Handle("/v1/me/master/", marketplace)
 	mux.Handle("/v1/services", marketplace)
 	mux.Handle("/v1/services/", marketplace)
+	mux.Handle("/v1/service-categories", marketplace)
+	mux.Handle("/v1/service-categories/", marketplace)
 	mux.Handle("/v1/me/working-hours", booking)
 	mux.Handle("/v1/appointments", booking)
 	mux.Handle("/v1/appointments/", booking)
+	mux.Handle("/v1/reports/", booking)
 	mux.Handle("/v1/clients", clients)
 	mux.Handle("/v1/clients/", clients)
 	mux.Handle("/v1/client-cards", clients)
@@ -54,6 +60,9 @@ func main() {
 	mux.Handle("/v1/notifications/", communications)
 	mux.Handle("/v1/reviews", communications)
 	mux.Handle("/v1/reviews/", communications)
+	mux.Handle("/v1/commerce/", commerce)
+	mux.Handle("/v1/media", media)
+	mux.Handle("/v1/media/", media)
 	mux.Handle("/v1/masters", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		marketplace.ServeHTTP(w, r)
 	}))
@@ -72,7 +81,7 @@ func main() {
 	handler := httpx.WithRequestID(
 		httpx.SecurityHeaders(
 			httpx.CORS(corsOrigins)(
-				httpx.MaxBytes(1<<20)(
+				maxBytesByPath(1<<20, 6<<20, "/v1/media")(
 					httpx.AccessLog(log)(mux),
 				),
 			),
@@ -142,4 +151,17 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+func maxBytesByPath(defaultLimit, mediaLimit int64, mediaPrefix string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			limit := defaultLimit
+			if strings.HasPrefix(r.URL.Path, mediaPrefix) {
+				limit = mediaLimit
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			next.ServeHTTP(w, r)
+		})
+	}
 }

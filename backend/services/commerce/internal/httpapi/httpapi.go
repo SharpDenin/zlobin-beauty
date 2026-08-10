@@ -763,13 +763,14 @@ func (a *API) transitionSupplierOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Status string `json:"status"`
+		Status              string     `json:"status"`
+		EstimatedDeliveryAt *time.Time `json:"estimated_delivery_at"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	o, err := a.svc.TransitionSupplierOrder(r.Context(), claims.UserID, id, req.Status)
+	o, err := a.svc.TransitionSupplierOrder(r.Context(), claims.UserID, id, req.Status, req.EstimatedDeliveryAt)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -896,10 +897,15 @@ func orderDTO(o domain.SupplierOrder, items []domain.SupplierOrderItem) map[stri
 	if o.DesiredAt != nil {
 		desiredAt = *o.DesiredAt
 	}
+	var estimated any
+	if o.EstimatedDeliveryAt != nil {
+		estimated = *o.EstimatedDeliveryAt
+	}
 	return map[string]any{
 		"id": o.ID.String(), "buyer_org_id": o.BuyerOrgID.String(), "supplier_org_id": o.SupplierOrgID.String(),
 		"location_id": o.LocationID.String(), "status": o.Status, "currency": o.Currency, "total_minor": o.TotalMinor,
-		"comment": o.Comment, "desired_at": desiredAt, "created_by": o.CreatedBy.String(),
+		"comment": o.Comment, "desired_at": desiredAt, "estimated_delivery_at": estimated,
+		"created_by": o.CreatedBy.String(),
 		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt, "items": itemsOut,
 	}
 }

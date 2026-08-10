@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { apiRequest, ApiError } from '@/shared/api/client'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
 
@@ -52,7 +52,8 @@ const formulaSchema = z.object({
 
 export function ClientCardPage() {
   const { id, appointmentId } = useParams()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
+  const canMaster = hasMasterAccess(user)
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -70,6 +71,7 @@ export function ClientCardPage() {
   })
 
   const cardId = cardQuery.data?.id
+  const clientUserId = cardQuery.data?.user_id
   const visits = useQuery({
     queryKey: ['client-visits', cardId],
     queryFn: () => apiRequest<{ items: Visit[] }>(`/v1/clients/id/${cardId}/visits`, { token: accessToken }),
@@ -79,6 +81,28 @@ export function ClientCardPage() {
     queryKey: ['client-formulas', cardId],
     queryFn: () => apiRequest<{ items: Formula[] }>(`/v1/clients/id/${cardId}/formulas`, { token: accessToken }),
     enabled: Boolean(cardId && accessToken),
+  })
+  const autoConfirm = useQuery({
+    queryKey: ['client-auto-confirm', clientUserId],
+    queryFn: () =>
+      apiRequest<{ auto_confirm: boolean }>(`/v1/me/clients/${clientUserId}/auto-confirm`, {
+        token: accessToken,
+      }),
+    enabled: Boolean(canMaster && clientUserId && accessToken),
+  })
+  const setAutoConfirm = useMutation({
+    mutationFn: (auto_confirm: boolean) =>
+      apiRequest(`/v1/me/clients/${clientUserId}/auto-confirm`, {
+        method: 'PUT',
+        token: accessToken,
+        body: { auto_confirm },
+      }),
+    onSuccess: async () => {
+      setOk('Автоподтверждение обновлено')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
   })
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
@@ -135,6 +159,26 @@ export function ClientCardPage() {
 
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
+
+      {canMaster && (
+        <section className="card stack">
+          <h2>Автоподтверждение записей</h2>
+          <p className="muted">Новые записи этого клиента будут подтверждаться автоматически.</p>
+          {autoConfirm.isLoading && <div className="state-box">Загрузка…</div>}
+          {autoConfirm.isError && <div className="state-box error">Не удалось загрузить настройку</div>}
+          {autoConfirm.data && (
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={autoConfirm.data.auto_confirm}
+                disabled={setAutoConfirm.isPending}
+                onChange={(e) => setAutoConfirm.mutate(e.target.checked)}
+              />
+              <span>Автоподтверждение для этого клиента</span>
+            </label>
+          )}
+        </section>
+      )}
 
       <section className="card stack">
         <h2>История посещений</h2>

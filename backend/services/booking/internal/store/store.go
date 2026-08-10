@@ -290,3 +290,27 @@ func (s *Store) DeleteAppointmentPhoto(ctx context.Context, id uuid.UUID) error 
 	}
 	return nil
 }
+
+func (s *Store) GetClientAutoConfirm(ctx context.Context, masterUserID, clientUserID uuid.UUID) (bool, error) {
+	var auto bool
+	err := s.pool.QueryRow(ctx, `
+SELECT auto_confirm FROM master_client_settings
+WHERE master_user_id=$1 AND client_user_id=$2`, masterUserID, clientUserID).Scan(&auto)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return auto, nil
+}
+
+func (s *Store) SetClientAutoConfirm(ctx context.Context, masterUserID, clientUserID uuid.UUID, autoConfirm bool, now time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO master_client_settings(master_user_id, client_user_id, auto_confirm, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$4)
+ON CONFLICT (master_user_id, client_user_id) DO UPDATE SET
+  auto_confirm=EXCLUDED.auto_confirm,
+  updated_at=EXCLUDED.updated_at`, masterUserID, clientUserID, autoConfirm, now)
+	return err
+}

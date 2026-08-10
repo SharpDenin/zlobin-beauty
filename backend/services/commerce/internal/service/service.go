@@ -235,15 +235,23 @@ func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.
 }
 
 func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]domain.Product, error) {
-	if err := s.requireAnyMembership(ctx, orgID, actor); err != nil {
-		return nil, err
-	}
+	memberErr := s.requireAnyMembership(ctx, orgID, actor)
 	items, err := s.store.ListProducts(ctx, orgID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
 	if items == nil {
 		items = []domain.Product{}
+	}
+	// Non-members may browse published catalog (masters ordering from suppliers).
+	if memberErr != nil {
+		out := make([]domain.Product, 0, len(items))
+		for _, p := range items {
+			if p.Published {
+				out = append(out, p)
+			}
+		}
+		return out, nil
 	}
 	return items, nil
 }
@@ -637,15 +645,15 @@ func (s *Service) DeleteUnit(ctx context.Context, claims *auth.Claims, id uuid.U
 
 // StockForecastRow is one product line in a location stock forecast.
 type StockForecastRow struct {
-	ProductID    uuid.UUID
-	ProductName  string
-	QtyOnHand    float64
-	QtyReserved  float64
-	Available    float64
-	MinStock     float64
-	Demand       float64
-	Deficit      float64
-	Explanation  string
+	ProductID   uuid.UUID
+	ProductName string
+	QtyOnHand   float64
+	QtyReserved float64
+	Available   float64
+	MinStock    float64
+	Demand      float64
+	Deficit     float64
+	Explanation string
 }
 
 func (s *Service) StockForecast(ctx context.Context, actor, locationID uuid.UUID, from, to time.Time) ([]StockForecastRow, error) {
@@ -976,7 +984,7 @@ var supplierTransitions = map[string]map[string]bool{
 	domain.OrderStatusInTransit: {domain.OrderStatusDelivered: true},
 }
 
-func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, toStatus string) (*domain.SupplierOrder, error) {
+func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, toStatus string, estimatedDeliveryAt *time.Time) (*domain.SupplierOrder, error) {
 	toStatus = strings.TrimSpace(toStatus)
 	o, err := s.getOrderOrErr(ctx, orderID)
 	if err != nil {
@@ -997,7 +1005,7 @@ func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uu
 		}
 	}
 	now := s.now().UTC()
-	if err := s.store.UpdateOrderStatus(ctx, orderID, toStatus, now); err != nil {
+	if err := s.store.UpdateOrderStatus(ctx, orderID, toStatus, now, estimatedDeliveryAt); err != nil {
 		if ae, ok := apperr.As(err); ok {
 			return nil, ae
 		}
@@ -1005,11 +1013,14 @@ func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uu
 	}
 	o.Status = toStatus
 	o.UpdatedAt = now
+	if estimatedDeliveryAt != nil {
+		o.EstimatedDeliveryAt = estimatedDeliveryAt
+	}
 	return o, nil
 }
 
 func (s *Service) ConfirmSupplierOrder(ctx context.Context, actor, orderID uuid.UUID) (*domain.SupplierOrder, error) {
-	return s.TransitionSupplierOrder(ctx, actor, orderID, domain.OrderStatusConfirmed)
+	return s.TransitionSupplierOrder(ctx, actor, orderID, domain.OrderStatusConfirmed, nil)
 }
 
 var acceptableAcceptStatuses = map[string]bool{
@@ -1018,10 +1029,10 @@ var acceptableAcceptStatuses = map[string]bool{
 }
 
 type AcceptItemInput struct {
-	ProductID    uuid.UUID
-	QtyAccepted  float64
-	QtyDamaged   float64
-	QtyRejected  float64
+	ProductID   uuid.UUID
+	QtyAccepted float64
+	QtyDamaged  float64
+	QtyRejected float64
 }
 
 func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, accepted []AcceptItemInput) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {

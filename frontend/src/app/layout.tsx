@@ -1,5 +1,5 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
-import { hasMasterAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSupplierAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -35,31 +35,62 @@ export function RequireMaster() {
   return <Outlet />
 }
 
+export function RequireSupplier() {
+  const { user, loading } = useAuth()
+  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (!hasSupplierAccess(user)) {
+    return (
+      <main className="page">
+        <div className="state-box error">Этот раздел доступен только поставщикам</div>
+      </main>
+    )
+  }
+  return <Outlet />
+}
+
+type NavLink = { to: string; label: string }
+
+function navLinksForUser(user: ReturnType<typeof useAuth>['user']): NavLink[] {
+  const isMaster = hasMasterAccess(user)
+  const isSupplier = hasSupplierAccess(user)
+
+  if (isMaster) {
+    return [
+      { to: '/appointments', label: 'Записи' },
+      { to: '/calendar', label: 'Календарь' },
+      { to: '/clients', label: 'Клиенты' },
+      { to: '/cosmetics', label: 'Косметика' },
+      { to: '/knowledge', label: 'База знаний' },
+      { to: '/master', label: 'Кабинет' },
+      { to: '/profile', label: 'Профиль' },
+    ]
+  }
+
+  if (isSupplier) {
+    return [
+      { to: '/supplier', label: 'Товары' },
+      { to: '/knowledge', label: 'База знаний' },
+      { to: '/profile', label: 'Профиль' },
+    ]
+  }
+
+  return [
+    { to: '/', label: 'Главная' },
+    { to: '/search', label: 'Поиск' },
+    { to: '/appointments', label: 'Мои записи' },
+    { to: '/profile', label: 'Профиль' },
+  ]
+}
+
 export function AppShell() {
   const { user, logout } = useAuth()
   const location = useLocation()
-  const isMaster = hasMasterAccess(user)
-  const isAdmin = hasSystemAdmin(user)
+  const links = navLinksForUser(user)
 
-  const links = [
-    { to: '/', label: 'Главная' },
-    { to: '/search', label: 'Поиск' },
-    { to: '/appointments', label: 'Записи' },
-    { to: '/shop', label: 'Магазин' },
-    { to: '/notifications', label: 'События' },
-    ...(isMaster
-      ? [
-          { to: '/master', label: 'Кабинет' },
-          { to: '/clients', label: 'Клиенты' },
-          { to: '/warehouse', label: 'Склад' },
-          { to: '/supplier', label: 'Поставщик' },
-          { to: '/reports', label: 'Отчёты' },
-        ]
-      : []),
-    ...(isAdmin ? [{ to: '/admin/catalogs', label: 'Справочники' }] : []),
-    { to: '/rep', label: 'Доставки' },
-    { to: '/profile', label: 'Профиль' },
-  ]
+  function linkActive(to: string) {
+    if (to === '/') return location.pathname === '/'
+    return location.pathname === to || location.pathname.startsWith(`${to}/`)
+  }
 
   return (
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(links.length) }}>
@@ -67,14 +98,14 @@ export function AppShell() {
         <div className="brand">Zlobin Beauty</div>
         <nav className="stack-sm" style={{ marginTop: 24 }}>
           {links.map((l) => (
-            <Link key={l.to} to={l.to} className={location.pathname === l.to ? 'active' : ''}>
+            <Link key={l.to} to={l.to} className={linkActive(l.to) ? 'active' : ''}>
               {l.label}
             </Link>
           ))}
         </nav>
         <div style={{ marginTop: 'auto' }} className="stack-sm">
           <div className="muted">{user?.display_name}</div>
-          <Link to="/profile" className={location.pathname === '/profile' ? 'active' : ''}>Профиль</Link>
+          <Link to="/profile" className={linkActive('/profile') ? 'active' : ''}>Профиль</Link>
           <button className="btn btn-secondary" type="button" onClick={() => void logout()}>Выйти</button>
         </div>
       </aside>
@@ -92,7 +123,7 @@ export function AppShell() {
       </div>
       <nav className="bottomnav" aria-label="Основная навигация">
         {links.map((l) => (
-          <Link key={l.to} to={l.to} className={location.pathname === l.to ? 'active' : ''}>
+          <Link key={l.to} to={l.to} className={linkActive(l.to) ? 'active' : ''}>
             {l.label}
           </Link>
         ))}

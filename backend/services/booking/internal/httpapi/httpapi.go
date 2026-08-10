@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
+	mux.Handle("POST /v1/appointments/{id}/reject", auth(http.HandlerFunc(a.reject)))
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
@@ -42,6 +44,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.listPhotos)))
 	mux.Handle("POST /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.addPhoto)))
 	mux.Handle("DELETE /v1/appointments/{id}/photos/{photoID}", auth(http.HandlerFunc(a.deletePhoto)))
+	mux.Handle("GET /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.getAutoConfirm)))
+	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
 	a.registerReportRoutes(mux, auth)
 }
 
@@ -250,6 +254,73 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) reject(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "Отклонено мастером"
+	}
+	item, err := a.svc.Cancel(r.Context(), id, claims.UserID, reason)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) getAutoConfirm(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client user id"))
+		return
+	}
+	auto, err := a.svc.GetClientAutoConfirm(r.Context(), claims.UserID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"master_user_id": claims.UserID.String(),
+		"client_user_id": clientID.String(),
+		"auto_confirm":   auto,
+	})
+}
+
+func (a *API) setAutoConfirm(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client user id"))
+		return
+	}
+	var req struct {
+		AutoConfirm bool `json:"auto_confirm"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	if err := a.svc.SetClientAutoConfirm(r.Context(), claims.UserID, clientID, req.AutoConfirm); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"master_user_id": claims.UserID.String(),
+		"client_user_id": clientID.String(),
+		"auto_confirm":   req.AutoConfirm,
+	})
 }
 
 func (a *API) cancel(w http.ResponseWriter, r *http.Request) {

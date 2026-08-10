@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { z } from 'zod'
+import { zodResolver } from '@hookform/resolvers/zod'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
-import { clientOrderLabel, statusBadgeClass } from '@/shared/lib/status'
+import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string }
@@ -18,11 +20,44 @@ type Dashboard = {
   turnover_delta_percent?: number | null
 }
 
-type ClientOrderRow = {
+type Product = {
+  id: string
+  brand: string
+  name: string
+  sku: string
+  unit: string
+  volume_label: string
+  price_minor: number
+  min_stock: number
+  published: boolean
+}
+
+type SupplierOrder = {
   id: string
   status: string
   total_minor: number
+  buyer_org_id: string
+  estimated_delivery_at?: string | null
   created_at: string
+  comment?: string
+  items?: Array<{ product_id: string; qty_ordered: number; price_minor: number }>
+}
+
+const productSchema = z.object({
+  name: z.string().min(2),
+  brand: z.string().optional(),
+  sku: z.string().optional(),
+  price_rubles: z.coerce.number().min(0),
+  min_stock: z.coerce.number().min(0),
+  unit: z.string().min(1),
+  volume_label: z.string().optional(),
+})
+
+const nextB2BStatus: Record<string, string> = {
+  new: 'confirmed',
+  confirmed: 'picking',
+  picking: 'in_transit',
+  in_transit: 'delivered',
 }
 
 function periodISO(days: number): { from: string; to: string } {
@@ -38,18 +73,14 @@ function formatDelta(v: number | null | undefined): string {
   return `${sign}${v.toFixed(1)}%`
 }
 
-const nextStatus: Record<string, string> = {
-  submitted: 'confirmed',
-  confirmed: 'picking',
-  picking: 'in_delivery',
-}
-
 export function SupplierDashboardPage() {
-  const { accessToken, user } = useAuth()
+  const { accessToken } = useAuth()
   const [days, setDays] = useState(7)
   const range = useMemo(() => periodISO(days), [days])
   const qc = useQueryClient()
   const [actionError, setActionError] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
+  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, string>>({})
 
   const orgs = useQuery({
     queryKey: ['orgs-mine'],
@@ -112,28 +143,70 @@ export function SupplierDashboardPage() {
     enabled: Boolean(accessToken && orgId),
   })
 
-  const clientOrders = useQuery({
-    queryKey: ['supplier-client-orders', orgId],
+  const products = useQuery({
+    queryKey: ['commerce-products', orgId],
     queryFn: () =>
-      apiRequest<{ items: ClientOrderRow[] }>(
-        `/v1/commerce/shop/supplier/orders?organization_id=${orgId}`,
+      apiRequest<{ items: Product[] }>(`/v1/commerce/products?organization_id=${orgId}`, { token: accessToken }),
+    enabled: Boolean(accessToken && orgId),
+  })
+
+  const b2bOrders = useQuery({
+    queryKey: ['commerce-supplier-orders', 'supplier', orgId],
+    queryFn: () =>
+      apiRequest<{ items: SupplierOrder[] }>(
+        `/v1/commerce/supplier-orders?organization_id=${orgId}&role=supplier`,
         { token: accessToken },
       ),
     enabled: Boolean(accessToken && orgId),
   })
 
+  const productForm = useForm<z.infer<typeof productSchema>>({
+    resolver: zodResolver(productSchema),
+    defaultValues: { unit: 'pcs', price_rubles: 0, min_stock: 5 },
+  })
+
+  const createProduct = useMutation({
+    mutationFn: (v: z.infer<typeof productSchema>) =>
+      apiRequest('/v1/commerce/products', {
+        token: accessToken,
+        body: {
+          organization_id: orgId,
+          name: v.name,
+          brand: v.brand ?? '',
+          sku: v.sku ?? '',
+          unit: v.unit,
+          volume_label: v.volume_label ?? '',
+          price_minor: Math.round(v.price_rubles * 100),
+          min_stock: v.min_stock,
+          published: true,
+        },
+      }),
+    onSuccess: async () => {
+      setOk('Товар создан')
+      setActionError(null)
+      productForm.reset({ name: '', brand: '', sku: '', unit: 'pcs', volume_label: '', price_rubles: 0, min_stock: 5 })
+      await qc.invalidateQueries({ queryKey: ['commerce-products'] })
+      await qc.invalidateQueries({ queryKey: ['supplier-dashboard'] })
+    },
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Ошибка товара'),
+  })
+
   const transition = useMutation({
-    mutationFn: (input: { id: string; status: string; assignMe?: boolean }) =>
-      apiRequest(`/v1/commerce/shop/supplier/orders/${input.id}/transition`, {
+    mutationFn: (input: { id: string; status: string; estimated_delivery_at?: string }) =>
+      apiRequest(`/v1/commerce/supplier-orders/${input.id}/transition`, {
         token: accessToken,
         body: {
           status: input.status,
-          ...(input.assignMe && user?.id ? { rep_user_id: user.id } : {}),
+          ...(input.estimated_delivery_at
+            ? { estimated_delivery_at: new Date(input.estimated_delivery_at).toISOString() }
+            : {}),
         },
       }),
     onSuccess: async () => {
       setActionError(null)
-      await qc.invalidateQueries({ queryKey: ['supplier-client-orders'] })
+      setOk('Статус заказа обновлён')
+      await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
+      await qc.invalidateQueries({ queryKey: ['supplier-dashboard'] })
     },
     onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Ошибка статуса'),
   })
@@ -143,7 +216,7 @@ export function SupplierDashboardPage() {
     return (
       <main className="page stack">
         <h1>Онбординг поставщика</h1>
-        <p className="muted">Создайте организацию типа supplier — затем добавьте товары на складе и публикуйте каталог.</p>
+        <p className="muted">Создайте организацию типа supplier — затем добавьте товары и обрабатывайте заказы салонов.</p>
         {createError && <div className="state-box error">{createError}</div>}
         <section className="card stack">
           <div className="field">
@@ -171,7 +244,6 @@ export function SupplierDashboardPage() {
             Создать поставщика
           </button>
         </section>
-        <p className="muted">Салон создаётся отдельно в <Link to="/master">кабинете мастера</Link>.</p>
       </main>
     )
   }
@@ -189,10 +261,9 @@ export function SupplierDashboardPage() {
           </select>
         </div>
       )}
-      <p>
-        Оборот = сумма принятых позиций за период − возвраты. Сравнение с прошлым равным периодом;
-        при нулевой базе — «н/д».
-      </p>
+
+      {actionError && <div className="state-box error">{actionError}</div>}
+      {ok && <div className="state-box success">{ok}</div>}
 
       <div className="row">
         {[7, 30, 90].map((d) => (
@@ -200,12 +271,8 @@ export function SupplierDashboardPage() {
             {d} дн.
           </button>
         ))}
-        <Link className="btn btn-secondary" to="/warehouse">Склад и товары</Link>
-        <Link className="btn btn-secondary" to="/rep">Доставки</Link>
       </div>
 
-      {dash.isLoading && <div className="state-box">Считаем показатели…</div>}
-      {dash.isError && <div className="state-box error">Не удалось загрузить панель</div>}
       {dash.data && (
         <div className="kpi-grid">
           <article className="card">
@@ -229,54 +296,101 @@ export function SupplierDashboardPage() {
       )}
 
       <section className="card stack">
-        <h2>Клиентские заказы магазина</h2>
-        {actionError && <div className="state-box error">{actionError}</div>}
-        {clientOrders.isLoading && <div className="state-box">Загрузка…</div>}
-        {clientOrders.data && clientOrders.data.items.length === 0 && (
-          <div className="state-box">Заказов из магазина пока нет</div>
+        <h2>B2B-заказы салонов</h2>
+        {b2bOrders.isLoading && <div className="state-box">Загрузка…</div>}
+        {b2bOrders.data && b2bOrders.data.items.length === 0 && (
+          <div className="state-box">Заказов от салонов пока нет</div>
         )}
         <div className="list">
-          {clientOrders.data?.items.map((o) => {
-            const next = nextStatus[o.status]
+          {b2bOrders.data?.items.map((o) => {
+            const next = nextB2BStatus[o.status]
             return (
-              <article key={o.id} className="list-item">
+              <article key={o.id} className="list-item stack-sm">
                 <div className="row between">
                   <strong>{formatMoney(o.total_minor)}</strong>
-                  <span className={`badge ${statusBadgeClass(o.status)}`}>{clientOrderLabel(o.status)}</span>
+                  <span className={`badge ${statusBadgeClass(o.status)}`}>{statusLabel(o.status)}</span>
                 </div>
                 <p className="muted">{new Date(o.created_at).toLocaleString('ru-RU')}</p>
-                <div className="row">
-                  {next && (
-                    <button
-                      className="btn btn-primary btn-compact"
-                      type="button"
-                      disabled={transition.isPending}
-                      onClick={() =>
-                        transition.mutate({
-                          id: o.id,
-                          status: next,
-                          assignMe: next === 'in_delivery',
-                        })
-                      }
-                    >
-                      → {clientOrderLabel(next)}
-                      {next === 'in_delivery' ? ' (назначить меня)' : ''}
-                    </button>
-                  )}
-                  {(o.status === 'submitted' || o.status === 'confirmed') && (
-                    <button
-                      className="btn btn-secondary btn-compact"
-                      type="button"
-                      disabled={transition.isPending}
-                      onClick={() => transition.mutate({ id: o.id, status: 'cancelled' })}
-                    >
-                      Отменить
-                    </button>
-                  )}
-                </div>
+                {o.estimated_delivery_at && (
+                  <p>Доставка: {new Date(o.estimated_delivery_at).toLocaleString('ru-RU')}</p>
+                )}
+                {o.comment && <p>{o.comment}</p>}
+                {next && (
+                  <div className="stack-sm">
+                    {(next === 'in_transit' || next === 'confirmed') && (
+                      <div className="field">
+                        <label>Ожидаемая доставка</label>
+                        <input
+                          type="datetime-local"
+                          value={deliveryDraft[o.id] ?? ''}
+                          onChange={(e) => setDeliveryDraft((prev) => ({ ...prev, [o.id]: e.target.value }))}
+                        />
+                      </div>
+                    )}
+                    <div className="row">
+                      <button
+                        className="btn btn-primary btn-compact"
+                        type="button"
+                        disabled={transition.isPending}
+                        onClick={() =>
+                          transition.mutate({
+                            id: o.id,
+                            status: next,
+                            estimated_delivery_at: deliveryDraft[o.id] || undefined,
+                          })
+                        }
+                      >
+                        → {statusLabel(next)}
+                      </button>
+                      {(o.status === 'new' || o.status === 'confirmed') && (
+                        <button
+                          className="btn btn-secondary btn-compact"
+                          type="button"
+                          disabled={transition.isPending}
+                          onClick={() => transition.mutate({ id: o.id, status: 'cancelled' })}
+                        >
+                          Отменить
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </article>
             )
           })}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Товары</h2>
+        <form className="stack" onSubmit={productForm.handleSubmit((v) => createProduct.mutate(v))}>
+          <div className="field"><label>Название</label><input {...productForm.register('name')} /></div>
+          <div className="field"><label>Бренд</label><input {...productForm.register('brand')} /></div>
+          <div className="field"><label>Артикул</label><input {...productForm.register('sku')} /></div>
+          <div className="field"><label>Ед. изм.</label><input {...productForm.register('unit')} /></div>
+          <div className="field"><label>Объём</label><input {...productForm.register('volume_label')} placeholder="100 мл" /></div>
+          <div className="field"><label>Цена, ₽</label><input type="number" {...productForm.register('price_rubles')} /></div>
+          <div className="field"><label>Мин. остаток</label><input type="number" {...productForm.register('min_stock')} /></div>
+          <button className="btn btn-primary btn-block" type="submit" disabled={createProduct.isPending}>
+            Добавить товар
+          </button>
+        </form>
+        {products.isLoading && <div className="state-box">Загрузка…</div>}
+        {products.data && products.data.items.length === 0 && <div className="state-box">Товаров пока нет</div>}
+        <div className="list">
+          {products.data?.items.map((p) => (
+            <article key={p.id} className="list-item">
+              <div className="row between">
+                <strong>{p.brand} {p.name}</strong>
+                <span>{formatMoney(p.price_minor)}</span>
+              </div>
+              <p className="muted">
+                {p.sku ? `${p.sku} · ` : ''}
+                {p.volume_label || p.unit}
+                {p.published ? '' : ' · черновик'}
+              </p>
+            </article>
+          ))}
         </div>
       </section>
     </main>

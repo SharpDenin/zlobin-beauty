@@ -57,7 +57,7 @@ func main() {
 	handler := httpx.WithRequestID(
 		httpx.SecurityHeaders(
 			httpx.CORS(cfg.CORSOrigins)(
-				httpx.MaxBytes(1<<20)(
+				httpx.MaxBytes(1 << 20)(
 					httpx.AccessLog(log)(mux),
 				),
 			),

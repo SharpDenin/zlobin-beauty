@@ -68,3 +68,16 @@ type PortfolioItem struct {
 	SortOrder int
 	CreatedAt time.Time
 }
+
+type KnowledgeArticle struct {
+	ID           uuid.UUID
+	Title        string
+	Category     string
+	Content      string
+	AuthorUserID uuid.UUID
+	AuthorOrgID  *uuid.UUID
+	AuthorName   string
+	Published    bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}

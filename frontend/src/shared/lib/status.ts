@@ -7,10 +7,14 @@ const map: Record<string, string> = {
   cancelled_by_master: 'Отменена мастером',
   cancelled_by_salon: 'Отменена салоном',
   no_show: 'Клиент не пришёл',
+  new: 'Новый',
   submitted: 'Оформлен',
   picking: 'Собирается',
+  in_transit: 'В пути',
   in_delivery: 'В доставке',
   delivered: 'Доставлен',
+  accepted_partial: 'Принят частично',
+  accepted_full: 'Принят полностью',
   cancelled: 'Отменён',
 }
 
@@ -32,9 +36,17 @@ export function clientOrderLabel(status: string) {
 }
 
 export function statusBadgeClass(status: string) {
-  if (status === 'confirmed' || status === 'delivered') return 'badge-confirmed'
-  if (status === 'pending_confirmation' || status === 'submitted') return 'badge-pending'
-  if (status === 'in_progress' || status === 'picking' || status === 'in_delivery') return 'badge-progress'
+  if (status === 'confirmed' || status === 'delivered' || status === 'accepted_full') return 'badge-confirmed'
+  if (status === 'pending_confirmation' || status === 'submitted' || status === 'new') return 'badge-pending'
+  if (
+    status === 'in_progress'
+    || status === 'picking'
+    || status === 'in_delivery'
+    || status === 'in_transit'
+    || status === 'accepted_partial'
+  ) {
+    return 'badge-progress'
+  }
   if (status === 'completed') return 'badge-done'
   if (status.startsWith('cancelled') || status === 'no_show' || status === 'cancelled') return 'badge-cancelled'
   return 'badge-default'

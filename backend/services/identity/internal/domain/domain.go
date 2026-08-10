@@ -10,6 +10,7 @@ const (
 	RoleSystemAdmin = "system_admin"
 	RoleClient      = "client"
 	RoleMaster      = "master"
+	RoleSupplier    = "supplier"
 	RoleSalonOwner  = "salon_owner"
 )
 

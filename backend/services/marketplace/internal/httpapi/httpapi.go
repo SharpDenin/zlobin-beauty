@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
@@ -24,24 +25,55 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/masters", a.search)
 	mux.HandleFunc("GET /v1/masters/{id}", a.getMaster)
-	mux.HandleFunc("GET /v1/masters/by-user/{userID}", a.getMasterByUser)
 	mux.HandleFunc("GET /v1/services/popular", a.popularServices)
 	mux.Handle("GET /v1/me/master", auth(http.HandlerFunc(a.myMaster)))
 	mux.Handle("GET /v1/me/master/readiness", auth(http.HandlerFunc(a.readiness)))
 	mux.Handle("PUT /v1/me/master", auth(http.HandlerFunc(a.upsertMaster)))
 	mux.Handle("POST /v1/services", auth(http.HandlerFunc(a.createService)))
+	mux.Handle("PATCH /v1/services/{id}", auth(http.HandlerFunc(a.updateService)))
 	mux.HandleFunc("GET /v1/services/{id}", a.getService)
 	mux.HandleFunc("GET /v1/service-categories", a.listServiceCategories)
 	mux.Handle("POST /v1/service-categories", auth(http.HandlerFunc(a.createServiceCategory)))
 	mux.Handle("PUT /v1/service-categories/{id}", auth(http.HandlerFunc(a.updateServiceCategory)))
 	mux.Handle("DELETE /v1/service-categories/{id}", auth(http.HandlerFunc(a.deleteServiceCategory)))
+	mux.HandleFunc("GET /v1/knowledge", a.listKnowledge)
+	mux.HandleFunc("GET /v1/knowledge/{id}", a.getKnowledge)
+	mux.Handle("POST /v1/knowledge", auth(http.HandlerFunc(a.createKnowledge)))
+	mux.Handle("PUT /v1/knowledge/{id}", auth(http.HandlerFunc(a.updateKnowledge)))
 	a.registerPortfolioRoutes(mux, auth)
 }
 
 func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	city := r.URL.Query().Get("city")
 	q := r.URL.Query().Get("q")
-	items, err := a.svc.Search(r.Context(), city, q)
+	serviceQ := r.URL.Query().Get("service")
+	var priceMin, priceMax *int64
+	if v := strings.TrimSpace(r.URL.Query().Get("price_min")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid price_min"))
+			return
+		}
+		priceMin = &n
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("price_max")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid price_max"))
+			return
+		}
+		priceMax = &n
+	}
+	var availableOn *time.Time
+	if v := strings.TrimSpace(r.URL.Query().Get("available_on")); v != "" {
+		day, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid available_on (YYYY-MM-DD)"))
+			return
+		}
+		availableOn = &day
+	}
+	items, err := a.svc.Search(r.Context(), city, q, serviceQ, priceMin, priceMax, availableOn)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -61,8 +93,18 @@ func (a *API) getMaster(w http.ResponseWriter, r *http.Request) {
 	}
 	m, services, err := a.svc.GetMaster(r.Context(), id)
 	if err != nil {
-		httpx.WriteError(w, r, a.log, err)
-		return
+		// Allow resolving by user_id for deep links / booking helpers.
+		m2, err2 := a.svc.GetMasterByUserID(r.Context(), id)
+		if err2 != nil {
+			httpx.WriteError(w, r, a.log, err)
+			return
+		}
+		m3, services2, err3 := a.svc.GetMaster(r.Context(), m2.ID)
+		if err3 != nil {
+			httpx.WriteError(w, r, a.log, err3)
+			return
+		}
+		m, services = m3, services2
 	}
 	svcOut := make([]map[string]any, 0, len(services))
 	for _, s := range services {
@@ -212,6 +254,35 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, serviceDTO(*item))
 }
 
+func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Name            *string `json:"name"`
+		Category        *string `json:"category"`
+		DurationMinutes *int    `json:"duration_minutes"`
+		PriceMinor      *int64  `json:"price_minor"`
+		Published       *bool   `json:"published"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	item, err := a.svc.UpdateService(r.Context(), service.UpdateServiceInput{
+		ActorUserID: claims.UserID, ServiceID: id, Name: req.Name, Category: req.Category,
+		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, Published: req.Published,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, serviceDTO(*item))
+}
+
 func (a *API) getService(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -224,6 +295,126 @@ func (a *API) getService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, serviceDTO(*item))
+}
+
+func knowledgeDTO(a domain.KnowledgeArticle) map[string]any {
+	var orgID any
+	if a.AuthorOrgID != nil {
+		orgID = a.AuthorOrgID.String()
+	}
+	return map[string]any{
+		"id": a.ID.String(), "title": a.Title, "category": a.Category, "content": a.Content,
+		"author_user_id": a.AuthorUserID.String(), "author_org_id": orgID, "author_name": a.AuthorName,
+		"published": a.Published, "created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
+	}
+}
+
+func (a *API) listKnowledge(w http.ResponseWriter, r *http.Request) {
+	items, err := a.svc.ListKnowledge(r.Context(), r.URL.Query().Get("category"), false)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, knowledgeDTO(item))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) getKnowledge(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := a.svc.GetKnowledge(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, knowledgeDTO(*item))
+}
+
+func (a *API) createKnowledge(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Title      string  `json:"title"`
+		Category   string  `json:"category"`
+		Content    string  `json:"content"`
+		AuthorName string  `json:"author_name"`
+		OrgID      *string `json:"organization_id"`
+		Published  *bool   `json:"published"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	published := true
+	if req.Published != nil {
+		published = *req.Published
+	}
+	var orgID *uuid.UUID
+	if req.OrgID != nil && *req.OrgID != "" {
+		parsed, err := uuid.Parse(*req.OrgID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &parsed
+	}
+	item, err := a.svc.CreateKnowledge(r.Context(), service.KnowledgeInput{
+		ActorUserID: claims.UserID, ActorName: req.AuthorName, OrgID: orgID,
+		Title: req.Title, Category: req.Category, Content: req.Content, Published: published,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, knowledgeDTO(*item))
+}
+
+func (a *API) updateKnowledge(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Title      string  `json:"title"`
+		Category   string  `json:"category"`
+		Content    string  `json:"content"`
+		AuthorName string  `json:"author_name"`
+		OrgID      *string `json:"organization_id"`
+		Published  *bool   `json:"published"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	published := true
+	if req.Published != nil {
+		published = *req.Published
+	}
+	var orgID *uuid.UUID
+	if req.OrgID != nil && *req.OrgID != "" {
+		parsed, err := uuid.Parse(*req.OrgID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &parsed
+	}
+	item, err := a.svc.UpdateKnowledge(r.Context(), claims.UserID, id, service.KnowledgeInput{
+		ActorUserID: claims.UserID, ActorName: req.AuthorName, OrgID: orgID,
+		Title: req.Title, Category: req.Category, Content: req.Content, Published: published,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, knowledgeDTO(*item))
 }
 
 func masterDTO(m domain.MasterProfile) map[string]any {
@@ -244,7 +435,7 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
 		"photo_media_id": photoMediaID,
-		"rating_avg": m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
+		"rating_avg":     m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
 	}
 }
 

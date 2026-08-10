@@ -24,8 +24,14 @@ type AuthState = {
   accessToken: string | null
   refreshToken: string | null
   loading: boolean
-  login: (email: string, password: string) => Promise<void>
-  register: (input: { email: string; password: string; display_name: string; as_master?: boolean }) => Promise<void>
+  login: (email: string, password: string) => Promise<User>
+  register: (input: {
+    email: string
+    password: string
+    display_name: string
+    as_master?: boolean
+    as_supplier?: boolean
+  }) => Promise<User>
   logout: () => Promise<void>
   updateUser: (user: User) => void
 }
@@ -49,9 +55,22 @@ export function hasMasterAccess(user: User | null | undefined): boolean {
   return user.roles.some((r) => r === 'master' || r === 'salon_owner' || r === 'system_admin')
 }
 
+export function hasSupplierAccess(user: User | null | undefined): boolean {
+  if (!user) return false
+  return user.roles.some((r) => r === 'supplier' || r === 'system_admin')
+}
+
 export function hasSystemAdmin(user: User | null | undefined): boolean {
   if (!user) return false
   return user.roles.includes('system_admin')
+}
+
+/** Default landing path after login/register by primary role. Master wins over supplier. */
+export function homePathForUser(user: User | null | undefined): string {
+  if (!user) return '/'
+  if (hasMasterAccess(user)) return '/appointments'
+  if (hasSupplierAccess(user)) return '/supplier'
+  return '/'
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -160,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         skipAuthRefresh: true,
       })
       applyAuth(res)
+      return res.user
     },
     async register(input) {
       const res = await apiRequest<AuthResponse>('/v1/auth/register', {
@@ -167,6 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         skipAuthRefresh: true,
       })
       applyAuth(res)
+      return res.user
     },
     async logout() {
       if (refreshToken) {

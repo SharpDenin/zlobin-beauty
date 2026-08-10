@@ -10,7 +10,7 @@ const schema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
   email: z.string().email('Введите корректный email'),
   password: z.string().min(8, 'Минимум 8 символов'),
-  as_master: z.boolean().optional(),
+  role: z.enum(['client', 'master', 'supplier']),
 })
 
 type Form = z.infer<typeof schema>
@@ -21,7 +21,7 @@ export function RegisterPage() {
   const [error, setError] = useState<string | null>(null)
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { as_master: false },
+    defaultValues: { role: 'client' },
   })
 
   return (
@@ -29,14 +29,22 @@ export function RegisterPage() {
       <div className="page page-narrow stack">
         <div className="brand">Zlobin Beauty</div>
         <h1>Регистрация</h1>
-        <p>Создайте аккаунт клиента или мастера.</p>
+        <p>Создайте аккаунт клиента, мастера или поставщика.</p>
         <form
           className="card stack"
           onSubmit={handleSubmit(async (values) => {
             setError(null)
             try {
-              await registerUser(values)
-              navigate(values.as_master ? '/master' : '/')
+              await registerUser({
+                display_name: values.display_name,
+                email: values.email,
+                password: values.password,
+                as_master: values.role === 'master',
+                as_supplier: values.role === 'supplier',
+              })
+              if (values.role === 'master') navigate('/master')
+              else if (values.role === 'supplier') navigate('/supplier')
+              else navigate('/')
             } catch (e) {
               setError(e instanceof ApiError ? e.message : 'Не удалось зарегистрироваться')
             }
@@ -57,10 +65,22 @@ export function RegisterPage() {
             <input id="password" type="password" {...register('password')} />
             {errors.password && <span className="error">{errors.password.message}</span>}
           </div>
-          <label className="row">
-            <input type="checkbox" {...register('as_master')} />
-            <span>Я мастер / владелец салона</span>
-          </label>
+          <fieldset className="stack-sm">
+            <legend>Роль</legend>
+            <label className="row">
+              <input type="radio" value="client" {...register('role')} />
+              <span>Клиент</span>
+            </label>
+            <label className="row">
+              <input type="radio" value="master" {...register('role')} />
+              <span>Мастер</span>
+            </label>
+            <label className="row">
+              <input type="radio" value="supplier" {...register('role')} />
+              <span>Поставщик</span>
+            </label>
+            {errors.role && <span className="error">{errors.role.message}</span>}
+          </fieldset>
           {error && <div className="state-box error">{error}</div>}
           <button className="btn btn-primary btn-block" disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Создаём…' : 'Создать аккаунт'}

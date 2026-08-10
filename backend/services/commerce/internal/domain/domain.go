@@ -135,18 +135,19 @@ type ConsumptionNorm struct {
 }
 
 type SupplierOrder struct {
-	ID            uuid.UUID
-	BuyerOrgID    uuid.UUID
-	SupplierOrgID uuid.UUID
-	LocationID    uuid.UUID
-	Status        string
-	Currency      string
-	TotalMinor    int64
-	Comment       string
-	DesiredAt     *time.Time
-	CreatedBy     uuid.UUID
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                  uuid.UUID
+	BuyerOrgID          uuid.UUID
+	SupplierOrgID       uuid.UUID
+	LocationID          uuid.UUID
+	Status              string
+	Currency            string
+	TotalMinor          int64
+	Comment             string
+	DesiredAt           *time.Time
+	EstimatedDeliveryAt *time.Time
+	CreatedBy           uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type SupplierOrderItem struct {
@@ -213,35 +214,35 @@ type ClientCart struct {
 }
 
 type ClientCartItem struct {
-	CartID    uuid.UUID
-	ProductID uuid.UUID
-	Qty       float64
-	Brand     string
-	Name      string
-	SKU       string
-	Unit      string
-	PriceMinor int64
-	Currency  string
-	Available float64
+	CartID         uuid.UUID
+	ProductID      uuid.UUID
+	Qty            float64
+	Brand          string
+	Name           string
+	SKU            string
+	Unit           string
+	PriceMinor     int64
+	Currency       string
+	Available      float64
 	OrganizationID uuid.UUID
 }
 
 type ClientOrder struct {
-	ID                 uuid.UUID
-	UserID             uuid.UUID
-	SupplierOrgID      uuid.UUID
-	Status             string
-	Currency           string
-	TotalMinor         int64
-	DeliveryAddress    string
-	DeliveryComment    string
-	PaymentMethod      string
-	RepUserID          *uuid.UUID
-	DeliveredAt        *time.Time
-	DeliveryNote       string
+	ID                   uuid.UUID
+	UserID               uuid.UUID
+	SupplierOrgID        uuid.UUID
+	Status               string
+	Currency             string
+	TotalMinor           int64
+	DeliveryAddress      string
+	DeliveryComment      string
+	PaymentMethod        string
+	RepUserID            *uuid.UUID
+	DeliveredAt          *time.Time
+	DeliveryNote         string
 	AmountCollectedMinor int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type ClientOrderItem struct {
@@ -266,16 +267,16 @@ type ClientOrderStatusHistory struct {
 }
 
 type DebtEntry struct {
-	ID             uuid.UUID
-	SupplierOrgID  uuid.UUID
-	ClientUserID   uuid.UUID
-	Kind           string
-	AmountMinor    int64
-	RefType        string
-	RefID          *uuid.UUID
-	Note           string
-	ActorUserID    uuid.UUID
-	CreatedAt      time.Time
+	ID            uuid.UUID
+	SupplierOrgID uuid.UUID
+	ClientUserID  uuid.UUID
+	Kind          string
+	AmountMinor   int64
+	RefType       string
+	RefID         *uuid.UUID
+	Note          string
+	ActorUserID   uuid.UUID
+	CreatedAt     time.Time
 }
 
 type ImportJob struct {

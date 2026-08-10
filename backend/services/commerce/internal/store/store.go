@@ -384,7 +384,7 @@ ORDER BY created_at DESC`, orgID, serviceID)
 
 // --- supplier orders ---
 
-const orderColumns = `id, buyer_org_id, supplier_org_id, location_id, status, currency, total_minor, comment, desired_at, created_by, created_at, updated_at`
+const orderColumns = `id, buyer_org_id, supplier_org_id, location_id, status, currency, total_minor, comment, desired_at, estimated_delivery_at, created_by, created_at, updated_at`
 
 func (s *Store) CreateOrder(ctx context.Context, o domain.SupplierOrder, items []domain.SupplierOrderItem) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -394,9 +394,9 @@ func (s *Store) CreateOrder(ctx context.Context, o domain.SupplierOrder, items [
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
 INSERT INTO supplier_orders(`+orderColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		o.ID, o.BuyerOrgID, o.SupplierOrgID, o.LocationID, o.Status, o.Currency, o.TotalMinor, o.Comment,
-		o.DesiredAt, o.CreatedBy, o.CreatedAt, o.UpdatedAt); err != nil {
+		o.DesiredAt, o.EstimatedDeliveryAt, o.CreatedBy, o.CreatedAt, o.UpdatedAt); err != nil {
 		return nil, nil, err
 	}
 	for i := range items {
@@ -496,9 +496,13 @@ WHERE sl.organization_id=$1 AND sl.kind='supplier'
 	return n, err
 }
 
-func (s *Store) UpdateOrderStatus(ctx context.Context, id uuid.UUID, status string, now time.Time) error {
+func (s *Store) UpdateOrderStatus(ctx context.Context, id uuid.UUID, status string, now time.Time, estimatedDeliveryAt *time.Time) error {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE supplier_orders SET status=$2, updated_at=$3 WHERE id=$1`, id, status, now)
+UPDATE supplier_orders
+SET status=$2,
+    estimated_delivery_at=COALESCE($4, estimated_delivery_at),
+    updated_at=$3
+WHERE id=$1`, id, status, now, estimatedDeliveryAt)
 	if err != nil {
 		return err
 	}
@@ -541,7 +545,7 @@ func (s *Store) AcceptOrder(ctx context.Context, orderID, actorUserID uuid.UUID,
 	var order domain.SupplierOrder
 	if err := tx.QueryRow(ctx, `SELECT `+orderColumns+` FROM supplier_orders WHERE id=$1 FOR UPDATE`, orderID).Scan(
 		&order.ID, &order.BuyerOrgID, &order.SupplierOrgID, &order.LocationID, &order.Status, &order.Currency,
-		&order.TotalMinor, &order.Comment, &order.DesiredAt, &order.CreatedBy, &order.CreatedAt, &order.UpdatedAt); err != nil {
+		&order.TotalMinor, &order.Comment, &order.DesiredAt, &order.EstimatedDeliveryAt, &order.CreatedBy, &order.CreatedAt, &order.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, apperr.NotFound("order not found")
 		}
@@ -624,7 +628,7 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 func scanOrder(row pgx.Row) (*domain.SupplierOrder, error) {
 	var o domain.SupplierOrder
 	if err := row.Scan(&o.ID, &o.BuyerOrgID, &o.SupplierOrgID, &o.LocationID, &o.Status, &o.Currency,
-		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.EstimatedDeliveryAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -636,7 +640,7 @@ func scanOrder(row pgx.Row) (*domain.SupplierOrder, error) {
 func scanOrderRow(rows pgx.Rows) (*domain.SupplierOrder, error) {
 	var o domain.SupplierOrder
 	if err := rows.Scan(&o.ID, &o.BuyerOrgID, &o.SupplierOrgID, &o.LocationID, &o.Status, &o.Currency,
-		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.EstimatedDeliveryAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &o, nil

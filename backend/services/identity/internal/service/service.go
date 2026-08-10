@@ -31,6 +31,7 @@ type RegisterInput struct {
 	Password    string
 	DisplayName string
 	AsMaster    bool
+	AsSupplier  bool
 }
 
 type AuthResult struct {
@@ -70,10 +71,16 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	if in.AsMaster && in.AsSupplier {
+		return nil, apperr.Validation("choose either as_master or as_supplier")
+	}
 	now := s.now().UTC()
 	roles := []string{domain.RoleClient}
 	if in.AsMaster {
 		roles = append(roles, domain.RoleMaster)
+	}
+	if in.AsSupplier {
+		roles = append(roles, domain.RoleSupplier)
 	}
 	var emailPtr, phonePtr *string
 	if email != "" {

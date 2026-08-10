@@ -198,8 +198,8 @@ func (s *Service) PopularServices(ctx context.Context) ([]domain.ServiceItem, er
 	return out, nil
 }
 
-func (s *Service) Search(ctx context.Context, city, q string) ([]domain.MasterProfile, error) {
-	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), 50)
+func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time) ([]domain.MasterProfile, error) {
+	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), strings.TrimSpace(service), priceMin, priceMax, 50)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -212,11 +212,47 @@ func (s *Service) Search(ctx context.Context, city, q string) ([]domain.MasterPr
 		if err != nil {
 			return nil, err
 		}
-		if visible {
-			out = append(out, m)
+		if !visible {
+			continue
 		}
+		if availableOn != nil && s.bookingURL != "" {
+			ok, err := s.hasAnySlotOn(ctx, m.UserID, *availableOn)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		out = append(out, m)
 	}
 	return out, nil
+}
+
+func (s *Service) hasAnySlotOn(ctx context.Context, masterUserID uuid.UUID, day time.Time) (bool, error) {
+	day = day.UTC()
+	u := fmt.Sprintf("%s/v1/masters/%s/slots?date=%s&duration_minutes=60",
+		s.bookingURL, masterUserID.String(), day.Format("2006-01-02"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return false, nil
+	}
+	var parsed struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false, nil
+	}
+	return len(parsed.Items) > 0, nil
 }
 
 func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterProfile, []domain.ServiceItem, error) {
@@ -263,7 +299,7 @@ func (s *Service) GetMyMaster(ctx context.Context, userID uuid.UUID) (*domain.Ma
 	if m == nil {
 		return nil, nil, apperr.NotFound("master profile not found")
 	}
-	services, err := s.store.ListMasterServices(ctx, m.ID)
+	services, err := s.store.ListMasterServicesAll(ctx, m.ID)
 	if err != nil {
 		return nil, nil, apperr.Internal(err)
 	}
@@ -323,6 +359,66 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 		}
 	}
 	return &item, nil
+}
+
+type UpdateServiceInput struct {
+	ActorUserID     uuid.UUID
+	ServiceID       uuid.UUID
+	Name            *string
+	Category        *string
+	DurationMinutes *int
+	PriceMinor      *int64
+	Published       *bool
+}
+
+func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*domain.ServiceItem, error) {
+	item, err := s.store.GetService(ctx, in.ServiceID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if item == nil {
+		return nil, apperr.NotFound("service not found")
+	}
+	if err := s.requireMembership(ctx, item.OrganizationID, in.ActorUserID, "owner", "admin", "master"); err != nil {
+		return nil, err
+	}
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			return nil, apperr.Validation("name is required")
+		}
+		item.Name = name
+	}
+	if in.Category != nil {
+		category := strings.TrimSpace(*in.Category)
+		if category == "" {
+			return nil, apperr.Validation("category is required")
+		}
+		item.Category = category
+	}
+	if in.DurationMinutes != nil {
+		if *in.DurationMinutes <= 0 {
+			return nil, apperr.Validation("duration_minutes must be positive")
+		}
+		item.DurationMinutes = *in.DurationMinutes
+	}
+	if in.PriceMinor != nil {
+		if *in.PriceMinor < 0 {
+			return nil, apperr.Validation("price_minor must be >= 0")
+		}
+		item.PriceMinor = *in.PriceMinor
+	}
+	if in.Published != nil {
+		item.Published = *in.Published
+	}
+	item.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateService(ctx, *item); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	return item, nil
 }
 
 func (s *Service) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceItem, error) {
@@ -489,4 +585,90 @@ func (s *Service) DeleteServiceCategory(ctx context.Context, claims *auth.Claims
 		return apperr.Internal(err)
 	}
 	return nil
+}
+
+type KnowledgeInput struct {
+	ActorUserID uuid.UUID
+	ActorName   string
+	OrgID       *uuid.UUID
+	Title       string
+	Category    string
+	Content     string
+	Published   bool
+}
+
+func (s *Service) ListKnowledge(ctx context.Context, category string, includeUnpublished bool) ([]domain.KnowledgeArticle, error) {
+	items, err := s.store.ListKnowledgeArticles(ctx, strings.TrimSpace(category), !includeUnpublished, 100)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.KnowledgeArticle{}
+	}
+	return items, nil
+}
+
+func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID) (*domain.KnowledgeArticle, error) {
+	a, err := s.store.GetKnowledgeArticle(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if a == nil || !a.Published {
+		return nil, apperr.NotFound("article not found")
+	}
+	return a, nil
+}
+
+func (s *Service) CreateKnowledge(ctx context.Context, in KnowledgeInput) (*domain.KnowledgeArticle, error) {
+	title := strings.TrimSpace(in.Title)
+	content := strings.TrimSpace(in.Content)
+	if title == "" || content == "" {
+		return nil, apperr.Validation("title and content are required")
+	}
+	now := s.now().UTC()
+	a := domain.KnowledgeArticle{
+		ID: ids.New(), Title: title, Category: strings.TrimSpace(in.Category), Content: content,
+		AuthorUserID: in.ActorUserID, AuthorOrgID: in.OrgID, AuthorName: strings.TrimSpace(in.ActorName),
+		Published: in.Published, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.store.CreateKnowledgeArticle(ctx, a); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &a, nil
+}
+
+func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.UUID, in KnowledgeInput) (*domain.KnowledgeArticle, error) {
+	a, err := s.store.GetKnowledgeArticle(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if a == nil {
+		return nil, apperr.NotFound("article not found")
+	}
+	if a.AuthorUserID != actor {
+		return nil, apperr.Forbidden("only author can update article")
+	}
+	title := strings.TrimSpace(in.Title)
+	content := strings.TrimSpace(in.Content)
+	if title == "" || content == "" {
+		return nil, apperr.Validation("title and content are required")
+	}
+	a.Title = title
+	a.Category = strings.TrimSpace(in.Category)
+	a.Content = content
+	a.Published = in.Published
+	if in.OrgID != nil {
+		a.AuthorOrgID = in.OrgID
+	}
+	if name := strings.TrimSpace(in.ActorName); name != "" {
+		a.AuthorName = name
+	}
+	a.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateKnowledgeArticle(ctx, *a); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	return a, nil
 }

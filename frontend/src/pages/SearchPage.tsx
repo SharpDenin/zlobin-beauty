@@ -14,22 +14,57 @@ type Master = {
   rating_count: number
 }
 
+type Filters = {
+  city: string
+  q: string
+  service: string
+  price_min: string
+  price_max: string
+  available_on: string
+}
+
+function buildMastersUrl(f: Filters): string {
+  const params = new URLSearchParams()
+  params.set('city', f.city)
+  if (f.q) params.set('q', f.q)
+  if (f.service) params.set('service', f.service)
+  const minRub = f.price_min.trim() === '' ? null : Number(f.price_min)
+  const maxRub = f.price_max.trim() === '' ? null : Number(f.price_max)
+  if (minRub !== null && Number.isFinite(minRub)) params.set('price_min', String(Math.round(minRub * 100)))
+  if (maxRub !== null && Number.isFinite(maxRub)) params.set('price_max', String(Math.round(maxRub * 100)))
+  if (f.available_on) params.set('available_on', f.available_on)
+  return `/v1/masters?${params.toString()}`
+}
+
 export function SearchPage() {
   const { user } = useAuth()
   const defaultCity = user?.city?.trim() || 'Москва'
   const [city, setCity] = useState(defaultCity)
   const [q, setQ] = useState('')
-  const [submitted, setSubmitted] = useState({ city: defaultCity, q: '' })
+  const [service, setService] = useState('')
+  const [priceMin, setPriceMin] = useState('')
+  const [priceMax, setPriceMax] = useState('')
+  const [availableOn, setAvailableOn] = useState('')
+  const [submitted, setSubmitted] = useState<Filters>({
+    city: defaultCity,
+    q: '',
+    service: '',
+    price_min: '',
+    price_max: '',
+    available_on: '',
+  })
 
   useEffect(() => {
     const next = user?.city?.trim() || 'Москва'
     setCity(next)
-    setSubmitted((prev) => (prev.q ? prev : { city: next, q: '' }))
+    setSubmitted((prev) => (prev.q || prev.service || prev.price_min || prev.price_max || prev.available_on
+      ? prev
+      : { ...prev, city: next }))
   }, [user?.city])
 
   const query = useQuery({
     queryKey: ['masters', submitted],
-    queryFn: () => apiRequest<{ items: Master[] }>(`/v1/masters?city=${encodeURIComponent(submitted.city)}&q=${encodeURIComponent(submitted.q)}`),
+    queryFn: () => apiRequest<{ items: Master[] }>(buildMastersUrl(submitted)),
   })
 
   return (
@@ -39,7 +74,14 @@ export function SearchPage() {
         className="card search-form"
         onSubmit={(e) => {
           e.preventDefault()
-          setSubmitted({ city: city.trim() || defaultCity, q: q.trim() })
+          setSubmitted({
+            city: city.trim() || defaultCity,
+            q: q.trim(),
+            service: service.trim(),
+            price_min: priceMin.trim(),
+            price_max: priceMax.trim(),
+            available_on: availableOn,
+          })
         }}
       >
         <div className="field">
@@ -49,6 +91,22 @@ export function SearchPage() {
         <div className="field">
           <label htmlFor="q">Имя или специализация</label>
           <input id="q" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="service">Услуга</label>
+          <input id="service" value={service} onChange={(e) => setService(e.target.value)} placeholder="Стрижка" />
+        </div>
+        <div className="field">
+          <label htmlFor="price_min">Цена от, ₽</label>
+          <input id="price_min" type="number" min={0} value={priceMin} onChange={(e) => setPriceMin(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="price_max">Цена до, ₽</label>
+          <input id="price_max" type="number" min={0} value={priceMax} onChange={(e) => setPriceMax(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="available_on">Свободен на дату</label>
+          <input id="available_on" type="date" value={availableOn} onChange={(e) => setAvailableOn(e.target.value)} />
         </div>
         <button className="btn btn-primary" type="submit">Искать</button>
       </form>
@@ -60,7 +118,7 @@ export function SearchPage() {
       )}
       <div className="list">
         {query.data?.items.map((m) => (
-          <Link key={m.id} to={`/masters/${m.user_id}`} className="list-item">
+          <Link key={m.id} to={`/masters/${m.id}`} className="list-item">
             <div className="row between">
               <strong>{m.display_name}</strong>
               <span className="badge badge-default">{m.city}</span>

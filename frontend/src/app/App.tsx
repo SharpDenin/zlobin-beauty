@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider, useAuth } from '@/features/auth/AuthProvider'
-import { AppShell, RequireAdmin, RequireAuth, RequireMaster } from '@/app/layout'
+import { AuthProvider, homePathForUser, useAuth } from '@/features/auth/AuthProvider'
+import { AppShell, RequireAdmin, RequireAuth, RequireMaster, RequireSupplier } from '@/app/layout'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { HomePage } from '@/pages/HomePage'
@@ -20,6 +20,10 @@ import { SalonReportsPage } from '@/pages/SalonReportsPage'
 import { ShopPage } from '@/pages/ShopPage'
 import { RepPage } from '@/pages/RepPage'
 import { AdminCatalogsPage } from '@/pages/AdminCatalogsPage'
+import { CalendarPage } from '@/pages/CalendarPage'
+import { CosmeticsPage } from '@/pages/CosmeticsPage'
+import { KnowledgeListPage } from '@/pages/KnowledgeListPage'
+import { KnowledgeArticlePage } from '@/pages/KnowledgeArticlePage'
 import type { ReactNode } from 'react'
 
 const queryClient = new QueryClient({
@@ -31,7 +35,7 @@ const queryClient = new QueryClient({
 function PublicOnly({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return <div className="state-box page">Загрузка…</div>
-  if (user) return <Navigate to="/" replace />
+  if (user) return <Navigate to={homePathForUser(user)} replace />
   return children
 }
 
@@ -40,7 +44,7 @@ function LoginRoute() {
   const from = (location.state as { from?: string } | null)?.from
   return (
     <PublicOnly>
-      <LoginPage redirectTo={from && from !== '/login' ? from : '/'} />
+      <LoginPage redirectTo={from && from !== '/login' ? from : undefined} />
     </PublicOnly>
   )
 }
@@ -66,15 +70,21 @@ export function App() {
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/rep" element={<RepPage />} />
+                <Route path="/knowledge" element={<KnowledgeListPage />} />
+                <Route path="/knowledge/:id" element={<KnowledgeArticlePage />} />
                 <Route element={<RequireAdmin />}>
                   <Route path="/admin/catalogs" element={<AdminCatalogsPage />} />
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
                   <Route path="/clients" element={<ClientsPage />} />
+                  <Route path="/calendar" element={<CalendarPage />} />
+                  <Route path="/cosmetics" element={<CosmeticsPage />} />
                   <Route path="/warehouse" element={<WarehousePage />} />
-                  <Route path="/supplier" element={<SupplierDashboardPage />} />
                   <Route path="/reports" element={<SalonReportsPage />} />
+                </Route>
+                <Route element={<RequireSupplier />}>
+                  <Route path="/supplier" element={<SupplierDashboardPage />} />
                 </Route>
               </Route>
             </Route>

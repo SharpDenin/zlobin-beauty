@@ -20,15 +20,15 @@ import (
 )
 
 type Service struct {
-	store              *store.Store
-	marketplaceURL     string
-	organizationsURL   string
-	clientsURL         string
-	communicationsURL  string
+	store             *store.Store
+	marketplaceURL    string
+	organizationsURL  string
+	clientsURL        string
+	communicationsURL string
 	commerceURL       string
-	internalToken      string
-	httpClient         *http.Client
-	now                func() time.Time
+	internalToken     string
+	httpClient        *http.Client
+	now               func() time.Time
 }
 
 func New(st *store.Store, marketplaceURL string) *Service {
@@ -141,12 +141,8 @@ func (s *Service) timezoneForBranch(ctx context.Context, branchID uuid.UUID) str
 	return defaultTimezone
 }
 
-type masterByUserPayload struct {
-	BranchID *string `json:"branch_id"`
-}
-
 func (s *Service) fetchMasterBranchID(ctx context.Context, masterUserID uuid.UUID) (uuid.UUID, bool) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/masters/by-user/"+masterUserID.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/masters/"+masterUserID.String(), nil)
 	if err != nil {
 		return uuid.Nil, false
 	}
@@ -159,11 +155,23 @@ func (s *Service) fetchMasterBranchID(ctx context.Context, masterUserID uuid.UUI
 		return uuid.Nil, false
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	var payload masterByUserPayload
-	if err := json.Unmarshal(body, &payload); err != nil || payload.BranchID == nil {
+	var payload struct {
+		Master struct {
+			BranchID *string `json:"branch_id"`
+		} `json:"master"`
+		BranchID *string `json:"branch_id"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return uuid.Nil, false
 	}
-	id, err := uuid.Parse(*payload.BranchID)
+	raw := payload.Master.BranchID
+	if raw == nil {
+		raw = payload.BranchID
+	}
+	if raw == nil {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(*raw)
 	if err != nil {
 		return uuid.Nil, false
 	}
@@ -324,11 +332,19 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		return nil, apperr.Conflict("selected time is not available")
 	}
 	now := s.now().UTC()
+	status := domain.StatusPendingConfirmation
+	auto, err := s.store.GetClientAutoConfirm(ctx, masterUserID, in.ClientUserID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if auto {
+		status = domain.StatusConfirmed
+	}
 	a := domain.Appointment{
 		ID: ids.New(), OrganizationID: orgID, BranchID: branchID, MasterUserID: masterUserID,
 		ClientUserID: in.ClientUserID, ServiceID: in.ServiceID, ServiceName: svcName,
 		DurationMinutes: duration, PriceMinor: price, Currency: currency,
-		Status: domain.StatusPendingConfirmation, StartsAt: in.StartsAt.UTC(), EndsAt: ends,
+		Status: status, StartsAt: in.StartsAt.UTC(), EndsAt: ends,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateAppointment(ctx, a); err != nil {
@@ -337,9 +353,32 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		}
 		return nil, apperr.Internal(err)
 	}
-	s.notify(ctx, a.MasterUserID, "appointment.created", "Новая запись", a.ServiceName, a.ID)
-	s.notify(ctx, a.ClientUserID, "appointment.created", "Запись создана", "Ожидает подтверждения мастера", a.ID)
+	if status == domain.StatusConfirmed {
+		s.notify(ctx, a.MasterUserID, "appointment.created", "Новая запись", a.ServiceName+" (автоподтверждение)", a.ID)
+		s.notify(ctx, a.ClientUserID, "appointment.created", "Запись подтверждена", "Мастер разрешил автоподтверждение", a.ID)
+	} else {
+		s.notify(ctx, a.MasterUserID, "appointment.created", "Новая запись", a.ServiceName, a.ID)
+		s.notify(ctx, a.ClientUserID, "appointment.created", "Запись создана", "Ожидает подтверждения мастера", a.ID)
+	}
 	return &a, nil
+}
+
+func (s *Service) GetClientAutoConfirm(ctx context.Context, masterUserID, clientUserID uuid.UUID) (bool, error) {
+	auto, err := s.store.GetClientAutoConfirm(ctx, masterUserID, clientUserID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return auto, nil
+}
+
+func (s *Service) SetClientAutoConfirm(ctx context.Context, masterUserID, clientUserID uuid.UUID, autoConfirm bool) error {
+	if masterUserID == clientUserID {
+		return apperr.Validation("cannot set auto-confirm for yourself")
+	}
+	if err := s.store.SetClientAutoConfirm(ctx, masterUserID, clientUserID, autoConfirm, s.now().UTC()); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
 }
 
 func (s *Service) Confirm(ctx context.Context, appointmentID, actorUserID uuid.UUID) (*domain.Appointment, error) {

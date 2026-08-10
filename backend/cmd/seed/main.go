@@ -11,12 +11,14 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	_ "time/tzdata" // embed zoneinfo for Windows hosts without system tz data
 )
 
 const defaultPassword = "Password123!"
 
 func main() {
-	base := strings.TrimRight(envOr("GATEWAY_URL", "http://localhost:8080"), "/")
+	base := strings.TrimRight(envOr("GATEWAY_URL", "http://localhost:8090"), "/")
 	password := envOr("SEED_PASSWORD", defaultPassword)
 	client := &http.Client{Timeout: 30 * time.Second}
 
@@ -26,7 +28,7 @@ func main() {
 	}
 
 	accounts := []accountSpec{
-		{Email: "client1@demo.local", Name: "Клиент Один", Role: "client"},
+		{Email: "client1@demo.local", Name: "Клиент Один", Role: "client", City: "Красноярск"},
 		{Email: "client2@demo.local", Name: "Клиент Два", Role: "client"},
 		{Email: "master1@demo.local", Name: "Мастер Анна", Role: "master"},
 		{Email: "master2@demo.local", Name: "Мастер Иван", Role: "master"},
@@ -41,6 +43,11 @@ func main() {
 		if err != nil {
 			fatal("auth %s: %v", a.Email, err)
 		}
+		if a.City != "" {
+			if err := patchUserCity(client, base, u, a.City); err != nil {
+				log.Printf("warn patch city %s: %v", a.Email, err)
+			}
+		}
 		users[a.Email] = u
 		log.Printf("ok account %s id=%s roles=%v", a.Email, u.ID, u.Roles)
 	}
@@ -54,9 +61,9 @@ func main() {
 	client1 := users["client1@demo.local"]
 
 	m1Org, m1Branch, m1Profile, m1Service, err := seedMaster(client, base, master1, masterSeed{
-		OrgName: "Салон Анны (demo)", BranchName: "Москва центр",
-		City: "Москва", Address: "ул. Тверская, 1", Phone: "+79001112233", Timezone: "Europe/Moscow",
-		Display: "Анна Колористика", Bio: "Мастер-колорист с опытом работы в Москве. Демо-профиль для Zlobin Beauty.",
+		OrgName: "Салон Анны (demo)", BranchName: "Красноярск центр",
+		City: "Красноярск", Address: "ул. Ленина, 50", Phone: "+79001112233", Timezone: "Asia/Krasnoyarsk",
+		Display: "Анна Колористика", Bio: "Мастер-колорист в Красноярске. Демо-профиль для Zlobin Beauty.",
 		Specs: []string{"колористика", "стрижки"}, Experience: 7, Education: "Академия колористики",
 		WorkType: "owner",
 		Services: []serviceSpec{
@@ -68,12 +75,15 @@ func main() {
 	if err != nil {
 		fatal("master1: %v", err)
 	}
-	log.Printf("ok master1 org=%s branch=%s profile=%s service=%s work_type=owner", m1Org, m1Branch, m1Profile, m1Service)
+	log.Printf("ok master1 city=Красноярск tz=Asia/Krasnoyarsk org=%s branch=%s profile=%s service=%s work_type=owner", m1Org, m1Branch, m1Profile, m1Service)
+	if err := seedFixedWindowWorkshop(client, base, master1, m1Org, m1Branch); err != nil {
+		log.Printf("warn fixed_window workshop: %v", err)
+	}
 
 	_, _, _, _, err = seedMaster(client, base, master2, masterSeed{
-		OrgName: "Салон Ивана (demo)", BranchName: "Москва юг",
-		City: "Москва", Address: "ул. Варшавская, 10", Phone: "+79004445566", Timezone: "Europe/Moscow",
-		Display: "Иван Стилист", Bio: "Стилист и мастер укладок. Арендатор кресла в демо-салоне.",
+		OrgName: "Салон Ивана (demo)", BranchName: "Новосибирск юг",
+		City: "Новосибирск", Address: "ул. Красный проспект, 25", Phone: "+79004445566", Timezone: "Asia/Novosibirsk",
+		Display: "Иван Стилист", Bio: "Стилист и мастер укладок в Новосибирске. Демо «другой город» для поиска.",
 		Specs: []string{"стрижки", "укладки"}, Experience: 5, Education: "Школа стиля",
 		WorkType: "renter",
 		Services: []serviceSpec{
@@ -85,7 +95,7 @@ func main() {
 	if err != nil {
 		fatal("master2: %v", err)
 	}
-	log.Printf("ok master2 seeded work_type=renter")
+	log.Printf("ok master2 city=Новосибирск tz=Asia/Novosibirsk work_type=renter")
 
 	_, _, _, _, err = seedMaster(client, base, master3, masterSeed{
 		OrgName: "Салон Ольги (demo)", BranchName: "Москва запад",
@@ -103,12 +113,12 @@ func main() {
 	if err != nil {
 		fatal("master3: %v", err)
 	}
-	log.Printf("ok master3 seeded work_type=employee")
+	log.Printf("ok master3 city=Москва tz=Europe/Moscow work_type=employee")
 
 	_, _, _, _, err = seedMaster(client, base, master4, masterSeed{
-		OrgName: "Кабинет Дмитрия (demo)", BranchName: "Москва север",
-		City: "Москва", Address: "ул. Дмитровская, 7", Phone: "+79001234567", Timezone: "Europe/Moscow",
-		Display: "Дмитрий Бровист", Bio: "Независимый мастер архитектуры бровей и ламинирования ресниц.",
+		OrgName: "Кабинет Дмитрия (demo)", BranchName: "Красноярск север",
+		City: "Красноярск", Address: "ул. Мира, 12", Phone: "+79001234567", Timezone: "Asia/Krasnoyarsk",
+		Display: "Дмитрий Бровист", Bio: "Независимый мастер бровей и ресниц в Красноярске.",
 		Specs: []string{"брови", "ресницы"}, Experience: 6, Education: "Brow School",
 		WorkType: "independent",
 		Services: []serviceSpec{
@@ -120,7 +130,7 @@ func main() {
 	if err != nil {
 		fatal("master4: %v", err)
 	}
-	log.Printf("ok master4 seeded work_type=independent")
+	log.Printf("ok master4 city=Красноярск tz=Asia/Krasnoyarsk work_type=independent")
 
 	sup1Org, products1, err := seedSupplier(client, base, supplier1, supplierSeed{
 		OrgName:      "Поставщик Профи (demo)",
@@ -178,12 +188,13 @@ func main() {
 	log.Printf("seed complete")
 	log.Printf("demo accounts password=%s", password)
 	log.Printf("Open /cosmetics — suppliers appear as cards")
+	log.Printf("search demo: default city Красноярск shows Anna+Dmitry; Новосибирск (Ivan) needs include_other_cities")
 	log.Printf("--- demo accounts ---")
-	log.Printf("client1@demo.local / client2@demo.local          role=client")
-	log.Printf("master1@demo.local                               work_type=owner")
-	log.Printf("master2@demo.local                               work_type=renter")
-	log.Printf("master3@demo.local                               work_type=employee")
-	log.Printf("master4@demo.local                               work_type=independent")
+	log.Printf("client1@demo.local city=Красноярск / client2@demo.local   role=client")
+	log.Printf("master1@demo.local city=Красноярск Asia/Krasnoyarsk      work_type=owner (+ fixed_window МК)")
+	log.Printf("master2@demo.local city=Новосибирск Asia/Novosibirsk     work_type=renter (other city)")
+	log.Printf("master3@demo.local city=Москва Europe/Moscow             work_type=employee")
+	log.Printf("master4@demo.local city=Красноярск Asia/Krasnoyarsk      work_type=independent")
 	log.Printf("supplier1@demo.local org=%s", truncate(sup1Org, 36))
 	log.Printf("supplier2@demo.local org=%s", truncate(sup2Org, 36))
 }
@@ -194,6 +205,7 @@ type accountSpec struct {
 	Email string
 	Name  string
 	Role  string
+	City  string // optional; applied via PATCH /v1/auth/me (register has no city field)
 }
 
 type authUser struct {
@@ -206,6 +218,7 @@ type serviceSpec struct {
 	Name, Category, Description string
 	Duration                    int
 	Price                       int64
+	BookingMode                 string // optional: flexible | fixed_window
 }
 
 type masterSeed struct {
@@ -302,6 +315,19 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 	return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Roles: loginResp.User.Roles}, nil
 }
 
+func patchUserCity(c *http.Client, base string, user authUser, city string) error {
+	status, err := doJSON(c, http.MethodPatch, base+"/v1/auth/me", user.Token, map[string]any{
+		"city": city,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return &apiError{Status: status, Body: "PATCH /v1/auth/me city failed"}
+	}
+	return nil
+}
+
 // --- master / org ---
 
 func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (orgID, branchID, profileID, firstServiceID string, err error) {
@@ -310,9 +336,10 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 		return "", "", "", "", err
 	}
 
-	// Branch readiness requires phone/city/address/timezone.
+	// Branch readiness requires phone/city/address/timezone; pickup_enabled for supplier-order destinations.
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
-		"phone": cfg.Phone, "city": cfg.City, "address_line": cfg.Address, "timezone": cfg.Timezone, "name": cfg.BranchName,
+		"phone": cfg.Phone, "city": cfg.City, "address_line": cfg.Address, "timezone": cfg.Timezone,
+		"name": cfg.BranchName, "pickup_enabled": true,
 	}, nil)
 
 	// Draft profile first (publication needs services + hours).
@@ -351,7 +378,9 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 	}
 
 	pub := true
-	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{"published": pub}, nil)
+	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
+		"published": pub, "pickup_enabled": true,
+	}, nil)
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
 		"published": pub, "description": cfg.Bio,
 	}, nil)
@@ -490,6 +519,9 @@ func ensureServices(c *http.Client, base string, user authUser, orgID string, sp
 		if sp.Description != "" {
 			payload["description"] = sp.Description
 		}
+		if sp.BookingMode != "" {
+			payload["booking_mode"] = sp.BookingMode
+		}
 		status, err := doJSON(c, http.MethodPost, base+"/v1/services", user.Token, payload, &created)
 		if err != nil {
 			return nil, err
@@ -501,6 +533,68 @@ func ensureServices(c *http.Client, base string, user authUser, orgID string, sp
 		ids = append(ids, created.ID)
 	}
 	return ids, nil
+}
+
+// seedFixedWindowWorkshop creates Anna's author workshop + one Krasnoyarsk occurrence (~next week 14:00–18:00).
+func seedFixedWindowWorkshop(c *http.Client, base string, user authUser, orgID, branchID string) error {
+	const workshopName = "Авторский мастер-класс по окрашиванию"
+	ids, err := ensureServices(c, base, user, orgID, []serviceSpec{{
+		Name: workshopName, Category: "обучение",
+		Description: "Групповой мастер-класс по авторским техникам окрашивания. Запись на фиксированное окно.",
+		Duration: 240, Price: 850000, BookingMode: "fixed_window",
+	}})
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 || ids[0] == "" {
+		return fmt.Errorf("workshop service not created")
+	}
+	serviceID := ids[0]
+
+	var existing struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/services/"+serviceID+"/occurrences", user.Token, nil, &existing)
+	if len(existing.Items) > 0 {
+		log.Printf("skip workshop occurrence — already %d for service=%s", len(existing.Items), serviceID)
+		return nil
+	}
+
+	loc, err := time.LoadLocation("Asia/Krasnoyarsk")
+	if err != nil {
+		return fmt.Errorf("load Asia/Krasnoyarsk: %w", err)
+	}
+	now := time.Now().In(loc)
+	day := now.AddDate(0, 0, 7)
+	// Prefer a weekday for demo; skip weekend if next week lands on Sat/Sun.
+	for day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+		day = day.AddDate(0, 0, 1)
+	}
+	startsLocal := time.Date(day.Year(), day.Month(), day.Day(), 14, 0, 0, 0, loc)
+	endsLocal := startsLocal.Add(4 * time.Hour)
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	status, err := doJSON(c, http.MethodPost, base+"/v1/services/"+serviceID+"/occurrences", user.Token, map[string]any{
+		"branch_id":  branchID,
+		"starts_at":  startsLocal.UTC().Format(time.RFC3339),
+		"ends_at":    endsLocal.UTC().Format(time.RFC3339),
+		"timezone":   "Asia/Krasnoyarsk",
+		"capacity":   1,
+		"title":      workshopName,
+		"note":       "Демо fixed_window occurrence (seed)",
+	}, &created)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return &apiError{Status: status, Body: "create workshop occurrence failed"}
+	}
+	log.Printf("ok fixed_window workshop service=%s occurrence=%s starts_local=%s", serviceID, created.ID, startsLocal.Format(time.RFC3339))
+	return nil
 }
 
 // --- supplier / commerce ---
@@ -668,32 +762,44 @@ func ensureLocation(c *http.Client, base string, user authUser, orgID, name, kin
 // --- knowledge ---
 
 func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID string) error {
+	docJSON := `{"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Заголовок"}]},{"type":"paragraph","content":[{"type":"text","text":"Текст статьи"}]}]}`
 	articles := []struct {
-		Title, Category, Brand, Content string
+		Title, Category, Brand, Content, ContentFormat string
 	}{
 		{
 			Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
 			Content: "Краткий гид по уровням тона и фону осветления для демо базы знаний Zlobin Beauty.",
+			ContentFormat: "plain",
 		},
 		{
 			Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
 			Content: "Пошаговый протокол реконструкции волос: диагностика, нанесение, время выдержки, финальный уход.",
+			ContentFormat: "plain",
 		},
 		{
 			Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
 			Content: "Разница между 3%, 6% и 9% окислителями и рекомендации по совместимости с красками.",
+			ContentFormat: "plain",
 		},
 		{
 			Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
 			Content: "Практика поэтапного осветления, контроль фонов и защита структуры волос.",
+			ContentFormat: "plain",
 		},
 		{
 			Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
 			Content: "Какие продукты рекомендовать клиенту после окрашивания и как объяснить схему применения.",
+			ContentFormat: "plain",
 		},
 		{
 			Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
 			Content: "Подбор средств фиксации под тип волос и желаемый результат укладки.",
+			ContentFormat: "plain",
+		},
+		{
+			Title: "Rich-док: формула окрашивания", Category: "Колористика", Brand: "L'Oreal",
+			Content: docJSON,
+			ContentFormat: "doc_json",
 		},
 	}
 
@@ -716,10 +822,14 @@ func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID
 			log.Printf("skip knowledge %q", a.Title)
 			continue
 		}
-		status, err := doJSON(c, http.MethodPost, base+"/v1/knowledge", user.Token, map[string]any{
+		payload := map[string]any{
 			"title": a.Title, "category": a.Category, "content": a.Content, "brand": a.Brand,
 			"author_name": authorName, "organization_id": orgID, "published": pub,
-		}, nil)
+		}
+		if a.ContentFormat != "" {
+			payload["content_format"] = a.ContentFormat
+		}
+		status, err := doJSON(c, http.MethodPost, base+"/v1/knowledge", user.Token, payload, nil)
 		if err != nil {
 			return err
 		}
@@ -843,9 +953,12 @@ func findSlot(c *http.Client, base, masterUserID string, durationMin int) (time.
 
 // --- supplier orders ---
 
-func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrgID, _ string, productIDs []string) error {
+func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrgID, destBranchID string, productIDs []string) error {
 	if len(productIDs) < 2 {
 		return fmt.Errorf("need at least 2 products")
+	}
+	if destBranchID == "" {
+		return fmt.Errorf("destination_branch_id is required for seed orders")
 	}
 	locID, err := ensureLocation(c, base, master, buyerOrgID, "Основной склад", "salon")
 	if err != nil {
@@ -903,10 +1016,12 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 			ID string `json:"id"`
 		}
 		status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders", master.Token, map[string]any{
-			"buyer_org_id":    buyerOrgID,
-			"supplier_org_id": supplierOrgID,
-			"location_id":     locID,
-			"comment":         comment,
+			"buyer_org_id":          buyerOrgID,
+			"supplier_org_id":       supplierOrgID,
+			"location_id":           locID,
+			"destination_branch_id": destBranchID,
+			"payment_method":        "bank_transfer",
+			"comment":               comment,
 			"items": []map[string]any{
 				{"product_id": productIDs[0], "qty": 2},
 				{"product_id": productIDs[1], "qty": 1},
@@ -930,12 +1045,31 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 		return st
 	}
 
+	scheduleDelivery := func(id string) int {
+		windowStart := time.Now().UTC().AddDate(0, 0, 2).Truncate(time.Hour)
+		windowEnd := windowStart.Add(3 * time.Hour)
+		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/delivery/schedule", supplier.Token, map[string]any{
+			"window_start":        windowStart,
+			"window_end":          windowEnd,
+			"planned_delivery_at": windowStart,
+			"recipient_name":      "Анна",
+			"recipient_phone":     "+79001112233",
+			"comment":             "seed delivery window",
+		}, nil)
+		return st
+	}
+
+	markPaid := func(id string) int {
+		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/mark-paid", supplier.Token, map[string]any{}, nil)
+		return st
+	}
+
 	if !have["new"] {
 		id, err := createOrder("[seed-new] Демо заказ (new)")
 		if err != nil {
 			log.Printf("warn create new order: %v", err)
 		} else {
-			log.Printf("ok supplier order new id=%s", id)
+			log.Printf("ok supplier order new id=%s dest=%s", id, truncate(destBranchID, 36))
 		}
 	} else {
 		log.Printf("skip [seed-new] order — already exists")
@@ -949,7 +1083,8 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 			est := time.Now().UTC().AddDate(0, 0, 3)
 			st1 := transition(id, "confirmed", nil)
 			st2 := transition(id, "picking", &est)
-			log.Printf("ok supplier order flow id=%s confirmed=%d picking=%d", id, st1, st2)
+			stPay := markPaid(id)
+			log.Printf("ok supplier order flow id=%s confirmed=%d picking=%d mark_paid=%d", id, st1, st2, stPay)
 		}
 	} else {
 		log.Printf("skip [seed-flow] order — already exists")
@@ -963,8 +1098,9 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 			est := time.Now().UTC().AddDate(0, 0, 2)
 			_ = transition(id, "confirmed", nil)
 			_ = transition(id, "picking", &est)
+			stSched := scheduleDelivery(id)
 			st := transition(id, "in_transit", &est)
-			log.Printf("ok supplier order transit id=%s status_code=%d", id, st)
+			log.Printf("ok supplier order transit id=%s schedule=%d status_code=%d", id, stSched, st)
 		}
 	} else {
 		log.Printf("skip [seed-transit] order — already exists")
@@ -978,6 +1114,7 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 			est := time.Now().UTC().AddDate(0, 0, 1)
 			_ = transition(id, "confirmed", nil)
 			_ = transition(id, "picking", &est)
+			_ = scheduleDelivery(id)
 			_ = transition(id, "in_transit", &est)
 			st := transition(id, "delivered", nil)
 			log.Printf("ok supplier order delivered id=%s status_code=%d", id, st)

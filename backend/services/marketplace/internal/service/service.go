@@ -214,8 +214,8 @@ func (s *Service) PopularServices(ctx context.Context) ([]domain.ServiceItem, er
 	return out, nil
 }
 
-func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time) ([]domain.MasterProfile, error) {
-	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), strings.TrimSpace(service), priceMin, priceMax, 50)
+func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time, includeOtherCities bool) ([]domain.MasterProfile, error) {
+	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), strings.TrimSpace(service), priceMin, priceMax, includeOtherCities, 50)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -335,7 +335,21 @@ type CreateServiceInput struct {
 	PhotoMediaID    *uuid.UUID
 	DurationMinutes int
 	PriceMinor      int64
+	BookingMode     string
 	AttachToMaster  bool
+}
+
+func normalizeBookingMode(mode string) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return "flexible", nil
+	}
+	switch mode {
+	case "flexible", "fixed_window":
+		return mode, nil
+	default:
+		return "", apperr.Validation("booking_mode must be flexible or fixed_window")
+	}
 }
 
 func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*domain.ServiceItem, error) {
@@ -344,8 +358,16 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 	if name == "" || category == "" {
 		return nil, apperr.Validation("name and category are required")
 	}
-	if in.DurationMinutes <= 0 {
-		return nil, apperr.Validation("duration_minutes must be positive")
+	bookingMode, err := normalizeBookingMode(in.BookingMode)
+	if err != nil {
+		return nil, err
+	}
+	if bookingMode == "flexible" {
+		if in.DurationMinutes <= 0 {
+			return nil, apperr.Validation("duration_minutes must be positive")
+		}
+	} else if in.DurationMinutes < 0 {
+		return nil, apperr.Validation("duration_minutes must be >= 0")
 	}
 	if in.PriceMinor < 0 {
 		return nil, apperr.Validation("price_minor must be >= 0")
@@ -357,7 +379,7 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 	item := domain.ServiceItem{
 		ID: ids.New(), OrganizationID: in.OrganizationID, Name: name, Category: category,
 		Description: strings.TrimSpace(in.Description), Notes: strings.TrimSpace(in.Notes), PhotoMediaID: in.PhotoMediaID,
-		DurationMinutes: in.DurationMinutes, PriceMinor: in.PriceMinor, Currency: "RUB",
+		DurationMinutes: in.DurationMinutes, PriceMinor: in.PriceMinor, Currency: "RUB", BookingMode: bookingMode,
 		Published: true, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateService(ctx, item); err != nil {
@@ -392,6 +414,7 @@ type UpdateServiceInput struct {
 	ClearPhoto      bool
 	DurationMinutes *int
 	PriceMinor      *int64
+	BookingMode     *string
 	Published       *bool
 	Archived        *bool
 }
@@ -432,11 +455,29 @@ func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*do
 	} else if in.PhotoMediaID != nil {
 		item.PhotoMediaID = in.PhotoMediaID
 	}
+	if in.BookingMode != nil {
+		mode, err := normalizeBookingMode(*in.BookingMode)
+		if err != nil {
+			return nil, err
+		}
+		item.BookingMode = mode
+	}
 	if in.DurationMinutes != nil {
-		if *in.DurationMinutes <= 0 {
-			return nil, apperr.Validation("duration_minutes must be positive")
+		mode := item.BookingMode
+		if mode == "" {
+			mode = "flexible"
+		}
+		if mode == "flexible" {
+			if *in.DurationMinutes <= 0 {
+				return nil, apperr.Validation("duration_minutes must be positive")
+			}
+		} else if *in.DurationMinutes < 0 {
+			return nil, apperr.Validation("duration_minutes must be >= 0")
 		}
 		item.DurationMinutes = *in.DurationMinutes
+	}
+	if item.BookingMode == "flexible" && item.DurationMinutes <= 0 {
+		return nil, apperr.Validation("duration_minutes must be positive")
 	}
 	if in.PriceMinor != nil {
 		if *in.PriceMinor < 0 {
@@ -632,15 +673,38 @@ func (s *Service) DeleteServiceCategory(ctx context.Context, claims *auth.Claims
 }
 
 type KnowledgeInput struct {
-	ActorUserID uuid.UUID
-	ActorName   string
-	OrgID       *uuid.UUID
-	Title       string
-	Category    string
-	Content     string
-	Brand       string
-	ProductID   *uuid.UUID
-	Published   bool
+	ActorUserID        uuid.UUID
+	ActorName          string
+	OrgID              *uuid.UUID
+	Title              string
+	Category           string
+	Content            string
+	ContentFormat      string
+	CoverMediaID       *uuid.UUID
+	ClearCover         bool
+	ReadingTimeMinutes int
+	Brand              string
+	ProductID          *uuid.UUID
+	Published          bool
+}
+
+func normalizeContentFormat(format, content string) (string, error) {
+	format = strings.TrimSpace(format)
+	if format == "" {
+		format = "plain"
+	}
+	switch format {
+	case "plain":
+		return format, nil
+	case "doc_json":
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(content), &obj); err != nil || obj == nil {
+			return "", apperr.Validation("content must be a valid JSON object for doc_json")
+		}
+		return format, nil
+	default:
+		return "", apperr.Validation("content_format must be plain or doc_json")
+	}
 }
 
 func (s *Service) ListKnowledge(ctx context.Context, category string, includeUnpublished bool) ([]domain.KnowledgeArticle, error) {
@@ -688,9 +752,17 @@ func (s *Service) CreateKnowledge(ctx context.Context, in KnowledgeInput) (*doma
 	if title == "" || content == "" {
 		return nil, apperr.Validation("title and content are required")
 	}
+	format, err := normalizeContentFormat(in.ContentFormat, content)
+	if err != nil {
+		return nil, err
+	}
+	if in.ReadingTimeMinutes < 0 {
+		return nil, apperr.Validation("reading_time_minutes must be >= 0")
+	}
 	now := s.now().UTC()
 	a := domain.KnowledgeArticle{
 		ID: ids.New(), Title: title, Category: strings.TrimSpace(in.Category), Content: content,
+		ContentFormat: format, CoverMediaID: in.CoverMediaID, ReadingTimeMinutes: in.ReadingTimeMinutes,
 		Brand: strings.TrimSpace(in.Brand), ProductID: in.ProductID,
 		AuthorUserID: in.ActorUserID, AuthorOrgID: in.OrgID, AuthorName: strings.TrimSpace(in.ActorName),
 		Published: in.Published, CreatedAt: now, UpdatedAt: now,
@@ -720,13 +792,27 @@ func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.
 	if title == "" || content == "" {
 		return nil, apperr.Validation("title and content are required")
 	}
+	format, err := normalizeContentFormat(in.ContentFormat, content)
+	if err != nil {
+		return nil, err
+	}
+	if in.ReadingTimeMinutes < 0 {
+		return nil, apperr.Validation("reading_time_minutes must be >= 0")
+	}
 	wasPublished := a.Published
 	a.Title = title
 	a.Category = strings.TrimSpace(in.Category)
 	a.Content = content
+	a.ContentFormat = format
+	a.ReadingTimeMinutes = in.ReadingTimeMinutes
 	a.Brand = strings.TrimSpace(in.Brand)
 	a.ProductID = in.ProductID
 	a.Published = in.Published
+	if in.ClearCover {
+		a.CoverMediaID = nil
+	} else if in.CoverMediaID != nil {
+		a.CoverMediaID = in.CoverMediaID
+	}
 	if in.OrgID != nil {
 		a.AuthorOrgID = in.OrgID
 	}

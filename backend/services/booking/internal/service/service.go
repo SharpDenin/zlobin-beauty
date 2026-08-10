@@ -53,7 +53,7 @@ func (s *Service) WithIntegrations(organizationsURL, clientsURL, communicationsU
 	return s
 }
 
-func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day time.Time, durationMinutes int, timezone string) ([]Slot, error) {
+func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day time.Time, durationMinutes int, timezone string, excludeAppointmentID uuid.UUID) ([]Slot, error) {
 	if durationMinutes <= 0 {
 		return nil, apperr.Validation("duration_minutes must be positive")
 	}
@@ -109,14 +109,7 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 			if !st.After(now) {
 				continue
 			}
-			overlap := false
-			for _, a := range existing {
-				if st.Before(a.EndsAt) && en.After(a.StartsAt) {
-					overlap = true
-					break
-				}
-			}
-			if !overlap {
+			if !appointmentBlocksSlot(existing, excludeAppointmentID, st, en) {
 				slots = append(slots, Slot{StartsAt: st, EndsAt: en})
 			}
 		}
@@ -143,8 +136,8 @@ func (s *Service) ResolveTimezone(ctx context.Context, masterUserID uuid.UUID, t
 	}
 	if s.marketplaceURL != "" && s.organizationsURL != "" {
 		if branchID, ok := s.fetchMasterBranchID(ctx, masterUserID); ok {
-			if name, ok := s.fetchBranchTimezone(ctx, branchID); ok {
-				return name, nil
+			if loc := s.fetchBranchLocation(ctx, branchID); loc != nil && loc.Timezone != "" {
+				return loc.Timezone, nil
 			}
 		}
 	}
@@ -152,13 +145,17 @@ func (s *Service) ResolveTimezone(ctx context.Context, masterUserID uuid.UUID, t
 }
 
 func (s *Service) timezoneForBranch(ctx context.Context, branchID uuid.UUID) string {
-	if s.organizationsURL == "" {
-		return defaultTimezone
-	}
-	if name, ok := s.fetchBranchTimezone(ctx, branchID); ok {
-		return name
+	if loc := s.fetchBranchLocation(ctx, branchID); loc != nil && loc.Timezone != "" {
+		return loc.Timezone
 	}
 	return defaultTimezone
+}
+
+type branchLocation struct {
+	Name     string
+	City     string
+	Address  string
+	Timezone string
 }
 
 func (s *Service) fetchMasterBranchID(ctx context.Context, masterUserID uuid.UUID) (uuid.UUID, bool) {
@@ -198,30 +195,41 @@ func (s *Service) fetchMasterBranchID(ctx context.Context, masterUserID uuid.UUI
 	return id, true
 }
 
-func (s *Service) fetchBranchTimezone(ctx context.Context, branchID uuid.UUID) (string, bool) {
+func (s *Service) fetchBranchLocation(ctx context.Context, branchID uuid.UUID) *branchLocation {
+	if s.organizationsURL == "" || branchID == uuid.Nil {
+		return nil
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/branches/"+branchID.String(), nil)
 	if err != nil {
-		return "", false
+		return nil
 	}
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", false
+		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", false
+		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	var payload struct {
-		Timezone string `json:"timezone"`
+		Name        string `json:"name"`
+		City        string `json:"city"`
+		AddressLine string `json:"address_line"`
+		Timezone    string `json:"timezone"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil || payload.Timezone == "" {
-		return "", false
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
 	}
-	if _, err := time.LoadLocation(payload.Timezone); err != nil {
-		return "", false
+	tz := payload.Timezone
+	if tz == "" {
+		tz = defaultTimezone
+	} else if _, err := time.LoadLocation(tz); err != nil {
+		tz = defaultTimezone
 	}
-	return payload.Timezone, true
+	return &branchLocation{
+		Name: payload.Name, City: payload.City, Address: payload.AddressLine, Timezone: tz,
+	}
 }
 
 type HoursInput struct {
@@ -338,10 +346,12 @@ type Slot struct {
 }
 
 type CreateInput struct {
-	ClientUserID uuid.UUID
-	MasterID     uuid.UUID
-	ServiceID    uuid.UUID
-	StartsAt     time.Time
+	ClientUserID   uuid.UUID
+	MasterID       uuid.UUID
+	ServiceID      uuid.UUID
+	StartsAt       time.Time
+	OccurrenceID   *uuid.UUID
+	IdempotencyKey string
 }
 
 type masterPayload struct {
@@ -361,10 +371,41 @@ type masterPayload struct {
 	} `json:"services"`
 }
 
+type occurrencePayload struct {
+	ID              string  `json:"id"`
+	ServiceID       string  `json:"service_id"`
+	MasterUserID    string  `json:"master_user_id"`
+	BranchID        *string `json:"branch_id"`
+	StartsAt        time.Time `json:"starts_at"`
+	EndsAt          time.Time `json:"ends_at"`
+	Timezone        string  `json:"timezone"`
+	Capacity        int     `json:"capacity"`
+	BookedCount     int     `json:"booked_count"`
+	Status          string  `json:"status"`
+	BookingCutoffAt *time.Time `json:"booking_cutoff_at"`
+	Title           string  `json:"title"`
+}
+
+const createAppointmentOp = "create_appointment"
+
 func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointment, error) {
-	if in.StartsAt.Before(s.now().UTC()) {
-		return nil, apperr.Validation("starts_at must be in the future")
+	idemKey := strings.TrimSpace(in.IdempotencyKey)
+	if idemKey != "" {
+		rec, err := s.store.GetIdempotency(ctx, idemKey, in.ClientUserID, createAppointmentOp)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if rec != nil && rec.EntityID != nil {
+			existing, err := s.store.GetAppointment(ctx, *rec.EntityID)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			if existing != nil {
+				return existing, nil
+			}
+		}
 	}
+
 	payload, err := s.fetchMaster(ctx, in.MasterID)
 	if err != nil {
 		return nil, err
@@ -383,7 +424,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	if payload.Master.BranchID == nil {
 		return nil, apperr.Validation("master has no branch")
 	}
-	branchID, err := uuid.Parse(*payload.Master.BranchID)
+	masterBranchID, err := uuid.Parse(*payload.Master.BranchID)
 	if err != nil {
 		return nil, apperr.Validation("invalid master branch")
 	}
@@ -405,25 +446,89 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	if !found {
 		return nil, apperr.Validation("service is not offered by master")
 	}
-	ends := in.StartsAt.UTC().Add(time.Duration(duration) * time.Minute)
-	slots, err := s.FreeSlots(ctx, masterUserID, in.StartsAt, duration, s.timezoneForBranch(ctx, branchID))
-	if err != nil {
-		return nil, err
-	}
-	okSlot := false
-	for _, slot := range slots {
-		if slot.StartsAt.Equal(in.StartsAt.UTC()) {
-			okSlot = true
-			break
+
+	branchID := masterBranchID
+	bookingMode := domain.BookingModeFlexible
+	startsAt := in.StartsAt.UTC()
+	endsAt := startsAt.Add(time.Duration(duration) * time.Minute)
+	var occurrenceID *uuid.UUID
+	bookedOccurrence := false
+
+	if in.OccurrenceID != nil && *in.OccurrenceID != uuid.Nil {
+		occ, err := s.fetchOccurrence(ctx, *in.OccurrenceID)
+		if err != nil {
+			return nil, err
+		}
+		if occ.ServiceID != in.ServiceID.String() {
+			return nil, apperr.Validation("occurrence does not match service")
+		}
+		if occ.MasterUserID != masterUserID.String() {
+			return nil, apperr.Validation("occurrence does not match master")
+		}
+		if occ.Status != "scheduled" {
+			return nil, apperr.Conflict("occurrence is not available")
+		}
+		now := s.now().UTC()
+		if occ.BookingCutoffAt != nil && !now.Before(occ.BookingCutoffAt.UTC()) {
+			return nil, apperr.Conflict("booking cutoff has passed")
+		}
+		if !occ.StartsAt.After(now) {
+			return nil, apperr.Validation("occurrence has already started")
+		}
+		startsAt = occ.StartsAt.UTC()
+		endsAt = occ.EndsAt.UTC()
+		durMin := int(endsAt.Sub(startsAt).Minutes())
+		if durMin <= 0 {
+			return nil, apperr.Validation("invalid occurrence duration")
+		}
+		duration = durMin
+		bookingMode = domain.BookingModeFixedWindow
+		id := *in.OccurrenceID
+		occurrenceID = &id
+		if occ.BranchID != nil && *occ.BranchID != "" {
+			bid, err := uuid.Parse(*occ.BranchID)
+			if err != nil {
+				return nil, apperr.Validation("invalid occurrence branch")
+			}
+			branchID = bid
+		}
+		if err := s.bookOccurrence(ctx, id); err != nil {
+			return nil, err
+		}
+		bookedOccurrence = true
+	} else {
+		if in.StartsAt.Before(s.now().UTC()) {
+			return nil, apperr.Validation("starts_at must be in the future")
+		}
+		slots, err := s.FreeSlots(ctx, masterUserID, in.StartsAt, duration, s.timezoneForBranch(ctx, branchID), uuid.Nil)
+		if err != nil {
+			return nil, err
+		}
+		okSlot := false
+		for _, slot := range slots {
+			if slot.StartsAt.Equal(startsAt) {
+				okSlot = true
+				break
+			}
+		}
+		if !okSlot {
+			return nil, apperr.Conflict("selected time is not available")
 		}
 	}
-	if !okSlot {
-		return nil, apperr.Conflict("selected time is not available")
+
+	loc := s.fetchBranchLocation(ctx, branchID)
+	locName, locCity, locAddr, locTZ := "", "", "", defaultTimezone
+	if loc != nil {
+		locName, locCity, locAddr, locTZ = loc.Name, loc.City, loc.Address, loc.Timezone
 	}
+
 	now := s.now().UTC()
 	status := domain.StatusPendingConfirmation
 	auto, err := s.store.GetClientAutoConfirm(ctx, masterUserID, in.ClientUserID)
 	if err != nil {
+		if bookedOccurrence {
+			_ = s.releaseOccurrence(ctx, *occurrenceID)
+		}
 		return nil, apperr.Internal(err)
 	}
 	if auto {
@@ -433,14 +538,22 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		ID: ids.New(), OrganizationID: orgID, BranchID: branchID, MasterUserID: masterUserID,
 		ClientUserID: in.ClientUserID, ServiceID: in.ServiceID, ServiceName: svcName,
 		DurationMinutes: duration, PriceMinor: price, Currency: currency,
-		Status: status, StartsAt: in.StartsAt.UTC(), EndsAt: ends,
+		Status: status, StartsAt: startsAt, EndsAt: endsAt,
+		OccurrenceID: occurrenceID, BookingMode: bookingMode,
+		LocationName: locName, LocationCity: locCity, LocationAddress: locAddr, LocationTimezone: locTZ,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateAppointment(ctx, a); err != nil {
+		if bookedOccurrence {
+			_ = s.releaseOccurrence(ctx, *occurrenceID)
+		}
 		if ae, ok := apperr.As(err); ok {
 			return nil, ae
 		}
 		return nil, apperr.Internal(err)
+	}
+	if idemKey != "" {
+		_ = s.store.PutIdempotency(ctx, idemKey, in.ClientUserID, createAppointmentOp, a.ID, http.StatusCreated)
 	}
 	if status == domain.StatusConfirmed {
 		s.notify(ctx, a.MasterUserID, "appointment.created", "Новая запись", a.ServiceName+" (автоподтверждение)", a.ID)
@@ -450,6 +563,77 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		s.notify(ctx, a.ClientUserID, "appointment.created", "Запись создана", "Ожидает подтверждения мастера", a.ID)
 	}
 	return &a, nil
+}
+
+func (s *Service) fetchOccurrence(ctx context.Context, id uuid.UUID) (*occurrencePayload, error) {
+	if s.marketplaceURL == "" {
+		return nil, apperr.Internal(fmt.Errorf("marketplace url not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/occurrences/"+id.String(), nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, apperr.NotFound("occurrence not found")
+	}
+	if resp.StatusCode >= 300 {
+		return nil, apperr.Internal(fmt.Errorf("marketplace occurrence status %d", resp.StatusCode))
+	}
+	var payload struct {
+		Occurrence occurrencePayload `json:"occurrence"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		// Also accept bare object.
+		if err2 := json.Unmarshal(body, &payload.Occurrence); err2 != nil {
+			return nil, apperr.Internal(err)
+		}
+	}
+	if payload.Occurrence.ID == "" {
+		return nil, apperr.NotFound("occurrence not found")
+	}
+	return &payload.Occurrence, nil
+}
+
+func (s *Service) bookOccurrence(ctx context.Context, id uuid.UUID) error {
+	return s.occurrenceCapacityCall(ctx, id, "book")
+}
+
+func (s *Service) releaseOccurrence(ctx context.Context, id uuid.UUID) error {
+	return s.occurrenceCapacityCall(ctx, id, "release")
+}
+
+func (s *Service) occurrenceCapacityCall(ctx context.Context, id uuid.UUID, action string) error {
+	if s.marketplaceURL == "" || s.internalToken == "" {
+		return apperr.Internal(fmt.Errorf("marketplace internal call not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.marketplaceURL+"/v1/internal/occurrences/"+id.String()+"/"+action, nil)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+	if resp.StatusCode == http.StatusConflict {
+		return apperr.Conflict("occurrence is not available")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return apperr.NotFound("occurrence not found")
+	}
+	if resp.StatusCode >= 300 {
+		return apperr.Internal(fmt.Errorf("marketplace %s status %d: %s", action, resp.StatusCode, string(body)))
+	}
+	return nil
 }
 
 func (s *Service) GetClientAutoConfirm(ctx context.Context, masterUserID, clientUserID uuid.UUID) (bool, error) {
@@ -556,11 +740,18 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	if a.ClientUserID != actorUserID && a.MasterUserID != actorUserID {
 		return nil, apperr.Forbidden("access denied")
 	}
+	if a.BookingMode == domain.BookingModeFixedWindow {
+		return nil, apperr.Validation("fixed_window appointments cannot be rescheduled")
+	}
 	if a.Status != domain.StatusPendingConfirmation && a.Status != domain.StatusConfirmed {
 		return nil, apperr.Conflict("cannot reschedule in current status")
 	}
 	ends := startsAt.UTC().Add(time.Duration(a.DurationMinutes) * time.Minute)
-	slots, err := s.FreeSlots(ctx, a.MasterUserID, startsAt, a.DurationMinutes, s.timezoneForBranch(ctx, a.BranchID))
+	tz := a.LocationTimezone
+	if tz == "" {
+		tz = s.timezoneForBranch(ctx, a.BranchID)
+	}
+	slots, err := s.FreeSlots(ctx, a.MasterUserID, startsAt, a.DurationMinutes, tz, a.ID)
 	if err != nil {
 		return nil, err
 	}

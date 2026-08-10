@@ -17,7 +17,8 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 const orgCols = `id, name, description, type, status, published, logo_media_id, delivery_note, created_by, created_at, updated_at`
-const branchCols = `id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published, created_at, updated_at`
+const branchCols = `id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
+pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, created_at, updated_at`
 
 func scanOrg(row pgx.Row) (*domain.Organization, error) {
 	var o domain.Organization
@@ -33,7 +34,9 @@ func scanOrg(row pgx.Row) (*domain.Organization, error) {
 func scanBranch(row pgx.Row) (*domain.Branch, error) {
 	var b domain.Branch
 	if err := row.Scan(&b.ID, &b.OrganizationID, &b.Name, &b.City, &b.AddressLine, &b.Phone, &b.Timezone,
-		&b.CancelWindowHours, &b.AutoConfirm, &b.Published, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		&b.CancelWindowHours, &b.AutoConfirm, &b.Published,
+		&b.PickupEnabled, &b.Latitude, &b.Longitude, &b.WorkingHoursNote, &b.PhotoMediaID,
+		&b.CreatedAt, &b.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -55,10 +58,13 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, org.ID, org.Name, org.Description,
 		return err
 	}
 	_, err = tx.Exec(ctx, `
-INSERT INTO branches(id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+INSERT INTO branches(id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
+pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		branch.ID, branch.OrganizationID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone,
-		branch.CancelWindowHours, branch.AutoConfirm, branch.Published, branch.CreatedAt, branch.UpdatedAt)
+		branch.CancelWindowHours, branch.AutoConfirm, branch.Published,
+		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID,
+		branch.CreatedAt, branch.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -192,10 +198,46 @@ func (s *Store) GetBranch(ctx context.Context, id uuid.UUID) (*domain.Branch, er
 	return scanBranch(s.pool.QueryRow(ctx, `SELECT `+branchCols+` FROM branches WHERE id=$1`, id))
 }
 
+func (s *Store) ListPickupBranches(ctx context.Context, city string) ([]domain.Branch, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if city != "" {
+		rows, err = s.pool.Query(ctx, `
+SELECT `+branchCols+`
+FROM branches
+WHERE published = TRUE AND pickup_enabled = TRUE AND lower(city) = lower($1)
+ORDER BY name`, city)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+SELECT `+branchCols+`
+FROM branches
+WHERE published = TRUE AND pickup_enabled = TRUE
+ORDER BY city, name`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Branch
+	for rows.Next() {
+		b, err := scanBranch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) UpdateBranch(ctx context.Context, branch domain.Branch) error {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE branches SET name=$2, city=$3, address_line=$4, phone=$5, timezone=$6, published=$7, updated_at=$8 WHERE id=$1`,
-		branch.ID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone, branch.Published, branch.UpdatedAt)
+UPDATE branches SET name=$2, city=$3, address_line=$4, phone=$5, timezone=$6, published=$7,
+pickup_enabled=$8, latitude=$9, longitude=$10, working_hours_note=$11, photo_media_id=$12, updated_at=$13
+WHERE id=$1`,
+		branch.ID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone, branch.Published,
+		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, branch.UpdatedAt)
 	if err != nil {
 		return err
 	}

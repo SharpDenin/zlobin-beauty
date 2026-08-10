@@ -1,6 +1,6 @@
 # Zlobin Beauty
 
-Адаптивное веб-приложение beauty-платформы (MVP): клиенты ищут мастеров и записываются; мастера ведут услуги, расписание, клиентов и заказы косметики; поставщики управляют каталогом и B2B-заказами; общая база знаний.
+Адаптивное веб-приложение beauty-платформы (MVP): клиенты ищут мастеров (по умолчанию Красноярск, опционально другие города) и записываются в режиме **flexible** или **fixed_window**; мастера ведут услуги, расписание, клиентов и B2B-заказы косметики с **самовывозом в филиал** и **оплатой (mock / mark-paid)**; поставщики управляют каталогом, доставкой и **rich** базой знаний.
 
 ## Стек
 
@@ -82,6 +82,8 @@ Swagger / OpenAPI UI в текущем MVP **нет**.
 
 ### Seed
 
+Seed ходит в **gateway `:8090`** и создаёт multi-city демо (Красноярск / Новосибирск / Москва), flexible-услуги, fixed_window МК у Анны, товары, заказы и статьи KB.
+
 ```bash
 docker compose --profile seed run --rm seed
 # или
@@ -90,7 +92,7 @@ docker compose --profile seed run --rm seed
 cd backend && GATEWAY_URL=http://localhost:8090 go run ./cmd/seed
 ```
 
-В конце seed печатает `demo supplier_org_id=…` — его вставляют на странице «Косметика» у мастера.
+Каталог косметики для мастера — карточки `GET /v1/suppliers` (UUID вводить не нужно). Checkout: филиал получения (`pickup`) + способ оплаты (онлайн-эквайринг не подключён).
 
 ### Логи / перезапуск / сброс
 
@@ -108,21 +110,34 @@ docker compose --profile seed run --rm seed
 
 Пароль для всех: **`Password123!`**
 
-| Role | Login |
-|------|-------|
-| Client | `client1@demo.local` |
-| Client | `client2@demo.local` |
-| Master | `master1@demo.local` |
-| Master | `master2@demo.local` |
-| Supplier | `supplier1@demo.local` |
+| Role / тип | Login |
+|------------|-------|
+| Client | `client1@demo.local`, `client2@demo.local` |
+| Master (owner) | `master1@demo.local` |
+| Master (renter) | `master2@demo.local` |
+| Master (employee) | `master3@demo.local` |
+| Master (independent) | `master4@demo.local` |
+| Supplier | `supplier1@demo.local`, `supplier2@demo.local` |
+
+Сценарий показа заказчику: см. **`MANUAL_DEMO.md`**.  
+Подробный отчёт итераций: **`FINAL_REPORT.md`**.
 
 ## MVP роли и разделы UI
 
-- **Client:** главная, поиск, записи, профиль  
-- **Master:** записи, календарь, клиенты, косметика, база знаний, кабинет, профиль  
-- **Supplier:** товары/заказы, база знаний, профиль  
+- **Client:** главная, поиск (город + «другие города»), записи (flexible / fixed occurrence), профиль  
+- **Master:** записи, календарь, услуги/occurrences, клиенты, косметика (pickup + payment), база знаний, кабинет, профиль  
+- **Supplier:** товары/заказы (доставка + mark-paid), база знаний (rich editor), профиль  
 
 Скрыты из навигации (код/API сохранены): магазин клиента, склад, отчёты салона, доставки rep, admin-справочники.
+
+### Ключевые понятия
+
+| Понятие | Смысл в MVP |
+|---------|-------------|
+| `flexible` | Свободные слоты по working hours − busy |
+| `fixed_window` | Запись на заранее объявленный `service_occurrence` |
+| Pickup branch | Филиал салона с `pickup_enabled` как точка получения B2B-заказа |
+| Payment mock | Выбор метода + ручной `mark-paid` у поставщика (без PSP) |
 
 ## Локальная разработка (без полного Docker app)
 
@@ -156,5 +171,7 @@ docker compose up -d --build
 
 ## Документация
 
-- `FINAL_REPORT.md` — отчёт по MVP-ревизии, API, ручной тест-план
+- `FINAL_REPORT.md` — production readiness / scheduling / commerce / gaps (2026-08-10)
+- `MANUAL_DEMO.md` — 12–15 мин сценарий показа заказчику
+- `MANUAL_TEST.md` — детальные acceptance-сценарии
 - `docs/` — историческая архитектура и ADRs (часть scope шире текущего MVP)

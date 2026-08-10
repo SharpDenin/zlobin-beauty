@@ -38,6 +38,11 @@ type Branch struct {
 	CancelWindowHours int
 	AutoConfirm       bool
 	Published         bool
+	PickupEnabled     bool
+	Latitude          *float64
+	Longitude         *float64
+	WorkingHoursNote  string
+	PhotoMediaID      *uuid.UUID
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }

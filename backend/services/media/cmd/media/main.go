@@ -60,7 +60,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))
 	api.Routes(mux, cfg.JWTSecret)
-	handler := httpx.WithRequestID(httpx.SecurityHeaders(httpx.CORS(cfg.CORSOrigins)(httpx.MaxBytes(6 << 20)(httpx.AccessLog(log)(mux)))))
+	handler := httpx.WithRequestID(httpx.SecurityHeaders(httpx.CORS(cfg.CORSOrigins)(httpx.MaxBytes(52 << 20)(httpx.AccessLog(log)(mux)))))
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,

@@ -22,6 +22,28 @@ const supplierOrderMap: Record<string, string> = {
   cancelled: 'Отменён',
 }
 
+const paymentStatusMap: Record<string, string> = {
+  pending: 'Ожидает оплаты',
+  awaiting_payment: 'Ожидает оплаты',
+  authorized: 'Авторизован',
+  paid: 'Оплачен',
+  partially_paid: 'Частично оплачен',
+  failed: 'Ошибка оплаты',
+  refunded: 'Возврат',
+  cancelled: 'Отменён',
+}
+
+const deliveryStatusMap: Record<string, string> = {
+  pending: 'Ожидает планирования',
+  scheduled: 'Запланирована',
+  preparing: 'Готовится',
+  in_transit: 'В пути',
+  arrived: 'Прибыла',
+  delivered: 'Доставлена',
+  failed: 'Сбой доставки',
+  cancelled: 'Отменена',
+}
+
 const clientOrderMap: Record<string, string> = {
   submitted: 'Оформлен',
   confirmed: 'Подтверждён',
@@ -72,6 +94,8 @@ const map: Record<string, string> = {
   ...clientOrderMap,
   ...productStateMap,
   ...stockStateMap,
+  ...paymentStatusMap,
+  ...deliveryStatusMap,
 }
 
 export function statusLabel(status: string) {
@@ -84,6 +108,16 @@ export function appointmentStatusLabel(status: string) {
 
 export function supplierOrderLabel(status: string) {
   return supplierOrderMap[status] ?? statusLabel(status)
+}
+
+export function paymentStatusLabel(status: string | null | undefined) {
+  if (!status) return '—'
+  return paymentStatusMap[status] ?? statusLabel(status)
+}
+
+export function deliveryStatusLabel(status: string | null | undefined) {
+  if (!status) return '—'
+  return deliveryStatusMap[status] ?? statusLabel(status)
 }
 
 export function clientOrderLabel(status: string) {
@@ -108,10 +142,31 @@ export const WORK_TYPE_OPTIONS = [
 ] as const
 
 export function statusBadgeClass(status: string) {
-  if (status === 'confirmed' || status === 'delivered' || status === 'accepted_full' || status === 'published' || status === 'for_sale' || status === 'active' || status === 'ok') {
+  if (
+    status === 'confirmed'
+    || status === 'delivered'
+    || status === 'accepted_full'
+    || status === 'published'
+    || status === 'for_sale'
+    || status === 'active'
+    || status === 'ok'
+    || status === 'paid'
+    || status === 'authorized'
+    || status === 'arrived'
+    || status === 'scheduled'
+  ) {
     return 'badge-confirmed'
   }
-  if (status === 'pending_confirmation' || status === 'submitted' || status === 'new' || status === 'draft' || status === 'inactive' || status === 'low') {
+  if (
+    status === 'pending_confirmation'
+    || status === 'submitted'
+    || status === 'new'
+    || status === 'draft'
+    || status === 'inactive'
+    || status === 'low'
+    || status === 'pending'
+    || status === 'awaiting_payment'
+  ) {
     return 'badge-pending'
   }
   if (
@@ -120,11 +175,24 @@ export function statusBadgeClass(status: string) {
     || status === 'in_delivery'
     || status === 'in_transit'
     || status === 'accepted_partial'
+    || status === 'preparing'
+    || status === 'partially_paid'
   ) {
     return 'badge-progress'
   }
   if (status === 'completed') return 'badge-done'
-  if (status.startsWith('cancelled') || status === 'no_show' || status === 'cancelled' || status === 'not_for_sale' || status === 'archived' || status === 'critical' || status === 'out' || status === 'out_of_stock') {
+  if (
+    status.startsWith('cancelled')
+    || status === 'no_show'
+    || status === 'cancelled'
+    || status === 'not_for_sale'
+    || status === 'archived'
+    || status === 'critical'
+    || status === 'out'
+    || status === 'out_of_stock'
+    || status === 'failed'
+    || status === 'refunded'
+  ) {
     return 'badge-cancelled'
   }
   return 'badge-default'

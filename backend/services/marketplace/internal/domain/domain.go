@@ -46,8 +46,27 @@ type ServiceItem struct {
 	PriceMinor      int64
 	Currency        string
 	PhotoMediaID    *uuid.UUID
+	BookingMode     string // flexible | fixed_window
 	Published       bool
 	ArchivedAt      *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type ServiceOccurrence struct {
+	ID              uuid.UUID
+	ServiceID       uuid.UUID
+	MasterUserID    uuid.UUID
+	BranchID        *uuid.UUID
+	StartsAt        time.Time
+	EndsAt          time.Time
+	Timezone        string
+	Capacity        int
+	BookedCount     int
+	Status          string // scheduled | cancelled | completed | full
+	BookingCutoffAt *time.Time
+	Title           string
+	Note            string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -75,17 +94,20 @@ type PortfolioItem struct {
 }
 
 type KnowledgeArticle struct {
-	ID           uuid.UUID
-	Title        string
-	Category     string
-	Content      string
-	Brand        string
-	ProductID    *uuid.UUID
-	AuthorUserID uuid.UUID
-	AuthorOrgID  *uuid.UUID
-	AuthorName   string
-	Published    bool
-	PublishedAt  *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                 uuid.UUID
+	Title              string
+	Category           string
+	Content            string
+	ContentFormat      string // plain | doc_json
+	CoverMediaID       *uuid.UUID
+	ReadingTimeMinutes int
+	Brand              string
+	ProductID          *uuid.UUID
+	AuthorUserID       uuid.UUID
+	AuthorOrgID        *uuid.UUID
+	AuthorName         string
+	Published          bool
+	PublishedAt        *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }

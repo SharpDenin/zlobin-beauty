@@ -3,9 +3,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { useSupplierOrg, type SupplierOrder } from '@/shared/lib/commerce'
+import {
+  fetchBranch,
+  paymentMethodLabel,
+  useSupplierOrg,
+  type OrderDelivery,
+  type SupplierOrder,
+} from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, supplierOrderActionLabel, supplierOrderLabel } from '@/shared/lib/status'
+import {
+  deliveryStatusLabel,
+  paymentStatusLabel,
+  statusBadgeClass,
+  supplierOrderActionLabel,
+  supplierOrderLabel,
+} from '@/shared/lib/status'
 
 const nextStatus: Record<string, string> = {
   new: 'confirmed',
@@ -16,11 +28,17 @@ const nextStatus: Record<string, string> = {
   in_delivery: 'delivered',
 }
 
+type ScheduleDraft = {
+  date: string
+  windowStart: string
+  windowEnd: string
+}
+
 export function SupplierOrdersPage() {
   const { accessToken } = useAuth()
   const { supplierOrgId, supplierOrg, orgs } = useSupplierOrg()
   const qc = useQueryClient()
-  const [deliveryDraft, setDeliveryDraft] = useState<Record<string, string>>({})
+  const [scheduleDraft, setScheduleDraft] = useState<Record<string, ScheduleDraft>>({})
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
 
@@ -35,15 +53,10 @@ export function SupplierOrdersPage() {
   })
 
   const transition = useMutation({
-    mutationFn: (input: { id: string; status: string; estimated_delivery_at?: string }) =>
+    mutationFn: (input: { id: string; status: string }) =>
       apiRequest(`/v1/commerce/supplier-orders/${input.id}/transition`, {
         token: accessToken,
-        body: {
-          status: input.status,
-          ...(input.estimated_delivery_at
-            ? { estimated_delivery_at: new Date(input.estimated_delivery_at).toISOString() }
-            : {}),
-        },
+        body: { status: input.status },
       }),
     onSuccess: async () => {
       setError(null)
@@ -52,6 +65,52 @@ export function SupplierOrdersPage() {
       await qc.invalidateQueries({ queryKey: ['supplier-dashboard'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить статус'),
+  })
+
+  const markPaid = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/commerce/supplier-orders/${id}/mark-paid`, {
+        token: accessToken,
+        method: 'POST',
+      }),
+    onSuccess: async () => {
+      setOk('Оплата отмечена')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось отметить оплату'),
+  })
+
+  const scheduleDelivery = useMutation({
+    mutationFn: async (input: { id: string; draft: ScheduleDraft; patch: boolean }) => {
+      if (!input.draft.date) throw new ApiError('Укажите дату доставки', 'validation_error', 400)
+      const planned = new Date(`${input.draft.date}T12:00:00`)
+      const windowStart = input.draft.windowStart
+        ? new Date(`${input.draft.date}T${input.draft.windowStart}:00`)
+        : undefined
+      const windowEnd = input.draft.windowEnd
+        ? new Date(`${input.draft.date}T${input.draft.windowEnd}:00`)
+        : undefined
+      return apiRequest<OrderDelivery>(
+        `/v1/commerce/supplier-orders/${input.id}/delivery/schedule`,
+        {
+          method: input.patch ? 'PATCH' : 'POST',
+          token: accessToken,
+          body: {
+            planned_delivery_at: planned.toISOString(),
+            ...(windowStart ? { window_start: windowStart.toISOString() } : {}),
+            ...(windowEnd ? { window_end: windowEnd.toISOString() } : {}),
+          },
+        },
+      )
+    },
+    onSuccess: async () => {
+      setOk('Доставка запланирована')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
+      await qc.invalidateQueries({ queryKey: ['order-delivery'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось запланировать доставку'),
   })
 
   if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
@@ -97,6 +156,8 @@ export function SupplierOrdersPage() {
         {orders.data?.items.map((o) => {
           const next = nextStatus[o.status]
           const actionLabel = next ? (supplierOrderActionLabel[next] ?? supplierOrderLabel(next)) : null
+          const draft = scheduleDraft[o.id] ?? { date: '', windowStart: '10:00', windowEnd: '18:00' }
+          const canMarkPaid = o.payment_status && o.payment_status !== 'paid' && o.payment_status !== 'cancelled'
           return (
             <article key={o.id} className="history-card stack-sm">
               <div className="row between">
@@ -104,6 +165,19 @@ export function SupplierOrdersPage() {
                 <span className={`badge ${statusBadgeClass(o.status)}`}>{supplierOrderLabel(o.status)}</span>
               </div>
               <p className="muted">{new Date(o.created_at).toLocaleString('ru-RU')}</p>
+              {(o.payment_method || o.payment_status) && (
+                <div className="row">
+                  {o.payment_method && <span className="chip badge-default">{paymentMethodLabel(o.payment_method)}</span>}
+                  {o.payment_status && (
+                    <span className={`badge ${statusBadgeClass(o.payment_status)}`}>
+                      {paymentStatusLabel(o.payment_status)}
+                    </span>
+                  )}
+                </div>
+              )}
+              {o.destination_branch_id && (
+                <DestinationLine branchId={o.destination_branch_id} token={accessToken} />
+              )}
               {o.estimated_delivery_at && (
                 <p>Доставка: {new Date(o.estimated_delivery_at).toLocaleDateString('ru-RU')}</p>
               )}
@@ -117,50 +191,154 @@ export function SupplierOrdersPage() {
                   ))}
                 </ul>
               )}
-              {next && (
-                <div className="stack-sm">
-                  {(next === 'confirmed' || next === 'in_transit' || next === 'picking') && (
-                    <div className="field">
-                      <label>Ожидаемая дата доставки</label>
-                      <input
-                        type="date"
-                        value={deliveryDraft[o.id] ?? ''}
-                        onChange={(e) => setDeliveryDraft((prev) => ({ ...prev, [o.id]: e.target.value }))}
-                      />
-                    </div>
-                  )}
-                  <div className="row">
-                    <button
-                      className="btn btn-primary btn-compact"
-                      type="button"
-                      disabled={transition.isPending}
-                      onClick={() =>
-                        transition.mutate({
-                          id: o.id,
-                          status: next,
-                          estimated_delivery_at: deliveryDraft[o.id] || undefined,
-                        })
-                      }
-                    >
-                      {actionLabel}
-                    </button>
-                    {(o.status === 'new' || o.status === 'submitted' || o.status === 'confirmed') && (
-                      <button
-                        className="btn btn-secondary btn-compact"
-                        type="button"
-                        disabled={transition.isPending}
-                        onClick={() => transition.mutate({ id: o.id, status: 'cancelled' })}
-                      >
-                        Отменить
-                      </button>
-                    )}
-                  </div>
-                </div>
+
+              {o.destination_branch_id && (
+                <DeliveryScheduleBlock
+                  orderId={o.id}
+                  token={accessToken}
+                  draft={draft}
+                  onDraftChange={(nextDraft) =>
+                    setScheduleDraft((prev) => ({ ...prev, [o.id]: nextDraft }))
+                  }
+                  onSchedule={(patch) =>
+                    scheduleDelivery.mutate({ id: o.id, draft, patch })
+                  }
+                  pending={scheduleDelivery.isPending}
+                />
               )}
+
+              <div className="row">
+                {next && (
+                  <button
+                    className="btn btn-primary btn-compact"
+                    type="button"
+                    disabled={transition.isPending}
+                    onClick={() => transition.mutate({ id: o.id, status: next })}
+                  >
+                    {actionLabel}
+                  </button>
+                )}
+                {canMarkPaid && (
+                  <button
+                    className="btn btn-secondary btn-compact"
+                    type="button"
+                    disabled={markPaid.isPending}
+                    onClick={() => markPaid.mutate(o.id)}
+                  >
+                    Отметить оплату
+                  </button>
+                )}
+                {(o.status === 'new' || o.status === 'submitted' || o.status === 'confirmed') && (
+                  <button
+                    className="btn btn-secondary btn-compact"
+                    type="button"
+                    disabled={transition.isPending}
+                    onClick={() => transition.mutate({ id: o.id, status: 'cancelled' })}
+                  >
+                    Отменить
+                  </button>
+                )}
+              </div>
             </article>
           )
         })}
       </div>
     </main>
+  )
+}
+
+function DestinationLine({ branchId, token }: { branchId: string; token: string | null }) {
+  const branch = useQuery({
+    queryKey: ['branch', branchId],
+    queryFn: () => fetchBranch(token, branchId),
+    enabled: Boolean(token && branchId),
+  })
+  if (branch.data) {
+    return (
+      <p>
+        Получение: {branch.data.name}
+        {branch.data.city ? `, ${branch.data.city}` : ''}
+        {branch.data.address_line ? ` · ${branch.data.address_line}` : ''}
+      </p>
+    )
+  }
+  return <p className="muted">Филиал получения указан</p>
+}
+
+function DeliveryScheduleBlock({
+  orderId,
+  token,
+  draft,
+  onDraftChange,
+  onSchedule,
+  pending,
+}: {
+  orderId: string
+  token: string | null
+  draft: ScheduleDraft
+  onDraftChange: (d: ScheduleDraft) => void
+  onSchedule: (patch: boolean) => void
+  pending: boolean
+}) {
+  const delivery = useQuery({
+    queryKey: ['order-delivery', orderId],
+    queryFn: () =>
+      apiRequest<OrderDelivery>(`/v1/commerce/supplier-orders/${orderId}/delivery`, {
+        token,
+      }),
+    enabled: Boolean(token && orderId),
+    retry: false,
+  })
+
+  const hasSchedule = Boolean(delivery.data?.planned_delivery_at || delivery.data?.window_start)
+
+  return (
+    <div className="stack-sm">
+      {delivery.data && (
+        <p className="muted">
+          Доставка: {deliveryStatusLabel(delivery.data.status)}
+          {delivery.data.planned_delivery_at
+            ? ` · ${new Date(delivery.data.planned_delivery_at).toLocaleDateString('ru-RU')}`
+            : ''}
+          {delivery.data.window_start && delivery.data.window_end
+            ? ` · ${new Date(delivery.data.window_start).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}–${new Date(delivery.data.window_end).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+            : ''}
+        </p>
+      )}
+      <div className="field">
+        <label>Дата доставки</label>
+        <input
+          type="date"
+          value={draft.date}
+          onChange={(e) => onDraftChange({ ...draft, date: e.target.value })}
+        />
+      </div>
+      <div className="row">
+        <div className="field" style={{ flex: 1 }}>
+          <label>Окно с</label>
+          <input
+            type="time"
+            value={draft.windowStart}
+            onChange={(e) => onDraftChange({ ...draft, windowStart: e.target.value })}
+          />
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Окно до</label>
+          <input
+            type="time"
+            value={draft.windowEnd}
+            onChange={(e) => onDraftChange({ ...draft, windowEnd: e.target.value })}
+          />
+        </div>
+      </div>
+      <button
+        className="btn btn-secondary btn-compact"
+        type="button"
+        disabled={pending || !draft.date}
+        onClick={() => onSchedule(hasSchedule)}
+      >
+        {hasSchedule ? 'Обновить расписание' : 'Запланировать доставку'}
+      </button>
+    </div>
   )
 }

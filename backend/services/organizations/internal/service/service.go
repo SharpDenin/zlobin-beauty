@@ -50,14 +50,20 @@ type UpdateOrgInput struct {
 }
 
 type UpdateBranchInput struct {
-	ActorID     uuid.UUID
-	BranchID    uuid.UUID
-	Name        *string
-	City        *string
-	AddressLine *string
-	Phone       *string
-	Timezone    *string
-	Published   *bool
+	ActorID          uuid.UUID
+	BranchID         uuid.UUID
+	Name             *string
+	City             *string
+	AddressLine      *string
+	Phone            *string
+	Timezone         *string
+	Published        *bool
+	PickupEnabled    *bool
+	Latitude         *float64
+	Longitude        *float64
+	WorkingHoursNote *string
+	PhotoMediaID     *uuid.UUID
+	ClearPhotoMedia  bool
 }
 
 func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, error) {
@@ -86,7 +92,7 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	}
 	branch := domain.Branch{
 		ID: ids.New(), OrganizationID: org.ID, Name: branchName, City: city, AddressLine: address,
-		Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, CreatedAt: now, UpdatedAt: now,
+		Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, PickupEnabled: true, CreatedAt: now, UpdatedAt: now,
 	}
 	ownerRole := "owner"
 	if orgType == "supplier" {
@@ -345,6 +351,23 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		}
 		b.Published = *in.Published
 	}
+	if in.PickupEnabled != nil {
+		b.PickupEnabled = *in.PickupEnabled
+	}
+	if in.Latitude != nil {
+		b.Latitude = in.Latitude
+	}
+	if in.Longitude != nil {
+		b.Longitude = in.Longitude
+	}
+	if in.WorkingHoursNote != nil {
+		b.WorkingHoursNote = strings.TrimSpace(*in.WorkingHoursNote)
+	}
+	if in.ClearPhotoMedia {
+		b.PhotoMediaID = nil
+	} else if in.PhotoMediaID != nil {
+		b.PhotoMediaID = in.PhotoMediaID
+	}
 	b.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateBranch(ctx, *b); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -353,6 +376,17 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		return nil, apperr.Internal(err)
 	}
 	return b, nil
+}
+
+func (s *Service) ListPickupBranches(ctx context.Context, city string) ([]domain.Branch, error) {
+	items, err := s.store.ListPickupBranches(ctx, strings.TrimSpace(city))
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Branch{}
+	}
+	return items, nil
 }
 
 func evaluateBranchReadiness(b domain.Branch) *domain.Readiness {

@@ -4,9 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import {
+  fetchPickupBranches,
   fetchSupplier,
+  newIdempotencyKey,
+  PAYMENT_METHOD_OPTIONS,
+  paymentMethodLabel,
   useBuyerOrg,
   useEnsureLocation,
+  type BranchCard,
   type CommerceProduct,
 } from '@/shared/lib/commerce'
 import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCartQty, type CartLine } from '@/shared/lib/cart'
@@ -23,6 +28,9 @@ export function CosmeticsSupplierPage() {
   const [cart, setCart] = useState<CartLine[]>(() => (supplierId ? loadCart(supplierId) : []))
   const [comment, setComment] = useState('')
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [branchQuery, setBranchQuery] = useState('')
+  const [destinationBranchId, setDestinationBranchId] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<string>('cash')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
 
@@ -50,9 +58,38 @@ export function CosmeticsSupplierPage() {
     enabled: Boolean(accessToken && supplierId),
   })
 
+  const pickupBranches = useQuery({
+    queryKey: ['pickup-branches', buyerOrgId],
+    queryFn: () => fetchPickupBranches(accessToken, buyerOrgId, buyerOrg?.branches),
+    enabled: Boolean(accessToken && buyerOrgId && checkoutOpen),
+  })
+
+  const filteredBranches = useMemo(() => {
+    const items = pickupBranches.data ?? []
+    const q = branchQuery.trim().toLowerCase()
+    if (!q) return items
+    return items.filter((b) =>
+      [b.name, b.city, b.address_line, b.phone, b.timezone]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q)),
+    )
+  }, [pickupBranches.data, branchQuery])
+
+  useEffect(() => {
+    if (!destinationBranchId && (pickupBranches.data?.length ?? 0) === 1) {
+      setDestinationBranchId(pickupBranches.data![0].id)
+    }
+  }, [pickupBranches.data, destinationBranchId])
+
+  const selectedBranch = useMemo(
+    () => (pickupBranches.data ?? []).find((b) => b.id === destinationBranchId) ?? null,
+    [pickupBranches.data, destinationBranchId],
+  )
+
   const createOrder = useMutation({
     mutationFn: async () => {
       if (!buyerOrgId) throw new ApiError('Нет организации салона', 'validation_error', 400)
+      if (!destinationBranchId) throw new ApiError('Выберите филиал для получения', 'validation_error', 400)
       let loc = locationId || locations.data?.items[0]?.id
       if (!loc) {
         const created = await ensure.mutateAsync()
@@ -60,14 +97,20 @@ export function CosmeticsSupplierPage() {
       }
       if (!loc) throw new ApiError('Не удалось подготовить склад доставки', 'validation_error', 400)
       if (cart.length === 0) throw new ApiError('Корзина пуста', 'validation_error', 400)
+      const idempotencyKey = newIdempotencyKey()
       return apiRequest('/v1/commerce/supplier-orders', {
         token: accessToken,
+        idempotencyKey,
         body: {
           buyer_org_id: buyerOrgId,
           supplier_org_id: supplierId,
           location_id: loc,
+          destination_branch_id: destinationBranchId,
+          payment_method: paymentMethod,
           comment: comment.trim() || 'Заказ косметики',
           items: cart.map((c) => ({ product_id: c.product.id, qty: c.qty })),
+          // Backend currently reads idempotency_key from body; header is also sent via idempotencyKey.
+          idempotency_key: idempotencyKey,
         },
       })
     },
@@ -78,6 +121,9 @@ export function CosmeticsSupplierPage() {
       clearCart(supplierId)
       setCheckoutOpen(false)
       setComment('')
+      setDestinationBranchId('')
+      setPaymentMethod('cash')
+      setBranchQuery('')
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось оформить заказ'),
@@ -102,7 +148,9 @@ export function CosmeticsSupplierPage() {
   }
 
   const title = supplier.data?.name || 'Каталог поставщика'
-  const total = cartTotal(cart)
+  const subtotal = cartTotal(cart)
+  const deliveryCost = 0
+  const total = subtotal + deliveryCost
   const count = cartCount(cart)
 
   return (
@@ -179,11 +227,12 @@ export function CosmeticsSupplierPage() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCheckoutOpen(false)}>
           <div className="modal-sheet stack" onClick={(e) => e.stopPropagation()}>
             <div className="row between">
-              <h2>Корзина</h2>
+              <h2>Оформление заказа</h2>
               <button className="btn btn-secondary btn-compact" type="button" onClick={() => setCheckoutOpen(false)}>
                 Закрыть
               </button>
             </div>
+
             <div className="list">
               {cart.map((line) => (
                 <article key={line.product.id} className="list-item">
@@ -203,16 +252,74 @@ export function CosmeticsSupplierPage() {
                 </article>
               ))}
             </div>
-            <p>Итого: <strong>{formatMoney(total)}</strong></p>
+
+            <section className="stack-sm">
+              <h3>Филиал получения</h3>
+              <div className="field">
+                <label htmlFor="branch-search">Поиск филиала</label>
+                <input
+                  id="branch-search"
+                  value={branchQuery}
+                  onChange={(e) => setBranchQuery(e.target.value)}
+                  placeholder="Название, город, адрес…"
+                />
+              </div>
+              {pickupBranches.isLoading && <div className="state-box">Загрузка филиалов…</div>}
+              {pickupBranches.isError && <div className="state-box error">Не удалось загрузить филиалы</div>}
+              {!pickupBranches.isLoading && filteredBranches.length === 0 && (
+                <div className="state-box">Нет доступных филиалов с самовывозом. Включите pickup у филиала салона.</div>
+              )}
+              <div className="list">
+                {filteredBranches.map((b) => (
+                  <BranchSelectCard
+                    key={b.id}
+                    branch={b}
+                    selected={destinationBranchId === b.id}
+                    onSelect={() => setDestinationBranchId(b.id)}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <div className="field">
+              <label htmlFor="payment-method">Способ оплаты</label>
+              <select
+                id="payment-method"
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+              >
+                {PAYMENT_METHOD_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {paymentMethod === 'card' && (
+                <p className="hint">Онлайн-оплата будет подключена позже</p>
+              )}
+            </div>
+
             <div className="field">
               <label htmlFor="comment">Комментарий</label>
               <input id="comment" value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Пожелания к доставке" />
             </div>
-            <p className="muted">Доставка на склад салона будет подготовлена автоматически.</p>
+
+            <section className="order-summary stack-sm">
+              <h3>Итого</h3>
+              <div className="row between"><span>Подытог</span><strong>{formatMoney(subtotal)}</strong></div>
+              <div className="row between"><span>Доставка</span><strong>{formatMoney(deliveryCost)}</strong></div>
+              <div className="row between"><span>Всего</span><strong>{formatMoney(total)}</strong></div>
+              <div className="row between">
+                <span>Оплата</span>
+                <strong>{paymentMethodLabel(paymentMethod)}</strong>
+              </div>
+              {selectedBranch && (
+                <p className="muted">Получение: {selectedBranch.name}, {selectedBranch.city}</p>
+              )}
+            </section>
+
             <button
               className="btn btn-primary btn-block"
               type="button"
-              disabled={createOrder.isPending || cart.length === 0}
+              disabled={createOrder.isPending || cart.length === 0 || !destinationBranchId}
               onClick={() => createOrder.mutate()}
             >
               {createOrder.isPending ? 'Отправляем…' : 'Подтвердить заказ'}
@@ -221,5 +328,32 @@ export function CosmeticsSupplierPage() {
         </div>
       )}
     </main>
+  )
+}
+
+function BranchSelectCard({
+  branch,
+  selected,
+  onSelect,
+}: {
+  branch: BranchCard
+  selected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className={`list-item branch-select-card${selected ? ' selected' : ''}`}
+      onClick={onSelect}
+    >
+      <div className="row between">
+        <strong>{branch.name}</strong>
+        {selected && <span className="chip badge-confirmed">Выбран</span>}
+      </div>
+      <p className="muted">{[branch.city, branch.address_line].filter(Boolean).join(' · ')}</p>
+      <p className="muted">
+        {[branch.timezone, branch.phone].filter(Boolean).join(' · ')}
+      </p>
+    </button>
   )
 }

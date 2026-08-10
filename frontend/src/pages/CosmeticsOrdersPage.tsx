@@ -2,9 +2,14 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { useBuyerOrg, type SupplierOrder } from '@/shared/lib/commerce'
+import {
+  fetchBranch,
+  paymentMethodLabel,
+  useBuyerOrg,
+  type SupplierOrder,
+} from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, supplierOrderLabel } from '@/shared/lib/status'
+import { paymentStatusLabel, statusBadgeClass, supplierOrderLabel } from '@/shared/lib/status'
 
 export function CosmeticsOrdersPage() {
   const { accessToken } = useAuth()
@@ -61,6 +66,19 @@ export function CosmeticsOrdersPage() {
               <span className={`badge ${statusBadgeClass(o.status)}`}>{supplierOrderLabel(o.status)}</span>
             </div>
             <p className="muted">{new Date(o.created_at).toLocaleString('ru-RU')}</p>
+            {(o.payment_method || o.payment_status) && (
+              <div className="row">
+                {o.payment_method && <span className="chip badge-default">{paymentMethodLabel(o.payment_method)}</span>}
+                {o.payment_status && (
+                  <span className={`badge ${statusBadgeClass(o.payment_status)}`}>
+                    {paymentStatusLabel(o.payment_status)}
+                  </span>
+                )}
+              </div>
+            )}
+            {o.destination_branch_id && (
+              <DestinationLine branchId={o.destination_branch_id} token={accessToken} />
+            )}
             {o.estimated_delivery_at && (
               <p>Ожидаемая доставка: {new Date(o.estimated_delivery_at).toLocaleDateString('ru-RU')}</p>
             )}
@@ -79,4 +97,22 @@ export function CosmeticsOrdersPage() {
       </div>
     </main>
   )
+}
+
+function DestinationLine({ branchId, token }: { branchId: string; token: string | null }) {
+  const branch = useQuery({
+    queryKey: ['branch', branchId],
+    queryFn: () => fetchBranch(token, branchId),
+    enabled: Boolean(token && branchId),
+  })
+  if (branch.data) {
+    return (
+      <p>
+        Получение: {branch.data.name}
+        {branch.data.city ? `, ${branch.data.city}` : ''}
+        {branch.data.address_line ? ` · ${branch.data.address_line}` : ''}
+      </p>
+    )
+  }
+  return <p className="muted">Филиал получения указан</p>
 }

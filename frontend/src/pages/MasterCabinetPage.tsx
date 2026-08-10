@@ -4,10 +4,12 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
+import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
+import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { useToast } from '@/shared/ui/Toast'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string; published: boolean; description: string }
@@ -37,15 +39,15 @@ const masterSchema = z.object({
 export function MasterCabinetPage() {
   const { accessToken, user } = useAuth()
   const qc = useQueryClient()
+  const toast = useToast()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
-  const [photoStatus, setPhotoStatus] = useState<string | null>(null)
-  const [photoUploading, setPhotoUploading] = useState(false)
   const [portfolioCaption, setPortfolioCaption] = useState('')
-  const [portfolioUploading, setPortfolioUploading] = useState(false)
-  const [salonPhotoUploading, setSalonPhotoUploading] = useState(false)
   const [recoProductId, setRecoProductId] = useState('')
   const [recoComment, setRecoComment] = useState('')
+  const [profilePhotoDraft, setProfilePhotoDraft] = useState<string | null>(null)
+  const [portfolioDraft, setPortfolioDraft] = useState<string | null>(null)
+  const [salonDraft, setSalonDraft] = useState<string | null>(null)
 
   const orgs = useQuery({
     queryKey: ['orgs-mine'],
@@ -160,7 +162,7 @@ export function MasterCabinetPage() {
     defaultValues: {
       published: false,
       display_name: user?.display_name ?? '',
-      city: 'Москва',
+      city: 'Красноярск',
       experience_years: 1,
       education: '',
       work_type: 'independent',
@@ -172,7 +174,7 @@ export function MasterCabinetPage() {
     if (!m) return
     masterForm.reset({
       display_name: m.display_name || user?.display_name || '',
-      city: m.city || 'Москва',
+      city: m.city || 'Красноярск',
       bio: m.bio ?? '',
       specializations: (m.specializations ?? []).join(', '),
       experience_years: m.experience_years ?? 1,
@@ -296,30 +298,21 @@ export function MasterCabinetPage() {
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка расписания'),
   })
 
-  async function uploadProfilePhoto(file: File) {
+  async function attachProfilePhoto(mediaId: string | null) {
+    if (!mediaId) {
+      setProfilePhotoDraft(null)
+      return
+    }
     if (!accessToken) return
     const org = orgs.data?.items[0]
     if (!org) {
       setError('Сначала создайте салон')
+      toast.error('Сначала создайте салон')
+      setProfilePhotoDraft(null)
       return
     }
-    setPhotoUploading(true)
-    setPhotoStatus(null)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'profile')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
-      const mediaId = uploadData.id as string
       await apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
@@ -327,7 +320,7 @@ export function MasterCabinetPage() {
           organization_id: org.organization.id,
           branch_id: org.branches[0]?.id,
           display_name: masterForm.getValues('display_name') || user?.display_name || '',
-          city: masterForm.getValues('city') || 'Москва',
+          city: masterForm.getValues('city') || 'Красноярск',
           bio: masterForm.getValues('bio') ?? '',
           specializations: (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
           experience_years: masterForm.getValues('experience_years') ?? 0,
@@ -337,74 +330,64 @@ export function MasterCabinetPage() {
           photo_media_id: mediaId,
         },
       })
-      setPhotoStatus('Фото профиля загружено')
+      setProfilePhotoDraft(null)
       setOk('Фото профиля сохранено')
+      toast.success('Фото профиля сохранено')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото')
-    } finally {
-      setPhotoUploading(false)
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото'
+      setError(msg)
+      toast.error(msg)
+      setProfilePhotoDraft(null)
     }
   }
 
-  async function uploadPortfolioPhoto(file: File) {
+  async function attachPortfolioPhoto(mediaId: string | null) {
+    if (!mediaId) {
+      setPortfolioDraft(null)
+      return
+    }
     if (!accessToken) return
-    setPortfolioUploading(true)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'portfolio')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
       await apiRequest('/v1/me/master/portfolio', {
         token: accessToken,
-        body: { media_id: uploadData.id as string, caption: portfolioCaption.trim() },
+        body: { media_id: mediaId, caption: portfolioCaption.trim() },
       })
       setPortfolioCaption('')
+      setPortfolioDraft(null)
       setOk('Работа добавлена в портфолио')
+      toast.success('Работа добавлена в портфолио')
       await qc.invalidateQueries({ queryKey: ['my-portfolio'] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки в портфолио')
-    } finally {
-      setPortfolioUploading(false)
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки в портфолио'
+      setError(msg)
+      toast.error(msg)
+      setPortfolioDraft(null)
     }
   }
 
-  async function uploadSalonPhoto(file: File) {
+  async function attachSalonPhoto(mediaId: string | null) {
+    if (!mediaId) {
+      setSalonDraft(null)
+      return
+    }
     if (!accessToken || !primaryBranch) return
-    setSalonPhotoUploading(true)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'salon')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
       await apiRequest(`/v1/branches/${primaryBranch.id}/photos`, {
         token: accessToken,
-        body: { media_id: uploadData.id as string, sort_order: branchPhotos.data?.items.length ?? 0 },
+        body: { media_id: mediaId, sort_order: branchPhotos.data?.items.length ?? 0 },
       })
+      setSalonDraft(null)
       setOk('Фото салона добавлено')
+      toast.success('Фото салона добавлено')
       await qc.invalidateQueries({ queryKey: ['branch-photos', primaryBranch.id] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото салона')
-    } finally {
-      setSalonPhotoUploading(false)
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото салона'
+      setError(msg)
+      toast.error(msg)
+      setSalonDraft(null)
     }
   }
 
@@ -592,25 +575,21 @@ export function MasterCabinetPage() {
         <div className="stack-sm">
           <h3>Фото профиля</h3>
           {master.data?.master.photo_media_id ? (
-            <p className="muted">Фото профиля загружено</p>
+            <div className="avatar-circle" style={{ width: 120, height: 120 }}>
+              <MediaImage mediaId={master.data.master.photo_media_id} token={accessToken} alt="Профиль" />
+            </div>
           ) : (
             <p className="state-box">Фото профиля не загружено</p>
           )}
-          {photoStatus && <p className="muted">{photoStatus}</p>}
-          <div className="field">
-            <label htmlFor="profile-photo">Загрузить фото (JPEG, PNG, WebP, до 5 МБ)</label>
-            <input
-              id="profile-photo"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              disabled={photoUploading}
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void uploadProfilePhoto(file)
-                e.target.value = ''
-              }}
-            />
-          </div>
+          <MediaDropzone
+            purpose="profile"
+            value={profilePhotoDraft}
+            onChange={(mediaId) => {
+              setProfilePhotoDraft(mediaId)
+              if (mediaId) void attachProfilePhoto(mediaId)
+            }}
+            label="Загрузить фото профиля"
+          />
         </div>
         <form className="stack" onSubmit={masterForm.handleSubmit((v) => saveMaster.mutate(v))}>
           <div className="field">
@@ -676,20 +655,16 @@ export function MasterCabinetPage() {
         {branchPhotos.data && branchPhotos.data.items.length === 0 && (
           <div className="state-box">Фото салона пока нет</div>
         )}
-        <div className="field">
-          <label htmlFor="salon-photo">Добавить фото филиала</label>
-          <input
-            id="salon-photo"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            disabled={salonPhotoUploading || !primaryBranch}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadSalonPhoto(file)
-              e.target.value = ''
-            }}
-          />
-        </div>
+        <MediaDropzone
+          purpose="salon"
+          value={salonDraft}
+          onChange={(mediaId) => {
+            setSalonDraft(mediaId)
+            if (mediaId) void attachSalonPhoto(mediaId)
+          }}
+          label="Добавить фото филиала"
+          disabled={!primaryBranch}
+        />
       </section>
 
       <section className="card stack">
@@ -720,20 +695,16 @@ export function MasterCabinetPage() {
           <label htmlFor="portfolio-caption">Подпись (необязательно)</label>
           <input id="portfolio-caption" value={portfolioCaption} onChange={(e) => setPortfolioCaption(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="portfolio-photo">Добавить работу</label>
-          <input
-            id="portfolio-photo"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            disabled={portfolioUploading || !master.data}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadPortfolioPhoto(file)
-              e.target.value = ''
-            }}
-          />
-        </div>
+        <MediaDropzone
+          purpose="portfolio"
+          value={portfolioDraft}
+          onChange={(mediaId) => {
+            setPortfolioDraft(mediaId)
+            if (mediaId) void attachPortfolioPhoto(mediaId)
+          }}
+          label="Добавить работу в портфолио"
+          disabled={!master.data}
+        />
       </section>
 
       <section className="card stack">

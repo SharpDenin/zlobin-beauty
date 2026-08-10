@@ -34,6 +34,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("DELETE /v1/branches/{branchID}/photos/{photoID}", auth(http.HandlerFunc(a.deleteBranchPhoto)))
 	// Branch metadata (timezone, city, etc.) is read by other services
 	// (e.g. booking resolving a master's timezone), so this stays public.
+	mux.HandleFunc("GET /v1/branches/pickup", a.listPickupBranches)
 	mux.HandleFunc("GET /v1/branches/{branchID}", a.getBranch)
 	mux.HandleFunc("GET /v1/branches/{branchID}/photos", a.listBranchPhotos)
 	mux.HandleFunc("GET /v1/suppliers", a.listSuppliers)
@@ -209,12 +210,17 @@ func (a *API) updateOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchBranchReq struct {
-	Name        *string `json:"name"`
-	City        *string `json:"city"`
-	AddressLine *string `json:"address_line"`
-	Phone       *string `json:"phone"`
-	Timezone    *string `json:"timezone"`
-	Published   *bool   `json:"published"`
+	Name             *string  `json:"name"`
+	City             *string  `json:"city"`
+	AddressLine      *string  `json:"address_line"`
+	Phone            *string  `json:"phone"`
+	Timezone         *string  `json:"timezone"`
+	Published        *bool    `json:"published"`
+	PickupEnabled    *bool    `json:"pickup_enabled"`
+	Latitude         *float64 `json:"latitude"`
+	Longitude        *float64 `json:"longitude"`
+	WorkingHoursNote *string  `json:"working_hours_note"`
+	PhotoMediaID     *string  `json:"photo_media_id"`
 }
 
 func (a *API) updateBranch(w http.ResponseWriter, r *http.Request) {
@@ -229,11 +235,26 @@ func (a *API) updateBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	b, err := a.svc.UpdateBranch(r.Context(), service.UpdateBranchInput{
+	in := service.UpdateBranchInput{
 		ActorID: claims.UserID, BranchID: branchID,
 		Name: req.Name, City: req.City, AddressLine: req.AddressLine,
 		Phone: req.Phone, Timezone: req.Timezone, Published: req.Published,
-	})
+		PickupEnabled: req.PickupEnabled, Latitude: req.Latitude, Longitude: req.Longitude,
+		WorkingHoursNote: req.WorkingHoursNote,
+	}
+	if req.PhotoMediaID != nil {
+		if *req.PhotoMediaID == "" {
+			in.ClearPhotoMedia = true
+		} else {
+			id, err := uuid.Parse(*req.PhotoMediaID)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+				return
+			}
+			in.PhotoMediaID = &id
+		}
+	}
+	b, err := a.svc.UpdateBranch(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -298,6 +319,20 @@ func (a *API) getBranch(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, branchDTO(*b))
 }
 
+func (a *API) listPickupBranches(w http.ResponseWriter, r *http.Request) {
+	city := r.URL.Query().Get("city")
+	items, err := a.svc.ListPickupBranches(r.Context(), city)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, b := range items {
+		out = append(out, branchDTO(b))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
 func orgDTO(o domain.Organization) map[string]any {
 	var logo any
 	if o.LogoMediaID != nil {
@@ -351,10 +386,23 @@ func (a *API) getSupplier(w http.ResponseWriter, r *http.Request) {
 }
 
 func branchDTO(b domain.Branch) map[string]any {
+	var photo any
+	if b.PhotoMediaID != nil {
+		photo = b.PhotoMediaID.String()
+	}
+	var lat, lng any
+	if b.Latitude != nil {
+		lat = *b.Latitude
+	}
+	if b.Longitude != nil {
+		lng = *b.Longitude
+	}
 	return map[string]any{
 		"id": b.ID.String(), "organization_id": b.OrganizationID.String(), "name": b.Name,
 		"city": b.City, "address_line": b.AddressLine, "phone": b.Phone, "timezone": b.Timezone,
 		"cancel_window_hours": b.CancelWindowHours, "auto_confirm": b.AutoConfirm, "published": b.Published,
+		"pickup_enabled": b.PickupEnabled, "latitude": lat, "longitude": lng,
+		"working_hours_note": b.WorkingHoursNote, "photo_media_id": photo,
 	}
 }
 

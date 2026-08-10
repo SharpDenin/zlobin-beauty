@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,21 @@ type Store struct{ pool *pgxpool.Pool }
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+const appointmentCols = `
+id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
+duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at,
+occurrence_id, booking_mode, location_name, location_city, location_address, location_timezone`
+
+const slotConflictMsg = "Это время уже занято"
+
+func mapAppointmentConflict(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == pgerrcode.ExclusionViolation || pgErr.Code == "23P01") {
+		return apperr.Conflict(slotConflictMsg)
+	}
+	return err
+}
 
 func (s *Store) ReplaceWorkingHours(ctx context.Context, masterUserID uuid.UUID, hours []domain.WorkingHours) error {
 	tx, err := s.pool.Begin(ctx)
@@ -125,8 +141,7 @@ DELETE FROM schedule_exceptions WHERE master_user_id=$1 AND day=$2::date`, maste
 
 func (s *Store) ListAppointmentsInRange(ctx context.Context, masterUserID uuid.UUID, from, to time.Time) ([]domain.Appointment, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
-       duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at
+SELECT `+appointmentCols+`
 FROM appointments
 WHERE master_user_id=$1
   AND status IN ('pending_confirmation','confirmed','in_progress')
@@ -140,37 +155,39 @@ ORDER BY starts_at`, masterUserID, from, to)
 }
 
 func (s *Store) CreateAppointment(ctx context.Context, a domain.Appointment) error {
+	mode := a.BookingMode
+	if mode == "" {
+		mode = domain.BookingModeFlexible
+	}
+	tz := a.LocationTimezone
+	if tz == "" {
+		tz = "Europe/Moscow"
+	}
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO appointments(
   id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
-  duration_minutes, price_minor, currency, status, starts_at, ends_at, created_at, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+  duration_minutes, price_minor, currency, status, starts_at, ends_at, created_at, updated_at,
+  occurrence_id, booking_mode, location_name, location_city, location_address, location_timezone
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
 		a.ID, a.OrganizationID, a.BranchID, a.MasterUserID, a.ClientUserID, a.ServiceID, a.ServiceName,
-		a.DurationMinutes, a.PriceMinor, a.Currency, a.Status, a.StartsAt, a.EndsAt, a.CreatedAt, a.UpdatedAt)
+		a.DurationMinutes, a.PriceMinor, a.Currency, a.Status, a.StartsAt, a.EndsAt, a.CreatedAt, a.UpdatedAt,
+		a.OccurrenceID, mode, a.LocationName, a.LocationCity, a.LocationAddress, tz)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
-			return apperr.Conflict("time slot is not available")
-		}
-		return err
+		return mapAppointmentConflict(err)
 	}
 	return nil
 }
 
 func (s *Store) GetAppointment(ctx context.Context, id uuid.UUID) (*domain.Appointment, error) {
-	row := s.pool.QueryRow(ctx, `
-SELECT id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
-       duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at
-FROM appointments WHERE id=$1`, id)
-	var a domain.Appointment
-	if err := row.Scan(&a.ID, &a.OrganizationID, &a.BranchID, &a.MasterUserID, &a.ClientUserID, &a.ServiceID, &a.ServiceName,
-		&a.DurationMinutes, &a.PriceMinor, &a.Currency, &a.Status, &a.CancelReason, &a.StartsAt, &a.EndsAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	row := s.pool.QueryRow(ctx, `SELECT `+appointmentCols+` FROM appointments WHERE id=$1`, id)
+	a, err := scanAppointment(row)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &a, nil
+	return a, nil
 }
 
 func (s *Store) TransitionStatus(ctx context.Context, id uuid.UUID, from, to string, actor uuid.UUID, reason string, at time.Time) error {
@@ -206,11 +223,7 @@ func (s *Store) Reschedule(ctx context.Context, id uuid.UUID, fromStatus string,
 UPDATE appointments SET starts_at=$3, ends_at=$4, updated_at=$5
 WHERE id=$1 AND status=$2`, id, fromStatus, starts, ends, at)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
-			return apperr.Conflict("time slot is not available")
-		}
-		return err
+		return mapAppointmentConflict(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return apperr.Conflict("appointment status changed concurrently")
@@ -258,8 +271,7 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID, asMaster bool
 		col = "master_user_id"
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
-       duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at
+SELECT `+appointmentCols+`
 FROM appointments WHERE `+col+`=$1 ORDER BY starts_at DESC LIMIT 100`, userID)
 	if err != nil {
 		return nil, err
@@ -268,15 +280,26 @@ FROM appointments WHERE `+col+`=$1 ORDER BY starts_at DESC LIMIT 100`, userID)
 	return scanAppointments(rows)
 }
 
+func scanAppointment(row pgx.Row) (*domain.Appointment, error) {
+	var a domain.Appointment
+	if err := row.Scan(
+		&a.ID, &a.OrganizationID, &a.BranchID, &a.MasterUserID, &a.ClientUserID, &a.ServiceID, &a.ServiceName,
+		&a.DurationMinutes, &a.PriceMinor, &a.Currency, &a.Status, &a.CancelReason, &a.StartsAt, &a.EndsAt, &a.CreatedAt, &a.UpdatedAt,
+		&a.OccurrenceID, &a.BookingMode, &a.LocationName, &a.LocationCity, &a.LocationAddress, &a.LocationTimezone,
+	); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 func scanAppointments(rows pgx.Rows) ([]domain.Appointment, error) {
 	var out []domain.Appointment
 	for rows.Next() {
-		var a domain.Appointment
-		if err := rows.Scan(&a.ID, &a.OrganizationID, &a.BranchID, &a.MasterUserID, &a.ClientUserID, &a.ServiceID, &a.ServiceName,
-			&a.DurationMinutes, &a.PriceMinor, &a.Currency, &a.Status, &a.CancelReason, &a.StartsAt, &a.EndsAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		a, err := scanAppointment(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, a)
+		out = append(out, *a)
 	}
 	return out, rows.Err()
 }
@@ -288,8 +311,7 @@ func (s *Store) ListByOrgInRange(ctx context.Context, orgID uuid.UUID, from, to 
 		statuses = []string{domain.StatusConfirmed, domain.StatusInProgress}
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
-       duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at
+SELECT `+appointmentCols+`
 FROM appointments
 WHERE organization_id=$1
   AND status = ANY($4)
@@ -300,6 +322,31 @@ ORDER BY starts_at`, orgID, from, to, statuses)
 	}
 	defer rows.Close()
 	return scanAppointments(rows)
+}
+
+// GetIdempotency returns a non-expired idempotency record for user+operation+key.
+func (s *Store) GetIdempotency(ctx context.Context, key string, userID uuid.UUID, operation string) (*domain.IdempotencyRecord, error) {
+	row := s.pool.QueryRow(ctx, `
+SELECT key, user_id, operation, entity_id, response_status, expires_at
+FROM idempotency_keys
+WHERE key=$1 AND user_id=$2 AND operation=$3 AND expires_at > now()`, key, userID, operation)
+	var rec domain.IdempotencyRecord
+	if err := row.Scan(&rec.Key, &rec.UserID, &rec.Operation, &rec.EntityID, &rec.ResponseStatus, &rec.ExpiresAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &rec, nil
+}
+
+// PutIdempotency stores a successful create response entity id (24h TTL).
+func (s *Store) PutIdempotency(ctx context.Context, key string, userID uuid.UUID, operation string, entityID uuid.UUID, responseStatus int) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO idempotency_keys(key, user_id, operation, entity_id, response_status, expires_at)
+VALUES ($1,$2,$3,$4,$5, now() + interval '24 hours')
+ON CONFLICT (key) DO NOTHING`, key, userID, operation, entityID, responseStatus)
+	return err
 }
 
 // --- appointment photos ---

@@ -4,10 +4,11 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, API_BASE_URL, apiRequest } from '@/shared/api/client'
+import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg, type CommerceProduct } from '@/shared/lib/commerce'
-import { MediaImage } from '@/shared/ui/MediaImage'
+import { MediaDropzone } from '@/shared/ui/MediaDropzone'
+import { useToast } from '@/shared/ui/Toast'
 
 const schema = z.object({
   name: z.string().min(2, 'Укажите название'),
@@ -32,9 +33,9 @@ export function SupplierProductEditPage() {
   const { supplierOrgId, orgs } = useSupplierOrg()
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const toast = useToast()
   const [error, setError] = useState<string | null>(null)
   const [photoMediaId, setPhotoMediaId] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
 
   const existing = useQuery({
     queryKey: ['commerce-product', id],
@@ -78,31 +79,6 @@ export function SupplierProductEditPage() {
     setPhotoMediaId(p.photo_media_id ?? null)
   }, [existing.data, form])
 
-  async function uploadPhoto(file: File) {
-    if (!accessToken) return
-    setUploading(true)
-    setError(null)
-    try {
-      const body = new FormData()
-      body.append('file', file)
-      body.append('purpose', 'product')
-      const res = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body,
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new ApiError(data?.error?.message ?? 'Не удалось загрузить фото', data?.error?.code ?? 'error', res.status)
-      }
-      setPhotoMediaId(data.id as string)
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото')
-    } finally {
-      setUploading(false)
-    }
-  }
-
   const save = useMutation({
     mutationFn: async (values: FormValues) => {
       if (!supplierOrgId) throw new ApiError('Нет организации поставщика', 'validation_error', 400)
@@ -136,12 +112,17 @@ export function SupplierProductEditPage() {
     },
     onSuccess: async (res) => {
       setError(null)
+      toast.success('Товар сохранён')
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
       await qc.invalidateQueries({ queryKey: ['commerce-product'] })
       await qc.invalidateQueries({ queryKey: ['supplier-dashboard'] })
       void navigate(res?.id ? `/supplier/products/${res.id}` : '/supplier/products')
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить товар'),
+    onError: (e) => {
+      const msg = e instanceof ApiError ? e.message : 'Не удалось сохранить товар'
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   if (orgs.isLoading || (!isNew && existing.isLoading)) {
@@ -172,25 +153,13 @@ export function SupplierProductEditPage() {
       {!isNew && existing.isError && <div className="state-box error">Товар не найден</div>}
 
       <form className="card stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
-        <div className="product-media">
-          {photoMediaId ? (
-            <MediaImage mediaId={photoMediaId} token={accessToken} alt="Товар" />
-          ) : (
-            <span>Фото появится здесь</span>
-          )}
-        </div>
         <div className="field">
-          <label htmlFor="photo">Фото</label>
-          <input
-            id="photo"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            disabled={uploading}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadPhoto(file)
-              e.target.value = ''
-            }}
+          <label>Фото</label>
+          <MediaDropzone
+            purpose="product"
+            value={photoMediaId}
+            onChange={setPhotoMediaId}
+            label="Фото товара"
           />
           <span className="hint">JPEG, PNG или WebP. Если загрузка недоступна — можно сохранить без фото.</span>
         </div>

@@ -33,17 +33,53 @@ const (
 	StockOut        = "out"
 )
 
-// Supplier order statuses.
+// Supplier order statuses (legacy + commercial lifecycle).
 const (
-	OrderStatusDraft           = "draft"
-	OrderStatusNew             = "new"
-	OrderStatusConfirmed       = "confirmed"
-	OrderStatusPicking         = "picking"
-	OrderStatusInTransit       = "in_transit"
-	OrderStatusDelivered       = "delivered"
-	OrderStatusAcceptedPartial = "accepted_partial"
-	OrderStatusAcceptedFull    = "accepted_full"
-	OrderStatusCancelled       = "cancelled"
+	OrderStatusDraft            = "draft"
+	OrderStatusNew              = "new"
+	OrderStatusSubmitted        = "submitted" // alias of new for commercial clients
+	OrderStatusConfirmed        = "confirmed"
+	OrderStatusProcessing       = "processing"
+	OrderStatusPicking          = "picking"
+	OrderStatusReadyForDispatch = "ready_for_dispatch"
+	OrderStatusInTransit        = "in_transit" // legacy; prefer delivery status
+	OrderStatusDelivered        = "delivered"  // legacy alias; prefer completed
+	OrderStatusCompleted        = "completed"
+	OrderStatusAcceptedPartial  = "accepted_partial"
+	OrderStatusAcceptedFull     = "accepted_full"
+	OrderStatusCancelled        = "cancelled"
+)
+
+// Payment methods for B2B supplier orders.
+const (
+	PaymentMethodCash         = "cash"
+	PaymentMethodBankTransfer = "bank_transfer"
+	PaymentMethodCard         = "card"
+	PaymentMethodInvoice      = "invoice"
+)
+
+// Payment statuses for B2B supplier orders.
+const (
+	PaymentStatusPending         = "pending"
+	PaymentStatusAwaitingPayment = "awaiting_payment"
+	PaymentStatusAuthorized      = "authorized"
+	PaymentStatusPaid            = "paid"
+	PaymentStatusPartiallyPaid   = "partially_paid"
+	PaymentStatusFailed          = "failed"
+	PaymentStatusRefunded        = "refunded"
+	PaymentStatusCancelled       = "cancelled"
+)
+
+// Delivery statuses (physical fulfillment; separate from commercial order status).
+const (
+	DeliveryStatusPending   = "pending"
+	DeliveryStatusScheduled = "scheduled"
+	DeliveryStatusPreparing = "preparing"
+	DeliveryStatusInTransit = "in_transit"
+	DeliveryStatusArrived   = "arrived"
+	DeliveryStatusDelivered = "delivered"
+	DeliveryStatusFailed    = "failed"
+	DeliveryStatusCancelled = "cancelled"
 )
 
 type ProductCategory struct {
@@ -138,29 +174,57 @@ type ConsumptionNorm struct {
 }
 
 type SupplierOrder struct {
-	ID                  uuid.UUID
-	BuyerOrgID          uuid.UUID
-	SupplierOrgID       uuid.UUID
-	LocationID          uuid.UUID
-	Status              string
-	Currency            string
-	TotalMinor          int64
-	Comment             string
-	DesiredAt           *time.Time
-	EstimatedDeliveryAt *time.Time
-	CreatedBy           uuid.UUID
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                   uuid.UUID
+	BuyerOrgID           uuid.UUID
+	SupplierOrgID        uuid.UUID
+	LocationID           uuid.UUID
+	DestinationBranchID  *uuid.UUID
+	Status               string
+	Currency             string
+	TotalMinor           int64
+	SubtotalMinor        int64
+	DeliveryCostMinor    int64
+	PaymentMethod        string
+	PaymentStatus        string
+	PaidAt               *time.Time
+	IdempotencyKey       string
+	Comment              string
+	DesiredAt            *time.Time
+	EstimatedDeliveryAt  *time.Time
+	CreatedBy            uuid.UUID
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type SupplierOrderItem struct {
 	ID           uuid.UUID
 	OrderID      uuid.UUID
 	ProductID    uuid.UUID
+	ProductName  string
+	ProductSKU   string
 	QtyOrdered   float64
 	QtyDelivered float64
 	QtyAccepted  float64
 	PriceMinor   int64
+}
+
+type OrderDelivery struct {
+	ID                  uuid.UUID
+	OrderID             uuid.UUID
+	SupplierOrgID       uuid.UUID
+	DestinationBranchID uuid.UUID
+	Status              string
+	PlannedDeliveryAt   *time.Time
+	WindowStart         *time.Time
+	WindowEnd           *time.Time
+	DeliveredAt         *time.Time
+	RecipientName       string
+	RecipientPhone      string
+	Comment             string
+	Provider            string
+	TrackingCode        string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // Client order statuses (B2C shop).

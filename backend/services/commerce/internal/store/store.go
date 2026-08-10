@@ -384,43 +384,80 @@ ORDER BY created_at DESC`, orgID, serviceID)
 
 // --- supplier orders ---
 
-const orderColumns = `id, buyer_org_id, supplier_org_id, location_id, status, currency, total_minor, comment, desired_at, estimated_delivery_at, created_by, created_at, updated_at`
+const orderColumns = `id, buyer_org_id, supplier_org_id, location_id, status, currency, total_minor, comment,
+desired_at, estimated_delivery_at, created_by, created_at, updated_at,
+destination_branch_id, payment_method, payment_status, subtotal_minor, delivery_cost_minor, paid_at, idempotency_key`
 
-func (s *Store) CreateOrder(ctx context.Context, o domain.SupplierOrder, items []domain.SupplierOrderItem) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
+const orderItemColumns = `id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, price_minor, product_name, product_sku`
+
+const deliveryColumns = `id, order_id, supplier_org_id, destination_branch_id, status,
+planned_delivery_at, window_start, window_end, delivered_at,
+recipient_name, recipient_phone, comment, provider, tracking_code, created_at, updated_at`
+
+func (s *Store) CreateOrder(ctx context.Context, o domain.SupplierOrder, items []domain.SupplierOrderItem, delivery *domain.OrderDelivery) (*domain.SupplierOrder, []domain.SupplierOrderItem, *domain.OrderDelivery, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
 INSERT INTO supplier_orders(`+orderColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 		o.ID, o.BuyerOrgID, o.SupplierOrgID, o.LocationID, o.Status, o.Currency, o.TotalMinor, o.Comment,
-		o.DesiredAt, o.EstimatedDeliveryAt, o.CreatedBy, o.CreatedAt, o.UpdatedAt); err != nil {
-		return nil, nil, err
+		o.DesiredAt, o.EstimatedDeliveryAt, o.CreatedBy, o.CreatedAt, o.UpdatedAt,
+		o.DestinationBranchID, o.PaymentMethod, o.PaymentStatus, o.SubtotalMinor, o.DeliveryCostMinor, o.PaidAt, nullIfEmpty(o.IdempotencyKey)); err != nil {
+		return nil, nil, nil, err
 	}
 	for i := range items {
 		items[i].OrderID = o.ID
 		if _, err := tx.Exec(ctx, `
-INSERT INTO supplier_order_items(id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, price_minor)
-VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			items[i].ID, items[i].OrderID, items[i].ProductID, items[i].QtyOrdered, items[i].QtyDelivered, items[i].QtyAccepted, items[i].PriceMinor); err != nil {
-			return nil, nil, err
+INSERT INTO supplier_order_items(id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, price_minor, product_name, product_sku)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			items[i].ID, items[i].OrderID, items[i].ProductID, items[i].QtyOrdered, items[i].QtyDelivered, items[i].QtyAccepted,
+			items[i].PriceMinor, items[i].ProductName, items[i].ProductSKU); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if delivery != nil {
+		delivery.OrderID = o.ID
+		if _, err := tx.Exec(ctx, `
+INSERT INTO order_deliveries(`+deliveryColumns+`)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+			delivery.ID, delivery.OrderID, delivery.SupplierOrgID, delivery.DestinationBranchID, delivery.Status,
+			delivery.PlannedDeliveryAt, delivery.WindowStart, delivery.WindowEnd, delivery.DeliveredAt,
+			delivery.RecipientName, delivery.RecipientPhone, delivery.Comment, delivery.Provider, delivery.TrackingCode,
+			delivery.CreatedAt, delivery.UpdatedAt); err != nil {
+			return nil, nil, nil, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return &o, items, nil
+	return &o, items, delivery, nil
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *Store) GetOrder(ctx context.Context, id uuid.UUID) (*domain.SupplierOrder, error) {
 	return scanOrder(s.pool.QueryRow(ctx, `SELECT `+orderColumns+` FROM supplier_orders WHERE id=$1`, id))
 }
 
+func (s *Store) GetOrderByIdempotencyKey(ctx context.Context, createdBy uuid.UUID, key string) (*domain.SupplierOrder, error) {
+	if key == "" {
+		return nil, nil
+	}
+	return scanOrder(s.pool.QueryRow(ctx, `
+SELECT `+orderColumns+` FROM supplier_orders WHERE created_by=$1 AND idempotency_key=$2`, createdBy, key))
+}
+
 func (s *Store) ListOrderItems(ctx context.Context, orderID uuid.UUID) ([]domain.SupplierOrderItem, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, price_minor
+SELECT `+orderItemColumns+`
 FROM supplier_order_items WHERE order_id=$1 ORDER BY id`, orderID)
 	if err != nil {
 		return nil, err
@@ -512,9 +549,23 @@ WHERE id=$1`, id, status, now, estimatedDeliveryAt)
 	return nil
 }
 
+func (s *Store) MarkOrderPaid(ctx context.Context, id uuid.UUID, paidAt, now time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE supplier_orders
+SET payment_status=$2, paid_at=$3, updated_at=$4
+WHERE id=$1`, id, domain.PaymentStatusPaid, paidAt, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("order not found")
+	}
+	return nil
+}
+
 func (s *Store) ConfirmOrder(ctx context.Context, id uuid.UUID, now time.Time) error {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE supplier_orders SET status='confirmed', updated_at=$2 WHERE id=$1 AND status='new'`, id, now)
+UPDATE supplier_orders SET status='confirmed', updated_at=$2 WHERE id=$1 AND status IN ('new', 'submitted')`, id, now)
 	if err != nil {
 		return err
 	}
@@ -543,21 +594,27 @@ func (s *Store) AcceptOrder(ctx context.Context, orderID, actorUserID uuid.UUID,
 	defer tx.Rollback(ctx)
 
 	var order domain.SupplierOrder
+	var idem *string
 	if err := tx.QueryRow(ctx, `SELECT `+orderColumns+` FROM supplier_orders WHERE id=$1 FOR UPDATE`, orderID).Scan(
 		&order.ID, &order.BuyerOrgID, &order.SupplierOrgID, &order.LocationID, &order.Status, &order.Currency,
-		&order.TotalMinor, &order.Comment, &order.DesiredAt, &order.EstimatedDeliveryAt, &order.CreatedBy, &order.CreatedAt, &order.UpdatedAt); err != nil {
+		&order.TotalMinor, &order.Comment, &order.DesiredAt, &order.EstimatedDeliveryAt, &order.CreatedBy, &order.CreatedAt, &order.UpdatedAt,
+		&order.DestinationBranchID, &order.PaymentMethod, &order.PaymentStatus, &order.SubtotalMinor, &order.DeliveryCostMinor,
+		&order.PaidAt, &idem); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, apperr.NotFound("order not found")
 		}
 		return nil, nil, err
 	}
+	if idem != nil {
+		order.IdempotencyKey = *idem
+	}
 
-	if order.Status != domain.OrderStatusDelivered && order.Status != domain.OrderStatusAcceptedPartial {
+	if order.Status != domain.OrderStatusDelivered && order.Status != domain.OrderStatusCompleted && order.Status != domain.OrderStatusAcceptedPartial {
 		return nil, nil, apperr.Conflict("order is not ready to be accepted")
 	}
 
 	rows, err := tx.Query(ctx, `
-SELECT id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, price_minor
+SELECT `+orderItemColumns+`
 FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 	if err != nil {
 		return nil, nil, err
@@ -627,21 +684,33 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 
 func scanOrder(row pgx.Row) (*domain.SupplierOrder, error) {
 	var o domain.SupplierOrder
+	var idem *string
 	if err := row.Scan(&o.ID, &o.BuyerOrgID, &o.SupplierOrgID, &o.LocationID, &o.Status, &o.Currency,
-		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.EstimatedDeliveryAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.EstimatedDeliveryAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
+		&o.DestinationBranchID, &o.PaymentMethod, &o.PaymentStatus, &o.SubtotalMinor, &o.DeliveryCostMinor,
+		&o.PaidAt, &idem); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if idem != nil {
+		o.IdempotencyKey = *idem
 	}
 	return &o, nil
 }
 
 func scanOrderRow(rows pgx.Rows) (*domain.SupplierOrder, error) {
 	var o domain.SupplierOrder
+	var idem *string
 	if err := rows.Scan(&o.ID, &o.BuyerOrgID, &o.SupplierOrgID, &o.LocationID, &o.Status, &o.Currency,
-		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.EstimatedDeliveryAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.TotalMinor, &o.Comment, &o.DesiredAt, &o.EstimatedDeliveryAt, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
+		&o.DestinationBranchID, &o.PaymentMethod, &o.PaymentStatus, &o.SubtotalMinor, &o.DeliveryCostMinor,
+		&o.PaidAt, &idem); err != nil {
 		return nil, err
+	}
+	if idem != nil {
+		o.IdempotencyKey = *idem
 	}
 	return &o, nil
 }
@@ -651,12 +720,85 @@ func scanOrderItems(rows pgx.Rows) ([]domain.SupplierOrderItem, error) {
 	var out []domain.SupplierOrderItem
 	for rows.Next() {
 		var it domain.SupplierOrderItem
-		if err := rows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.QtyOrdered, &it.QtyDelivered, &it.QtyAccepted, &it.PriceMinor); err != nil {
+		if err := rows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.QtyOrdered, &it.QtyDelivered, &it.QtyAccepted,
+			&it.PriceMinor, &it.ProductName, &it.ProductSKU); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// --- order deliveries ---
+
+func (s *Store) GetDeliveryByOrderID(ctx context.Context, orderID uuid.UUID) (*domain.OrderDelivery, error) {
+	return scanDelivery(s.pool.QueryRow(ctx, `
+SELECT `+deliveryColumns+`
+FROM order_deliveries
+WHERE order_id=$1 AND status NOT IN ('cancelled', 'failed')
+ORDER BY created_at DESC
+LIMIT 1`, orderID))
+}
+
+func (s *Store) GetDelivery(ctx context.Context, id uuid.UUID) (*domain.OrderDelivery, error) {
+	return scanDelivery(s.pool.QueryRow(ctx, `SELECT `+deliveryColumns+` FROM order_deliveries WHERE id=$1`, id))
+}
+
+func (s *Store) UpdateDelivery(ctx context.Context, d domain.OrderDelivery) error {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE order_deliveries SET
+  destination_branch_id=$2, status=$3, planned_delivery_at=$4, window_start=$5, window_end=$6,
+  delivered_at=$7, recipient_name=$8, recipient_phone=$9, comment=$10, provider=$11, tracking_code=$12, updated_at=$13
+WHERE id=$1`,
+		d.ID, d.DestinationBranchID, d.Status, d.PlannedDeliveryAt, d.WindowStart, d.WindowEnd,
+		d.DeliveredAt, d.RecipientName, d.RecipientPhone, d.Comment, d.Provider, d.TrackingCode, d.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("delivery not found")
+	}
+	return nil
+}
+
+// CompleteDelivery marks delivery delivered and order completed in one transaction.
+func (s *Store) CompleteDelivery(ctx context.Context, deliveryID, orderID uuid.UUID, deliveredAt, now time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+UPDATE order_deliveries SET status=$2, delivered_at=$3, updated_at=$4 WHERE id=$1`,
+		deliveryID, domain.DeliveryStatusDelivered, deliveredAt, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("delivery not found")
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE supplier_orders SET status=$2, estimated_delivery_at=COALESCE(estimated_delivery_at, $3), updated_at=$4 WHERE id=$1`,
+		orderID, domain.OrderStatusCompleted, deliveredAt, now); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func scanDelivery(row pgx.Row) (*domain.OrderDelivery, error) {
+	var d domain.OrderDelivery
+	if err := row.Scan(
+		&d.ID, &d.OrderID, &d.SupplierOrgID, &d.DestinationBranchID, &d.Status,
+		&d.PlannedDeliveryAt, &d.WindowStart, &d.WindowEnd, &d.DeliveredAt,
+		&d.RecipientName, &d.RecipientPhone, &d.Comment, &d.Provider, &d.TrackingCode,
+		&d.CreatedAt, &d.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &d, nil
 }
 
 // --- product categories ---

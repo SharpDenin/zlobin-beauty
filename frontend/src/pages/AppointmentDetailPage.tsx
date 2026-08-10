@@ -4,11 +4,13 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
+import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { useToast } from '@/shared/ui/Toast'
 
 type Appointment = {
   id: string
@@ -37,8 +39,11 @@ export function AppointmentDetailPage() {
   const { id } = useParams()
   const { accessToken, user } = useAuth()
   const qc = useQueryClient()
+  const toast = useToast()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
+  const [afterDraft, setAfterDraft] = useState<string | null>(null)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -63,7 +68,7 @@ export function AppointmentDetailPage() {
     enabled: Boolean(id && accessToken),
   })
 
-  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoPending, setPhotoPending] = useState(false)
 
   const deletePhoto = useMutation({
     mutationFn: (photoId: string) =>
@@ -114,33 +119,34 @@ export function AppointmentDetailPage() {
   const canReview = isClient && a.status === 'completed'
   const canUploadPhotos = isMaster && ['confirmed', 'in_progress', 'completed'].includes(a.status)
 
-  async function uploadVisitPhoto(file: File, kind: 'before' | 'after') {
+  async function attachVisitPhoto(mediaId: string | null, kind: 'before' | 'after') {
+    if (!mediaId) {
+      if (kind === 'before') setBeforeDraft(null)
+      else setAfterDraft(null)
+      return
+    }
     if (!accessToken || !id) return
-    setPhotoUploading(true)
+    setPhotoPending(true)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'before_after')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
       await apiRequest(`/v1/appointments/${id}/photos`, {
         token: accessToken,
-        body: { media_id: uploadData.id as string, kind },
+        body: { media_id: mediaId, kind },
       })
-      setOk(kind === 'before' ? 'Фото «до» добавлено' : 'Фото «после» добавлено')
+      const msg = kind === 'before' ? 'Фото «до» добавлено' : 'Фото «после» добавлено'
+      setOk(msg)
+      toast.success(msg)
+      if (kind === 'before') setBeforeDraft(null)
+      else setAfterDraft(null)
       await qc.invalidateQueries({ queryKey: ['appointment-photos', id] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото')
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото'
+      setError(msg)
+      toast.error(msg)
+      if (kind === 'before') setBeforeDraft(null)
+      else setAfterDraft(null)
     } finally {
-      setPhotoUploading(false)
+      setPhotoPending(false)
     }
   }
 
@@ -233,33 +239,31 @@ export function AppointmentDetailPage() {
           <div className="state-box">Фото визита пока нет</div>
         )}
         {canUploadPhotos && (
-          <div className="row">
+          <div className="stack">
             <div className="field">
-              <label htmlFor="photo-before">Добавить «до»</label>
-              <input
-                id="photo-before"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                disabled={photoUploading}
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) void uploadVisitPhoto(file, 'before')
-                  e.target.value = ''
+              <label>Добавить «до»</label>
+              <MediaDropzone
+                purpose="before_after"
+                value={beforeDraft}
+                onChange={(mediaId) => {
+                  setBeforeDraft(mediaId)
+                  if (mediaId) void attachVisitPhoto(mediaId, 'before')
                 }}
+                label="Фото до процедуры"
+                disabled={photoPending}
               />
             </div>
             <div className="field">
-              <label htmlFor="photo-after">Добавить «после»</label>
-              <input
-                id="photo-after"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                disabled={photoUploading}
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) void uploadVisitPhoto(file, 'after')
-                  e.target.value = ''
+              <label>Добавить «после»</label>
+              <MediaDropzone
+                purpose="before_after"
+                value={afterDraft}
+                onChange={(mediaId) => {
+                  setAfterDraft(mediaId)
+                  if (mediaId) void attachVisitPhoto(mediaId, 'after')
                 }}
+                label="Фото после процедуры"
+                disabled={photoPending}
               />
             </div>
           </div>

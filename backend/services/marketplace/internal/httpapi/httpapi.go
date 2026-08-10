@@ -15,15 +15,19 @@ import (
 )
 
 type API struct {
-	svc *service.Service
-	log *slog.Logger
+	svc           *service.Service
+	log           *slog.Logger
+	internalToken string
 }
 
-func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, log: log} }
+func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
+	return &API{svc: svc, log: log, internalToken: internalToken}
+}
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	optional := httpx.OptionalBearerAuth(jwtSecret)
+	a.registerOccurrenceRoutes(mux, jwtSecret)
 	mux.HandleFunc("GET /v1/masters", a.search)
 	mux.HandleFunc("GET /v1/masters/{id}", a.getMaster)
 	mux.HandleFunc("GET /v1/services/popular", a.popularServices)
@@ -75,7 +79,12 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 		}
 		availableOn = &day
 	}
-	items, err := a.svc.Search(r.Context(), city, q, serviceQ, priceMin, priceMax, availableOn)
+	includeOtherCities := false
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("include_other_cities"))) {
+	case "1", "true", "yes":
+		includeOtherCities = true
+	}
+	items, err := a.svc.Search(r.Context(), city, q, serviceQ, priceMin, priceMax, availableOn, includeOtherCities)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -234,6 +243,7 @@ type createServiceReq struct {
 	PhotoMediaID    *string `json:"photo_media_id"`
 	DurationMinutes int     `json:"duration_minutes"`
 	PriceMinor      int64   `json:"price_minor"`
+	BookingMode     string  `json:"booking_mode"`
 	AttachToMe      bool    `json:"attach_to_me"`
 }
 
@@ -257,7 +267,7 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 	item, err := a.svc.CreateService(r.Context(), service.CreateServiceInput{
 		ActorUserID: claims.UserID, OrganizationID: orgID, Name: req.Name, Category: req.Category,
 		Description: req.Description, Notes: req.Notes, PhotoMediaID: photoMediaID,
-		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, AttachToMaster: req.AttachToMe,
+		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, BookingMode: req.BookingMode, AttachToMaster: req.AttachToMe,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -281,6 +291,7 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 		PhotoMediaID    *string `json:"photo_media_id"`
 		DurationMinutes *int    `json:"duration_minutes"`
 		PriceMinor      *int64  `json:"price_minor"`
+		BookingMode     *string `json:"booking_mode"`
 		Published       *bool   `json:"published"`
 		Archived        *bool   `json:"archived"`
 	}
@@ -291,7 +302,8 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 	in := service.UpdateServiceInput{
 		ActorUserID: claims.UserID, ServiceID: id, Name: req.Name, Category: req.Category,
 		Description: req.Description, Notes: req.Notes,
-		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, Published: req.Published, Archived: req.Archived,
+		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, BookingMode: req.BookingMode,
+		Published: req.Published, Archived: req.Archived,
 	}
 	if req.PhotoMediaID != nil {
 		if *req.PhotoMediaID == "" {
@@ -336,12 +348,21 @@ func knowledgeDTO(a domain.KnowledgeArticle) map[string]any {
 	if a.ProductID != nil {
 		productID = a.ProductID.String()
 	}
+	var coverMediaID any
+	if a.CoverMediaID != nil {
+		coverMediaID = a.CoverMediaID.String()
+	}
 	var publishedAt any
 	if a.PublishedAt != nil {
 		publishedAt = *a.PublishedAt
 	}
+	format := a.ContentFormat
+	if format == "" {
+		format = "plain"
+	}
 	return map[string]any{
 		"id": a.ID.String(), "title": a.Title, "category": a.Category, "content": a.Content,
+		"content_format": format, "cover_media_id": coverMediaID, "reading_time_minutes": a.ReadingTimeMinutes,
 		"brand": a.Brand, "product_id": productID,
 		"author_user_id": a.AuthorUserID.String(), "author_org_id": orgID, "author_name": a.AuthorName,
 		"published": a.Published, "published_at": publishedAt, "created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
@@ -396,14 +417,17 @@ func (a *API) getKnowledge(w http.ResponseWriter, r *http.Request) {
 func (a *API) createKnowledge(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var req struct {
-		Title      string  `json:"title"`
-		Category   string  `json:"category"`
-		Content    string  `json:"content"`
-		Brand      string  `json:"brand"`
-		ProductID  *string `json:"product_id"`
-		AuthorName string  `json:"author_name"`
-		OrgID      *string `json:"organization_id"`
-		Published  *bool   `json:"published"`
+		Title              string  `json:"title"`
+		Category           string  `json:"category"`
+		Content            string  `json:"content"`
+		ContentFormat      string  `json:"content_format"`
+		CoverMediaID       *string `json:"cover_media_id"`
+		ReadingTimeMinutes int     `json:"reading_time_minutes"`
+		Brand              string  `json:"brand"`
+		ProductID          *string `json:"product_id"`
+		AuthorName         string  `json:"author_name"`
+		OrgID              *string `json:"organization_id"`
+		Published          *bool   `json:"published"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -427,9 +451,16 @@ func (a *API) createKnowledge(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
 		return
 	}
+	coverMediaID, err := parseOptionalUUID(req.CoverMediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid cover_media_id"))
+		return
+	}
 	item, err := a.svc.CreateKnowledge(r.Context(), service.KnowledgeInput{
 		ActorUserID: claims.UserID, ActorName: req.AuthorName, OrgID: orgID,
-		Title: req.Title, Category: req.Category, Content: req.Content, Brand: req.Brand, ProductID: productID, Published: published,
+		Title: req.Title, Category: req.Category, Content: req.Content, ContentFormat: req.ContentFormat,
+		CoverMediaID: coverMediaID, ReadingTimeMinutes: req.ReadingTimeMinutes,
+		Brand: req.Brand, ProductID: productID, Published: published,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -446,14 +477,17 @@ func (a *API) updateKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title      string  `json:"title"`
-		Category   string  `json:"category"`
-		Content    string  `json:"content"`
-		Brand      string  `json:"brand"`
-		ProductID  *string `json:"product_id"`
-		AuthorName string  `json:"author_name"`
-		OrgID      *string `json:"organization_id"`
-		Published  *bool   `json:"published"`
+		Title              string  `json:"title"`
+		Category           string  `json:"category"`
+		Content            string  `json:"content"`
+		ContentFormat      string  `json:"content_format"`
+		CoverMediaID       *string `json:"cover_media_id"`
+		ReadingTimeMinutes int     `json:"reading_time_minutes"`
+		Brand              string  `json:"brand"`
+		ProductID          *string `json:"product_id"`
+		AuthorName         string  `json:"author_name"`
+		OrgID              *string `json:"organization_id"`
+		Published          *bool   `json:"published"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -477,10 +511,24 @@ func (a *API) updateKnowledge(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
 		return
 	}
-	item, err := a.svc.UpdateKnowledge(r.Context(), claims.UserID, id, service.KnowledgeInput{
+	in := service.KnowledgeInput{
 		ActorUserID: claims.UserID, ActorName: req.AuthorName, OrgID: orgID,
-		Title: req.Title, Category: req.Category, Content: req.Content, Brand: req.Brand, ProductID: productID, Published: published,
-	})
+		Title: req.Title, Category: req.Category, Content: req.Content, ContentFormat: req.ContentFormat,
+		ReadingTimeMinutes: req.ReadingTimeMinutes, Brand: req.Brand, ProductID: productID, Published: published,
+	}
+	if req.CoverMediaID != nil {
+		if *req.CoverMediaID == "" {
+			in.ClearCover = true
+		} else {
+			coverID, err := uuid.Parse(*req.CoverMediaID)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid cover_media_id"))
+				return
+			}
+			in.CoverMediaID = &coverID
+		}
+	}
+	item, err := a.svc.UpdateKnowledge(r.Context(), claims.UserID, id, in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -523,10 +571,15 @@ func serviceDTO(s domain.ServiceItem) map[string]any {
 	if s.ArchivedAt != nil {
 		archivedAt = *s.ArchivedAt
 	}
+	mode := s.BookingMode
+	if mode == "" {
+		mode = "flexible"
+	}
 	return map[string]any{
 		"id": s.ID.String(), "organization_id": s.OrganizationID.String(), "name": s.Name, "category": s.Category,
 		"description": s.Description, "notes": s.Notes, "photo_media_id": photo,
 		"duration_minutes": s.DurationMinutes, "price_minor": s.PriceMinor, "currency": s.Currency,
+		"booking_mode":  mode,
 		"price_display": formatMoney(s.PriceMinor), "published": s.Published, "archived_at": archivedAt,
 	}
 }

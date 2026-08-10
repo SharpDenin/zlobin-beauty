@@ -44,7 +44,7 @@ func main() {
 	}
 	st := store.New(pool)
 	svc := service.New(st).WithOrganizations(os.Getenv("ORGANIZATIONS_URL"), os.Getenv("INTERNAL_TOKEN")).WithBooking(os.Getenv("BOOKING_URL"))
-	api := httpapi.New(svc, log)
+	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

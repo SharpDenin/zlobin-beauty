@@ -63,12 +63,17 @@ func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
 	return &m, nil
 }
 
-func (s *Store) SearchMasters(ctx context.Context, city, q, service string, priceMin, priceMax *int64, limit int) ([]domain.MasterProfile, error) {
+func (s *Store) SearchMasters(ctx context.Context, city, q, service string, priceMin, priceMax *int64, includeOtherCities bool, limit int) ([]domain.MasterProfile, error) {
 	// Branch publication is enforced in service.Search via organizations internal API.
+	cityFilter := city
+	if includeOtherCities {
+		cityFilter = ""
+	}
 	rows, err := s.pool.Query(ctx, `
 SELECT DISTINCT
   mp.id, mp.user_id, mp.organization_id, mp.branch_id, mp.display_name, mp.bio, mp.specializations, mp.city,
-  mp.experience_years, mp.education, mp.photo_media_id, mp.work_type, mp.rating_avg, mp.rating_count, mp.published, mp.created_at, mp.updated_at
+  mp.experience_years, mp.education, mp.photo_media_id, mp.work_type, mp.rating_avg, mp.rating_count, mp.published, mp.created_at, mp.updated_at,
+  CASE WHEN $7 <> '' AND mp.city ILIKE $7 THEN 0 ELSE 1 END AS city_rank
 FROM master_profiles mp
 WHERE mp.published = TRUE
   AND ($1 = '' OR mp.city ILIKE $1)
@@ -97,8 +102,8 @@ WHERE mp.published = TRUE
         AND COALESCE(ms.price_minor_override, svc.price_minor) <= $5
     )
   )
-ORDER BY mp.rating_avg DESC, mp.rating_count DESC, mp.id
-LIMIT $6`, city, q, service, priceMin, priceMax, limit)
+ORDER BY city_rank ASC, mp.rating_avg DESC, mp.rating_count DESC, mp.id
+LIMIT $6`, cityFilter, q, service, priceMin, priceMax, limit, city)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +111,9 @@ LIMIT $6`, city, q, service, priceMin, priceMax, limit)
 	var out []domain.MasterProfile
 	for rows.Next() {
 		var m domain.MasterProfile
+		var cityRank int
 		if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
-			&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt, &cityRank); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -115,14 +121,18 @@ LIMIT $6`, city, q, service, priceMin, priceMax, limit)
 	return out, rows.Err()
 }
 
-const serviceCols = `id, organization_id, name, category, description, notes, duration_minutes, price_minor, currency, photo_media_id, published, archived_at, created_at, updated_at`
+const serviceCols = `id, organization_id, name, category, description, notes, duration_minutes, price_minor, currency, photo_media_id, booking_mode, published, archived_at, created_at, updated_at`
 
 func (s *Store) CreateService(ctx context.Context, item domain.ServiceItem) error {
+	mode := item.BookingMode
+	if mode == "" {
+		mode = "flexible"
+	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO services(id, organization_id, name, category, description, notes, duration_minutes, price_minor, currency, photo_media_id, published, archived_at, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+INSERT INTO services(id, organization_id, name, category, description, notes, duration_minutes, price_minor, currency, photo_media_id, booking_mode, published, archived_at, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		item.ID, item.OrganizationID, item.Name, item.Category, item.Description, item.Notes,
-		item.DurationMinutes, item.PriceMinor, item.Currency, item.PhotoMediaID, item.Published, item.ArchivedAt, item.CreatedAt, item.UpdatedAt)
+		item.DurationMinutes, item.PriceMinor, item.Currency, item.PhotoMediaID, mode, item.Published, item.ArchivedAt, item.CreatedAt, item.UpdatedAt)
 	return err
 }
 
@@ -144,7 +154,7 @@ func (s *Store) ListMasterServicesAll(ctx context.Context, masterID uuid.UUID) (
 func (s *Store) listMasterServices(ctx context.Context, masterID uuid.UUID, publishedOnly bool) ([]domain.ServiceItem, error) {
 	query := `
 SELECT s.id, s.organization_id, s.name, s.category, s.description, s.notes, s.duration_minutes,
-       COALESCE(ms.price_minor_override, s.price_minor), s.currency, s.photo_media_id, s.published, s.archived_at, s.created_at, s.updated_at
+       COALESCE(ms.price_minor_override, s.price_minor), s.currency, s.photo_media_id, s.booking_mode, s.published, s.archived_at, s.created_at, s.updated_at
 FROM master_services ms
 JOIN services s ON s.id = ms.service_id
 WHERE ms.master_id=$1`
@@ -161,8 +171,11 @@ WHERE ms.master_id=$1`
 	for rows.Next() {
 		var item domain.ServiceItem
 		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
-			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if item.BookingMode == "" {
+			item.BookingMode = "flexible"
 		}
 		out = append(out, item)
 	}
@@ -170,11 +183,15 @@ WHERE ms.master_id=$1`
 }
 
 func (s *Store) UpdateService(ctx context.Context, item domain.ServiceItem) error {
+	mode := item.BookingMode
+	if mode == "" {
+		mode = "flexible"
+	}
 	tag, err := s.pool.Exec(ctx, `
 UPDATE services
-SET name=$2, category=$3, description=$4, notes=$5, duration_minutes=$6, price_minor=$7, photo_media_id=$8, published=$9, archived_at=$10, updated_at=$11
+SET name=$2, category=$3, description=$4, notes=$5, duration_minutes=$6, price_minor=$7, photo_media_id=$8, booking_mode=$9, published=$10, archived_at=$11, updated_at=$12
 WHERE id=$1`, item.ID, item.Name, item.Category, item.Description, item.Notes, item.DurationMinutes, item.PriceMinor,
-		item.PhotoMediaID, item.Published, item.ArchivedAt, item.UpdatedAt)
+		item.PhotoMediaID, mode, item.Published, item.ArchivedAt, item.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -187,7 +204,7 @@ WHERE id=$1`, item.ID, item.Name, item.Category, item.Description, item.Notes, i
 func (s *Store) CountPopularServices(ctx context.Context, limit int) ([]domain.ServiceItem, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT s.id, s.organization_id, s.name, s.category, s.description, s.notes, s.duration_minutes, s.price_minor, s.currency,
-       s.photo_media_id, s.published, s.archived_at, s.created_at, s.updated_at,
+       s.photo_media_id, s.booking_mode, s.published, s.archived_at, s.created_at, s.updated_at,
        mp.branch_id
 FROM services s
 JOIN master_services ms ON ms.service_id = s.id
@@ -205,8 +222,11 @@ LIMIT $1`, limit*3)
 		var item domain.ServiceItem
 		var branchID *uuid.UUID
 		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
-			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt, &branchID); err != nil {
+			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt, &branchID); err != nil {
 			return nil, err
+		}
+		if item.BookingMode == "" {
+			item.BookingMode = "flexible"
 		}
 		if _, ok := seen[item.ID]; ok {
 			continue
@@ -225,13 +245,23 @@ func (s *Store) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceIt
 	row := s.pool.QueryRow(ctx, `SELECT `+serviceCols+` FROM services WHERE id=$1`, id)
 	var item domain.ServiceItem
 	if err := row.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
-		&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	if item.BookingMode == "" {
+		item.BookingMode = "flexible"
+	}
 	return &item, nil
+}
+
+func (s *Store) IsServiceAttachedToMaster(ctx context.Context, masterID, serviceID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM master_services WHERE master_id=$1 AND service_id=$2)`, masterID, serviceID).Scan(&ok)
+	return ok, err
 }
 
 // --- service categories ---
@@ -295,22 +325,32 @@ func (s *Store) DeleteServiceCategory(ctx context.Context, id uuid.UUID) error {
 
 // --- knowledge base ---
 
-const knowledgeCols = `id, title, category, content, brand, product_id, author_user_id, author_org_id, author_name, published, published_at, created_at, updated_at`
+const knowledgeCols = `id, title, category, content, content_format, cover_media_id, reading_time_minutes, brand, product_id, author_user_id, author_org_id, author_name, published, published_at, created_at, updated_at`
 
 func (s *Store) CreateKnowledgeArticle(ctx context.Context, a domain.KnowledgeArticle) error {
+	format := a.ContentFormat
+	if format == "" {
+		format = "plain"
+	}
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO knowledge_articles(`+knowledgeCols+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		a.ID, a.Title, a.Category, a.Content, a.Brand, a.ProductID, a.AuthorUserID, a.AuthorOrgID, a.AuthorName,
-		a.Published, a.PublishedAt, a.CreatedAt, a.UpdatedAt)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		a.ID, a.Title, a.Category, a.Content, format, a.CoverMediaID, a.ReadingTimeMinutes, a.Brand, a.ProductID,
+		a.AuthorUserID, a.AuthorOrgID, a.AuthorName, a.Published, a.PublishedAt, a.CreatedAt, a.UpdatedAt)
 	return err
 }
 
 func (s *Store) UpdateKnowledgeArticle(ctx context.Context, a domain.KnowledgeArticle) error {
+	format := a.ContentFormat
+	if format == "" {
+		format = "plain"
+	}
 	tag, err := s.pool.Exec(ctx, `
 UPDATE knowledge_articles
-SET title=$2, category=$3, content=$4, brand=$5, product_id=$6, author_org_id=$7, author_name=$8, published=$9, published_at=$10, updated_at=$11
-WHERE id=$1`, a.ID, a.Title, a.Category, a.Content, a.Brand, a.ProductID, a.AuthorOrgID, a.AuthorName, a.Published, a.PublishedAt, a.UpdatedAt)
+SET title=$2, category=$3, content=$4, content_format=$5, cover_media_id=$6, reading_time_minutes=$7,
+    brand=$8, product_id=$9, author_org_id=$10, author_name=$11, published=$12, published_at=$13, updated_at=$14
+WHERE id=$1`, a.ID, a.Title, a.Category, a.Content, format, a.CoverMediaID, a.ReadingTimeMinutes,
+		a.Brand, a.ProductID, a.AuthorOrgID, a.AuthorName, a.Published, a.PublishedAt, a.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -378,21 +418,29 @@ LIMIT $2`, authorUserID, limit)
 
 func scanKnowledge(row pgx.Row) (*domain.KnowledgeArticle, error) {
 	var a domain.KnowledgeArticle
-	if err := row.Scan(&a.ID, &a.Title, &a.Category, &a.Content, &a.Brand, &a.ProductID, &a.AuthorUserID, &a.AuthorOrgID, &a.AuthorName,
+	if err := row.Scan(&a.ID, &a.Title, &a.Category, &a.Content, &a.ContentFormat, &a.CoverMediaID, &a.ReadingTimeMinutes,
+		&a.Brand, &a.ProductID, &a.AuthorUserID, &a.AuthorOrgID, &a.AuthorName,
 		&a.Published, &a.PublishedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	if a.ContentFormat == "" {
+		a.ContentFormat = "plain"
+	}
 	return &a, nil
 }
 
 func scanKnowledgeRow(rows pgx.Rows) (*domain.KnowledgeArticle, error) {
 	var a domain.KnowledgeArticle
-	if err := rows.Scan(&a.ID, &a.Title, &a.Category, &a.Content, &a.Brand, &a.ProductID, &a.AuthorUserID, &a.AuthorOrgID, &a.AuthorName,
+	if err := rows.Scan(&a.ID, &a.Title, &a.Category, &a.Content, &a.ContentFormat, &a.CoverMediaID, &a.ReadingTimeMinutes,
+		&a.Brand, &a.ProductID, &a.AuthorUserID, &a.AuthorOrgID, &a.AuthorName,
 		&a.Published, &a.PublishedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if a.ContentFormat == "" {
+		a.ContentFormat = "plain"
 	}
 	return &a, nil
 }

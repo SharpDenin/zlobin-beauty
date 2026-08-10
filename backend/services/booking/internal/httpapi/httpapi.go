@@ -248,7 +248,7 @@ func (a *API) slots(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	slots, err := a.svc.FreeSlots(r.Context(), masterUserID, day, duration, tz)
+	slots, err := a.svc.FreeSlots(r.Context(), masterUserID, day, duration, tz, uuid.Nil)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -271,9 +271,10 @@ func parseInt(dst *int, s string) (int, error) {
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var req struct {
-		MasterID  string    `json:"master_id"`
-		ServiceID string    `json:"service_id"`
-		StartsAt  time.Time `json:"starts_at"`
+		MasterID     string    `json:"master_id"`
+		ServiceID    string    `json:"service_id"`
+		StartsAt     time.Time `json:"starts_at"`
+		OccurrenceID string    `json:"occurrence_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -289,8 +290,18 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
 		return
 	}
+	var occurrenceID *uuid.UUID
+	if strings.TrimSpace(req.OccurrenceID) != "" {
+		oid, err := uuid.Parse(req.OccurrenceID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid occurrence_id"))
+			return
+		}
+		occurrenceID = &oid
+	}
 	aapt, err := a.svc.Create(r.Context(), service.CreateInput{
 		ClientUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
+		OccurrenceID: occurrenceID, IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -526,12 +537,23 @@ func (a *API) simpleAction(w http.ResponseWriter, r *http.Request, fn func(conte
 }
 
 func appointmentDTO(a domain.Appointment) map[string]any {
+	var occ any
+	if a.OccurrenceID != nil {
+		occ = a.OccurrenceID.String()
+	}
+	mode := a.BookingMode
+	if mode == "" {
+		mode = domain.BookingModeFlexible
+	}
 	return map[string]any{
 		"id": a.ID.String(), "organization_id": a.OrganizationID.String(), "branch_id": a.BranchID.String(),
 		"master_user_id": a.MasterUserID.String(), "client_user_id": a.ClientUserID.String(),
 		"service_id": a.ServiceID.String(), "service_name": a.ServiceName,
 		"duration_minutes": a.DurationMinutes, "price_minor": a.PriceMinor, "currency": a.Currency,
 		"status": a.Status, "cancel_reason": a.CancelReason, "starts_at": a.StartsAt, "ends_at": a.EndsAt,
+		"occurrence_id": occ, "booking_mode": mode,
+		"location_name": a.LocationName, "location_city": a.LocationCity,
+		"location_address": a.LocationAddress, "location_timezone": a.LocationTimezone,
 		"created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
 }

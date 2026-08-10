@@ -31,6 +31,7 @@ import { CosmeticsOrdersPage } from '@/pages/CosmeticsOrdersPage'
 import { ServicesPage } from '@/pages/ServicesPage'
 import { KnowledgeListPage } from '@/pages/KnowledgeListPage'
 import { KnowledgeArticlePage } from '@/pages/KnowledgeArticlePage'
+import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
 
 const queryClient = new QueryClient({
@@ -60,6 +61,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <ToastProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
@@ -107,6 +109,7 @@ export function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
+        </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>
   )

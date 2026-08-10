@@ -39,11 +39,14 @@ type OrgBundle struct {
 }
 
 type UpdateOrgInput struct {
-	ActorID     uuid.UUID
-	OrgID       uuid.UUID
-	Name        *string
-	Description *string
-	Published   *bool
+	ActorID      uuid.UUID
+	OrgID        uuid.UUID
+	Name         *string
+	Description  *string
+	Published    *bool
+	DeliveryNote *string
+	LogoMediaID  *uuid.UUID
+	ClearLogo    bool
 }
 
 type UpdateBranchInput struct {
@@ -238,6 +241,14 @@ func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Org
 	if in.Description != nil {
 		org.Description = strings.TrimSpace(*in.Description)
 	}
+	if in.DeliveryNote != nil {
+		org.DeliveryNote = strings.TrimSpace(*in.DeliveryNote)
+	}
+	if in.ClearLogo {
+		org.LogoMediaID = nil
+	} else if in.LogoMediaID != nil {
+		org.LogoMediaID = in.LogoMediaID
+	}
 	if in.Published != nil {
 		if *in.Published {
 			branches, err := s.store.ListBranches(ctx, org.ID)
@@ -259,6 +270,28 @@ func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Org
 		return nil, apperr.Internal(err)
 	}
 	return org, nil
+}
+
+func (s *Service) ListSuppliers(ctx context.Context) ([]domain.SupplierListItem, error) {
+	items, err := s.store.ListPublishedSuppliers(ctx)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.SupplierListItem{}
+	}
+	return items, nil
+}
+
+func (s *Service) GetSupplier(ctx context.Context, id uuid.UUID) (*domain.SupplierListItem, error) {
+	item, err := s.store.GetPublishedSupplier(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if item == nil {
+		return nil, apperr.NotFound("supplier not found")
+	}
+	return item, nil
 }
 
 func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*domain.Branch, error) {

@@ -36,6 +36,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	// (e.g. booking resolving a master's timezone), so this stays public.
 	mux.HandleFunc("GET /v1/branches/{branchID}", a.getBranch)
 	mux.HandleFunc("GET /v1/branches/{branchID}/photos", a.listBranchPhotos)
+	mux.HandleFunc("GET /v1/suppliers", a.listSuppliers)
+	mux.HandleFunc("GET /v1/suppliers/{id}", a.getSupplier)
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
 	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
 }
@@ -163,9 +165,11 @@ func (a *API) orgReadiness(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchOrgReq struct {
-	Name        *string `json:"name"`
-	Description *string `json:"description"`
-	Published   *bool   `json:"published"`
+	Name         *string `json:"name"`
+	Description  *string `json:"description"`
+	Published    *bool   `json:"published"`
+	DeliveryNote *string `json:"delivery_note"`
+	LogoMediaID  *string `json:"logo_media_id"`
 }
 
 func (a *API) updateOrg(w http.ResponseWriter, r *http.Request) {
@@ -180,10 +184,23 @@ func (a *API) updateOrg(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	org, err := a.svc.UpdateOrg(r.Context(), service.UpdateOrgInput{
+	in := service.UpdateOrgInput{
 		ActorID: claims.UserID, OrgID: orgID,
-		Name: req.Name, Description: req.Description, Published: req.Published,
-	})
+		Name: req.Name, Description: req.Description, Published: req.Published, DeliveryNote: req.DeliveryNote,
+	}
+	if req.LogoMediaID != nil {
+		if *req.LogoMediaID == "" {
+			in.ClearLogo = true
+		} else {
+			id, err := uuid.Parse(*req.LogoMediaID)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid logo_media_id"))
+				return
+			}
+			in.LogoMediaID = &id
+		}
+	}
+	org, err := a.svc.UpdateOrg(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -282,11 +299,55 @@ func (a *API) getBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 func orgDTO(o domain.Organization) map[string]any {
+	var logo any
+	if o.LogoMediaID != nil {
+		logo = o.LogoMediaID.String()
+	}
 	return map[string]any{
 		"id": o.ID.String(), "name": o.Name, "description": o.Description,
 		"type": o.Type, "status": o.Status, "published": o.Published,
+		"logo_media_id": logo, "delivery_note": o.DeliveryNote,
 		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
 	}
+}
+
+func supplierDTO(s domain.SupplierListItem) map[string]any {
+	var logo any
+	if s.LogoMediaID != nil {
+		logo = s.LogoMediaID.String()
+	}
+	return map[string]any{
+		"id": s.ID.String(), "name": s.Name, "description": s.Description,
+		"delivery_note": s.DeliveryNote, "logo_media_id": logo,
+		"city": s.City, "product_count": s.ProductCount,
+	}
+}
+
+func (a *API) listSuppliers(w http.ResponseWriter, r *http.Request) {
+	items, err := a.svc.ListSuppliers(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, s := range items {
+		out = append(out, supplierDTO(s))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) getSupplier(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid supplier id"))
+		return
+	}
+	item, err := a.svc.GetSupplier(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, supplierDTO(*item))
 }
 
 func branchDTO(b domain.Branch) map[string]any {

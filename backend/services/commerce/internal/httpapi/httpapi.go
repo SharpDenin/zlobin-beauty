@@ -31,6 +31,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/commerce/products", auth(http.HandlerFunc(a.listProducts)))
 	mux.Handle("GET /v1/commerce/products/{id}", auth(http.HandlerFunc(a.getProduct)))
 	mux.Handle("PUT /v1/commerce/products/{id}", auth(http.HandlerFunc(a.updateProduct)))
+	mux.Handle("GET /v1/commerce/catalog/suppliers/{orgID}/products", auth(http.HandlerFunc(a.listCatalogProducts)))
 	mux.Handle("POST /v1/commerce/stock/movements", auth(http.HandlerFunc(a.createMovement)))
 	mux.Handle("GET /v1/commerce/stock", auth(http.HandlerFunc(a.listStock)))
 	mux.Handle("GET /v1/commerce/stock/forecast", auth(http.HandlerFunc(a.stockForecast)))
@@ -134,6 +135,9 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		Currency       string  `json:"currency"`
 		MinStock       float64 `json:"min_stock"`
 		Published      bool    `json:"published"`
+		ForSale        *bool   `json:"for_sale"`
+		DeliveryDays   *int    `json:"delivery_days"`
+		PhotoMediaID   *string `json:"photo_media_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -154,10 +158,24 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid parent_id"))
 		return
 	}
+	photoMediaID, err := parseOptionalUUID(req.PhotoMediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+		return
+	}
+	forSale := true
+	if req.ForSale != nil {
+		forSale = *req.ForSale
+	}
+	deliveryDays := 3
+	if req.DeliveryDays != nil {
+		deliveryDays = *req.DeliveryDays
+	}
 	p, err := a.svc.CreateProduct(r.Context(), claims.UserID, service.ProductInput{
 		OrganizationID: orgID, ParentID: parentID, CategoryID: categoryID, Brand: req.Brand, Name: req.Name, SKU: req.SKU,
 		Description: req.Description, Unit: req.Unit, VolumeLabel: req.VolumeLabel, PriceMinor: req.PriceMinor,
 		Currency: req.Currency, MinStock: req.MinStock, Published: req.Published,
+		ForSale: forSale, DeliveryDays: deliveryDays, PhotoMediaID: photoMediaID,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -171,6 +189,25 @@ func (a *API) listProducts(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, p := range items {
+		out = append(out, productDTO(p))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) listCatalogProducts(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization id"))
 		return
 	}
 	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
@@ -208,17 +245,20 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		CategoryID  *string  `json:"category_id"`
-		Brand       *string  `json:"brand"`
-		Name        *string  `json:"name"`
-		SKU         *string  `json:"sku"`
-		Description *string  `json:"description"`
-		Unit        *string  `json:"unit"`
-		VolumeLabel *string  `json:"volume_label"`
-		PriceMinor  *int64   `json:"price_minor"`
-		Currency    *string  `json:"currency"`
-		MinStock    *float64 `json:"min_stock"`
-		Published   *bool    `json:"published"`
+		CategoryID   *string  `json:"category_id"`
+		Brand        *string  `json:"brand"`
+		Name         *string  `json:"name"`
+		SKU          *string  `json:"sku"`
+		Description  *string  `json:"description"`
+		Unit         *string  `json:"unit"`
+		VolumeLabel  *string  `json:"volume_label"`
+		PriceMinor   *int64   `json:"price_minor"`
+		Currency     *string  `json:"currency"`
+		MinStock     *float64 `json:"min_stock"`
+		Published    *bool    `json:"published"`
+		ForSale      *bool    `json:"for_sale"`
+		DeliveryDays *int     `json:"delivery_days"`
+		PhotoMediaID *string  `json:"photo_media_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -232,10 +272,22 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 	patch := service.ProductPatch{
 		Brand: req.Brand, Name: req.Name, SKU: req.SKU, Description: req.Description, Unit: req.Unit,
 		VolumeLabel: req.VolumeLabel, PriceMinor: req.PriceMinor, Currency: req.Currency, MinStock: req.MinStock,
-		Published: req.Published,
+		Published: req.Published, ForSale: req.ForSale, DeliveryDays: req.DeliveryDays,
 	}
 	if req.CategoryID != nil {
 		patch.CategoryID = categoryID
+	}
+	if req.PhotoMediaID != nil {
+		if *req.PhotoMediaID == "" {
+			patch.ClearPhoto = true
+		} else {
+			photoID, err := uuid.Parse(*req.PhotoMediaID)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+				return
+			}
+			patch.PhotoMediaID = &photoID
+		}
 	}
 	p, err := a.svc.UpdateProduct(r.Context(), claims.UserID, id, patch)
 	if err != nil {
@@ -254,11 +306,16 @@ func productDTO(p domain.Product) map[string]any {
 	if p.ParentID != nil {
 		parent = p.ParentID.String()
 	}
+	var photo any
+	if p.PhotoMediaID != nil {
+		photo = p.PhotoMediaID.String()
+	}
 	return map[string]any{
 		"id": p.ID.String(), "organization_id": p.OrganizationID.String(), "parent_id": parent, "category_id": category,
 		"brand": p.Brand, "name": p.Name, "sku": p.SKU, "description": p.Description, "unit": p.Unit,
 		"volume_label": p.VolumeLabel, "price_minor": p.PriceMinor, "currency": p.Currency,
-		"min_stock": p.MinStock, "published": p.Published, "created_at": p.CreatedAt, "updated_at": p.UpdatedAt,
+		"min_stock": p.MinStock, "published": p.Published, "for_sale": p.ForSale, "delivery_days": p.DeliveryDays,
+		"photo_media_id": photo, "created_at": p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
 

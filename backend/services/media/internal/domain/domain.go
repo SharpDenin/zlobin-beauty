@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	PurposeProfile      = "profile"
-	PurposeSalon        = "salon"
-	PurposePortfolio    = "portfolio"
-	PurposeBeforeAfter  = "before_after"
-	PurposeProduct      = "product"
-	PurposeDelivery     = "delivery"
-	PurposeDocument     = "document"
+	PurposeProfile     = "profile"
+	PurposeSalon       = "salon"
+	PurposePortfolio   = "portfolio"
+	PurposeBeforeAfter = "before_after"
+	PurposeProduct     = "product"
+	PurposeDelivery    = "delivery"
+	PurposeDocument    = "document"
 )
 
 const MaxUploadBytes = 5 << 20 // 5 MiB

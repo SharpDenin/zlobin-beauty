@@ -33,6 +33,7 @@ func (s *Store) ListPublishedProducts(ctx context.Context, q, brand string, limi
 SELECT `+productColumns+`, `+availableSubquery+` AS available
 FROM products p
 WHERE p.published = true
+  AND p.for_sale = true
   AND p.parent_id IS NULL
   AND ($1 = '' OR p.name ILIKE '%' || $1 || '%' OR p.brand ILIKE '%' || $1 || '%')
   AND ($2 = '' OR p.brand ILIKE $2)
@@ -49,7 +50,7 @@ func (s *Store) GetPublishedProduct(ctx context.Context, id uuid.UUID) (*domain.
 	row := s.pool.QueryRow(ctx, `
 SELECT `+productColumns+`, `+availableSubquery+` AS available
 FROM products p
-WHERE p.id = $1 AND p.published = true`, id)
+WHERE p.id = $1 AND p.published = true AND p.for_sale = true`, id)
 	return scanShopProduct(row)
 }
 
@@ -67,7 +68,7 @@ WHERE sb.product_id = $1 AND sl.organization_id = p.organization_id AND sl.kind 
 func scanShopProduct(row pgx.Row) (*domain.ShopProduct, error) {
 	var sp domain.ShopProduct
 	if err := row.Scan(&sp.ID, &sp.OrganizationID, &sp.ParentID, &sp.CategoryID, &sp.Brand, &sp.Name, &sp.SKU, &sp.Description, &sp.Unit, &sp.VolumeLabel,
-		&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
+		&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.ForSale, &sp.DeliveryDays, &sp.PhotoMediaID, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -81,7 +82,7 @@ func scanShopProducts(rows pgx.Rows) ([]domain.ShopProduct, error) {
 	for rows.Next() {
 		var sp domain.ShopProduct
 		if err := rows.Scan(&sp.ID, &sp.OrganizationID, &sp.ParentID, &sp.CategoryID, &sp.Brand, &sp.Name, &sp.SKU, &sp.Description, &sp.Unit, &sp.VolumeLabel,
-			&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
+			&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.ForSale, &sp.DeliveryDays, &sp.PhotoMediaID, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)
@@ -106,6 +107,7 @@ func (s *Store) ListPublishedVariants(ctx context.Context, productID uuid.UUID) 
 SELECT `+productColumns+`, `+availableSubquery+` AS available
 FROM products p
 WHERE p.published = true
+  AND p.for_sale = true
   AND (p.id = $1 OR p.parent_id = $1)
 ORDER BY p.volume_label ASC NULLS LAST, p.price_minor ASC, p.created_at ASC`, rootID)
 	if err != nil {

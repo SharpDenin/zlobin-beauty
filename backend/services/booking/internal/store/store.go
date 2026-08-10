@@ -57,6 +57,72 @@ FROM working_hours WHERE master_user_id=$1 ORDER BY weekday, start_minute`, mast
 	return out, rows.Err()
 }
 
+func (s *Store) ListScheduleExceptions(ctx context.Context, masterUserID uuid.UUID, from, to time.Time) ([]domain.ScheduleException, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, master_user_id, day, is_day_off, start_minute, end_minute, note, created_at
+FROM schedule_exceptions
+WHERE master_user_id=$1 AND day >= $2::date AND day <= $3::date
+ORDER BY day`, masterUserID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ScheduleException
+	for rows.Next() {
+		var e domain.ScheduleException
+		if err := rows.Scan(&e.ID, &e.MasterUserID, &e.Day, &e.IsDayOff, &e.StartMinute, &e.EndMinute, &e.Note, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetScheduleException(ctx context.Context, masterUserID uuid.UUID, day time.Time) (*domain.ScheduleException, error) {
+	row := s.pool.QueryRow(ctx, `
+SELECT id, master_user_id, day, is_day_off, start_minute, end_minute, note, created_at
+FROM schedule_exceptions
+WHERE master_user_id=$1 AND day=$2::date`, masterUserID, day)
+	var e domain.ScheduleException
+	if err := row.Scan(&e.ID, &e.MasterUserID, &e.Day, &e.IsDayOff, &e.StartMinute, &e.EndMinute, &e.Note, &e.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &e, nil
+}
+
+func (s *Store) UpsertScheduleException(ctx context.Context, e domain.ScheduleException) (*domain.ScheduleException, error) {
+	row := s.pool.QueryRow(ctx, `
+INSERT INTO schedule_exceptions(id, master_user_id, day, is_day_off, start_minute, end_minute, note, created_at)
+VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8)
+ON CONFLICT (master_user_id, day) DO UPDATE SET
+  is_day_off=EXCLUDED.is_day_off,
+  start_minute=EXCLUDED.start_minute,
+  end_minute=EXCLUDED.end_minute,
+  note=EXCLUDED.note
+RETURNING id, master_user_id, day, is_day_off, start_minute, end_minute, note, created_at`,
+		e.ID, e.MasterUserID, e.Day, e.IsDayOff, e.StartMinute, e.EndMinute, e.Note, e.CreatedAt)
+	var out domain.ScheduleException
+	if err := row.Scan(&out.ID, &out.MasterUserID, &out.Day, &out.IsDayOff, &out.StartMinute, &out.EndMinute, &out.Note, &out.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Store) DeleteScheduleException(ctx context.Context, masterUserID uuid.UUID, day time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+DELETE FROM schedule_exceptions WHERE master_user_id=$1 AND day=$2::date`, masterUserID, day)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("schedule exception not found")
+	}
+	return nil
+}
+
 func (s *Store) ListAppointmentsInRange(ctx context.Context, masterUserID uuid.UUID, from, to time.Time) ([]domain.Appointment, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,

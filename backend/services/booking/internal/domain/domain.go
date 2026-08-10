@@ -54,6 +54,18 @@ type WorkingHours struct {
 	EndMinute    int
 }
 
+// ScheduleException overrides weekly working hours for a concrete calendar day.
+type ScheduleException struct {
+	ID           uuid.UUID
+	MasterUserID uuid.UUID
+	Day          time.Time // date (UTC midnight of the calendar day)
+	IsDayOff     bool
+	StartMinute  *int
+	EndMinute    *int
+	Note         string
+	CreatedAt    time.Time
+}
+
 type Appointment struct {
 	ID              uuid.UUID
 	OrganizationID  uuid.UUID

@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 
 type Article = {
   id: string
@@ -9,6 +10,8 @@ type Article = {
   category: string
   content: string
   author_name: string
+  product_id?: string | null
+  published?: boolean
   created_at: string
 }
 
@@ -36,18 +39,31 @@ export function KnowledgeArticlePage() {
 
   return (
     <main className="page stack">
-      <Link className="btn btn-secondary btn-compact" to="/knowledge">← К списку</Link>
-      <h1>{a.title}</h1>
-      <p className="muted">
-        {a.category && <span className="badge badge-default">{a.category}</span>}
-        {' '}
-        {a.author_name || 'Автор не указан'}
-        {' · '}
-        {new Date(a.created_at).toLocaleDateString('ru-RU')}
-      </p>
+      <Link className="btn btn-ghost btn-compact" to="/knowledge">← К списку</Link>
+      <div className="stack-sm">
+        <h1>{a.title}</h1>
+        <div className="row">
+          {a.category && <span className="badge badge-default">{a.category}</span>}
+          {typeof a.published === 'boolean' && (
+            <span className={`badge ${statusBadgeClass(a.published ? 'published' : 'draft')}`}>
+              {productStateLabel(a.published ? 'published' : 'draft')}
+            </span>
+          )}
+        </div>
+        <p className="muted">
+          {a.author_name || 'Автор не указан'}
+          {' · '}
+          {new Date(a.created_at).toLocaleDateString('ru-RU')}
+        </p>
+      </div>
       <section className="card">
         <div style={{ whiteSpace: 'pre-wrap' }}>{a.content}</div>
       </section>
+      {a.product_id && (
+        <Link className="btn btn-secondary" to={`/cosmetics/products/${a.product_id}`}>
+          Открыть связанный товар
+        </Link>
+      )}
     </main>
   )
 }

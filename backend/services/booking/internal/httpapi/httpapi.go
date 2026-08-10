@@ -29,6 +29,9 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
+	mux.Handle("PUT /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.putScheduleExceptions)))
+	mux.Handle("GET /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.getScheduleExceptions)))
+	mux.Handle("DELETE /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.deleteScheduleException)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
 	mux.Handle("POST /v1/appointments", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
@@ -125,6 +128,94 @@ func (a *API) getHours(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func scheduleExceptionDTO(e domain.ScheduleException) map[string]any {
+	var start any
+	var end any
+	if e.StartMinute != nil {
+		start = *e.StartMinute
+	}
+	if e.EndMinute != nil {
+		end = *e.EndMinute
+	}
+	return map[string]any{
+		"id": e.ID.String(), "day": e.Day.Format("2006-01-02"), "is_day_off": e.IsDayOff,
+		"start_minute": start, "end_minute": end, "note": e.Note, "created_at": e.CreatedAt,
+	}
+}
+
+func (a *API) putScheduleExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Items []service.ScheduleExceptionInput `json:"items"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	items, err := a.svc.UpsertScheduleExceptions(r.Context(), claims.UserID, req.Items)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) getScheduleExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	now := time.Now().UTC()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 60)
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid from (YYYY-MM-DD)"))
+			return
+		}
+		from = t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid to (YYYY-MM-DD)"))
+			return
+		}
+		to = t
+	}
+	items, err := a.svc.ListScheduleExceptions(r.Context(), claims.UserID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) deleteScheduleException(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	dayStr := r.URL.Query().Get("day")
+	if dayStr == "" {
+		httpx.WriteError(w, r, a.log, apperr.Validation("day is required (YYYY-MM-DD)"))
+		return
+	}
+	day, err := time.Parse("2006-01-02", dayStr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid day (YYYY-MM-DD)"))
+		return
+	}
+	if err := a.svc.DeleteScheduleException(r.Context(), claims.UserID, day); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) slots(w http.ResponseWriter, r *http.Request) {

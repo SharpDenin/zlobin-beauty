@@ -68,7 +68,7 @@ export function hasSystemAdmin(user: User | null | undefined): boolean {
 /** Default landing path after login/register by primary role. Master wins over supplier. */
 export function homePathForUser(user: User | null | undefined): string {
   if (!user) return '/'
-  if (hasMasterAccess(user)) return '/appointments'
+  if (hasMasterAccess(user)) return '/'
   if (hasSupplierAccess(user)) return '/supplier'
   return '/'
 }

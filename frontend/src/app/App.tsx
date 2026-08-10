@@ -15,13 +15,20 @@ import { ClientsPage } from '@/pages/ClientsPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
 import { WarehousePage } from '@/pages/WarehousePage'
-import { SupplierDashboardPage } from '@/pages/SupplierDashboardPage'
+import { SupplierHomePage } from '@/pages/SupplierHomePage'
+import { SupplierProductsPage } from '@/pages/SupplierProductsPage'
+import { SupplierProductEditPage } from '@/pages/SupplierProductEditPage'
+import { SupplierOrdersPage } from '@/pages/SupplierOrdersPage'
 import { SalonReportsPage } from '@/pages/SalonReportsPage'
 import { ShopPage } from '@/pages/ShopPage'
 import { RepPage } from '@/pages/RepPage'
 import { AdminCatalogsPage } from '@/pages/AdminCatalogsPage'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { CosmeticsPage } from '@/pages/CosmeticsPage'
+import { CosmeticsSupplierPage } from '@/pages/CosmeticsSupplierPage'
+import { CosmeticsProductPage } from '@/pages/CosmeticsProductPage'
+import { CosmeticsOrdersPage } from '@/pages/CosmeticsOrdersPage'
+import { ServicesPage } from '@/pages/ServicesPage'
 import { KnowledgeListPage } from '@/pages/KnowledgeListPage'
 import { KnowledgeArticlePage } from '@/pages/KnowledgeArticlePage'
 import type { ReactNode } from 'react'
@@ -79,12 +86,21 @@ export function App() {
                   <Route path="/master" element={<MasterCabinetPage />} />
                   <Route path="/clients" element={<ClientsPage />} />
                   <Route path="/calendar" element={<CalendarPage />} />
+                  <Route path="/services" element={<ServicesPage />} />
+                  <Route path="/services/:id" element={<ServicesPage />} />
                   <Route path="/cosmetics" element={<CosmeticsPage />} />
+                  <Route path="/cosmetics/orders" element={<CosmeticsOrdersPage />} />
+                  <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
+                  <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
                   <Route path="/warehouse" element={<WarehousePage />} />
                   <Route path="/reports" element={<SalonReportsPage />} />
                 </Route>
                 <Route element={<RequireSupplier />}>
-                  <Route path="/supplier" element={<SupplierDashboardPage />} />
+                  <Route path="/supplier" element={<SupplierHomePage />} />
+                  <Route path="/supplier/products" element={<SupplierProductsPage />} />
+                  <Route path="/supplier/products/new" element={<SupplierProductEditPage />} />
+                  <Route path="/supplier/products/:id" element={<SupplierProductEditPage />} />
+                  <Route path="/supplier/orders" element={<SupplierOrdersPage />} />
                 </Route>
               </Route>
             </Route>

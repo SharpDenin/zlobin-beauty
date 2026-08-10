@@ -53,6 +53,7 @@ type UpsertMasterInput struct {
 	ExperienceYears int
 	Education       string
 	PhotoMediaID    *uuid.UUID
+	WorkType        string
 	Published       bool
 	AccessToken     string
 }
@@ -66,6 +67,15 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	if in.ExperienceYears < 0 {
 		return nil, apperr.Validation("experience_years must be >= 0")
 	}
+	workType := strings.TrimSpace(in.WorkType)
+	if workType == "" {
+		workType = "independent"
+	}
+	switch workType {
+	case "employee", "renter", "owner", "salon_owner", "independent":
+	default:
+		return nil, apperr.Validation("invalid work_type")
+	}
 	if err := s.requireMembership(ctx, in.OrganizationID, in.UserID, "owner", "admin", "master"); err != nil {
 		return nil, err
 	}
@@ -78,7 +88,7 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		UserID: in.UserID, OrganizationID: in.OrganizationID, BranchID: in.BranchID,
 		DisplayName: name, Bio: strings.TrimSpace(in.Bio), Specializations: in.Specializations,
 		City: city, ExperienceYears: in.ExperienceYears, Education: strings.TrimSpace(in.Education),
-		PhotoMediaID: in.PhotoMediaID, Published: in.Published, UpdatedAt: now,
+		PhotoMediaID: in.PhotoMediaID, WorkType: workType, Published: in.Published, UpdatedAt: now,
 	}
 	if m.Specializations == nil {
 		m.Specializations = []string{}
@@ -93,6 +103,12 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		m.RatingCount = existing.RatingCount
 		if in.PhotoMediaID == nil {
 			m.PhotoMediaID = existing.PhotoMediaID
+		}
+		if strings.TrimSpace(in.WorkType) == "" {
+			m.WorkType = existing.WorkType
+			if m.WorkType == "" {
+				m.WorkType = "independent"
+			}
 		}
 	}
 	if m.Published {
@@ -314,6 +330,9 @@ type CreateServiceInput struct {
 	OrganizationID  uuid.UUID
 	Name            string
 	Category        string
+	Description     string
+	Notes           string
+	PhotoMediaID    *uuid.UUID
 	DurationMinutes int
 	PriceMinor      int64
 	AttachToMaster  bool
@@ -337,6 +356,7 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 	now := s.now().UTC()
 	item := domain.ServiceItem{
 		ID: ids.New(), OrganizationID: in.OrganizationID, Name: name, Category: category,
+		Description: strings.TrimSpace(in.Description), Notes: strings.TrimSpace(in.Notes), PhotoMediaID: in.PhotoMediaID,
 		DurationMinutes: in.DurationMinutes, PriceMinor: in.PriceMinor, Currency: "RUB",
 		Published: true, CreatedAt: now, UpdatedAt: now,
 	}
@@ -366,9 +386,14 @@ type UpdateServiceInput struct {
 	ServiceID       uuid.UUID
 	Name            *string
 	Category        *string
+	Description     *string
+	Notes           *string
+	PhotoMediaID    *uuid.UUID
+	ClearPhoto      bool
 	DurationMinutes *int
 	PriceMinor      *int64
 	Published       *bool
+	Archived        *bool
 }
 
 func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*domain.ServiceItem, error) {
@@ -396,6 +421,17 @@ func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*do
 		}
 		item.Category = category
 	}
+	if in.Description != nil {
+		item.Description = strings.TrimSpace(*in.Description)
+	}
+	if in.Notes != nil {
+		item.Notes = strings.TrimSpace(*in.Notes)
+	}
+	if in.ClearPhoto {
+		item.PhotoMediaID = nil
+	} else if in.PhotoMediaID != nil {
+		item.PhotoMediaID = in.PhotoMediaID
+	}
 	if in.DurationMinutes != nil {
 		if *in.DurationMinutes <= 0 {
 			return nil, apperr.Validation("duration_minutes must be positive")
@@ -410,6 +446,14 @@ func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*do
 	}
 	if in.Published != nil {
 		item.Published = *in.Published
+	}
+	if in.Archived != nil {
+		if *in.Archived {
+			now := s.now().UTC()
+			item.ArchivedAt = &now
+		} else {
+			item.ArchivedAt = nil
+		}
 	}
 	item.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateService(ctx, *item); err != nil {
@@ -594,6 +638,8 @@ type KnowledgeInput struct {
 	Title       string
 	Category    string
 	Content     string
+	Brand       string
+	ProductID   *uuid.UUID
 	Published   bool
 }
 
@@ -608,15 +654,32 @@ func (s *Service) ListKnowledge(ctx context.Context, category string, includeUnp
 	return items, nil
 }
 
-func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID) (*domain.KnowledgeArticle, error) {
+func (s *Service) ListMyKnowledge(ctx context.Context, authorUserID uuid.UUID) ([]domain.KnowledgeArticle, error) {
+	items, err := s.store.ListKnowledgeArticlesByAuthor(ctx, authorUserID, 100)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.KnowledgeArticle{}
+	}
+	return items, nil
+}
+
+func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID, viewerID *uuid.UUID) (*domain.KnowledgeArticle, error) {
 	a, err := s.store.GetKnowledgeArticle(ctx, id)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if a == nil || !a.Published {
+	if a == nil {
 		return nil, apperr.NotFound("article not found")
 	}
-	return a, nil
+	if a.Published {
+		return a, nil
+	}
+	if viewerID != nil && *viewerID == a.AuthorUserID {
+		return a, nil
+	}
+	return nil, apperr.NotFound("article not found")
 }
 
 func (s *Service) CreateKnowledge(ctx context.Context, in KnowledgeInput) (*domain.KnowledgeArticle, error) {
@@ -628,8 +691,12 @@ func (s *Service) CreateKnowledge(ctx context.Context, in KnowledgeInput) (*doma
 	now := s.now().UTC()
 	a := domain.KnowledgeArticle{
 		ID: ids.New(), Title: title, Category: strings.TrimSpace(in.Category), Content: content,
+		Brand: strings.TrimSpace(in.Brand), ProductID: in.ProductID,
 		AuthorUserID: in.ActorUserID, AuthorOrgID: in.OrgID, AuthorName: strings.TrimSpace(in.ActorName),
 		Published: in.Published, CreatedAt: now, UpdatedAt: now,
+	}
+	if in.Published {
+		a.PublishedAt = &now
 	}
 	if err := s.store.CreateKnowledgeArticle(ctx, a); err != nil {
 		return nil, apperr.Internal(err)
@@ -653,9 +720,12 @@ func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.
 	if title == "" || content == "" {
 		return nil, apperr.Validation("title and content are required")
 	}
+	wasPublished := a.Published
 	a.Title = title
 	a.Category = strings.TrimSpace(in.Category)
 	a.Content = content
+	a.Brand = strings.TrimSpace(in.Brand)
+	a.ProductID = in.ProductID
 	a.Published = in.Published
 	if in.OrgID != nil {
 		a.AuthorOrgID = in.OrgID
@@ -663,7 +733,11 @@ func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.
 	if name := strings.TrimSpace(in.ActorName); name != "" {
 		a.AuthorName = name
 	}
-	a.UpdatedAt = s.now().UTC()
+	now := s.now().UTC()
+	if in.Published && (!wasPublished || a.PublishedAt == nil) {
+		a.PublishedAt = &now
+	}
+	a.UpdatedAt = now
 	if err := s.store.UpdateKnowledgeArticle(ctx, *a); err != nil {
 		if ae, ok := apperr.As(err); ok {
 			return nil, ae

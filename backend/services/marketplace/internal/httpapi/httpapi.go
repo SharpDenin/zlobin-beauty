@@ -23,6 +23,7 @@ func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, lo
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
+	optional := httpx.OptionalBearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/masters", a.search)
 	mux.HandleFunc("GET /v1/masters/{id}", a.getMaster)
 	mux.HandleFunc("GET /v1/services/popular", a.popularServices)
@@ -37,9 +38,10 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/service-categories/{id}", auth(http.HandlerFunc(a.updateServiceCategory)))
 	mux.Handle("DELETE /v1/service-categories/{id}", auth(http.HandlerFunc(a.deleteServiceCategory)))
 	mux.HandleFunc("GET /v1/knowledge", a.listKnowledge)
-	mux.HandleFunc("GET /v1/knowledge/{id}", a.getKnowledge)
+	mux.Handle("GET /v1/knowledge/{id}", optional(http.HandlerFunc(a.getKnowledge)))
 	mux.Handle("POST /v1/knowledge", auth(http.HandlerFunc(a.createKnowledge)))
 	mux.Handle("PUT /v1/knowledge/{id}", auth(http.HandlerFunc(a.updateKnowledge)))
+	mux.Handle("GET /v1/me/knowledge", auth(http.HandlerFunc(a.listMyKnowledge)))
 	a.registerPortfolioRoutes(mux, auth)
 }
 
@@ -151,6 +153,7 @@ type upsertMasterReq struct {
 	ExperienceYears int      `json:"experience_years"`
 	Education       string   `json:"education"`
 	PhotoMediaID    string   `json:"photo_media_id"`
+	WorkType        string   `json:"work_type"`
 	Published       bool     `json:"published"`
 }
 
@@ -213,7 +216,7 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 		UserID: claims.UserID, OrganizationID: orgID, BranchID: branchID,
 		DisplayName: req.DisplayName, Bio: req.Bio, Specializations: req.Specializations,
 		City: req.City, ExperienceYears: req.ExperienceYears, Education: req.Education,
-		PhotoMediaID: photoMediaID, Published: req.Published, AccessToken: token,
+		PhotoMediaID: photoMediaID, WorkType: req.WorkType, Published: req.Published, AccessToken: token,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -223,12 +226,15 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 }
 
 type createServiceReq struct {
-	OrganizationID  string `json:"organization_id"`
-	Name            string `json:"name"`
-	Category        string `json:"category"`
-	DurationMinutes int    `json:"duration_minutes"`
-	PriceMinor      int64  `json:"price_minor"`
-	AttachToMe      bool   `json:"attach_to_me"`
+	OrganizationID  string  `json:"organization_id"`
+	Name            string  `json:"name"`
+	Category        string  `json:"category"`
+	Description     string  `json:"description"`
+	Notes           string  `json:"notes"`
+	PhotoMediaID    *string `json:"photo_media_id"`
+	DurationMinutes int     `json:"duration_minutes"`
+	PriceMinor      int64   `json:"price_minor"`
+	AttachToMe      bool    `json:"attach_to_me"`
 }
 
 func (a *API) createService(w http.ResponseWriter, r *http.Request) {
@@ -243,8 +249,14 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
 		return
 	}
+	photoMediaID, err := parseOptionalUUID(req.PhotoMediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+		return
+	}
 	item, err := a.svc.CreateService(r.Context(), service.CreateServiceInput{
 		ActorUserID: claims.UserID, OrganizationID: orgID, Name: req.Name, Category: req.Category,
+		Description: req.Description, Notes: req.Notes, PhotoMediaID: photoMediaID,
 		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, AttachToMaster: req.AttachToMe,
 	})
 	if err != nil {
@@ -264,18 +276,36 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name            *string `json:"name"`
 		Category        *string `json:"category"`
+		Description     *string `json:"description"`
+		Notes           *string `json:"notes"`
+		PhotoMediaID    *string `json:"photo_media_id"`
 		DurationMinutes *int    `json:"duration_minutes"`
 		PriceMinor      *int64  `json:"price_minor"`
 		Published       *bool   `json:"published"`
+		Archived        *bool   `json:"archived"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	item, err := a.svc.UpdateService(r.Context(), service.UpdateServiceInput{
+	in := service.UpdateServiceInput{
 		ActorUserID: claims.UserID, ServiceID: id, Name: req.Name, Category: req.Category,
-		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, Published: req.Published,
-	})
+		Description: req.Description, Notes: req.Notes,
+		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, Published: req.Published, Archived: req.Archived,
+	}
+	if req.PhotoMediaID != nil {
+		if *req.PhotoMediaID == "" {
+			in.ClearPhoto = true
+		} else {
+			photoID, err := uuid.Parse(*req.PhotoMediaID)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+				return
+			}
+			in.PhotoMediaID = &photoID
+		}
+	}
+	item, err := a.svc.UpdateService(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -302,15 +332,38 @@ func knowledgeDTO(a domain.KnowledgeArticle) map[string]any {
 	if a.AuthorOrgID != nil {
 		orgID = a.AuthorOrgID.String()
 	}
+	var productID any
+	if a.ProductID != nil {
+		productID = a.ProductID.String()
+	}
+	var publishedAt any
+	if a.PublishedAt != nil {
+		publishedAt = *a.PublishedAt
+	}
 	return map[string]any{
 		"id": a.ID.String(), "title": a.Title, "category": a.Category, "content": a.Content,
+		"brand": a.Brand, "product_id": productID,
 		"author_user_id": a.AuthorUserID.String(), "author_org_id": orgID, "author_name": a.AuthorName,
-		"published": a.Published, "created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
+		"published": a.Published, "published_at": publishedAt, "created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
 }
 
 func (a *API) listKnowledge(w http.ResponseWriter, r *http.Request) {
 	items, err := a.svc.ListKnowledge(r.Context(), r.URL.Query().Get("category"), false)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, knowledgeDTO(item))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) listMyKnowledge(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	items, err := a.svc.ListMyKnowledge(r.Context(), claims.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -328,7 +381,11 @@ func (a *API) getKnowledge(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
 		return
 	}
-	item, err := a.svc.GetKnowledge(r.Context(), id)
+	var viewerID *uuid.UUID
+	if claims, ok := httpx.ClaimsFrom(r.Context()); ok {
+		viewerID = &claims.UserID
+	}
+	item, err := a.svc.GetKnowledge(r.Context(), id, viewerID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -342,6 +399,8 @@ func (a *API) createKnowledge(w http.ResponseWriter, r *http.Request) {
 		Title      string  `json:"title"`
 		Category   string  `json:"category"`
 		Content    string  `json:"content"`
+		Brand      string  `json:"brand"`
+		ProductID  *string `json:"product_id"`
 		AuthorName string  `json:"author_name"`
 		OrgID      *string `json:"organization_id"`
 		Published  *bool   `json:"published"`
@@ -363,9 +422,14 @@ func (a *API) createKnowledge(w http.ResponseWriter, r *http.Request) {
 		}
 		orgID = &parsed
 	}
+	productID, err := parseOptionalUUID(req.ProductID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
+		return
+	}
 	item, err := a.svc.CreateKnowledge(r.Context(), service.KnowledgeInput{
 		ActorUserID: claims.UserID, ActorName: req.AuthorName, OrgID: orgID,
-		Title: req.Title, Category: req.Category, Content: req.Content, Published: published,
+		Title: req.Title, Category: req.Category, Content: req.Content, Brand: req.Brand, ProductID: productID, Published: published,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -385,6 +449,8 @@ func (a *API) updateKnowledge(w http.ResponseWriter, r *http.Request) {
 		Title      string  `json:"title"`
 		Category   string  `json:"category"`
 		Content    string  `json:"content"`
+		Brand      string  `json:"brand"`
+		ProductID  *string `json:"product_id"`
 		AuthorName string  `json:"author_name"`
 		OrgID      *string `json:"organization_id"`
 		Published  *bool   `json:"published"`
@@ -406,9 +472,14 @@ func (a *API) updateKnowledge(w http.ResponseWriter, r *http.Request) {
 		}
 		orgID = &parsed
 	}
+	productID, err := parseOptionalUUID(req.ProductID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
+		return
+	}
 	item, err := a.svc.UpdateKnowledge(r.Context(), claims.UserID, id, service.KnowledgeInput{
 		ActorUserID: claims.UserID, ActorName: req.AuthorName, OrgID: orgID,
-		Title: req.Title, Category: req.Category, Content: req.Content, Published: published,
+		Title: req.Title, Category: req.Category, Content: req.Content, Brand: req.Brand, ProductID: productID, Published: published,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -426,6 +497,10 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	if m.PhotoMediaID != nil {
 		photoMediaID = m.PhotoMediaID.String()
 	}
+	workType := m.WorkType
+	if workType == "" {
+		workType = "independent"
+	}
 	specs := m.Specializations
 	if specs == nil {
 		specs = []string{}
@@ -434,17 +509,37 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": m.OrganizationID.String(),
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
-		"photo_media_id": photoMediaID,
-		"rating_avg":     m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
+		"photo_media_id": photoMediaID, "work_type": workType,
+		"rating_avg": m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
 	}
 }
 
 func serviceDTO(s domain.ServiceItem) map[string]any {
+	var photo any
+	if s.PhotoMediaID != nil {
+		photo = s.PhotoMediaID.String()
+	}
+	var archivedAt any
+	if s.ArchivedAt != nil {
+		archivedAt = *s.ArchivedAt
+	}
 	return map[string]any{
 		"id": s.ID.String(), "organization_id": s.OrganizationID.String(), "name": s.Name, "category": s.Category,
+		"description": s.Description, "notes": s.Notes, "photo_media_id": photo,
 		"duration_minutes": s.DurationMinutes, "price_minor": s.PriceMinor, "currency": s.Currency,
-		"price_display": formatMoney(s.PriceMinor), "published": s.Published,
+		"price_display": formatMoney(s.PriceMinor), "published": s.Published, "archived_at": archivedAt,
 	}
+}
+
+func parseOptionalUUID(s *string) (*uuid.UUID, error) {
+	if s == nil || *s == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(*s)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }
 
 func formatMoney(minor int64) string {

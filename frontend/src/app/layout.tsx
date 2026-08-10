@@ -1,4 +1,5 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
+import { useMemo, useState, type ReactNode } from 'react'
 import { hasMasterAccess, hasSupplierAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 
 export function RequireAuth() {
@@ -48,64 +49,151 @@ export function RequireSupplier() {
   return <Outlet />
 }
 
-type NavLink = { to: string; label: string }
+type NavLink = { to: string; label: string; end?: boolean }
 
-function navLinksForUser(user: ReturnType<typeof useAuth>['user']): NavLink[] {
-  const isMaster = hasMasterAccess(user)
-  const isSupplier = hasSupplierAccess(user)
-
-  if (isMaster) {
-    return [
-      { to: '/appointments', label: 'Записи' },
-      { to: '/calendar', label: 'Календарь' },
-      { to: '/clients', label: 'Клиенты' },
-      { to: '/cosmetics', label: 'Косметика' },
-      { to: '/knowledge', label: 'База знаний' },
-      { to: '/master', label: 'Кабинет' },
-      { to: '/profile', label: 'Профиль' },
-    ]
-  }
-
-  if (isSupplier) {
-    return [
-      { to: '/supplier', label: 'Товары' },
-      { to: '/knowledge', label: 'База знаний' },
-      { to: '/profile', label: 'Профиль' },
-    ]
-  }
-
+function masterPrimary(): NavLink[] {
   return [
-    { to: '/', label: 'Главная' },
-    { to: '/search', label: 'Поиск' },
-    { to: '/appointments', label: 'Мои записи' },
+    { to: '/', label: 'Сегодня', end: true },
+    { to: '/calendar', label: 'Календарь' },
+    { to: '/appointments', label: 'Записи' },
+    { to: '/more', label: 'Ещё' },
+  ]
+}
+
+function masterSecondary(): NavLink[] {
+  return [
+    { to: '/clients', label: 'Клиенты' },
+    { to: '/services', label: 'Услуги' },
+    { to: '/cosmetics', label: 'Косметика' },
+    { to: '/knowledge', label: 'База знаний' },
+    { to: '/master', label: 'Кабинет' },
     { to: '/profile', label: 'Профиль' },
   ]
+}
+
+function supplierPrimary(): NavLink[] {
+  return [
+    { to: '/supplier', label: 'Главная', end: true },
+    { to: '/supplier/products', label: 'Товары' },
+    { to: '/supplier/orders', label: 'Заказы' },
+    { to: '/knowledge', label: 'База' },
+    { to: '/profile', label: 'Профиль' },
+  ]
+}
+
+function clientPrimary(): NavLink[] {
+  return [
+    { to: '/', label: 'Главная', end: true },
+    { to: '/search', label: 'Найти' },
+    { to: '/appointments', label: 'Записи' },
+    { to: '/profile', label: 'Профиль' },
+  ]
+}
+
+function linkActive(pathname: string, to: string, end?: boolean) {
+  if (to === '/more') return false
+  if (end || to === '/') return pathname === to
+  if (to === '/supplier/products') return pathname.startsWith('/supplier/products')
+  return pathname === to || pathname.startsWith(`${to}/`)
+}
+
+function NavLinks({
+  links,
+  pathname,
+  onNavigate,
+  className,
+}: {
+  links: NavLink[]
+  pathname: string
+  onNavigate?: () => void
+  className?: string
+}) {
+  return (
+    <>
+      {links.map((l) => (
+        <Link
+          key={l.to}
+          to={l.to === '/more' ? '#' : l.to}
+          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) ? 'active' : ''}`.trim()}
+          onClick={(e) => {
+            if (l.to === '/more') {
+              e.preventDefault()
+              onNavigate?.()
+              return
+            }
+            onNavigate?.()
+          }}
+        >
+          {l.label}
+        </Link>
+      ))}
+    </>
+  )
+}
+
+function MoreDrawer({
+  open,
+  onClose,
+  links,
+  pathname,
+}: {
+  open: boolean
+  onClose: () => void
+  links: NavLink[]
+  pathname: string
+}) {
+  if (!open) return null
+  return (
+    <div className="more-drawer" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="more-panel stack-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="row between">
+          <h2>Ещё</h2>
+          <button className="btn btn-secondary btn-compact" type="button" onClick={onClose}>Закрыть</button>
+        </div>
+        <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
+      </div>
+    </div>
+  )
 }
 
 export function AppShell() {
   const { user, logout } = useAuth()
   const location = useLocation()
-  const links = navLinksForUser(user)
+  const [moreOpen, setMoreOpen] = useState(false)
 
-  function linkActive(to: string) {
-    if (to === '/') return location.pathname === '/'
-    return location.pathname === to || location.pathname.startsWith(`${to}/`)
-  }
+  const isMaster = hasMasterAccess(user)
+  const isSupplier = hasSupplierAccess(user) && !isMaster
+
+  const primary = useMemo(() => {
+    if (isMaster) return masterPrimary()
+    if (isSupplier) return supplierPrimary()
+    return clientPrimary()
+  }, [isMaster, isSupplier])
+
+  const secondary = useMemo(() => (isMaster ? masterSecondary() : []), [isMaster])
+
+  const sideLinks = useMemo(() => {
+    if (isMaster) {
+      return [
+        { to: '/', label: 'Сегодня', end: true },
+        { to: '/calendar', label: 'Календарь' },
+        { to: '/appointments', label: 'Записи' },
+        ...masterSecondary(),
+      ]
+    }
+    if (isSupplier) return supplierPrimary()
+    return clientPrimary()
+  }, [isMaster, isSupplier])
 
   return (
-    <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(links.length) }}>
+    <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
         <div className="brand">Zlobin Beauty</div>
         <nav className="stack-sm" style={{ marginTop: 24 }}>
-          {links.map((l) => (
-            <Link key={l.to} to={l.to} className={linkActive(l.to) ? 'active' : ''}>
-              {l.label}
-            </Link>
-          ))}
+          <NavLinks links={sideLinks} pathname={location.pathname} />
         </nav>
         <div style={{ marginTop: 'auto' }} className="stack-sm">
           <div className="muted">{user?.display_name}</div>
-          <Link to="/profile" className={linkActive('/profile') ? 'active' : ''}>Профиль</Link>
           <button className="btn btn-secondary" type="button" onClick={() => void logout()}>Выйти</button>
         </div>
       </aside>
@@ -122,12 +210,56 @@ export function AppShell() {
         <Outlet />
       </div>
       <nav className="bottomnav" aria-label="Основная навигация">
-        {links.map((l) => (
-          <Link key={l.to} to={l.to} className={linkActive(l.to) ? 'active' : ''}>
-            {l.label}
-          </Link>
-        ))}
+        {primary.map((l) => {
+          if (l.to === '/more') {
+            return (
+              <button
+                key={l.to}
+                type="button"
+                className={`nav-tab ${moreOpen ? 'active' : ''}`}
+                onClick={() => setMoreOpen(true)}
+              >
+                {l.label}
+              </button>
+            )
+          }
+          return (
+            <Link
+              key={l.to}
+              to={l.to}
+              className={linkActive(location.pathname, l.to, l.end) ? 'active' : ''}
+            >
+              {l.label}
+            </Link>
+          )
+        })}
       </nav>
+      <MoreDrawer
+        open={moreOpen}
+        onClose={() => setMoreOpen(false)}
+        links={secondary}
+        pathname={location.pathname}
+      />
+    </div>
+  )
+}
+
+export function PageHeader({
+  title,
+  subtitle,
+  actions,
+}: {
+  title: string
+  subtitle?: ReactNode
+  actions?: ReactNode
+}) {
+  return (
+    <div className="row between">
+      <div className="stack-sm">
+        <h1>{title}</h1>
+        {subtitle}
+      </div>
+      {actions}
     </div>
   )
 }

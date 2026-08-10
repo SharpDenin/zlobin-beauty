@@ -68,10 +68,33 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 	weekday := int(localDay.Weekday())
 	fromUTC := localDay.UTC()
 	toUTC := localDay.Add(24 * time.Hour).UTC()
-	hours, err := s.store.ListWorkingHours(ctx, masterUserID)
+
+	// Date column is calendar-day; query with UTC midnight of that Y-M-D to avoid TZ shifts.
+	dayKey := time.Date(localDay.Year(), localDay.Month(), localDay.Day(), 0, 0, 0, 0, time.UTC)
+	exception, err := s.store.GetScheduleException(ctx, masterUserID, dayKey)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	if exception != nil && exception.IsDayOff {
+		return []Slot{}, nil
+	}
+
+	type interval struct{ start, end int }
+	var windows []interval
+	if exception != nil && !exception.IsDayOff && exception.StartMinute != nil && exception.EndMinute != nil {
+		windows = append(windows, interval{*exception.StartMinute, *exception.EndMinute})
+	} else {
+		hours, err := s.store.ListWorkingHours(ctx, masterUserID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		for _, h := range hours {
+			if h.Weekday == weekday {
+				windows = append(windows, interval{h.StartMinute, h.EndMinute})
+			}
+		}
+	}
+
 	existing, err := s.store.ListAppointmentsInRange(ctx, masterUserID, fromUTC, toUTC)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -79,11 +102,8 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 	var slots []Slot
 	step := 30
 	now := s.now().UTC()
-	for _, h := range hours {
-		if h.Weekday != weekday {
-			continue
-		}
-		for start := h.StartMinute; start+durationMinutes <= h.EndMinute; start += step {
+	for _, w := range windows {
+		for start := w.start; start+durationMinutes <= w.end; start += step {
 			st := localDay.Add(time.Duration(start) * time.Minute).UTC()
 			en := st.Add(time.Duration(durationMinutes) * time.Minute)
 			if !st.After(now) {
@@ -241,6 +261,75 @@ func (s *Service) GetWorkingHours(ctx context.Context, masterUserID uuid.UUID) (
 		hours = []domain.WorkingHours{}
 	}
 	return hours, nil
+}
+
+type ScheduleExceptionInput struct {
+	Day         string `json:"day"` // YYYY-MM-DD
+	IsDayOff    bool   `json:"is_day_off"`
+	StartMinute *int   `json:"start_minute"`
+	EndMinute   *int   `json:"end_minute"`
+	Note        string `json:"note"`
+}
+
+func (s *Service) ListScheduleExceptions(ctx context.Context, masterUserID uuid.UUID, from, to time.Time) ([]domain.ScheduleException, error) {
+	if to.Before(from) {
+		return nil, apperr.Validation("to must be on or after from")
+	}
+	items, err := s.store.ListScheduleExceptions(ctx, masterUserID, from, to)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.ScheduleException{}
+	}
+	return items, nil
+}
+
+func (s *Service) UpsertScheduleExceptions(ctx context.Context, masterUserID uuid.UUID, inputs []ScheduleExceptionInput) ([]domain.ScheduleException, error) {
+	if len(inputs) == 0 {
+		return nil, apperr.Validation("at least one exception is required")
+	}
+	now := s.now().UTC()
+	out := make([]domain.ScheduleException, 0, len(inputs))
+	for _, in := range inputs {
+		day, err := time.Parse("2006-01-02", strings.TrimSpace(in.Day))
+		if err != nil {
+			return nil, apperr.Validation("day must be YYYY-MM-DD")
+		}
+		e := domain.ScheduleException{
+			ID: ids.New(), MasterUserID: masterUserID, Day: day, IsDayOff: in.IsDayOff,
+			Note: strings.TrimSpace(in.Note), CreatedAt: now,
+		}
+		if in.IsDayOff {
+			e.StartMinute = nil
+			e.EndMinute = nil
+		} else {
+			if in.StartMinute == nil || in.EndMinute == nil {
+				return nil, apperr.Validation("start_minute and end_minute are required when is_day_off is false")
+			}
+			if *in.StartMinute < 0 || *in.EndMinute > 1440 || *in.EndMinute <= *in.StartMinute {
+				return nil, apperr.Validation("invalid custom hours interval")
+			}
+			e.StartMinute = in.StartMinute
+			e.EndMinute = in.EndMinute
+		}
+		saved, err := s.store.UpsertScheduleException(ctx, e)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		out = append(out, *saved)
+	}
+	return out, nil
+}
+
+func (s *Service) DeleteScheduleException(ctx context.Context, masterUserID uuid.UUID, day time.Time) error {
+	if err := s.store.DeleteScheduleException(ctx, masterUserID, day); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return ae
+		}
+		return apperr.Internal(err)
+	}
+	return nil
 }
 
 type Slot struct {

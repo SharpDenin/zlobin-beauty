@@ -20,9 +20,9 @@ const (
 )
 
 type Claims struct {
-	UserID   uuid.UUID `json:"uid"`
+	UserID    uuid.UUID `json:"uid"`
 	SessionID uuid.UUID `json:"sid"`
-	Roles    []string  `json:"roles"`
+	Roles     []string  `json:"roles"`
 	jwt.RegisteredClaims
 }
 

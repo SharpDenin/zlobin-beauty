@@ -30,7 +30,10 @@ func main() {
 		{Email: "client2@demo.local", Name: "Клиент Два", Role: "client"},
 		{Email: "master1@demo.local", Name: "Мастер Анна", Role: "master"},
 		{Email: "master2@demo.local", Name: "Мастер Иван", Role: "master"},
+		{Email: "master3@demo.local", Name: "Мастер Ольга", Role: "master"},
+		{Email: "master4@demo.local", Name: "Мастер Дмитрий", Role: "master"},
 		{Email: "supplier1@demo.local", Name: "Поставщик Профи", Role: "supplier"},
+		{Email: "supplier2@demo.local", Name: "Поставщик БьютиЛайн", Role: "supplier"},
 	}
 	users := map[string]authUser{}
 	for _, a := range accounts {
@@ -44,65 +47,119 @@ func main() {
 
 	master1 := users["master1@demo.local"]
 	master2 := users["master2@demo.local"]
+	master3 := users["master3@demo.local"]
+	master4 := users["master4@demo.local"]
 	supplier1 := users["supplier1@demo.local"]
+	supplier2 := users["supplier2@demo.local"]
 	client1 := users["client1@demo.local"]
 
 	m1Org, m1Branch, m1Profile, m1Service, err := seedMaster(client, base, master1, masterSeed{
-		OrgName:    "Салон Анны (demo)",
-		BranchName: "Москва центр",
-		City:       "Москва",
-		Address:    "ул. Тверская, 1",
-		Phone:      "+79001112233",
-		Timezone:   "Europe/Moscow",
-		Display:    "Анна Колористика",
-		Bio:        "Мастер-колорист с опытом работы в Москве. Демо-профиль для Zlobin Beauty.",
-		Specs:      []string{"колористика", "стрижки"},
-		Experience: 7,
-		Education:  "Академия колористики",
+		OrgName: "Салон Анны (demo)", BranchName: "Москва центр",
+		City: "Москва", Address: "ул. Тверская, 1", Phone: "+79001112233", Timezone: "Europe/Moscow",
+		Display: "Анна Колористика", Bio: "Мастер-колорист с опытом работы в Москве. Демо-профиль для Zlobin Beauty.",
+		Specs: []string{"колористика", "стрижки"}, Experience: 7, Education: "Академия колористики",
+		WorkType: "owner",
 		Services: []serviceSpec{
-			{Name: "Стрижка", Category: "стрижки", Duration: 60, Price: 200000},
-			{Name: "Окрашивание", Category: "колористика", Duration: 180, Price: 500000},
-			{Name: "Уход", Category: "уход", Duration: 90, Price: 350000},
+			{Name: "Стрижка", Category: "стрижки", Description: "Женская стрижка с консультацией по форме.", Duration: 60, Price: 200000},
+			{Name: "Окрашивание", Category: "колористика", Description: "Полное окрашивание с подбором формулы.", Duration: 180, Price: 500000},
+			{Name: "Уход", Category: "уход", Description: "Восстанавливающий уход после окрашивания.", Duration: 90, Price: 350000},
 		},
 	})
 	if err != nil {
 		fatal("master1: %v", err)
 	}
-	log.Printf("ok master1 org=%s branch=%s profile=%s service=%s", m1Org, m1Branch, m1Profile, m1Service)
+	log.Printf("ok master1 org=%s branch=%s profile=%s service=%s work_type=owner", m1Org, m1Branch, m1Profile, m1Service)
 
 	_, _, _, _, err = seedMaster(client, base, master2, masterSeed{
-		OrgName:    "Салон Ивана (demo)",
-		BranchName: "Москва юг",
-		City:       "Москва",
-		Address:    "ул. Варшавская, 10",
-		Phone:      "+79004445566",
-		Timezone:   "Europe/Moscow",
-		Display:    "Иван Стилист",
-		Bio:        "Стилист и мастер укладок. Демо-профиль для Zlobin Beauty.",
-		Specs:      []string{"стрижки", "укладки"},
-		Experience: 5,
-		Education:  "Школа стиля",
+		OrgName: "Салон Ивана (demo)", BranchName: "Москва юг",
+		City: "Москва", Address: "ул. Варшавская, 10", Phone: "+79004445566", Timezone: "Europe/Moscow",
+		Display: "Иван Стилист", Bio: "Стилист и мастер укладок. Арендатор кресла в демо-салоне.",
+		Specs: []string{"стрижки", "укладки"}, Experience: 5, Education: "Школа стиля",
+		WorkType: "renter",
 		Services: []serviceSpec{
-			{Name: "Мужская стрижка", Category: "стрижки", Duration: 45, Price: 150000},
-			{Name: "Укладка", Category: "укладки", Duration: 60, Price: 250000},
-			{Name: "Борода", Category: "барбер", Duration: 30, Price: 100000},
+			{Name: "Мужская стрижка", Category: "стрижки", Description: "Классическая мужская стрижка машинкой и ножницами.", Duration: 45, Price: 150000},
+			{Name: "Укладка", Category: "укладки", Description: "Вечерняя или повседневная укладка феном.", Duration: 60, Price: 250000},
+			{Name: "Борода", Category: "барбер", Description: "Оформление бороды и контура.", Duration: 30, Price: 100000},
 		},
 	})
 	if err != nil {
 		fatal("master2: %v", err)
 	}
-	log.Printf("ok master2 seeded")
+	log.Printf("ok master2 seeded work_type=renter")
 
-	supOrg, products, err := seedSupplier(client, base, supplier1)
+	_, _, _, _, err = seedMaster(client, base, master3, masterSeed{
+		OrgName: "Салон Ольги (demo)", BranchName: "Москва запад",
+		City: "Москва", Address: "Кутузовский просп., 12", Phone: "+79007778899", Timezone: "Europe/Moscow",
+		Display: "Ольга Nail Art", Bio: "Мастер маникюра и педикюра, сотрудник салона.",
+		Specs: []string{"маникюр", "педикюр"}, Experience: 4, Education: "Nail Academy",
+		WorkType: "employee",
+		Services: []serviceSpec{
+			{Name: "Маникюр", Category: "маникюр", Description: "Классический или аппаратный маникюр с покрытием.", Duration: 75, Price: 220000},
+			{Name: "Педикюр", Category: "педикюр", Description: "Эстетический педикюр с уходом за стопой.", Duration: 90, Price: 280000},
+			{Name: "Дизайн ногтей", Category: "маникюр", Description: "Художественный дизайн или стемпинг.", Duration: 45, Price: 120000},
+			{Name: "Снятие покрытия", Category: "маникюр", Description: "Аккуратное снятие гель-лака.", Duration: 30, Price: 80000},
+		},
+	})
 	if err != nil {
-		fatal("supplier: %v", err)
+		fatal("master3: %v", err)
 	}
-	log.Printf("ok supplier org=%s products=%d", supOrg, len(products))
+	log.Printf("ok master3 seeded work_type=employee")
 
-	if err := seedKnowledge(client, base, master1, m1Org); err != nil {
+	_, _, _, _, err = seedMaster(client, base, master4, masterSeed{
+		OrgName: "Кабинет Дмитрия (demo)", BranchName: "Москва север",
+		City: "Москва", Address: "ул. Дмитровская, 7", Phone: "+79001234567", Timezone: "Europe/Moscow",
+		Display: "Дмитрий Бровист", Bio: "Независимый мастер архитектуры бровей и ламинирования ресниц.",
+		Specs: []string{"брови", "ресницы"}, Experience: 6, Education: "Brow School",
+		WorkType: "independent",
+		Services: []serviceSpec{
+			{Name: "Коррекция бровей", Category: "брови", Description: "Форма бровей под тип лица.", Duration: 40, Price: 180000},
+			{Name: "Окрашивание бровей", Category: "брови", Description: "Стойкое окрашивание с подбором оттенка.", Duration: 50, Price: 200000},
+			{Name: "Ламинирование ресниц", Category: "ресницы", Description: "Ламинирование и питание ресниц.", Duration: 70, Price: 320000},
+		},
+	})
+	if err != nil {
+		fatal("master4: %v", err)
+	}
+	log.Printf("ok master4 seeded work_type=independent")
+
+	sup1Org, products1, err := seedSupplier(client, base, supplier1, supplierSeed{
+		OrgName:      "Поставщик Профи (demo)",
+		BranchName:   "Склад Москва",
+		City:         "Москва",
+		Address:      "просп. Мира, 5",
+		Phone:        "+79005556677",
+		Timezone:     "Europe/Moscow",
+		Description:  "Профессиональная косметика для салонов: краски, уход, стайлинг.",
+		DeliveryNote: "Доставка 2–5 дней по Москве",
+		MinPublished: 8,
+		Products:     supplier1Products(),
+	})
+	if err != nil {
+		fatal("supplier1: %v", err)
+	}
+	log.Printf("ok supplier1 org=%s products=%d", sup1Org, len(products1))
+
+	sup2Org, products2, err := seedSupplier(client, base, supplier2, supplierSeed{
+		OrgName:      "Поставщик БьютиЛайн (demo)",
+		BranchName:   "Склад Химки",
+		City:         "Химки",
+		Address:      "ул. Складская, 3",
+		Phone:        "+79008889900",
+		Timezone:     "Europe/Moscow",
+		Description:  "Дистрибьютор уходовой и декоративной профессиональной косметики.",
+		DeliveryNote: "Доставка 3–7 дней по Москве и области",
+		MinPublished: 4,
+		Products:     supplier2Products(),
+	})
+	if err != nil {
+		fatal("supplier2: %v", err)
+	}
+	log.Printf("ok supplier2 org=%s products=%d", sup2Org, len(products2))
+
+	if err := seedKnowledge(client, base, supplier1, "Поставщик Профи", sup1Org); err != nil {
 		log.Printf("warn knowledge: %v", err)
 	} else {
-		log.Printf("ok knowledge articles")
+		log.Printf("ok knowledge articles (supplier-authored)")
 	}
 
 	apptID, err := seedAppointments(client, base, client1, master1, m1Profile, m1Service)
@@ -112,7 +169,7 @@ func main() {
 		log.Printf("ok appointment=%s", apptID)
 	}
 
-	if err := seedOrders(client, base, master1, supplier1, m1Org, m1Branch, products); err != nil {
+	if err := seedOrders(client, base, master1, supplier1, m1Org, m1Branch, products1); err != nil {
 		log.Printf("warn orders: %v", err)
 	} else {
 		log.Printf("ok supplier orders")
@@ -120,7 +177,15 @@ func main() {
 
 	log.Printf("seed complete")
 	log.Printf("demo accounts password=%s", password)
-	log.Printf("demo supplier_org_id=%s (paste into master Cosmetics page)", supOrg)
+	log.Printf("Open /cosmetics — suppliers appear as cards")
+	log.Printf("--- demo accounts ---")
+	log.Printf("client1@demo.local / client2@demo.local          role=client")
+	log.Printf("master1@demo.local                               work_type=owner")
+	log.Printf("master2@demo.local                               work_type=renter")
+	log.Printf("master3@demo.local                               work_type=employee")
+	log.Printf("master4@demo.local                               work_type=independent")
+	log.Printf("supplier1@demo.local org=%s", truncate(sup1Org, 36))
+	log.Printf("supplier2@demo.local org=%s", truncate(sup2Org, 36))
 }
 
 // --- types ---
@@ -138,18 +203,31 @@ type authUser struct {
 }
 
 type serviceSpec struct {
-	Name     string
-	Category string
-	Duration int
-	Price    int64
+	Name, Category, Description string
+	Duration                    int
+	Price                       int64
 }
 
 type masterSeed struct {
 	OrgName, BranchName, City, Address, Phone, Timezone string
-	Display, Bio, Education                             string
+	Display, Bio, Education, WorkType                   string
 	Specs                                               []string
 	Experience                                          int
 	Services                                            []serviceSpec
+}
+
+type prodSpec struct {
+	Brand, Name, SKU, Unit, Volume, Category, Description string
+	Price                                                 int64
+	Published, ForSale                                    bool
+	DeliveryDays                                          int
+}
+
+type supplierSeed struct {
+	OrgName, BranchName, City, Address, Phone, Timezone string
+	Description, DeliveryNote                           string
+	MinPublished                                        int
+	Products                                            []prodSpec
 }
 
 type apiError struct {
@@ -159,6 +237,33 @@ type apiError struct {
 
 func (e *apiError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.Status, truncate(e.Body, 300))
+}
+
+func supplier1Products() []prodSpec {
+	return []prodSpec{
+		{Brand: "L'Oreal", Name: "Краска Majirel", SKU: "S1-LOR-MAJ-001", Unit: "pcs", Volume: "50ml", Category: "краска", Description: "Перманентная крем-краска Majirel", Price: 89000, Published: true, ForSale: true, DeliveryDays: 2},
+		{Brand: "L'Oreal", Name: "Окислитель 9%", SKU: "S1-LOR-OX-9", Unit: "pcs", Volume: "1000ml", Category: "окислитель", Description: "Оксидант 9% для окрашивания", Price: 65000, Published: true, ForSale: true, DeliveryDays: 2},
+		{Brand: "L'Oreal", Name: "Шампунь Absolut Repair", SKU: "S1-LOR-AR-SH", Unit: "pcs", Volume: "300ml", Category: "шампунь", Description: "Восстанавливающий шампунь", Price: 185000, Published: true, ForSale: true, DeliveryDays: 3},
+		{Brand: "Wella", Name: "Koleston Perfect", SKU: "S1-WEL-KOL-001", Unit: "pcs", Volume: "60ml", Category: "краска", Description: "Стойкая крем-краска Koleston", Price: 92000, Published: true, ForSale: true, DeliveryDays: 3},
+		{Brand: "Wella", Name: "Oil Reflections шампунь", SKU: "S1-WEL-OR-SH", Unit: "pcs", Volume: "250ml", Category: "шампунь", Description: "Блеск и мягкость волос", Price: 210000, Published: true, ForSale: false, DeliveryDays: 4},
+		{Brand: "Olaplex", Name: "No.3 Hair Perfector", SKU: "S1-OLA-N3", Unit: "pcs", Volume: "100ml", Category: "уход", Description: "Домашний уход для восстановления связей", Price: 320000, Published: true, ForSale: true, DeliveryDays: 5},
+		{Brand: "Olaplex", Name: "No.0 Intensive Bond", SKU: "S1-OLA-N0", Unit: "pcs", Volume: "155ml", Category: "уход", Description: "Интенсивный праймер перед No.3", Price: 290000, Published: false, ForSale: true, DeliveryDays: 5},
+		{Brand: "Estel", Name: "Essex краска", SKU: "S1-EST-ESX-001", Unit: "pcs", Volume: "60ml", Category: "краска", Description: "Крем-краска Essex", Price: 42000, Published: true, ForSale: true, DeliveryDays: 1},
+		{Brand: "Estel", Name: "Curex Therapy маска", SKU: "S1-EST-CTX-MSK", Unit: "pcs", Volume: "500ml", Category: "маска", Description: "Терапевтическая маска для повреждённых волос", Price: 78000, Published: true, ForSale: true, DeliveryDays: 2},
+		{Brand: "Estel", Name: "De Luxe окислитель 6%", SKU: "S1-EST-DLX-OX6", Unit: "pcs", Volume: "1000ml", Category: "окислитель", Description: "Оксигент 6% De Luxe", Price: 38000, Published: false, ForSale: false, DeliveryDays: 7},
+		{Brand: "Wella", Name: "EIMI Super Set", SKU: "S1-WEL-EIMI-SS", Unit: "pcs", Volume: "300ml", Category: "стайлинг", Description: "Лак сильной фиксации", Price: 145000, Published: true, ForSale: true, DeliveryDays: 4},
+		{Brand: "Olaplex", Name: "No.6 Bond Smoother", SKU: "S1-OLA-N6", Unit: "pcs", Volume: "100ml", Category: "уход", Description: "Крем-несмывашка для гладкости", Price: 280000, Published: true, ForSale: true, DeliveryDays: 6},
+	}
+}
+
+func supplier2Products() []prodSpec {
+	return []prodSpec{
+		{Brand: "L'Oreal", Name: "Dia Richesse", SKU: "S2-LOR-DIA-001", Unit: "pcs", Volume: "50ml", Category: "краска", Description: "Тонирующая краска Dia Richesse", Price: 76000, Published: true, ForSale: true, DeliveryDays: 3},
+		{Brand: "Wella", Name: "Fusion маска", SKU: "S2-WEL-FUS-MSK", Unit: "pcs", Volume: "150ml", Category: "маска", Description: "Интенсивная маска Fusion", Price: 265000, Published: true, ForSale: true, DeliveryDays: 4},
+		{Brand: "Estel", Name: "Otium Aqua шампунь", SKU: "S2-EST-OTA-SH", Unit: "pcs", Volume: "250ml", Category: "шампунь", Description: "Увлажняющий шампунь Otium Aqua", Price: 69000, Published: true, ForSale: true, DeliveryDays: 2},
+		{Brand: "Olaplex", Name: "No.4 Bond Maintenance", SKU: "S2-OLA-N4", Unit: "pcs", Volume: "250ml", Category: "шампунь", Description: "Шампунь для поддержания связей", Price: 310000, Published: true, ForSale: false, DeliveryDays: 5},
+		{Brand: "L'Oreal", Name: "Serie Expert Blow-Dry", SKU: "S2-LOR-SE-BD", Unit: "pcs", Volume: "150ml", Category: "стайлинг", Description: "Термозащитный крем", Price: 198000, Published: false, ForSale: true, DeliveryDays: 7},
+	}
 }
 
 // --- auth ---
@@ -205,9 +310,9 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 		return "", "", "", "", err
 	}
 
-	// Branch readiness requires phone.
+	// Branch readiness requires phone/city/address/timezone.
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
-		"phone": cfg.Phone, "city": cfg.City, "address_line": cfg.Address, "timezone": cfg.Timezone,
+		"phone": cfg.Phone, "city": cfg.City, "address_line": cfg.Address, "timezone": cfg.Timezone, "name": cfg.BranchName,
 	}, nil)
 
 	// Draft profile first (publication needs services + hours).
@@ -247,7 +352,9 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 
 	pub := true
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{"published": pub}, nil)
-	_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{"published": pub}, nil)
+	_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
+		"published": pub, "description": cfg.Bio,
+	}, nil)
 
 	// Salon warehouse location for supplier orders.
 	if _, err := ensureLocation(c, base, user, orgID, "Основной склад", "salon"); err != nil {
@@ -261,7 +368,7 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 	var resp struct {
 		ID string `json:"id"`
 	}
-	status, err := doJSON(c, http.MethodPut, base+"/v1/me/master", user.Token, map[string]any{
+	body := map[string]any{
 		"organization_id":  orgID,
 		"branch_id":        branchID,
 		"display_name":     cfg.Display,
@@ -271,7 +378,11 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		"experience_years": cfg.Experience,
 		"education":        cfg.Education,
 		"published":        published,
-	}, &resp)
+	}
+	if cfg.WorkType != "" {
+		body["work_type"] = cfg.WorkType
+	}
+	status, err := doJSON(c, http.MethodPut, base+"/v1/me/master", user.Token, body, &resp)
 	if err != nil {
 		return "", err
 	}
@@ -316,6 +427,10 @@ func ensureOrg(c *http.Client, base string, user authUser, typ, name, branchName
 					branchID = it.Branches[0].ID
 				}
 				log.Printf("skip org create for %s — using existing %s", user.ID, orgID)
+				// Refresh name/description fields on re-seed when possible.
+				_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
+					"name": name,
+				}, nil)
 				return orgID, branchID, nil
 			}
 		}
@@ -364,14 +479,18 @@ func ensureServices(c *http.Client, base string, user authUser, orgID string, sp
 		var created struct {
 			ID string `json:"id"`
 		}
-		status, err := doJSON(c, http.MethodPost, base+"/v1/services", user.Token, map[string]any{
+		payload := map[string]any{
 			"organization_id":  orgID,
 			"name":             sp.Name,
 			"category":         sp.Category,
 			"duration_minutes": sp.Duration,
 			"price_minor":      sp.Price,
 			"attach_to_me":     true,
-		}, &created)
+		}
+		if sp.Description != "" {
+			payload["description"] = sp.Description
+		}
+		status, err := doJSON(c, http.MethodPost, base+"/v1/services", user.Token, payload, &created)
 		if err != nil {
 			return nil, err
 		}
@@ -386,51 +505,75 @@ func ensureServices(c *http.Client, base string, user authUser, orgID string, sp
 
 // --- supplier / commerce ---
 
-func seedSupplier(c *http.Client, base string, user authUser) (orgID string, productIDs []string, err error) {
-	orgID, _, err = ensureOrg(c, base, user, "supplier", "Поставщик Профи (demo)", "Склад Москва", "Москва", "просп. Мира, 5", "Europe/Moscow")
+func seedSupplier(c *http.Client, base string, user authUser, cfg supplierSeed) (orgID string, productIDs []string, err error) {
+	orgID, branchID, err := ensureOrg(c, base, user, "supplier", cfg.OrgName, cfg.BranchName, cfg.City, cfg.Address, cfg.Timezone)
 	if err != nil {
 		return "", nil, err
 	}
-	pub := true
-	_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
-		"published": pub, "description": "Демо-поставщик профессиональной косметики",
+
+	// Satisfy branch readiness checklist before publish.
+	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
+		"name": cfg.BranchName, "phone": cfg.Phone, "city": cfg.City,
+		"address_line": cfg.Address, "timezone": cfg.Timezone,
 	}, nil)
+
+	pub := true
+	stBranch, _ := doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{"published": pub}, nil)
+	if stBranch >= 300 {
+		log.Printf("warn publish supplier branch status=%d", stBranch)
+	}
+
+	stOrg, _ := doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
+		"name": cfg.OrgName, "description": cfg.Description,
+		"delivery_note": cfg.DeliveryNote, "published": pub,
+	}, nil)
+	if stOrg >= 300 {
+		log.Printf("warn publish supplier org status=%d — retry without published", stOrg)
+		_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
+			"name": cfg.OrgName, "description": cfg.Description, "delivery_note": cfg.DeliveryNote,
+		}, nil)
+		stOrg2, _ := doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{"published": pub}, nil)
+		if stOrg2 >= 300 {
+			log.Printf("warn supplier org still unpublished status=%d", stOrg2)
+		}
+	}
 
 	locID, err := ensureLocation(c, base, user, orgID, "Склад поставщика", "supplier")
 	if err != nil {
 		return "", nil, err
 	}
 
-	type prodSpec struct {
-		Brand, Name, SKU, Unit, Volume string
-		Price                          int64
-	}
-	wanted := []prodSpec{
-		{Brand: "L'Oreal", Name: "Краска Majirel", SKU: "LOR-MAJ-001", Unit: "pcs", Volume: "50ml", Price: 89000},
-		{Brand: "L'Oreal", Name: "Окислитель 9%", SKU: "LOR-OX-9", Unit: "pcs", Volume: "1000ml", Price: 65000},
-		{Brand: "Kerastase", Name: "Шампунь Nutritive", SKU: "KER-NUT-SH", Unit: "pcs", Volume: "250ml", Price: 240000},
-	}
-
 	var existing struct {
 		Items []struct {
-			ID   string `json:"id"`
-			SKU  string `json:"sku"`
-			Name string `json:"name"`
+			ID        string `json:"id"`
+			SKU       string `json:"sku"`
+			Name      string `json:"name"`
+			Published bool   `json:"published"`
 		} `json:"items"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/products?organization_id="+orgID, user.Token, nil, &existing)
+
+	publishedCount := 0
 	bySKU := map[string]string{}
 	for _, p := range existing.Items {
 		bySKU[p.SKU] = p.ID
+		productIDs = append(productIDs, p.ID)
+		if p.Published {
+			publishedCount++
+		}
 	}
 
-	for _, w := range wanted {
+	if cfg.MinPublished > 0 && publishedCount >= cfg.MinPublished {
+		log.Printf("skip product create for org=%s — already %d published (need %d)", orgID, publishedCount, cfg.MinPublished)
+		return orgID, uniqueStrings(productIDs), nil
+	}
+
+	catIDs := listProductCategoryIDs(c, base, user)
+
+	for _, w := range cfg.Products {
 		id := bySKU[w.SKU]
 		if id == "" {
-			var created struct {
-				ID string `json:"id"`
-			}
-			status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/products", user.Token, map[string]any{
+			payload := map[string]any{
 				"organization_id": orgID,
 				"brand":           w.Brand,
 				"name":            w.Name,
@@ -440,9 +583,18 @@ func seedSupplier(c *http.Client, base string, user authUser) (orgID string, pro
 				"price_minor":     w.Price,
 				"currency":        "RUB",
 				"min_stock":       5,
-				"published":       true,
-				"description":     "Демо-товар для seed",
-			}, &created)
+				"published":       w.Published,
+				"for_sale":        w.ForSale,
+				"delivery_days":   w.DeliveryDays,
+				"description":     w.Description,
+			}
+			if catID := catIDs[strings.ToLower(w.Category)]; catID != "" {
+				payload["category_id"] = catID
+			}
+			var created struct {
+				ID string `json:"id"`
+			}
+			status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/products", user.Token, payload, &created)
 			if err != nil {
 				return "", nil, err
 			}
@@ -451,14 +603,32 @@ func seedSupplier(c *http.Client, base string, user authUser) (orgID string, pro
 				continue
 			}
 			id = created.ID
+			bySKU[w.SKU] = id
+			productIDs = append(productIDs, id)
 		}
-		productIDs = append(productIDs, id)
 		// Stock so products look available.
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/stock/movements", user.Token, map[string]any{
 			"location_id": locID, "product_id": id, "kind": "receipt", "qty": 50, "reason": "seed stock",
 		}, nil)
 	}
-	return orgID, productIDs, nil
+	return orgID, uniqueStrings(productIDs), nil
+}
+
+func listProductCategoryIDs(c *http.Client, base string, user authUser) map[string]string {
+	var list struct {
+		Items []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/product-categories", user.Token, nil, &list)
+	out := map[string]string{}
+	for _, it := range list.Items {
+		out[strings.ToLower(it.Name)] = it.ID
+		out[strings.ToLower(it.Slug)] = it.ID
+	}
+	return out
 }
 
 func ensureLocation(c *http.Client, base string, user authUser, orgID, name, kind string) (string, error) {
@@ -497,24 +667,33 @@ func ensureLocation(c *http.Client, base string, user authUser, orgID, name, kin
 
 // --- knowledge ---
 
-func seedKnowledge(c *http.Client, base string, user authUser, orgID string) error {
+func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID string) error {
 	articles := []struct {
-		Title, Category, Content string
+		Title, Category, Brand, Content string
 	}{
 		{
-			Title:    "Основы колористики: тон и фон осветления",
-			Category: "Колористика",
-			Content:  "Краткий гид по уровням тона и фону осветления для демо базы знаний Zlobin Beauty.",
+			Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
+			Content: "Краткий гид по уровням тона и фону осветления для демо базы знаний Zlobin Beauty.",
 		},
 		{
-			Title:    "Протокол уходовых процедур",
-			Category: "Процедуры",
-			Content:  "Пошаговый протокол реконструкции волос: диагностика, нанесение, время выдержки, финальный уход.",
+			Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
+			Content: "Пошаговый протокол реконструкции волос: диагностика, нанесение, время выдержки, финальный уход.",
 		},
 		{
-			Title:    "Как выбирать окислитель",
-			Category: "Продукция",
-			Content:  "Разница между 3%, 6% и 9% окислителями и рекомендации по совместимости с красками L'Oreal.",
+			Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
+			Content: "Разница между 3%, 6% и 9% окислителями и рекомендации по совместимости с красками.",
+		},
+		{
+			Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
+			Content: "Практика поэтапного осветления, контроль фонов и защита структуры волос.",
+		},
+		{
+			Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
+			Content: "Какие продукты рекомендовать клиенту после окрашивания и как объяснить схему применения.",
+		},
+		{
+			Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
+			Content: "Подбор средств фиксации под тип волос и желаемый результат укладки.",
 		},
 	}
 
@@ -538,8 +717,8 @@ func seedKnowledge(c *http.Client, base string, user authUser, orgID string) err
 			continue
 		}
 		status, err := doJSON(c, http.MethodPost, base+"/v1/knowledge", user.Token, map[string]any{
-			"title": a.Title, "category": a.Category, "content": a.Content,
-			"author_name": "Демо мастер", "organization_id": orgID, "published": pub,
+			"title": a.Title, "category": a.Category, "content": a.Content, "brand": a.Brand,
+			"author_name": authorName, "organization_id": orgID, "published": pub,
 		}, nil)
 		if err != nil {
 			return err
@@ -705,13 +884,17 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 		} `json:"items"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/supplier-orders?organization_id="+buyerOrgID, master.Token, nil, &existing)
-	haveNew, havePicking := false, false
+	have := map[string]bool{}
 	for _, o := range existing.Items {
-		if strings.Contains(o.Comment, "[seed-new]") {
-			haveNew = true
-		}
-		if strings.Contains(o.Comment, "[seed-flow]") || o.Status == "picking" || o.Status == "confirmed" {
-			havePicking = true
+		switch {
+		case strings.Contains(o.Comment, "[seed-new]"):
+			have["new"] = true
+		case strings.Contains(o.Comment, "[seed-flow]"):
+			have["picking"] = true
+		case strings.Contains(o.Comment, "[seed-transit]"):
+			have["transit"] = true
+		case strings.Contains(o.Comment, "[seed-delivered]"):
+			have["delivered"] = true
 		}
 	}
 
@@ -738,7 +921,16 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 		return created.ID, nil
 	}
 
-	if !haveNew {
+	transition := func(id, status string, est *time.Time) int {
+		body := map[string]any{"status": status}
+		if est != nil {
+			body["estimated_delivery_at"] = *est
+		}
+		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/transition", supplier.Token, body, nil)
+		return st
+	}
+
+	if !have["new"] {
 		id, err := createOrder("[seed-new] Демо заказ (new)")
 		if err != nil {
 			log.Printf("warn create new order: %v", err)
@@ -749,24 +941,51 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 		log.Printf("skip [seed-new] order — already exists")
 	}
 
-	if !havePicking {
+	if !have["picking"] {
 		id, err := createOrder("[seed-flow] Демо заказ (confirmed→picking)")
 		if err != nil {
 			log.Printf("warn create flow order: %v", err)
-			return nil
+		} else {
+			est := time.Now().UTC().AddDate(0, 0, 3)
+			st1 := transition(id, "confirmed", nil)
+			st2 := transition(id, "picking", &est)
+			log.Printf("ok supplier order flow id=%s confirmed=%d picking=%d", id, st1, st2)
 		}
-		// Supplier transitions: new → confirmed → picking.
-		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/transition", supplier.Token, map[string]any{
-			"status": "confirmed",
-		}, nil)
-		est := time.Now().UTC().AddDate(0, 0, 3)
-		st2, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/transition", supplier.Token, map[string]any{
-			"status": "picking", "estimated_delivery_at": est,
-		}, nil)
-		log.Printf("ok supplier order flow id=%s confirmed=%d picking=%d", id, st, st2)
 	} else {
 		log.Printf("skip [seed-flow] order — already exists")
 	}
+
+	if !have["transit"] {
+		id, err := createOrder("[seed-transit] Демо заказ (→in_transit)")
+		if err != nil {
+			log.Printf("warn create transit order: %v", err)
+		} else {
+			est := time.Now().UTC().AddDate(0, 0, 2)
+			_ = transition(id, "confirmed", nil)
+			_ = transition(id, "picking", &est)
+			st := transition(id, "in_transit", &est)
+			log.Printf("ok supplier order transit id=%s status_code=%d", id, st)
+		}
+	} else {
+		log.Printf("skip [seed-transit] order — already exists")
+	}
+
+	if !have["delivered"] {
+		id, err := createOrder("[seed-delivered] Демо заказ (→delivered)")
+		if err != nil {
+			log.Printf("warn create delivered order: %v", err)
+		} else {
+			est := time.Now().UTC().AddDate(0, 0, 1)
+			_ = transition(id, "confirmed", nil)
+			_ = transition(id, "picking", &est)
+			_ = transition(id, "in_transit", &est)
+			st := transition(id, "delivered", nil)
+			log.Printf("ok supplier order delivered id=%s status_code=%d", id, st)
+		}
+	} else {
+		log.Printf("skip [seed-delivered] order — already exists")
+	}
+
 	return nil
 }
 
@@ -837,6 +1056,19 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 func fatal(format string, args ...any) {

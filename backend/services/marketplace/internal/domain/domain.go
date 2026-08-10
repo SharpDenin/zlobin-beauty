@@ -18,6 +18,7 @@ type MasterProfile struct {
 	ExperienceYears int
 	Education       string
 	PhotoMediaID    *uuid.UUID
+	WorkType        string
 	RatingAvg       float64
 	RatingCount     int
 	Published       bool
@@ -39,10 +40,14 @@ type ServiceItem struct {
 	BranchID        *uuid.UUID // optional: set when joined with a published master for public listing filters
 	Name            string
 	Category        string
+	Description     string
+	Notes           string
 	DurationMinutes int
 	PriceMinor      int64
 	Currency        string
+	PhotoMediaID    *uuid.UUID
 	Published       bool
+	ArchivedAt      *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -74,10 +79,13 @@ type KnowledgeArticle struct {
 	Title        string
 	Category     string
 	Content      string
+	Brand        string
+	ProductID    *uuid.UUID
 	AuthorUserID uuid.UUID
 	AuthorOrgID  *uuid.UUID
 	AuthorName   string
 	Published    bool
+	PublishedAt  *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

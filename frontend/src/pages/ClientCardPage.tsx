@@ -34,6 +34,7 @@ type Formula = {
   ratio: string
   comment: string
   created_at: string
+  components?: Array<{ label?: string; amount?: string } | string>
 }
 
 const noteSchema = z.object({
@@ -49,6 +50,14 @@ const formulaSchema = z.object({
   ratio: z.string().optional(),
   comment: z.string().optional(),
 })
+
+function formulaComponents(f: Formula): string[] {
+  if (!f.components || f.components.length === 0) return []
+  return f.components.map((c) => {
+    if (typeof c === 'string') return c
+    return [c.label, c.amount].filter(Boolean).join(' ')
+  }).filter(Boolean)
+}
 
 export function ClientCardPage() {
   const { id, appointmentId } = useParams()
@@ -150,11 +159,12 @@ export function ClientCardPage() {
 
   return (
     <main className="page stack">
-      <h1>{card.display_name}</h1>
-      <section className="card stack-sm">
-        <p>{card.email ?? 'Email не указан'}</p>
-        <p>{card.phone ?? 'Телефон не указан'}</p>
-        <p>Предпочтения: {card.preferences || '—'}</p>
+      <section className="hero">
+        <div className="stack">
+          <h1>{card.display_name}</h1>
+          <p>{card.phone || card.email || 'Контакты не указаны'}</p>
+          {card.preferences && <p className="muted">Предпочтения: {card.preferences}</p>}
+        </div>
       </section>
 
       {error && <div className="state-box error">{error}</div>}
@@ -164,10 +174,8 @@ export function ClientCardPage() {
         <section className="card stack">
           <h2>Автоподтверждение записей</h2>
           <p className="muted">Новые записи этого клиента будут подтверждаться автоматически.</p>
-          {autoConfirm.isLoading && <div className="state-box">Загрузка…</div>}
-          {autoConfirm.isError && <div className="state-box error">Не удалось загрузить настройку</div>}
           {autoConfirm.data && (
-            <label className="row">
+            <label className="field-check">
               <input
                 type="checkbox"
                 checked={autoConfirm.data.auto_confirm}
@@ -180,16 +188,19 @@ export function ClientCardPage() {
         </section>
       )}
 
-      <section className="card stack">
+      <section className="stack">
         <h2>История посещений</h2>
         {visits.isLoading && <div className="state-box">Загрузка…</div>}
-        {visits.data && visits.data.items.length === 0 && <div className="state-box">Посещений пока нет</div>}
+        {visits.data && visits.data.items.length === 0 && <div className="empty-state"><h2>Посещений пока нет</h2></div>}
         <div className="list">
           {visits.data?.items.map((v) => (
-            <div key={v.id} className="list-item">
-              <strong>{v.service_name}</strong>
-              <p>{new Date(v.completed_at).toLocaleString('ru-RU')} · {formatMoney(v.price_minor)}</p>
-            </div>
+            <article key={v.id} className="history-card">
+              <div className="row between">
+                <strong>{v.service_name}</strong>
+                <span>{formatMoney(v.price_minor)}</span>
+              </div>
+              <p className="muted">{new Date(v.completed_at).toLocaleString('ru-RU')}</p>
+            </article>
           ))}
         </div>
       </section>
@@ -216,19 +227,33 @@ export function ClientCardPage() {
         </form>
       </section>
 
-      <section className="card stack">
+      <section className="stack">
         <h2>Составы окрашивания</h2>
-        {formulas.data && formulas.data.items.length === 0 && <div className="state-box">Составов пока нет</div>}
+        {formulas.data && formulas.data.items.length === 0 && (
+          <div className="empty-state"><h2>Составов пока нет</h2></div>
+        )}
         <div className="list">
-          {formulas.data?.items.map((f) => (
-            <div key={f.id} className="list-item">
-              <strong>{f.name}</strong>
-              <p>{f.brand} · {f.oxidizer} · {f.ratio}</p>
-              <p>{f.comment}</p>
-            </div>
-          ))}
+          {formulas.data?.items.map((f) => {
+            const comps = formulaComponents(f)
+            return (
+              <article key={f.id} className="formula-card">
+                <div className="row between">
+                  <strong>{f.name}</strong>
+                  <span className="muted">{new Date(f.created_at).toLocaleDateString('ru-RU')}</span>
+                </div>
+                <div className="formula-grid">
+                  <div className="formula-field"><span>Бренд</span><strong>{f.brand || '—'}</strong></div>
+                  <div className="formula-field"><span>Окислитель</span><strong>{f.oxidizer || '—'}</strong></div>
+                  <div className="formula-field"><span>Пропорция</span><strong>{f.ratio || '—'}</strong></div>
+                  <div className="formula-field"><span>Компоненты</span><strong>{comps.join(', ') || '—'}</strong></div>
+                </div>
+                {f.comment && <p>{f.comment}</p>}
+              </article>
+            )
+          })}
         </div>
-        <form className="stack" onSubmit={formulaForm.handleSubmit((v) => saveFormula.mutate(v))}>
+        <form className="card stack" onSubmit={formulaForm.handleSubmit((v) => saveFormula.mutate(v))}>
+          <h3>Новый состав</h3>
           <div className="field"><label>Название</label><input {...formulaForm.register('name')} /></div>
           <div className="field"><label>Бренд</label><input {...formulaForm.register('brand')} /></div>
           <div className="field"><label>Компоненты через запятую</label><input {...formulaForm.register('components_text')} placeholder="8.1 30g, 9.13 20g" /></div>

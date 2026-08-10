@@ -75,6 +75,9 @@ type Product struct {
 	Currency       string
 	MinStock       float64
 	Published      bool
+	ForSale        bool
+	DeliveryDays   int
+	PhotoMediaID   *uuid.UUID
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

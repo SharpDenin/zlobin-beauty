@@ -67,14 +67,14 @@ func scanLocation(row pgx.Row) (*domain.StockLocation, error) {
 
 // --- products ---
 
-const productColumns = `id, organization_id, parent_id, category_id, brand, name, sku, description, unit, volume_label, price_minor, currency, min_stock, published, created_at, updated_at`
+const productColumns = `id, organization_id, parent_id, category_id, brand, name, sku, description, unit, volume_label, price_minor, currency, min_stock, published, for_sale, delivery_days, photo_media_id, created_at, updated_at`
 
 func (s *Store) CreateProduct(ctx context.Context, p domain.Product) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO products(`+productColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		p.ID, p.OrganizationID, p.ParentID, p.CategoryID, p.Brand, p.Name, p.SKU, p.Description, p.Unit, p.VolumeLabel,
-		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.CreatedAt, p.UpdatedAt)
+		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.ForSale, p.DeliveryDays, p.PhotoMediaID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -109,10 +109,10 @@ func (s *Store) ListProducts(ctx context.Context, orgID uuid.UUID) ([]domain.Pro
 func (s *Store) UpdateProduct(ctx context.Context, p domain.Product) error {
 	tag, err := s.pool.Exec(ctx, `
 UPDATE products SET parent_id=$2, category_id=$3, brand=$4, name=$5, sku=$6, description=$7, unit=$8, volume_label=$9,
-  price_minor=$10, currency=$11, min_stock=$12, published=$13, updated_at=$14
+  price_minor=$10, currency=$11, min_stock=$12, published=$13, for_sale=$14, delivery_days=$15, photo_media_id=$16, updated_at=$17
 WHERE id=$1`,
 		p.ID, p.ParentID, p.CategoryID, p.Brand, p.Name, p.SKU, p.Description, p.Unit, p.VolumeLabel,
-		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.UpdatedAt)
+		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.ForSale, p.DeliveryDays, p.PhotoMediaID, p.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -129,7 +129,7 @@ WHERE id=$1`,
 func scanProduct(row pgx.Row) (*domain.Product, error) {
 	var p domain.Product
 	if err := row.Scan(&p.ID, &p.OrganizationID, &p.ParentID, &p.CategoryID, &p.Brand, &p.Name, &p.SKU, &p.Description, &p.Unit, &p.VolumeLabel,
-		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.ForSale, &p.DeliveryDays, &p.PhotoMediaID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -141,7 +141,7 @@ func scanProduct(row pgx.Row) (*domain.Product, error) {
 func scanProductRow(rows pgx.Rows) (*domain.Product, error) {
 	var p domain.Product
 	if err := rows.Scan(&p.ID, &p.OrganizationID, &p.ParentID, &p.CategoryID, &p.Brand, &p.Name, &p.SKU, &p.Description, &p.Unit, &p.VolumeLabel,
-		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.ForSale, &p.DeliveryDays, &p.PhotoMediaID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil

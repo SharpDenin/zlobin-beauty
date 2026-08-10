@@ -155,6 +155,9 @@ type ProductInput struct {
 	Currency       string
 	MinStock       float64
 	Published      bool
+	ForSale        bool
+	DeliveryDays   int
+	PhotoMediaID   *uuid.UUID
 }
 
 func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in ProductInput) (*domain.Product, error) {
@@ -167,6 +170,9 @@ func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in Product
 	}
 	if in.MinStock < 0 {
 		return nil, apperr.Validation("min_stock must not be negative")
+	}
+	if in.DeliveryDays < 0 {
+		return nil, apperr.Validation("delivery_days must not be negative")
 	}
 	if err := s.requireMembership(ctx, in.OrganizationID, actor, "owner", "admin"); err != nil {
 		return nil, err
@@ -197,11 +203,16 @@ func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in Product
 		currency = "RUB"
 	}
 	now := s.now().UTC()
+	deliveryDays := in.DeliveryDays
+	if deliveryDays == 0 {
+		deliveryDays = 3
+	}
 	p := domain.Product{
 		ID: ids.New(), OrganizationID: in.OrganizationID, ParentID: parentID, CategoryID: in.CategoryID, Brand: strings.TrimSpace(in.Brand),
 		Name: name, SKU: strings.TrimSpace(in.SKU), Description: strings.TrimSpace(in.Description), Unit: unit,
 		VolumeLabel: strings.TrimSpace(in.VolumeLabel), PriceMinor: in.PriceMinor, Currency: currency,
-		MinStock: in.MinStock, Published: in.Published, CreatedAt: now, UpdatedAt: now,
+		MinStock: in.MinStock, Published: in.Published, ForSale: in.ForSale, DeliveryDays: deliveryDays,
+		PhotoMediaID: in.PhotoMediaID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateProduct(ctx, p); err != nil {
 		if ae, ok := apperr.As(err); ok {
@@ -228,10 +239,16 @@ func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireAnyMembership(ctx, p.OrganizationID, actor); err != nil {
-		return nil, err
+	if err := s.requireAnyMembership(ctx, p.OrganizationID, actor); err == nil {
+		return p, nil
 	}
-	return p, nil
+	if p.Published && p.ForSale {
+		return p, nil
+	}
+	if p.Published {
+		return p, nil
+	}
+	return nil, apperr.NotFound("product not found")
 }
 
 func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]domain.Product, error) {
@@ -243,11 +260,11 @@ func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]d
 	if items == nil {
 		items = []domain.Product{}
 	}
-	// Non-members may browse published catalog (masters ordering from suppliers).
+	// Non-members may browse published for-sale catalog.
 	if memberErr != nil {
 		out := make([]domain.Product, 0, len(items))
 		for _, p := range items {
-			if p.Published {
+			if p.Published && p.ForSale {
 				out = append(out, p)
 			}
 		}
@@ -257,17 +274,21 @@ func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]d
 }
 
 type ProductPatch struct {
-	CategoryID  *uuid.UUID
-	Brand       *string
-	Name        *string
-	SKU         *string
-	Description *string
-	Unit        *string
-	VolumeLabel *string
-	PriceMinor  *int64
-	Currency    *string
-	MinStock    *float64
-	Published   *bool
+	CategoryID   *uuid.UUID
+	Brand        *string
+	Name         *string
+	SKU          *string
+	Description  *string
+	Unit         *string
+	VolumeLabel  *string
+	PriceMinor   *int64
+	Currency     *string
+	MinStock     *float64
+	Published    *bool
+	ForSale      *bool
+	DeliveryDays *int
+	PhotoMediaID *uuid.UUID
+	ClearPhoto   bool
 }
 
 func (s *Service) UpdateProduct(ctx context.Context, actor, id uuid.UUID, patch ProductPatch) (*domain.Product, error) {
@@ -328,6 +349,20 @@ func (s *Service) UpdateProduct(ctx context.Context, actor, id uuid.UUID, patch 
 	}
 	if patch.Published != nil {
 		p.Published = *patch.Published
+	}
+	if patch.ForSale != nil {
+		p.ForSale = *patch.ForSale
+	}
+	if patch.DeliveryDays != nil {
+		if *patch.DeliveryDays < 0 {
+			return nil, apperr.Validation("delivery_days must not be negative")
+		}
+		p.DeliveryDays = *patch.DeliveryDays
+	}
+	if patch.ClearPhoto {
+		p.PhotoMediaID = nil
+	} else if patch.PhotoMediaID != nil {
+		p.PhotoMediaID = patch.PhotoMediaID
 	}
 	p.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateProduct(ctx, *p); err != nil {

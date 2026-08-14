@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { ApiError } from '@/shared/api/client'
 
 const schema = z.object({
@@ -13,7 +13,7 @@ const schema = z.object({
 
 type Form = z.infer<typeof schema>
 
-export function LoginPage({ redirectTo = '/' }: { redirectTo?: string }) {
+export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   const { login } = useAuth()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
@@ -31,8 +31,10 @@ export function LoginPage({ redirectTo = '/' }: { redirectTo?: string }) {
           onSubmit={handleSubmit(async (values) => {
             setError(null)
             try {
-              await login(values.email, values.password)
-              navigate(redirectTo || '/')
+              const user = await login(values.email, values.password)
+              const fallback = homePathForUser(user)
+              const target = redirectTo && redirectTo !== '/' ? redirectTo : fallback
+              navigate(target)
             } catch (e) {
               setError(e instanceof ApiError ? e.message : 'Не удалось войти')
               setFocus('email')

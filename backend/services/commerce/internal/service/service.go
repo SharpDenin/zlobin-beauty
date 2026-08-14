@@ -155,6 +155,9 @@ type ProductInput struct {
 	Currency       string
 	MinStock       float64
 	Published      bool
+	ForSale        bool
+	DeliveryDays   int
+	PhotoMediaID   *uuid.UUID
 }
 
 func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in ProductInput) (*domain.Product, error) {
@@ -167,6 +170,9 @@ func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in Product
 	}
 	if in.MinStock < 0 {
 		return nil, apperr.Validation("min_stock must not be negative")
+	}
+	if in.DeliveryDays < 0 {
+		return nil, apperr.Validation("delivery_days must not be negative")
 	}
 	if err := s.requireMembership(ctx, in.OrganizationID, actor, "owner", "admin"); err != nil {
 		return nil, err
@@ -197,11 +203,16 @@ func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in Product
 		currency = "RUB"
 	}
 	now := s.now().UTC()
+	deliveryDays := in.DeliveryDays
+	if deliveryDays == 0 {
+		deliveryDays = 3
+	}
 	p := domain.Product{
 		ID: ids.New(), OrganizationID: in.OrganizationID, ParentID: parentID, CategoryID: in.CategoryID, Brand: strings.TrimSpace(in.Brand),
 		Name: name, SKU: strings.TrimSpace(in.SKU), Description: strings.TrimSpace(in.Description), Unit: unit,
 		VolumeLabel: strings.TrimSpace(in.VolumeLabel), PriceMinor: in.PriceMinor, Currency: currency,
-		MinStock: in.MinStock, Published: in.Published, CreatedAt: now, UpdatedAt: now,
+		MinStock: in.MinStock, Published: in.Published, ForSale: in.ForSale, DeliveryDays: deliveryDays,
+		PhotoMediaID: in.PhotoMediaID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateProduct(ctx, p); err != nil {
 		if ae, ok := apperr.As(err); ok {
@@ -228,16 +239,20 @@ func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireAnyMembership(ctx, p.OrganizationID, actor); err != nil {
-		return nil, err
+	if err := s.requireAnyMembership(ctx, p.OrganizationID, actor); err == nil {
+		return p, nil
 	}
-	return p, nil
+	if p.Published && p.ForSale {
+		return p, nil
+	}
+	if p.Published {
+		return p, nil
+	}
+	return nil, apperr.NotFound("product not found")
 }
 
 func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]domain.Product, error) {
-	if err := s.requireAnyMembership(ctx, orgID, actor); err != nil {
-		return nil, err
-	}
+	memberErr := s.requireAnyMembership(ctx, orgID, actor)
 	items, err := s.store.ListProducts(ctx, orgID)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -245,21 +260,35 @@ func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]d
 	if items == nil {
 		items = []domain.Product{}
 	}
+	// Non-members may browse published for-sale catalog.
+	if memberErr != nil {
+		out := make([]domain.Product, 0, len(items))
+		for _, p := range items {
+			if p.Published && p.ForSale {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
 	return items, nil
 }
 
 type ProductPatch struct {
-	CategoryID  *uuid.UUID
-	Brand       *string
-	Name        *string
-	SKU         *string
-	Description *string
-	Unit        *string
-	VolumeLabel *string
-	PriceMinor  *int64
-	Currency    *string
-	MinStock    *float64
-	Published   *bool
+	CategoryID   *uuid.UUID
+	Brand        *string
+	Name         *string
+	SKU          *string
+	Description  *string
+	Unit         *string
+	VolumeLabel  *string
+	PriceMinor   *int64
+	Currency     *string
+	MinStock     *float64
+	Published    *bool
+	ForSale      *bool
+	DeliveryDays *int
+	PhotoMediaID *uuid.UUID
+	ClearPhoto   bool
 }
 
 func (s *Service) UpdateProduct(ctx context.Context, actor, id uuid.UUID, patch ProductPatch) (*domain.Product, error) {
@@ -320,6 +349,20 @@ func (s *Service) UpdateProduct(ctx context.Context, actor, id uuid.UUID, patch 
 	}
 	if patch.Published != nil {
 		p.Published = *patch.Published
+	}
+	if patch.ForSale != nil {
+		p.ForSale = *patch.ForSale
+	}
+	if patch.DeliveryDays != nil {
+		if *patch.DeliveryDays < 0 {
+			return nil, apperr.Validation("delivery_days must not be negative")
+		}
+		p.DeliveryDays = *patch.DeliveryDays
+	}
+	if patch.ClearPhoto {
+		p.PhotoMediaID = nil
+	} else if patch.PhotoMediaID != nil {
+		p.PhotoMediaID = patch.PhotoMediaID
 	}
 	p.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateProduct(ctx, *p); err != nil {
@@ -637,15 +680,15 @@ func (s *Service) DeleteUnit(ctx context.Context, claims *auth.Claims, id uuid.U
 
 // StockForecastRow is one product line in a location stock forecast.
 type StockForecastRow struct {
-	ProductID    uuid.UUID
-	ProductName  string
-	QtyOnHand    float64
-	QtyReserved  float64
-	Available    float64
-	MinStock     float64
-	Demand       float64
-	Deficit      float64
-	Explanation  string
+	ProductID   uuid.UUID
+	ProductName string
+	QtyOnHand   float64
+	QtyReserved float64
+	Available   float64
+	MinStock    float64
+	Demand      float64
+	Deficit     float64
+	Explanation string
 }
 
 func (s *Service) StockForecast(ctx context.Context, actor, locationID uuid.UUID, from, to time.Time) ([]StockForecastRow, error) {
@@ -853,12 +896,16 @@ type OrderItemInput struct {
 }
 
 type CreateOrderInput struct {
-	BuyerOrgID    uuid.UUID
-	SupplierOrgID uuid.UUID
-	LocationID    uuid.UUID
-	Comment       string
-	DesiredAt     *time.Time
-	Items         []OrderItemInput
+	BuyerOrgID          uuid.UUID
+	SupplierOrgID       uuid.UUID
+	LocationID          uuid.UUID
+	DestinationBranchID uuid.UUID
+	PaymentMethod       string
+	DeliveryCostMinor   int64
+	IdempotencyKey      string
+	Comment             string
+	DesiredAt           *time.Time
+	Items               []OrderItemInput
 }
 
 func (s *Service) CreateSupplierOrder(ctx context.Context, actor uuid.UUID, in CreateOrderInput) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
@@ -868,6 +915,24 @@ func (s *Service) CreateSupplierOrder(ctx context.Context, actor uuid.UUID, in C
 	if len(in.Items) == 0 {
 		return nil, nil, apperr.Validation("at least one item is required")
 	}
+	if in.DeliveryCostMinor < 0 {
+		return nil, nil, apperr.Validation("delivery_cost_minor must not be negative")
+	}
+	idemKey := strings.TrimSpace(in.IdempotencyKey)
+	if idemKey != "" {
+		existing, err := s.store.GetOrderByIdempotencyKey(ctx, actor, idemKey)
+		if err != nil {
+			return nil, nil, apperr.Internal(err)
+		}
+		if existing != nil {
+			items, err := s.OrderItems(ctx, existing.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			return existing, items, nil
+		}
+	}
+
 	loc, err := s.getLocationOrErr(ctx, in.LocationID)
 	if err != nil {
 		return nil, nil, err
@@ -878,35 +943,123 @@ func (s *Service) CreateSupplierOrder(ctx context.Context, actor uuid.UUID, in C
 	if err := s.requireMembership(ctx, in.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
 		return nil, nil, err
 	}
-	var totalMinor int64
-	items := make([]domain.SupplierOrderItem, 0, len(in.Items))
-	for _, it := range in.Items {
-		if it.ProductID == uuid.Nil {
-			return nil, nil, apperr.Validation("item product_id is required")
-		}
-		if it.QtyOrdered <= 0 {
-			return nil, nil, apperr.Validation("item qty must be positive")
-		}
-		p, err := s.getProductOrErr(ctx, it.ProductID)
-		if err != nil {
+
+	paymentMethod := domain.NormalizePaymentMethod(in.PaymentMethod)
+	if !domain.ValidPaymentMethod(paymentMethod) {
+		return nil, nil, apperr.Validation("invalid payment_method")
+	}
+
+	var destBranchID *uuid.UUID
+	if in.DestinationBranchID != uuid.Nil {
+		if err := s.validateDestinationBranch(ctx, in.DestinationBranchID); err != nil {
 			return nil, nil, err
 		}
-		totalMinor += int64(it.QtyOrdered*float64(p.PriceMinor) + 0.5)
-		items = append(items, domain.SupplierOrderItem{
-			ID: ids.New(), ProductID: it.ProductID, QtyOrdered: it.QtyOrdered, PriceMinor: p.PriceMinor,
-		})
+		id := in.DestinationBranchID
+		destBranchID = &id
 	}
+
+	built, err := buildOrderItems(in.SupplierOrgID, in.Items, func(productID uuid.UUID) (*domain.Product, error) {
+		return s.getProductOrErr(ctx, productID)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
 	now := s.now().UTC()
 	order := domain.SupplierOrder{
 		ID: ids.New(), BuyerOrgID: in.BuyerOrgID, SupplierOrgID: in.SupplierOrgID, LocationID: in.LocationID,
-		Status: domain.OrderStatusNew, Currency: "RUB", TotalMinor: totalMinor, Comment: strings.TrimSpace(in.Comment),
+		DestinationBranchID: destBranchID,
+		Status:              domain.OrderStatusNew, Currency: "RUB",
+		TotalMinor: domain.OrderTotalMinor(built.SubtotalMinor, in.DeliveryCostMinor),
+		SubtotalMinor: built.SubtotalMinor, DeliveryCostMinor: in.DeliveryCostMinor,
+		PaymentMethod: paymentMethod, PaymentStatus: domain.InitialPaymentStatus(paymentMethod),
+		IdempotencyKey: idemKey, Comment: strings.TrimSpace(in.Comment),
 		DesiredAt: in.DesiredAt, CreatedBy: actor, CreatedAt: now, UpdatedAt: now,
 	}
-	outOrder, outItems, err := s.store.CreateOrder(ctx, order, items)
+
+	var delivery *domain.OrderDelivery
+	if destBranchID != nil {
+		delivery = &domain.OrderDelivery{
+			ID: ids.New(), OrderID: order.ID, SupplierOrgID: in.SupplierOrgID,
+			DestinationBranchID: *destBranchID, Status: domain.DeliveryStatusPending,
+			CreatedAt: now, UpdatedAt: now,
+		}
+	}
+
+	outOrder, outItems, _, err := s.store.CreateOrder(ctx, order, built.Items, delivery)
 	if err != nil {
 		return nil, nil, apperr.Internal(err)
 	}
 	return outOrder, outItems, nil
+}
+
+type builtOrderItems struct {
+	Items         []domain.SupplierOrderItem
+	SubtotalMinor int64
+}
+
+// buildOrderItems validates products and snapshots prices/names using int64 line totals.
+func buildOrderItems(supplierOrgID uuid.UUID, inputs []OrderItemInput, loadProduct func(uuid.UUID) (*domain.Product, error)) (*builtOrderItems, error) {
+	items := make([]domain.SupplierOrderItem, 0, len(inputs))
+	var subtotal int64
+	for _, it := range inputs {
+		if it.ProductID == uuid.Nil {
+			return nil, apperr.Validation("item product_id is required")
+		}
+		if it.QtyOrdered <= 0 {
+			return nil, apperr.Validation("item qty must be positive")
+		}
+		p, err := loadProduct(it.ProductID)
+		if err != nil {
+			return nil, err
+		}
+		if !domain.ProductEligibleForOrder(p.Published, p.ForSale, p.OrganizationID, supplierOrgID) {
+			if p.OrganizationID != supplierOrgID {
+				return nil, apperr.Validation("product does not belong to supplier")
+			}
+			return nil, apperr.Validation("product must be published and for_sale")
+		}
+		subtotal += domain.LineTotalMinor(it.QtyOrdered, p.PriceMinor)
+		items = append(items, domain.SupplierOrderItem{
+			ID: ids.New(), ProductID: it.ProductID, QtyOrdered: it.QtyOrdered,
+			PriceMinor: p.PriceMinor, ProductName: p.Name, ProductSKU: p.SKU,
+		})
+	}
+	return &builtOrderItems{Items: items, SubtotalMinor: subtotal}, nil
+}
+
+func (s *Service) validateDestinationBranch(ctx context.Context, branchID uuid.UUID) error {
+	if s.organizationsURL == "" {
+		// Soft validation when orgs service is not wired.
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/branches/"+branchID.String(), nil)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return apperr.Validation("destination_branch_id not found")
+	}
+	if resp.StatusCode >= 300 {
+		return apperr.Internal(fmt.Errorf("branch lookup status %d: %s", resp.StatusCode, string(body)))
+	}
+	var out struct {
+		Published     bool `json:"published"`
+		PickupEnabled bool `json:"pickup_enabled"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return apperr.Internal(err)
+	}
+	if !out.Published || !out.PickupEnabled {
+		return apperr.Validation("destination branch must be published and pickup_enabled")
+	}
+	return nil
 }
 
 func (s *Service) ListSupplierOrders(ctx context.Context, actor, orgID uuid.UUID, asSupplier bool) ([]domain.SupplierOrder, error) {
@@ -969,21 +1122,13 @@ func (s *Service) requireOrderAccess(ctx context.Context, actor uuid.UUID, o *do
 	return s.requireAnyMembership(ctx, o.SupplierOrgID, actor)
 }
 
-var supplierTransitions = map[string]map[string]bool{
-	domain.OrderStatusNew:       {domain.OrderStatusConfirmed: true, domain.OrderStatusCancelled: true},
-	domain.OrderStatusConfirmed: {domain.OrderStatusPicking: true, domain.OrderStatusCancelled: true},
-	domain.OrderStatusPicking:   {domain.OrderStatusInTransit: true},
-	domain.OrderStatusInTransit: {domain.OrderStatusDelivered: true},
-}
-
-func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, toStatus string) (*domain.SupplierOrder, error) {
+func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, toStatus string, estimatedDeliveryAt *time.Time) (*domain.SupplierOrder, error) {
 	toStatus = strings.TrimSpace(toStatus)
 	o, err := s.getOrderOrErr(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
-	allowed, ok := supplierTransitions[o.Status]
-	if !ok || !allowed[toStatus] {
+	if !domain.CanTransitionOrder(o.Status, toStatus) {
 		return nil, apperr.Conflict("invalid status transition from " + o.Status + " to " + toStatus)
 	}
 	switch toStatus {
@@ -997,7 +1142,7 @@ func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uu
 		}
 	}
 	now := s.now().UTC()
-	if err := s.store.UpdateOrderStatus(ctx, orderID, toStatus, now); err != nil {
+	if err := s.store.UpdateOrderStatus(ctx, orderID, toStatus, now, estimatedDeliveryAt); err != nil {
 		if ae, ok := apperr.As(err); ok {
 			return nil, ae
 		}
@@ -1005,23 +1150,218 @@ func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uu
 	}
 	o.Status = toStatus
 	o.UpdatedAt = now
+	if estimatedDeliveryAt != nil {
+		o.EstimatedDeliveryAt = estimatedDeliveryAt
+	}
+	if domain.ShouldPrepareDeliveryOnOrderTransition(toStatus) {
+		_ = s.maybePrepareDelivery(ctx, o, now)
+	}
 	return o, nil
 }
 
+func (s *Service) maybePrepareDelivery(ctx context.Context, o *domain.SupplierOrder, now time.Time) error {
+	d, err := s.store.GetDeliveryByOrderID(ctx, o.ID)
+	if err != nil || d == nil {
+		return err
+	}
+	if d.Status != domain.DeliveryStatusPending && d.Status != domain.DeliveryStatusScheduled {
+		return nil
+	}
+	if !domain.CanTransitionDelivery(d.Status, domain.DeliveryStatusPreparing) {
+		return nil
+	}
+	d.Status = domain.DeliveryStatusPreparing
+	d.UpdatedAt = now
+	return s.store.UpdateDelivery(ctx, *d)
+}
+
 func (s *Service) ConfirmSupplierOrder(ctx context.Context, actor, orderID uuid.UUID) (*domain.SupplierOrder, error) {
-	return s.TransitionSupplierOrder(ctx, actor, orderID, domain.OrderStatusConfirmed)
+	return s.TransitionSupplierOrder(ctx, actor, orderID, domain.OrderStatusConfirmed, nil)
+}
+
+func (s *Service) MarkSupplierOrderPaid(ctx context.Context, actor, orderID uuid.UUID) (*domain.SupplierOrder, error) {
+	o, err := s.getOrderOrErr(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireMembership(ctx, o.SupplierOrgID, actor, "owner", "admin"); err != nil {
+		return nil, err
+	}
+	if o.Status == domain.OrderStatusCancelled {
+		return nil, apperr.Conflict("cannot mark paid a cancelled order")
+	}
+	if o.PaymentStatus == domain.PaymentStatusPaid {
+		return o, nil
+	}
+	now := s.now().UTC()
+	if err := s.store.MarkOrderPaid(ctx, orderID, now, now); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	o.PaymentStatus = domain.PaymentStatusPaid
+	o.PaidAt = &now
+	o.UpdatedAt = now
+	return o, nil
+}
+
+// --- deliveries ---
+
+type ScheduleDeliveryInput struct {
+	WindowStart       *time.Time
+	WindowEnd         *time.Time
+	PlannedDeliveryAt *time.Time
+	RecipientName     string
+	RecipientPhone    string
+	Comment           string
+	Provider          string
+	TrackingCode      string
+}
+
+func (s *Service) GetOrderDelivery(ctx context.Context, actor, orderID uuid.UUID) (*domain.OrderDelivery, error) {
+	o, err := s.getOrderOrErr(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireOrderAccess(ctx, actor, o); err != nil {
+		return nil, err
+	}
+	d, err := s.store.GetDeliveryByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if d == nil {
+		return nil, apperr.NotFound("delivery not found")
+	}
+	return d, nil
+}
+
+func (s *Service) ScheduleOrderDelivery(ctx context.Context, actor, orderID uuid.UUID, in ScheduleDeliveryInput) (*domain.OrderDelivery, error) {
+	o, err := s.getOrderOrErr(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireMembership(ctx, o.SupplierOrgID, actor, "owner", "admin"); err != nil {
+		return nil, err
+	}
+	if o.Status == domain.OrderStatusCancelled {
+		return nil, apperr.Conflict("cannot schedule delivery for cancelled order")
+	}
+	d, err := s.store.GetDeliveryByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if d == nil {
+		return nil, apperr.NotFound("delivery not found")
+	}
+	if d.Status != domain.DeliveryStatusPending && d.Status != domain.DeliveryStatusScheduled {
+		return nil, apperr.Conflict("delivery can only be scheduled from pending/scheduled")
+	}
+	if in.WindowStart != nil && in.WindowEnd != nil && !in.WindowEnd.After(*in.WindowStart) {
+		return nil, apperr.Validation("window_end must be after window_start")
+	}
+	now := s.now().UTC()
+	d.Status = domain.DeliveryStatusScheduled
+	d.WindowStart = in.WindowStart
+	d.WindowEnd = in.WindowEnd
+	d.PlannedDeliveryAt = in.PlannedDeliveryAt
+	if name := strings.TrimSpace(in.RecipientName); name != "" {
+		d.RecipientName = name
+	}
+	if phone := strings.TrimSpace(in.RecipientPhone); phone != "" {
+		d.RecipientPhone = phone
+	}
+	if c := strings.TrimSpace(in.Comment); c != "" {
+		d.Comment = c
+	}
+	if p := strings.TrimSpace(in.Provider); p != "" {
+		d.Provider = p
+	}
+	if t := strings.TrimSpace(in.TrackingCode); t != "" {
+		d.TrackingCode = t
+	}
+	d.UpdatedAt = now
+	if err := s.store.UpdateDelivery(ctx, *d); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	return d, nil
+}
+
+func (s *Service) TransitionOrderDelivery(ctx context.Context, actor, orderID uuid.UUID, toStatus string) (*domain.OrderDelivery, error) {
+	toStatus = strings.TrimSpace(toStatus)
+	o, err := s.getOrderOrErr(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireMembership(ctx, o.SupplierOrgID, actor, "owner", "admin"); err != nil {
+		return nil, err
+	}
+	if o.Status == domain.OrderStatusCancelled {
+		return nil, apperr.Conflict("cannot transition delivery for cancelled order")
+	}
+	d, err := s.store.GetDeliveryByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if d == nil {
+		return nil, apperr.NotFound("delivery not found")
+	}
+
+	switch toStatus {
+	case domain.DeliveryStatusInTransit:
+		if !domain.OrderAllowsInTransitDelivery(o.Status) {
+			return nil, apperr.Conflict("order status does not allow in_transit delivery")
+		}
+	case domain.DeliveryStatusDelivered:
+		if !domain.CanMarkDeliveryDelivered(d.Status) {
+			return nil, apperr.Conflict("delivery must be in_transit or arrived before delivered")
+		}
+	}
+
+	if !domain.CanTransitionDelivery(d.Status, toStatus) {
+		return nil, apperr.Conflict("invalid delivery transition from " + d.Status + " to " + toStatus)
+	}
+
+	now := s.now().UTC()
+	if toStatus == domain.DeliveryStatusDelivered {
+		if err := s.store.CompleteDelivery(ctx, d.ID, o.ID, now, now); err != nil {
+			if ae, ok := apperr.As(err); ok {
+				return nil, ae
+			}
+			return nil, apperr.Internal(err)
+		}
+		d.Status = domain.DeliveryStatusDelivered
+		d.DeliveredAt = &now
+		d.UpdatedAt = now
+		return d, nil
+	}
+
+	d.Status = toStatus
+	d.UpdatedAt = now
+	if err := s.store.UpdateDelivery(ctx, *d); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
+	}
+	return d, nil
 }
 
 var acceptableAcceptStatuses = map[string]bool{
 	domain.OrderStatusDelivered:       true,
+	domain.OrderStatusCompleted:       true,
 	domain.OrderStatusAcceptedPartial: true,
 }
 
 type AcceptItemInput struct {
-	ProductID    uuid.UUID
-	QtyAccepted  float64
-	QtyDamaged   float64
-	QtyRejected  float64
+	ProductID   uuid.UUID
+	QtyAccepted float64
+	QtyDamaged  float64
+	QtyRejected float64
 }
 
 func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, accepted []AcceptItemInput) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {

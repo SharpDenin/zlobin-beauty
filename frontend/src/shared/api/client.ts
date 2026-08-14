@@ -16,6 +16,8 @@ type RequestOptions = {
   body?: unknown
   token?: string | null
   skipAuthRefresh?: boolean
+  headers?: Record<string, string>
+  idempotencyKey?: string
 }
 
 type SessionSnapshot = {
@@ -75,9 +77,15 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' }
-  if (options.body !== undefined) {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...(options.headers ?? {}),
+  }
+  if (options.body !== undefined && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
+  }
+  if (options.idempotencyKey) {
+    headers['Idempotency-Key'] = options.idempotencyKey
   }
 
   let token = options.token
@@ -129,6 +137,9 @@ function humanizeError(message: unknown, status: number): string {
       'time slot is not available': 'Это время уже занято',
       'selected time is not available': 'Выбранное время недоступно',
       'invalid appointment status transition': 'Это действие недоступно для текущего статуса записи',
+      'occurrence overlaps': 'Окно пересекается с другим сеансом',
+      'occurrence is full': 'Мест на этот сеанс больше нет',
+      'occurrence is not bookable': 'Этот сеанс недоступен для записи',
       unauthorized: 'Требуется вход в аккаунт',
       forbidden: 'Недостаточно прав',
     }

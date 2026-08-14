@@ -18,13 +18,13 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 const masterCols = `id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
-    experience_years, education, photo_media_id, rating_avg, rating_count, published, created_at, updated_at`
+    experience_years, education, photo_media_id, work_type, rating_avg, rating_count, published, created_at, updated_at`
 
 func (s *Store) UpsertMaster(ctx context.Context, m domain.MasterProfile) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
-  experience_years, education, photo_media_id, rating_avg, rating_count, published, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+  experience_years, education, photo_media_id, work_type, rating_avg, rating_count, published, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 ON CONFLICT (user_id) DO UPDATE SET
   organization_id=EXCLUDED.organization_id,
   branch_id=EXCLUDED.branch_id,
@@ -35,10 +35,11 @@ ON CONFLICT (user_id) DO UPDATE SET
   experience_years=EXCLUDED.experience_years,
   education=EXCLUDED.education,
   photo_media_id=EXCLUDED.photo_media_id,
+  work_type=EXCLUDED.work_type,
   published=EXCLUDED.published,
   updated_at=EXCLUDED.updated_at`,
 		m.ID, m.UserID, m.OrganizationID, m.BranchID, m.DisplayName, m.Bio, m.Specializations, m.City,
-		m.ExperienceYears, m.Education, m.PhotoMediaID, m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
+		m.ExperienceYears, m.Education, m.PhotoMediaID, m.WorkType, m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
 	return err
 }
 
@@ -53,7 +54,7 @@ func (s *Store) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterProf
 func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
 	var m domain.MasterProfile
 	if err := row.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
-		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -62,16 +63,47 @@ func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
 	return &m, nil
 }
 
-func (s *Store) SearchMasters(ctx context.Context, city, q string, limit int) ([]domain.MasterProfile, error) {
+func (s *Store) SearchMasters(ctx context.Context, city, q, service string, priceMin, priceMax *int64, includeOtherCities bool, limit int) ([]domain.MasterProfile, error) {
 	// Branch publication is enforced in service.Search via organizations internal API.
+	cityFilter := city
+	if includeOtherCities {
+		cityFilter = ""
+	}
 	rows, err := s.pool.Query(ctx, `
-SELECT `+masterCols+`
-FROM master_profiles
-WHERE published = TRUE
-  AND ($1 = '' OR city ILIKE $1)
-  AND ($2 = '' OR display_name ILIKE '%' || $2 || '%' OR EXISTS (SELECT 1 FROM unnest(specializations) s WHERE s ILIKE '%' || $2 || '%'))
-ORDER BY rating_avg DESC, rating_count DESC, id
-LIMIT $3`, city, q, limit)
+SELECT DISTINCT
+  mp.id, mp.user_id, mp.organization_id, mp.branch_id, mp.display_name, mp.bio, mp.specializations, mp.city,
+  mp.experience_years, mp.education, mp.photo_media_id, mp.work_type, mp.rating_avg, mp.rating_count, mp.published, mp.created_at, mp.updated_at,
+  CASE WHEN $7 <> '' AND mp.city ILIKE $7 THEN 0 ELSE 1 END AS city_rank
+FROM master_profiles mp
+WHERE mp.published = TRUE
+  AND ($1 = '' OR mp.city ILIKE $1)
+  AND ($2 = '' OR mp.display_name ILIKE '%' || $2 || '%' OR EXISTS (SELECT 1 FROM unnest(mp.specializations) s WHERE s ILIKE '%' || $2 || '%'))
+  AND (
+    $3 = '' OR EXISTS (
+      SELECT 1 FROM master_services ms
+      JOIN services svc ON svc.id = ms.service_id AND svc.published = TRUE AND svc.archived_at IS NULL
+      WHERE ms.master_id = mp.id
+        AND (svc.name ILIKE '%' || $3 || '%' OR svc.category ILIKE '%' || $3 || '%')
+    )
+  )
+  AND (
+    $4::bigint IS NULL OR EXISTS (
+      SELECT 1 FROM master_services ms
+      JOIN services svc ON svc.id = ms.service_id AND svc.published = TRUE AND svc.archived_at IS NULL
+      WHERE ms.master_id = mp.id
+        AND COALESCE(ms.price_minor_override, svc.price_minor) >= $4
+    )
+  )
+  AND (
+    $5::bigint IS NULL OR EXISTS (
+      SELECT 1 FROM master_services ms
+      JOIN services svc ON svc.id = ms.service_id AND svc.published = TRUE AND svc.archived_at IS NULL
+      WHERE ms.master_id = mp.id
+        AND COALESCE(ms.price_minor_override, svc.price_minor) <= $5
+    )
+  )
+ORDER BY city_rank ASC, mp.rating_avg DESC, mp.rating_count DESC, mp.id
+LIMIT $6`, cityFilter, q, service, priceMin, priceMax, limit, city)
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +111,9 @@ LIMIT $3`, city, q, limit)
 	var out []domain.MasterProfile
 	for rows.Next() {
 		var m domain.MasterProfile
+		var cityRank int
 		if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
-			&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt, &cityRank); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -88,11 +121,18 @@ LIMIT $3`, city, q, limit)
 	return out, rows.Err()
 }
 
+const serviceCols = `id, organization_id, name, category, description, notes, duration_minutes, price_minor, currency, photo_media_id, booking_mode, published, archived_at, created_at, updated_at`
+
 func (s *Store) CreateService(ctx context.Context, item domain.ServiceItem) error {
+	mode := item.BookingMode
+	if mode == "" {
+		mode = "flexible"
+	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO services(id, organization_id, name, category, duration_minutes, price_minor, currency, published, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		item.ID, item.OrganizationID, item.Name, item.Category, item.DurationMinutes, item.PriceMinor, item.Currency, item.Published, item.CreatedAt, item.UpdatedAt)
+INSERT INTO services(id, organization_id, name, category, description, notes, duration_minutes, price_minor, currency, photo_media_id, booking_mode, published, archived_at, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		item.ID, item.OrganizationID, item.Name, item.Category, item.Description, item.Notes,
+		item.DurationMinutes, item.PriceMinor, item.Currency, item.PhotoMediaID, mode, item.Published, item.ArchivedAt, item.CreatedAt, item.UpdatedAt)
 	return err
 }
 
@@ -104,13 +144,25 @@ ON CONFLICT DO NOTHING`, masterID, serviceID)
 }
 
 func (s *Store) ListMasterServices(ctx context.Context, masterID uuid.UUID) ([]domain.ServiceItem, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT s.id, s.organization_id, s.name, s.category, s.duration_minutes,
-       COALESCE(ms.price_minor_override, s.price_minor), s.currency, s.published, s.created_at, s.updated_at
+	return s.listMasterServices(ctx, masterID, true)
+}
+
+func (s *Store) ListMasterServicesAll(ctx context.Context, masterID uuid.UUID) ([]domain.ServiceItem, error) {
+	return s.listMasterServices(ctx, masterID, false)
+}
+
+func (s *Store) listMasterServices(ctx context.Context, masterID uuid.UUID, publishedOnly bool) ([]domain.ServiceItem, error) {
+	query := `
+SELECT s.id, s.organization_id, s.name, s.category, s.description, s.notes, s.duration_minutes,
+       COALESCE(ms.price_minor_override, s.price_minor), s.currency, s.photo_media_id, s.booking_mode, s.published, s.archived_at, s.created_at, s.updated_at
 FROM master_services ms
 JOIN services s ON s.id = ms.service_id
-WHERE ms.master_id=$1 AND s.published=TRUE
-ORDER BY s.name`, masterID)
+WHERE ms.master_id=$1`
+	if publishedOnly {
+		query += ` AND s.published=TRUE AND s.archived_at IS NULL`
+	}
+	query += ` ORDER BY s.name`
+	rows, err := s.pool.Query(ctx, query, masterID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,22 +170,46 @@ ORDER BY s.name`, masterID)
 	var out []domain.ServiceItem
 	for rows.Next() {
 		var item domain.ServiceItem
-		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.Published, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
+			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if item.BookingMode == "" {
+			item.BookingMode = "flexible"
 		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
 }
 
+func (s *Store) UpdateService(ctx context.Context, item domain.ServiceItem) error {
+	mode := item.BookingMode
+	if mode == "" {
+		mode = "flexible"
+	}
+	tag, err := s.pool.Exec(ctx, `
+UPDATE services
+SET name=$2, category=$3, description=$4, notes=$5, duration_minutes=$6, price_minor=$7, photo_media_id=$8, booking_mode=$9, published=$10, archived_at=$11, updated_at=$12
+WHERE id=$1`, item.ID, item.Name, item.Category, item.Description, item.Notes, item.DurationMinutes, item.PriceMinor,
+		item.PhotoMediaID, mode, item.Published, item.ArchivedAt, item.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("service not found")
+	}
+	return nil
+}
+
 func (s *Store) CountPopularServices(ctx context.Context, limit int) ([]domain.ServiceItem, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT s.id, s.organization_id, s.name, s.category, s.duration_minutes, s.price_minor, s.currency, s.published, s.created_at, s.updated_at,
+SELECT s.id, s.organization_id, s.name, s.category, s.description, s.notes, s.duration_minutes, s.price_minor, s.currency,
+       s.photo_media_id, s.booking_mode, s.published, s.archived_at, s.created_at, s.updated_at,
        mp.branch_id
 FROM services s
 JOIN master_services ms ON ms.service_id = s.id
 JOIN master_profiles mp ON mp.id = ms.master_id AND mp.published = TRUE
-WHERE s.published = TRUE
+WHERE s.published = TRUE AND s.archived_at IS NULL
 ORDER BY s.created_at DESC
 LIMIT $1`, limit*3)
 	if err != nil {
@@ -145,8 +221,12 @@ LIMIT $1`, limit*3)
 	for rows.Next() {
 		var item domain.ServiceItem
 		var branchID *uuid.UUID
-		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.Published, &item.CreatedAt, &item.UpdatedAt, &branchID); err != nil {
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
+			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt, &branchID); err != nil {
 			return nil, err
+		}
+		if item.BookingMode == "" {
+			item.BookingMode = "flexible"
 		}
 		if _, ok := seen[item.ID]; ok {
 			continue
@@ -162,17 +242,26 @@ LIMIT $1`, limit*3)
 }
 
 func (s *Store) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceItem, error) {
-	row := s.pool.QueryRow(ctx, `
-SELECT id, organization_id, name, category, duration_minutes, price_minor, currency, published, created_at, updated_at
-FROM services WHERE id=$1`, id)
+	row := s.pool.QueryRow(ctx, `SELECT `+serviceCols+` FROM services WHERE id=$1`, id)
 	var item domain.ServiceItem
-	if err := row.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.Published, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
+		&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	if item.BookingMode == "" {
+		item.BookingMode = "flexible"
+	}
 	return &item, nil
+}
+
+func (s *Store) IsServiceAttachedToMaster(ctx context.Context, masterID, serviceID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM master_services WHERE master_id=$1 AND service_id=$2)`, masterID, serviceID).Scan(&ok)
+	return ok, err
 }
 
 // --- service categories ---
@@ -232,4 +321,126 @@ func (s *Store) DeleteServiceCategory(ctx context.Context, id uuid.UUID) error {
 		return apperr.NotFound("service category not found")
 	}
 	return nil
+}
+
+// --- knowledge base ---
+
+const knowledgeCols = `id, title, category, content, content_format, cover_media_id, reading_time_minutes, brand, product_id, author_user_id, author_org_id, author_name, published, published_at, created_at, updated_at`
+
+func (s *Store) CreateKnowledgeArticle(ctx context.Context, a domain.KnowledgeArticle) error {
+	format := a.ContentFormat
+	if format == "" {
+		format = "plain"
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO knowledge_articles(`+knowledgeCols+`)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		a.ID, a.Title, a.Category, a.Content, format, a.CoverMediaID, a.ReadingTimeMinutes, a.Brand, a.ProductID,
+		a.AuthorUserID, a.AuthorOrgID, a.AuthorName, a.Published, a.PublishedAt, a.CreatedAt, a.UpdatedAt)
+	return err
+}
+
+func (s *Store) UpdateKnowledgeArticle(ctx context.Context, a domain.KnowledgeArticle) error {
+	format := a.ContentFormat
+	if format == "" {
+		format = "plain"
+	}
+	tag, err := s.pool.Exec(ctx, `
+UPDATE knowledge_articles
+SET title=$2, category=$3, content=$4, content_format=$5, cover_media_id=$6, reading_time_minutes=$7,
+    brand=$8, product_id=$9, author_org_id=$10, author_name=$11, published=$12, published_at=$13, updated_at=$14
+WHERE id=$1`, a.ID, a.Title, a.Category, a.Content, format, a.CoverMediaID, a.ReadingTimeMinutes,
+		a.Brand, a.ProductID, a.AuthorOrgID, a.AuthorName, a.Published, a.PublishedAt, a.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("article not found")
+	}
+	return nil
+}
+
+func (s *Store) GetKnowledgeArticle(ctx context.Context, id uuid.UUID) (*domain.KnowledgeArticle, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+knowledgeCols+` FROM knowledge_articles WHERE id=$1`, id)
+	return scanKnowledge(row)
+}
+
+func (s *Store) ListKnowledgeArticles(ctx context.Context, category string, publishedOnly bool, limit int) ([]domain.KnowledgeArticle, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+knowledgeCols+`
+FROM knowledge_articles
+WHERE ($1 = '' OR category ILIKE $1)
+  AND ($2 = FALSE OR published = TRUE)
+ORDER BY created_at DESC
+LIMIT $3`, category, publishedOnly, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.KnowledgeArticle
+	for rows.Next() {
+		a, err := scanKnowledgeRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListKnowledgeArticlesByAuthor(ctx context.Context, authorUserID uuid.UUID, limit int) ([]domain.KnowledgeArticle, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+knowledgeCols+`
+FROM knowledge_articles
+WHERE author_user_id=$1
+ORDER BY created_at DESC
+LIMIT $2`, authorUserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.KnowledgeArticle
+	for rows.Next() {
+		a, err := scanKnowledgeRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
+func scanKnowledge(row pgx.Row) (*domain.KnowledgeArticle, error) {
+	var a domain.KnowledgeArticle
+	if err := row.Scan(&a.ID, &a.Title, &a.Category, &a.Content, &a.ContentFormat, &a.CoverMediaID, &a.ReadingTimeMinutes,
+		&a.Brand, &a.ProductID, &a.AuthorUserID, &a.AuthorOrgID, &a.AuthorName,
+		&a.Published, &a.PublishedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if a.ContentFormat == "" {
+		a.ContentFormat = "plain"
+	}
+	return &a, nil
+}
+
+func scanKnowledgeRow(rows pgx.Rows) (*domain.KnowledgeArticle, error) {
+	var a domain.KnowledgeArticle
+	if err := rows.Scan(&a.ID, &a.Title, &a.Category, &a.Content, &a.ContentFormat, &a.CoverMediaID, &a.ReadingTimeMinutes,
+		&a.Brand, &a.ProductID, &a.AuthorUserID, &a.AuthorOrgID, &a.AuthorName,
+		&a.Published, &a.PublishedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if a.ContentFormat == "" {
+		a.ContentFormat = "plain"
+	}
+	return &a, nil
 }

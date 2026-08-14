@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/commerce/products", auth(http.HandlerFunc(a.listProducts)))
 	mux.Handle("GET /v1/commerce/products/{id}", auth(http.HandlerFunc(a.getProduct)))
 	mux.Handle("PUT /v1/commerce/products/{id}", auth(http.HandlerFunc(a.updateProduct)))
+	mux.Handle("GET /v1/commerce/catalog/suppliers/{orgID}/products", auth(http.HandlerFunc(a.listCatalogProducts)))
 	mux.Handle("POST /v1/commerce/stock/movements", auth(http.HandlerFunc(a.createMovement)))
 	mux.Handle("GET /v1/commerce/stock", auth(http.HandlerFunc(a.listStock)))
 	mux.Handle("GET /v1/commerce/stock/forecast", auth(http.HandlerFunc(a.stockForecast)))
@@ -51,6 +53,16 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/commerce/supplier-orders/{id}", auth(http.HandlerFunc(a.getSupplierOrder)))
 	mux.Handle("POST /v1/commerce/supplier-orders/{id}/transition", auth(http.HandlerFunc(a.transitionSupplierOrder)))
 	mux.Handle("POST /v1/commerce/supplier-orders/{id}/accept", auth(http.HandlerFunc(a.acceptSupplierOrder)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/mark-paid", auth(http.HandlerFunc(a.markSupplierOrderPaid)))
+	mux.Handle("GET /v1/commerce/supplier-orders/{id}/delivery", auth(http.HandlerFunc(a.getOrderDelivery)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/schedule", auth(http.HandlerFunc(a.scheduleOrderDelivery)))
+	mux.Handle("PATCH /v1/commerce/supplier-orders/{id}/delivery/schedule", auth(http.HandlerFunc(a.scheduleOrderDelivery)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/preparing", auth(http.HandlerFunc(a.transitionDeliveryPreparing)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/in-transit", auth(http.HandlerFunc(a.transitionDeliveryInTransit)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/arrived", auth(http.HandlerFunc(a.transitionDeliveryArrived)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/delivered", auth(http.HandlerFunc(a.transitionDeliveryDelivered)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/fail", auth(http.HandlerFunc(a.transitionDeliveryFail)))
+	mux.Handle("POST /v1/commerce/supplier-orders/{id}/delivery/cancel", auth(http.HandlerFunc(a.transitionDeliveryCancel)))
 	// legacy paths (Stage 3 early wiring)
 	mux.Handle("POST /v1/commerce/supplier/orders", auth(http.HandlerFunc(a.createSupplierOrder)))
 	mux.Handle("GET /v1/commerce/supplier/orders", auth(http.HandlerFunc(a.listSupplierOrders)))
@@ -134,6 +146,9 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		Currency       string  `json:"currency"`
 		MinStock       float64 `json:"min_stock"`
 		Published      bool    `json:"published"`
+		ForSale        *bool   `json:"for_sale"`
+		DeliveryDays   *int    `json:"delivery_days"`
+		PhotoMediaID   *string `json:"photo_media_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -154,10 +169,24 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid parent_id"))
 		return
 	}
+	photoMediaID, err := parseOptionalUUID(req.PhotoMediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+		return
+	}
+	forSale := true
+	if req.ForSale != nil {
+		forSale = *req.ForSale
+	}
+	deliveryDays := 3
+	if req.DeliveryDays != nil {
+		deliveryDays = *req.DeliveryDays
+	}
 	p, err := a.svc.CreateProduct(r.Context(), claims.UserID, service.ProductInput{
 		OrganizationID: orgID, ParentID: parentID, CategoryID: categoryID, Brand: req.Brand, Name: req.Name, SKU: req.SKU,
 		Description: req.Description, Unit: req.Unit, VolumeLabel: req.VolumeLabel, PriceMinor: req.PriceMinor,
 		Currency: req.Currency, MinStock: req.MinStock, Published: req.Published,
+		ForSale: forSale, DeliveryDays: deliveryDays, PhotoMediaID: photoMediaID,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -171,6 +200,25 @@ func (a *API) listProducts(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, p := range items {
+		out = append(out, productDTO(p))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) listCatalogProducts(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization id"))
 		return
 	}
 	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
@@ -208,17 +256,20 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		CategoryID  *string  `json:"category_id"`
-		Brand       *string  `json:"brand"`
-		Name        *string  `json:"name"`
-		SKU         *string  `json:"sku"`
-		Description *string  `json:"description"`
-		Unit        *string  `json:"unit"`
-		VolumeLabel *string  `json:"volume_label"`
-		PriceMinor  *int64   `json:"price_minor"`
-		Currency    *string  `json:"currency"`
-		MinStock    *float64 `json:"min_stock"`
-		Published   *bool    `json:"published"`
+		CategoryID   *string  `json:"category_id"`
+		Brand        *string  `json:"brand"`
+		Name         *string  `json:"name"`
+		SKU          *string  `json:"sku"`
+		Description  *string  `json:"description"`
+		Unit         *string  `json:"unit"`
+		VolumeLabel  *string  `json:"volume_label"`
+		PriceMinor   *int64   `json:"price_minor"`
+		Currency     *string  `json:"currency"`
+		MinStock     *float64 `json:"min_stock"`
+		Published    *bool    `json:"published"`
+		ForSale      *bool    `json:"for_sale"`
+		DeliveryDays *int     `json:"delivery_days"`
+		PhotoMediaID *string  `json:"photo_media_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -232,10 +283,22 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 	patch := service.ProductPatch{
 		Brand: req.Brand, Name: req.Name, SKU: req.SKU, Description: req.Description, Unit: req.Unit,
 		VolumeLabel: req.VolumeLabel, PriceMinor: req.PriceMinor, Currency: req.Currency, MinStock: req.MinStock,
-		Published: req.Published,
+		Published: req.Published, ForSale: req.ForSale, DeliveryDays: req.DeliveryDays,
 	}
 	if req.CategoryID != nil {
 		patch.CategoryID = categoryID
+	}
+	if req.PhotoMediaID != nil {
+		if *req.PhotoMediaID == "" {
+			patch.ClearPhoto = true
+		} else {
+			photoID, err := uuid.Parse(*req.PhotoMediaID)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+				return
+			}
+			patch.PhotoMediaID = &photoID
+		}
 	}
 	p, err := a.svc.UpdateProduct(r.Context(), claims.UserID, id, patch)
 	if err != nil {
@@ -254,11 +317,16 @@ func productDTO(p domain.Product) map[string]any {
 	if p.ParentID != nil {
 		parent = p.ParentID.String()
 	}
+	var photo any
+	if p.PhotoMediaID != nil {
+		photo = p.PhotoMediaID.String()
+	}
 	return map[string]any{
 		"id": p.ID.String(), "organization_id": p.OrganizationID.String(), "parent_id": parent, "category_id": category,
 		"brand": p.Brand, "name": p.Name, "sku": p.SKU, "description": p.Description, "unit": p.Unit,
 		"volume_label": p.VolumeLabel, "price_minor": p.PriceMinor, "currency": p.Currency,
-		"min_stock": p.MinStock, "published": p.Published, "created_at": p.CreatedAt, "updated_at": p.UpdatedAt,
+		"min_stock": p.MinStock, "published": p.Published, "for_sale": p.ForSale, "delivery_days": p.DeliveryDays,
+		"photo_media_id": photo, "created_at": p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
 
@@ -674,12 +742,16 @@ func deltaPercent(current, previous int64) any {
 func (a *API) createSupplierOrder(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var req struct {
-		BuyerOrgID    string     `json:"buyer_org_id"`
-		SupplierOrgID string     `json:"supplier_org_id"`
-		LocationID    string     `json:"location_id"`
-		Comment       string     `json:"comment"`
-		DesiredAt     *time.Time `json:"desired_at"`
-		Items         []struct {
+		BuyerOrgID          string     `json:"buyer_org_id"`
+		SupplierOrgID       string     `json:"supplier_org_id"`
+		LocationID          string     `json:"location_id"`
+		DestinationBranchID string     `json:"destination_branch_id"`
+		PaymentMethod       string     `json:"payment_method"`
+		DeliveryCostMinor   int64      `json:"delivery_cost_minor"`
+		IdempotencyKey      string     `json:"idempotency_key"`
+		Comment             string     `json:"comment"`
+		DesiredAt           *time.Time `json:"desired_at"`
+		Items               []struct {
 			ProductID string  `json:"product_id"`
 			Qty       float64 `json:"qty"`
 		} `json:"items"`
@@ -695,6 +767,15 @@ func (a *API) createSupplierOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid buyer_org_id, supplier_org_id or location_id"))
 		return
 	}
+	var destBranchID uuid.UUID
+	if req.DestinationBranchID != "" {
+		id, err := uuid.Parse(req.DestinationBranchID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid destination_branch_id"))
+			return
+		}
+		destBranchID = id
+	}
 	items := make([]service.OrderItemInput, 0, len(req.Items))
 	for _, it := range req.Items {
 		productID, err := uuid.Parse(it.ProductID)
@@ -704,9 +785,14 @@ func (a *API) createSupplierOrder(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, service.OrderItemInput{ProductID: productID, QtyOrdered: it.Qty})
 	}
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
 	order, orderItems, err := a.svc.CreateSupplierOrder(r.Context(), claims.UserID, service.CreateOrderInput{
-		BuyerOrgID: buyerOrgID, SupplierOrgID: supplierOrgID, LocationID: locID, Comment: req.Comment,
-		DesiredAt: req.DesiredAt, Items: items,
+		BuyerOrgID: buyerOrgID, SupplierOrgID: supplierOrgID, LocationID: locID,
+		DestinationBranchID: destBranchID, PaymentMethod: req.PaymentMethod,
+		DeliveryCostMinor: req.DeliveryCostMinor, IdempotencyKey: req.IdempotencyKey,
+		Comment: req.Comment, DesiredAt: req.DesiredAt, Items: items,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -763,13 +849,14 @@ func (a *API) transitionSupplierOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Status string `json:"status"`
+		Status              string     `json:"status"`
+		EstimatedDeliveryAt *time.Time `json:"estimated_delivery_at"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	o, err := a.svc.TransitionSupplierOrder(r.Context(), claims.UserID, id, req.Status)
+	o, err := a.svc.TransitionSupplierOrder(r.Context(), claims.UserID, id, req.Status, req.EstimatedDeliveryAt)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -884,23 +971,168 @@ func (a *API) acceptSupplierOrderLegacy(w http.ResponseWriter, r *http.Request) 
 	httpx.JSON(w, http.StatusOK, orderDTO(*o, items))
 }
 
+func (a *API) markSupplierOrderPaid(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	o, err := a.svc.MarkSupplierOrderPaid(r.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, err := a.svc.OrderItems(r.Context(), o.ID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, orderDTO(*o, items))
+}
+
+func (a *API) getOrderDelivery(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	d, err := a.svc.GetOrderDelivery(r.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, deliveryDTO(*d))
+}
+
+func (a *API) scheduleOrderDelivery(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		WindowStart       *time.Time `json:"window_start"`
+		WindowEnd         *time.Time `json:"window_end"`
+		PlannedDeliveryAt *time.Time `json:"planned_delivery_at"`
+		RecipientName     string     `json:"recipient_name"`
+		RecipientPhone    string     `json:"recipient_phone"`
+		Comment           string     `json:"comment"`
+		Provider          string     `json:"provider"`
+		TrackingCode      string     `json:"tracking_code"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	d, err := a.svc.ScheduleOrderDelivery(r.Context(), claims.UserID, id, service.ScheduleDeliveryInput{
+		WindowStart: req.WindowStart, WindowEnd: req.WindowEnd, PlannedDeliveryAt: req.PlannedDeliveryAt,
+		RecipientName: req.RecipientName, RecipientPhone: req.RecipientPhone, Comment: req.Comment,
+		Provider: req.Provider, TrackingCode: req.TrackingCode,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, deliveryDTO(*d))
+}
+
+func (a *API) transitionDeliveryPreparing(w http.ResponseWriter, r *http.Request) {
+	a.transitionDelivery(w, r, domain.DeliveryStatusPreparing)
+}
+func (a *API) transitionDeliveryInTransit(w http.ResponseWriter, r *http.Request) {
+	a.transitionDelivery(w, r, domain.DeliveryStatusInTransit)
+}
+func (a *API) transitionDeliveryArrived(w http.ResponseWriter, r *http.Request) {
+	a.transitionDelivery(w, r, domain.DeliveryStatusArrived)
+}
+func (a *API) transitionDeliveryDelivered(w http.ResponseWriter, r *http.Request) {
+	a.transitionDelivery(w, r, domain.DeliveryStatusDelivered)
+}
+func (a *API) transitionDeliveryFail(w http.ResponseWriter, r *http.Request) {
+	a.transitionDelivery(w, r, domain.DeliveryStatusFailed)
+}
+func (a *API) transitionDeliveryCancel(w http.ResponseWriter, r *http.Request) {
+	a.transitionDelivery(w, r, domain.DeliveryStatusCancelled)
+}
+
+func (a *API) transitionDelivery(w http.ResponseWriter, r *http.Request, toStatus string) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	d, err := a.svc.TransitionOrderDelivery(r.Context(), claims.UserID, id, toStatus)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, deliveryDTO(*d))
+}
+
 func orderDTO(o domain.SupplierOrder, items []domain.SupplierOrderItem) map[string]any {
 	itemsOut := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		itemsOut = append(itemsOut, map[string]any{
-			"id": it.ID.String(), "product_id": it.ProductID.String(), "qty_ordered": it.QtyOrdered,
-			"qty_delivered": it.QtyDelivered, "qty_accepted": it.QtyAccepted, "price_minor": it.PriceMinor,
+			"id": it.ID.String(), "product_id": it.ProductID.String(),
+			"product_name": it.ProductName, "product_sku": it.ProductSKU,
+			"qty_ordered": it.QtyOrdered, "qty_delivered": it.QtyDelivered, "qty_accepted": it.QtyAccepted,
+			"price_minor": it.PriceMinor,
 		})
 	}
 	var desiredAt any
 	if o.DesiredAt != nil {
 		desiredAt = *o.DesiredAt
 	}
+	var estimated any
+	if o.EstimatedDeliveryAt != nil {
+		estimated = *o.EstimatedDeliveryAt
+	}
+	var dest any
+	if o.DestinationBranchID != nil {
+		dest = o.DestinationBranchID.String()
+	}
+	var paidAt any
+	if o.PaidAt != nil {
+		paidAt = *o.PaidAt
+	}
 	return map[string]any{
 		"id": o.ID.String(), "buyer_org_id": o.BuyerOrgID.String(), "supplier_org_id": o.SupplierOrgID.String(),
-		"location_id": o.LocationID.String(), "status": o.Status, "currency": o.Currency, "total_minor": o.TotalMinor,
-		"comment": o.Comment, "desired_at": desiredAt, "created_by": o.CreatedBy.String(),
+		"location_id": o.LocationID.String(), "destination_branch_id": dest,
+		"status": o.Status, "currency": o.Currency,
+		"total_minor": o.TotalMinor, "subtotal_minor": o.SubtotalMinor, "delivery_cost_minor": o.DeliveryCostMinor,
+		"payment_method": o.PaymentMethod, "payment_status": o.PaymentStatus, "paid_at": paidAt,
+		"idempotency_key": o.IdempotencyKey,
+		"comment": o.Comment, "desired_at": desiredAt, "estimated_delivery_at": estimated,
+		"created_by": o.CreatedBy.String(),
 		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt, "items": itemsOut,
+	}
+}
+
+func deliveryDTO(d domain.OrderDelivery) map[string]any {
+	var planned, ws, we, delivered any
+	if d.PlannedDeliveryAt != nil {
+		planned = *d.PlannedDeliveryAt
+	}
+	if d.WindowStart != nil {
+		ws = *d.WindowStart
+	}
+	if d.WindowEnd != nil {
+		we = *d.WindowEnd
+	}
+	if d.DeliveredAt != nil {
+		delivered = *d.DeliveredAt
+	}
+	return map[string]any{
+		"id": d.ID.String(), "order_id": d.OrderID.String(), "supplier_org_id": d.SupplierOrgID.String(),
+		"destination_branch_id": d.DestinationBranchID.String(), "status": d.Status,
+		"planned_delivery_at": planned, "window_start": ws, "window_end": we, "delivered_at": delivered,
+		"recipient_name": d.RecipientName, "recipient_phone": d.RecipientPhone,
+		"comment": d.Comment, "provider": d.Provider, "tracking_code": d.TrackingCode,
+		"created_at": d.CreatedAt, "updated_at": d.UpdatedAt,
 	}
 }
 

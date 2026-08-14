@@ -601,10 +601,10 @@ func (s *Service) ApplyProductImport(ctx context.Context, actor, jobID uuid.UUID
 	// Re-parse from stored preview is insufficient; re-validate requires original body.
 	// Store full rows in report during validate for apply.
 	type storedReport struct {
-		Errors   []string    `json:"errors"`
+		Errors   []string         `json:"errors"`
 		Preview  []map[string]any `json:"preview"`
-		RowCount int         `json:"row_count"`
-		Rows     []ImportRow `json:"rows,omitempty"`
+		RowCount int              `json:"row_count"`
+		Rows     []ImportRow      `json:"rows,omitempty"`
 	}
 	var full storedReport
 	_ = json.Unmarshal(job.Report, &full)

@@ -16,6 +16,9 @@ const (
 	StatusCancelledByMaster   = "cancelled_by_master"
 	StatusCancelledBySalon    = "cancelled_by_salon"
 	StatusNoShow              = "no_show"
+
+	BookingModeFlexible    = "flexible"
+	BookingModeFixedWindow = "fixed_window"
 )
 
 var allowedTransitions = map[string]map[string]struct{}{
@@ -54,23 +57,51 @@ type WorkingHours struct {
 	EndMinute    int
 }
 
+// ScheduleException overrides weekly working hours for a concrete calendar day.
+type ScheduleException struct {
+	ID           uuid.UUID
+	MasterUserID uuid.UUID
+	Day          time.Time // date (UTC midnight of the calendar day)
+	IsDayOff     bool
+	StartMinute  *int
+	EndMinute    *int
+	Note         string
+	CreatedAt    time.Time
+}
+
 type Appointment struct {
-	ID              uuid.UUID
-	OrganizationID  uuid.UUID
-	BranchID        uuid.UUID
-	MasterUserID    uuid.UUID
-	ClientUserID    uuid.UUID
-	ServiceID       uuid.UUID
-	ServiceName     string
-	DurationMinutes int
-	PriceMinor      int64
-	Currency        string
-	Status          string
-	CancelReason    string
-	StartsAt        time.Time
-	EndsAt          time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                 uuid.UUID
+	OrganizationID     uuid.UUID
+	BranchID           uuid.UUID
+	MasterUserID       uuid.UUID
+	ClientUserID       uuid.UUID
+	ServiceID          uuid.UUID
+	ServiceName        string
+	DurationMinutes    int
+	PriceMinor         int64
+	Currency           string
+	Status             string
+	CancelReason       string
+	StartsAt           time.Time
+	EndsAt             time.Time
+	OccurrenceID       *uuid.UUID
+	BookingMode        string
+	LocationName       string
+	LocationCity       string
+	LocationAddress    string
+	LocationTimezone   string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// IdempotencyRecord stores a prior successful response for a client retry.
+type IdempotencyRecord struct {
+	Key            string
+	UserID         uuid.UUID
+	Operation      string
+	EntityID       *uuid.UUID
+	ResponseStatus int
+	ExpiresAt      time.Time
 }
 
 type StatusHistory struct {

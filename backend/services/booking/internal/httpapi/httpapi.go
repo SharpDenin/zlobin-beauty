@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,12 +29,16 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
+	mux.Handle("PUT /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.putScheduleExceptions)))
+	mux.Handle("GET /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.getScheduleExceptions)))
+	mux.Handle("DELETE /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.deleteScheduleException)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
 	mux.Handle("POST /v1/appointments", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
+	mux.Handle("POST /v1/appointments/{id}/reject", auth(http.HandlerFunc(a.reject)))
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
@@ -42,6 +47,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.listPhotos)))
 	mux.Handle("POST /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.addPhoto)))
 	mux.Handle("DELETE /v1/appointments/{id}/photos/{photoID}", auth(http.HandlerFunc(a.deletePhoto)))
+	mux.Handle("GET /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.getAutoConfirm)))
+	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
 	a.registerReportRoutes(mux, auth)
 }
 
@@ -123,6 +130,94 @@ func (a *API) getHours(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+func scheduleExceptionDTO(e domain.ScheduleException) map[string]any {
+	var start any
+	var end any
+	if e.StartMinute != nil {
+		start = *e.StartMinute
+	}
+	if e.EndMinute != nil {
+		end = *e.EndMinute
+	}
+	return map[string]any{
+		"id": e.ID.String(), "day": e.Day.Format("2006-01-02"), "is_day_off": e.IsDayOff,
+		"start_minute": start, "end_minute": end, "note": e.Note, "created_at": e.CreatedAt,
+	}
+}
+
+func (a *API) putScheduleExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Items []service.ScheduleExceptionInput `json:"items"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	items, err := a.svc.UpsertScheduleExceptions(r.Context(), claims.UserID, req.Items)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) getScheduleExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	now := time.Now().UTC()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 60)
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid from (YYYY-MM-DD)"))
+			return
+		}
+		from = t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid to (YYYY-MM-DD)"))
+			return
+		}
+		to = t
+	}
+	items, err := a.svc.ListScheduleExceptions(r.Context(), claims.UserID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) deleteScheduleException(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	dayStr := r.URL.Query().Get("day")
+	if dayStr == "" {
+		httpx.WriteError(w, r, a.log, apperr.Validation("day is required (YYYY-MM-DD)"))
+		return
+	}
+	day, err := time.Parse("2006-01-02", dayStr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid day (YYYY-MM-DD)"))
+		return
+	}
+	if err := a.svc.DeleteScheduleException(r.Context(), claims.UserID, day); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) slots(w http.ResponseWriter, r *http.Request) {
 	masterUserID, err := uuid.Parse(r.PathValue("masterUserID"))
 	if err != nil {
@@ -153,7 +248,7 @@ func (a *API) slots(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	slots, err := a.svc.FreeSlots(r.Context(), masterUserID, day, duration, tz)
+	slots, err := a.svc.FreeSlots(r.Context(), masterUserID, day, duration, tz, uuid.Nil)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -176,9 +271,10 @@ func parseInt(dst *int, s string) (int, error) {
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var req struct {
-		MasterID  string    `json:"master_id"`
-		ServiceID string    `json:"service_id"`
-		StartsAt  time.Time `json:"starts_at"`
+		MasterID     string    `json:"master_id"`
+		ServiceID    string    `json:"service_id"`
+		StartsAt     time.Time `json:"starts_at"`
+		OccurrenceID string    `json:"occurrence_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -194,8 +290,18 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
 		return
 	}
+	var occurrenceID *uuid.UUID
+	if strings.TrimSpace(req.OccurrenceID) != "" {
+		oid, err := uuid.Parse(req.OccurrenceID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid occurrence_id"))
+			return
+		}
+		occurrenceID = &oid
+	}
 	aapt, err := a.svc.Create(r.Context(), service.CreateInput{
 		ClientUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
+		OccurrenceID: occurrenceID, IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -250,6 +356,73 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) reject(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "Отклонено мастером"
+	}
+	item, err := a.svc.Cancel(r.Context(), id, claims.UserID, reason)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) getAutoConfirm(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client user id"))
+		return
+	}
+	auto, err := a.svc.GetClientAutoConfirm(r.Context(), claims.UserID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"master_user_id": claims.UserID.String(),
+		"client_user_id": clientID.String(),
+		"auto_confirm":   auto,
+	})
+}
+
+func (a *API) setAutoConfirm(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client user id"))
+		return
+	}
+	var req struct {
+		AutoConfirm bool `json:"auto_confirm"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	if err := a.svc.SetClientAutoConfirm(r.Context(), claims.UserID, clientID, req.AutoConfirm); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"master_user_id": claims.UserID.String(),
+		"client_user_id": clientID.String(),
+		"auto_confirm":   req.AutoConfirm,
+	})
 }
 
 func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
@@ -364,12 +537,23 @@ func (a *API) simpleAction(w http.ResponseWriter, r *http.Request, fn func(conte
 }
 
 func appointmentDTO(a domain.Appointment) map[string]any {
+	var occ any
+	if a.OccurrenceID != nil {
+		occ = a.OccurrenceID.String()
+	}
+	mode := a.BookingMode
+	if mode == "" {
+		mode = domain.BookingModeFlexible
+	}
 	return map[string]any{
 		"id": a.ID.String(), "organization_id": a.OrganizationID.String(), "branch_id": a.BranchID.String(),
 		"master_user_id": a.MasterUserID.String(), "client_user_id": a.ClientUserID.String(),
 		"service_id": a.ServiceID.String(), "service_name": a.ServiceName,
 		"duration_minutes": a.DurationMinutes, "price_minor": a.PriceMinor, "currency": a.Currency,
 		"status": a.Status, "cancel_reason": a.CancelReason, "starts_at": a.StartsAt, "ends_at": a.EndsAt,
+		"occurrence_id": occ, "booking_mode": mode,
+		"location_name": a.LocationName, "location_city": a.LocationCity,
+		"location_address": a.LocationAddress, "location_timezone": a.LocationTimezone,
 		"created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
 }

@@ -235,10 +235,10 @@ services:
       COMMUNICATIONS_URL: http://communications:8080
       COMMERCE_URL: http://commerce:8080
       MEDIA_URL: http://media:8080
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       LOG_LEVEL: info
     ports:
-      - "8080:8080"
+      - "8090:8080"
     depends_on:
       - identity
       - organizations
@@ -248,6 +248,29 @@ services:
       - communications
       - commerce
       - media
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8090}
+    ports:
+      - "5173:80"
+    depends_on:
+      - gateway
+
+  seed:
+    profiles: ["seed"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: cmd/seed
+    environment:
+      GATEWAY_URL: http://gateway:8080
+      SEED_PASSWORD: ${SEED_PASSWORD:-Password123!}
+    depends_on:
+      - gateway
 
   bootstrap-admin:
     profiles: ["bootstrap"]

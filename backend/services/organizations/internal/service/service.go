@@ -39,22 +39,31 @@ type OrgBundle struct {
 }
 
 type UpdateOrgInput struct {
-	ActorID     uuid.UUID
-	OrgID       uuid.UUID
-	Name        *string
-	Description *string
-	Published   *bool
+	ActorID      uuid.UUID
+	OrgID        uuid.UUID
+	Name         *string
+	Description  *string
+	Published    *bool
+	DeliveryNote *string
+	LogoMediaID  *uuid.UUID
+	ClearLogo    bool
 }
 
 type UpdateBranchInput struct {
-	ActorID     uuid.UUID
-	BranchID    uuid.UUID
-	Name        *string
-	City        *string
-	AddressLine *string
-	Phone       *string
-	Timezone    *string
-	Published   *bool
+	ActorID          uuid.UUID
+	BranchID         uuid.UUID
+	Name             *string
+	City             *string
+	AddressLine      *string
+	Phone            *string
+	Timezone         *string
+	Published        *bool
+	PickupEnabled    *bool
+	Latitude         *float64
+	Longitude        *float64
+	WorkingHoursNote *string
+	PhotoMediaID     *uuid.UUID
+	ClearPhotoMedia  bool
 }
 
 func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, error) {
@@ -83,7 +92,7 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	}
 	branch := domain.Branch{
 		ID: ids.New(), OrganizationID: org.ID, Name: branchName, City: city, AddressLine: address,
-		Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, CreatedAt: now, UpdatedAt: now,
+		Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, PickupEnabled: true, CreatedAt: now, UpdatedAt: now,
 	}
 	ownerRole := "owner"
 	if orgType == "supplier" {
@@ -238,6 +247,14 @@ func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Org
 	if in.Description != nil {
 		org.Description = strings.TrimSpace(*in.Description)
 	}
+	if in.DeliveryNote != nil {
+		org.DeliveryNote = strings.TrimSpace(*in.DeliveryNote)
+	}
+	if in.ClearLogo {
+		org.LogoMediaID = nil
+	} else if in.LogoMediaID != nil {
+		org.LogoMediaID = in.LogoMediaID
+	}
 	if in.Published != nil {
 		if *in.Published {
 			branches, err := s.store.ListBranches(ctx, org.ID)
@@ -259,6 +276,28 @@ func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Org
 		return nil, apperr.Internal(err)
 	}
 	return org, nil
+}
+
+func (s *Service) ListSuppliers(ctx context.Context) ([]domain.SupplierListItem, error) {
+	items, err := s.store.ListPublishedSuppliers(ctx)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.SupplierListItem{}
+	}
+	return items, nil
+}
+
+func (s *Service) GetSupplier(ctx context.Context, id uuid.UUID) (*domain.SupplierListItem, error) {
+	item, err := s.store.GetPublishedSupplier(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if item == nil {
+		return nil, apperr.NotFound("supplier not found")
+	}
+	return item, nil
 }
 
 func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*domain.Branch, error) {
@@ -312,6 +351,23 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		}
 		b.Published = *in.Published
 	}
+	if in.PickupEnabled != nil {
+		b.PickupEnabled = *in.PickupEnabled
+	}
+	if in.Latitude != nil {
+		b.Latitude = in.Latitude
+	}
+	if in.Longitude != nil {
+		b.Longitude = in.Longitude
+	}
+	if in.WorkingHoursNote != nil {
+		b.WorkingHoursNote = strings.TrimSpace(*in.WorkingHoursNote)
+	}
+	if in.ClearPhotoMedia {
+		b.PhotoMediaID = nil
+	} else if in.PhotoMediaID != nil {
+		b.PhotoMediaID = in.PhotoMediaID
+	}
 	b.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateBranch(ctx, *b); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -320,6 +376,17 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		return nil, apperr.Internal(err)
 	}
 	return b, nil
+}
+
+func (s *Service) ListPickupBranches(ctx context.Context, city string) ([]domain.Branch, error) {
+	items, err := s.store.ListPickupBranches(ctx, strings.TrimSpace(city))
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Branch{}
+	}
+	return items, nil
 }
 
 func evaluateBranchReadiness(b domain.Branch) *domain.Readiness {

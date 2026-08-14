@@ -1,9 +1,17 @@
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
 import { apiRequest } from '@/shared/api/client'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+
+type Appointment = {
+  id: string
+  service_name: string
+  status: string
+  starts_at: string
+  price_minor: number
+}
 
 type Master = {
   id: string
@@ -14,46 +22,24 @@ type Master = {
   rating_count: number
 }
 
-type Service = {
-  id: string
-  name: string
-  category: string
-  duration_minutes: number
-  price_minor: number
-  price_display?: string
-}
-
-type Appointment = {
-  id: string
-  service_name: string
-  status: string
-  starts_at: string
-  price_minor: number
-}
-
-export function HomePage() {
+function ClientHome() {
   const { user, accessToken } = useAuth()
-  const city = (user?.city?.trim() || 'Москва')
+  const city = user?.city?.trim() || 'Москва'
+
+  const appointments = useQuery({
+    queryKey: ['home-appointments', 'client'],
+    queryFn: () => apiRequest<{ items: Appointment[] }>('/v1/appointments/mine?role=client', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
 
   const masters = useQuery({
     queryKey: ['home-masters', city],
     queryFn: () => apiRequest<{ items: Master[] }>(`/v1/masters?city=${encodeURIComponent(city)}`),
   })
 
-  const services = useQuery({
-    queryKey: ['home-services'],
-    queryFn: () => apiRequest<{ items: Service[] }>('/v1/services/popular'),
-  })
-
-  const appointments = useQuery({
-    queryKey: ['home-appointments'],
-    queryFn: () => apiRequest<{ items: Appointment[] }>('/v1/appointments/mine?role=client', { token: accessToken }),
-    enabled: Boolean(accessToken),
-  })
-
   const upcoming = (appointments.data?.items ?? [])
     .filter((a) => ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status))
-    .slice(0, 3)
+    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0]
 
   return (
     <main className="page stack">
@@ -61,86 +47,142 @@ export function HomePage() {
         <div className="stack">
           <div className="brand">Zlobin Beauty</div>
           <h1>Здравствуйте, {user?.display_name}</h1>
-          <p>
-            Город: {city}.
-            {!user?.city?.trim() && (
-              <> Укажите город в <Link to="/profile">профиле</Link>.</>
-            )}
-            {' '}Найдите мастера или продолжите запись.
-          </p>
+          <p>Запишитесь к мастеру или откройте ближайшую запись.</p>
           <div className="row">
             <Link className="btn btn-primary" to="/search">Найти мастера</Link>
             <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
-            <Link className="btn btn-secondary" to="/shop">Магазин</Link>
           </div>
         </div>
       </section>
 
       <section className="stack">
-        <div className="row between">
-          <h2>Ближайшие записи</h2>
-          <Link to="/appointments">Все</Link>
-        </div>
-        {appointments.isLoading && <div className="state-box">Загрузка записей…</div>}
-        {appointments.isError && <div className="state-box error">Не удалось загрузить записи</div>}
-        {!appointments.isLoading && upcoming.length === 0 && (
-          <div className="state-box">Записей пока нет. <Link to="/search">Выбрать мастера</Link></div>
+        <h2>Ближайшая запись</h2>
+        {appointments.isLoading && <div className="state-box">Загрузка…</div>}
+        {!appointments.isLoading && !upcoming && (
+          <div className="empty-state">
+            <h2>Пока нет записей</h2>
+            <p>Выберите мастера и удобное время.</p>
+            <Link className="btn btn-primary" to="/search">Найти мастера</Link>
+          </div>
         )}
-        <div className="list">
-          {upcoming.map((a) => (
-            <Link key={a.id} to={`/appointments/${a.id}`} className="list-item">
-              <div className="row between">
-                <strong>{a.service_name}</strong>
-                <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
-              </div>
-              <p>{new Date(a.starts_at).toLocaleString('ru-RU')} · {formatMoney(a.price_minor)}</p>
-            </Link>
-          ))}
-        </div>
+        {upcoming && (
+          <Link to={`/appointments/${upcoming.id}`} className="list-item">
+            <div className="row between">
+              <strong>{upcoming.service_name}</strong>
+              <span className={`badge ${statusBadgeClass(upcoming.status)}`}>{statusLabel(upcoming.status)}</span>
+            </div>
+            <p>{new Date(upcoming.starts_at).toLocaleString('ru-RU')} · {formatMoney(upcoming.price_minor)}</p>
+          </Link>
+        )}
       </section>
 
       <section className="stack">
         <div className="row between">
-          <h2>Рекомендуемые мастера</h2>
-          <Link to="/search">Смотреть всех</Link>
+          <h2>Мастера рядом</h2>
+          <Link to="/search">Все</Link>
         </div>
-        {masters.isLoading && <div className="state-box">Загрузка…</div>}
-        {masters.isError && <div className="state-box error">Не удалось загрузить мастеров</div>}
-        {masters.data && masters.data.items.length === 0 && (
-          <div className="state-box">Пока нет опубликованных мастеров в городе {city}</div>
-        )}
         <div className="list">
-          {masters.data?.items.slice(0, 6).map((m) => (
+          {masters.data?.items.slice(0, 4).map((m) => (
             <Link key={m.id} to={`/masters/${m.id}`} className="list-item">
               <div className="row between">
                 <strong>{m.display_name}</strong>
-                <span className="badge badge-default">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</span>
+                <span className="badge badge-default">★ {m.rating_avg.toFixed(1)}</span>
               </div>
-              <p>{m.specializations.join(', ') || 'Специализации не указаны'} · {m.city}</p>
+              <p>{m.specializations.join(', ') || 'Красота и уход'} · {m.city}</p>
             </Link>
-          ))}
-        </div>
-      </section>
-
-      <section className="stack">
-        <h2>Популярные услуги</h2>
-        {services.isLoading && <div className="state-box">Загрузка…</div>}
-        {services.isError && <div className="state-box error">Не удалось загрузить услуги</div>}
-        {services.data && services.data.items.length === 0 && (
-          <div className="state-box">Опубликованных услуг пока нет</div>
-        )}
-        <div className="list">
-          {services.data?.items.map((s) => (
-            <article key={s.id} className="list-item">
-              <div className="row between">
-                <strong>{s.name}</strong>
-                <span>{s.price_display || formatMoney(s.price_minor)}</span>
-              </div>
-              <p>{s.category} · {s.duration_minutes} мин</p>
-            </article>
           ))}
         </div>
       </section>
     </main>
   )
+}
+
+function MasterHome() {
+  const { user, accessToken } = useAuth()
+  const todayKey = new Date().toISOString().slice(0, 10)
+
+  const appointments = useQuery({
+    queryKey: ['home-appointments', 'master'],
+    queryFn: () => apiRequest<{ items: Appointment[] }>('/v1/appointments/mine?role=master', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
+  const today = (appointments.data?.items ?? [])
+    .filter((a) => a.starts_at.slice(0, 10) === todayKey)
+    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
+
+  return (
+    <main className="page stack">
+      <section className="hero">
+        <div className="stack">
+          <div className="brand">Zlobin Beauty</div>
+          <h1>Сегодня, {user?.display_name}</h1>
+          <p>Записи на день и быстрые действия.</p>
+          <div className="row">
+            <Link className="btn btn-primary" to="/calendar">Календарь</Link>
+            <Link className="btn btn-secondary" to="/services">Услуги</Link>
+          </div>
+        </div>
+      </section>
+
+      <div className="tile-grid">
+        <Link className="dashboard-tile" to="/calendar">
+          <span className="muted">Календарь</span>
+          <strong>{today.length}</strong>
+          <span className="muted">записей сегодня</span>
+        </Link>
+        <Link className="dashboard-tile" to="/services">
+          <span className="muted">Услуги</span>
+          <strong>→</strong>
+          <span className="muted">управление прайсом</span>
+        </Link>
+        <Link className="dashboard-tile" to="/cosmetics">
+          <span className="muted">Косметика</span>
+          <strong>→</strong>
+          <span className="muted">заказ поставщику</span>
+        </Link>
+      </div>
+
+      <section className="stack">
+        <div className="row between">
+          <h2>Записи на сегодня</h2>
+          <Link to="/appointments">Все</Link>
+        </div>
+        {appointments.isLoading && <div className="state-box">Загрузка…</div>}
+        {!appointments.isLoading && today.length === 0 && (
+          <div className="empty-state">
+            <h2>Свободный день</h2>
+            <p>Новых записей на сегодня нет.</p>
+            <Link className="btn btn-secondary" to="/calendar">Открыть календарь</Link>
+          </div>
+        )}
+        <div className="timeline">
+          {today.map((a) => (
+            <Link key={a.id} to={`/appointments/${a.id}`} className="list-item timeline-item">
+              <div className="row between">
+                <strong>{a.service_name}</strong>
+                <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
+              </div>
+              <p>
+                {new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                {' · '}
+                {formatMoney(a.price_minor)}
+              </p>
+            </Link>
+          ))}
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function SupplierHomeRedirect() {
+  return <Navigate to="/supplier" replace />
+}
+
+export function HomePage() {
+  const { user } = useAuth()
+  if (hasMasterAccess(user)) return <MasterHome />
+  if (hasSupplierAccess(user)) return <SupplierHomeRedirect />
+  return <ClientHome />
 }

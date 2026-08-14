@@ -41,6 +41,20 @@ export function AppointmentsPage() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Не удалось подтвердить'),
   })
 
+  const reject = useMutation({
+    mutationFn: (input: { id: string; reason: string }) =>
+      apiRequest(`/v1/appointments/${input.id}/reject`, {
+        method: 'POST',
+        token: accessToken,
+        body: { reason: input.reason },
+      }),
+    onSuccess: async () => {
+      setActionError(null)
+      await qc.invalidateQueries({ queryKey: ['appointments'] })
+    },
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Не удалось отклонить'),
+  })
+
   return (
     <main className="page stack">
       <div className="row between">
@@ -76,14 +90,28 @@ export function AppointmentsPage() {
             <div className="row">
               <Link className="btn btn-secondary btn-compact" to={`/appointments/${a.id}`}>Открыть</Link>
               {role === 'master' && a.status === 'pending_confirmation' && (
-                <button
-                  className="btn btn-primary btn-compact"
-                  type="button"
-                  disabled={confirm.isPending}
-                  onClick={() => confirm.mutate(a.id)}
-                >
-                  Подтвердить
-                </button>
+                <>
+                  <button
+                    className="btn btn-primary btn-compact"
+                    type="button"
+                    disabled={confirm.isPending || reject.isPending}
+                    onClick={() => confirm.mutate(a.id)}
+                  >
+                    Подтвердить
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-compact"
+                    type="button"
+                    disabled={confirm.isPending || reject.isPending}
+                    onClick={() => {
+                      const reason = window.prompt('Причина отклонения', 'Не могу принять запись')
+                      if (reason === null) return
+                      reject.mutate({ id: a.id, reason: reason.trim() || 'Отклонено мастером' })
+                    }}
+                  >
+                    Отклонить
+                  </button>
+                </>
               )}
             </div>
           </article>

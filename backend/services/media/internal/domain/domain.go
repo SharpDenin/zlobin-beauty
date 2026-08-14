@@ -7,16 +7,19 @@ import (
 )
 
 const (
-	PurposeProfile      = "profile"
-	PurposeSalon        = "salon"
-	PurposePortfolio    = "portfolio"
-	PurposeBeforeAfter  = "before_after"
-	PurposeProduct      = "product"
-	PurposeDelivery     = "delivery"
-	PurposeDocument     = "document"
+	PurposeProfile     = "profile"
+	PurposeSalon       = "salon"
+	PurposePortfolio   = "portfolio"
+	PurposeBeforeAfter = "before_after"
+	PurposeProduct     = "product"
+	PurposeDelivery    = "delivery"
+	PurposeDocument    = "document"
+	PurposeArticle     = "article"
+	PurposeVideo       = "video"
 )
 
-const MaxUploadBytes = 5 << 20 // 5 MiB
+const MaxUploadBytes = 5 << 20      // 5 MiB images/docs
+const MaxVideoUploadBytes = 50 << 20 // 50 MiB videos
 
 type MediaObject struct {
 	ID           uuid.UUID
@@ -33,7 +36,7 @@ type MediaObject struct {
 
 func ValidPurpose(p string) bool {
 	switch p {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo:
 		return true
 	default:
 		return false
@@ -42,11 +45,19 @@ func ValidPurpose(p string) bool {
 
 func ValidContentType(ct string) bool {
 	switch ct {
-	case "image/jpeg", "image/png", "image/webp", "application/pdf":
+	case "image/jpeg", "image/png", "image/webp", "application/pdf",
+		"video/mp4", "video/webm", "video/quicktime":
 		return true
 	default:
 		return false
 	}
+}
+
+func MaxBytesForPurpose(purpose string) int64 {
+	if purpose == PurposeVideo {
+		return MaxVideoUploadBytes
+	}
+	return MaxUploadBytes
 }
 
 func ExtensionForContentType(ct string) string {
@@ -59,6 +70,12 @@ func ExtensionForContentType(ct string) string {
 		return ".webp"
 	case "application/pdf":
 		return ".pdf"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
 	default:
 		return ""
 	}
@@ -67,7 +84,7 @@ func ExtensionForContentType(ct string) string {
 // IsSharedPurpose returns true for media that any authenticated user may read.
 func IsSharedPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeBeforeAfter:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeBeforeAfter, PurposeArticle, PurposeVideo:
 		return true
 	default:
 		return false
@@ -77,7 +94,7 @@ func IsSharedPurpose(purpose string) bool {
 // IsPublicPurpose returns true for media readable without login (published catalog/profile surfaces).
 func IsPublicPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeArticle, PurposeVideo:
 		return true
 	default:
 		return false

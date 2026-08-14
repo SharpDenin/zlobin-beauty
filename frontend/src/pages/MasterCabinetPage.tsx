@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
+import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
+import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { useToast } from '@/shared/ui/Toast'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string; published: boolean; description: string }
@@ -29,28 +32,22 @@ const masterSchema = z.object({
   specializations: z.string().optional(),
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
+  work_type: z.enum(['employee', 'renter', 'owner', 'salon_owner', 'independent']),
   published: z.boolean(),
-})
-
-const serviceSchema = z.object({
-  name: z.string().min(2, 'Укажите название'),
-  category: z.string().min(2, 'Укажите категорию'),
-  duration_minutes: z.coerce.number().int().positive('Длительность должна быть больше 0'),
-  price_rubles: z.coerce.number().positive('Цена должна быть больше 0'),
 })
 
 export function MasterCabinetPage() {
   const { accessToken, user } = useAuth()
   const qc = useQueryClient()
+  const toast = useToast()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
-  const [photoStatus, setPhotoStatus] = useState<string | null>(null)
-  const [photoUploading, setPhotoUploading] = useState(false)
   const [portfolioCaption, setPortfolioCaption] = useState('')
-  const [portfolioUploading, setPortfolioUploading] = useState(false)
-  const [salonPhotoUploading, setSalonPhotoUploading] = useState(false)
   const [recoProductId, setRecoProductId] = useState('')
   const [recoComment, setRecoComment] = useState('')
+  const [profilePhotoDraft, setProfilePhotoDraft] = useState<string | null>(null)
+  const [portfolioDraft, setPortfolioDraft] = useState<string | null>(null)
+  const [salonDraft, setSalonDraft] = useState<string | null>(null)
 
   const orgs = useQuery({
     queryKey: ['orgs-mine'],
@@ -83,7 +80,24 @@ export function MasterCabinetPage() {
 
   const master = useQuery({
     queryKey: ['my-master'],
-    queryFn: () => apiRequest<{ master: { id: string; organization_id: string; branch_id: string | null; published: boolean; photo_media_id: string | null }; services: unknown[] }>('/v1/me/master', { token: accessToken }),
+    queryFn: () =>
+      apiRequest<{
+        master: {
+          id: string
+          organization_id: string
+          branch_id: string | null
+          published: boolean
+          photo_media_id: string | null
+          work_type?: string
+          display_name?: string
+          city?: string
+          bio?: string
+          specializations?: string[]
+          experience_years?: number
+          education?: string
+        }
+        services: unknown[]
+      }>('/v1/me/master', { token: accessToken }),
     enabled: Boolean(accessToken),
     retry: false,
   })
@@ -148,15 +162,27 @@ export function MasterCabinetPage() {
     defaultValues: {
       published: false,
       display_name: user?.display_name ?? '',
-      city: 'Москва',
+      city: 'Красноярск',
       experience_years: 1,
       education: '',
+      work_type: 'independent',
     },
   })
-  const serviceForm = useForm<z.infer<typeof serviceSchema>>({
-    resolver: zodResolver(serviceSchema),
-    defaultValues: { duration_minutes: 60, price_rubles: 3000, category: 'Окрашивание' },
-  })
+
+  useEffect(() => {
+    const m = master.data?.master
+    if (!m) return
+    masterForm.reset({
+      display_name: m.display_name || user?.display_name || '',
+      city: m.city || 'Красноярск',
+      bio: m.bio ?? '',
+      specializations: (m.specializations ?? []).join(', '),
+      experience_years: m.experience_years ?? 1,
+      education: m.education ?? '',
+      work_type: (m.work_type as z.infer<typeof masterSchema>['work_type']) || 'independent',
+      published: Boolean(m.published),
+    })
+  }, [master.data, masterForm, user?.display_name])
 
   const createOrg = useMutation({
     mutationFn: async (values: z.infer<typeof orgSchema>) => {
@@ -236,6 +262,7 @@ export function MasterCabinetPage() {
           specializations: (values.specializations ?? '').split(',').map((s) => s.trim()).filter(Boolean),
           experience_years: values.experience_years,
           education: values.education ?? '',
+          work_type: values.work_type,
           published: values.published,
         },
       })
@@ -247,32 +274,6 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка профиля'),
-  })
-
-  const createService = useMutation({
-    mutationFn: (values: z.infer<typeof serviceSchema>) => {
-      const orgId = master.data?.master.organization_id ?? orgs.data?.items[0]?.organization.id
-      if (!orgId) throw new ApiError('Нужен салон и профиль мастера', 'validation_error', 400)
-      return apiRequest('/v1/services', {
-        token: accessToken,
-        body: {
-          organization_id: orgId,
-          name: values.name,
-          category: values.category,
-          duration_minutes: values.duration_minutes,
-          price_minor: Math.round(values.price_rubles * 100),
-          attach_to_me: true,
-        },
-      })
-    },
-    onSuccess: async () => {
-      setOk('Услуга добавлена')
-      setError(null)
-      serviceForm.reset({ name: '', category: 'Окрашивание', duration_minutes: 60, price_rubles: 3000 })
-      await qc.invalidateQueries({ queryKey: ['my-master'] })
-      await qc.invalidateQueries({ queryKey: ['master-readiness'] })
-    },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка услуги'),
   })
 
   const saveHours = useMutation({
@@ -297,30 +298,21 @@ export function MasterCabinetPage() {
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка расписания'),
   })
 
-  async function uploadProfilePhoto(file: File) {
+  async function attachProfilePhoto(mediaId: string | null) {
+    if (!mediaId) {
+      setProfilePhotoDraft(null)
+      return
+    }
     if (!accessToken) return
     const org = orgs.data?.items[0]
     if (!org) {
       setError('Сначала создайте салон')
+      toast.error('Сначала создайте салон')
+      setProfilePhotoDraft(null)
       return
     }
-    setPhotoUploading(true)
-    setPhotoStatus(null)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'profile')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
-      const mediaId = uploadData.id as string
       await apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
@@ -328,83 +320,74 @@ export function MasterCabinetPage() {
           organization_id: org.organization.id,
           branch_id: org.branches[0]?.id,
           display_name: masterForm.getValues('display_name') || user?.display_name || '',
-          city: masterForm.getValues('city') || 'Москва',
+          city: masterForm.getValues('city') || 'Красноярск',
           bio: masterForm.getValues('bio') ?? '',
           specializations: (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
           experience_years: masterForm.getValues('experience_years') ?? 0,
           education: masterForm.getValues('education') ?? '',
           published: masterForm.getValues('published') ?? false,
+          work_type: masterForm.getValues('work_type') ?? 'independent',
           photo_media_id: mediaId,
         },
       })
-      setPhotoStatus('Фото профиля загружено')
+      setProfilePhotoDraft(null)
       setOk('Фото профиля сохранено')
+      toast.success('Фото профиля сохранено')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото')
-    } finally {
-      setPhotoUploading(false)
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото'
+      setError(msg)
+      toast.error(msg)
+      setProfilePhotoDraft(null)
     }
   }
 
-  async function uploadPortfolioPhoto(file: File) {
+  async function attachPortfolioPhoto(mediaId: string | null) {
+    if (!mediaId) {
+      setPortfolioDraft(null)
+      return
+    }
     if (!accessToken) return
-    setPortfolioUploading(true)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'portfolio')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
       await apiRequest('/v1/me/master/portfolio', {
         token: accessToken,
-        body: { media_id: uploadData.id as string, caption: portfolioCaption.trim() },
+        body: { media_id: mediaId, caption: portfolioCaption.trim() },
       })
       setPortfolioCaption('')
+      setPortfolioDraft(null)
       setOk('Работа добавлена в портфолио')
+      toast.success('Работа добавлена в портфолио')
       await qc.invalidateQueries({ queryKey: ['my-portfolio'] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки в портфолио')
-    } finally {
-      setPortfolioUploading(false)
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки в портфолио'
+      setError(msg)
+      toast.error(msg)
+      setPortfolioDraft(null)
     }
   }
 
-  async function uploadSalonPhoto(file: File) {
+  async function attachSalonPhoto(mediaId: string | null) {
+    if (!mediaId) {
+      setSalonDraft(null)
+      return
+    }
     if (!accessToken || !primaryBranch) return
-    setSalonPhotoUploading(true)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('purpose', 'salon')
-      const uploadRes = await fetch(`${API_BASE_URL}/v1/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      })
-      const uploadData = await uploadRes.json().catch(() => ({}))
-      if (!uploadRes.ok) {
-        throw new ApiError(uploadData?.error?.message ?? 'Не удалось загрузить фото', uploadData?.error?.code ?? 'error', uploadRes.status)
-      }
       await apiRequest(`/v1/branches/${primaryBranch.id}/photos`, {
         token: accessToken,
-        body: { media_id: uploadData.id as string, sort_order: branchPhotos.data?.items.length ?? 0 },
+        body: { media_id: mediaId, sort_order: branchPhotos.data?.items.length ?? 0 },
       })
+      setSalonDraft(null)
       setOk('Фото салона добавлено')
+      toast.success('Фото салона добавлено')
       await qc.invalidateQueries({ queryKey: ['branch-photos', primaryBranch.id] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Ошибка загрузки фото салона')
-    } finally {
-      setSalonPhotoUploading(false)
+      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото салона'
+      setError(msg)
+      toast.error(msg)
+      setSalonDraft(null)
     }
   }
 
@@ -455,30 +438,33 @@ export function MasterCabinetPage() {
   return (
     <main className="page stack">
       <h1>Кабинет мастера</h1>
-      <p>Пошаговая настройка: салон → профиль → услуги → расписание → публикация.</p>
+      <p>Настройте салон, профиль и расписание — затем покажитесь клиентам в поиске.</p>
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">
-        <h2>Готовность к публикации</h2>
+        <h2>Что ещё заполнить</h2>
         {readiness.isLoading && <div className="state-box">Проверяем профиль…</div>}
         {readiness.isError && <div className="state-box error">Не удалось проверить готовность</div>}
         {readiness.data && (
           <>
             <p>
               {readiness.data.ready
-                ? 'Профиль можно публиковать в поиске.'
-                : `Не хватает пунктов: ${readiness.data.missing.join(', ') || '—'}`}
+                ? 'Всё готово — можно публиковать профиль в поиске.'
+                : 'Отметьте пункты ниже, чтобы открыть запись клиентам.'}
             </p>
             <div className="list">
-              {readiness.data.checks.map((c) => (
+              {readiness.data.checks.filter((c) => !c.ok).slice(0, 4).map((c) => (
                 <div key={c.key} className="list-item">
                   <div className="row between">
                     <strong>{c.label}</strong>
-                    <span className={`badge ${c.ok ? 'badge-success' : 'badge-warning'}`}>{c.ok ? 'Готово' : 'Нужно'}</span>
+                    <span className="badge badge-warning">Нужно</span>
                   </div>
                 </div>
               ))}
+              {readiness.data.ready && (
+                <div className="state-box success">Профиль готов к публикации</div>
+              )}
             </div>
           </>
         )}
@@ -549,41 +535,15 @@ export function MasterCabinetPage() {
 
       {primaryOrg && (
         <section className="card stack">
-          <h2>Готовность салона к публикации</h2>
-          {orgReadiness.isLoading && <div className="state-box">Проверяем салон…</div>}
-          {orgReadiness.isError && <div className="state-box error">Не удалось проверить готовность салона</div>}
-          {orgReadiness.data && (
-            <>
-              <p>
-                {orgReadiness.data.ready
-                  ? 'Салон готов к публикации филиала.'
-                  : `Не хватает пунктов: ${orgReadiness.data.missing.join(', ') || '—'}`}
-              </p>
-              <div className="list">
-                {orgReadiness.data.checks.map((c) => (
-                  <div key={c.key} className="list-item">
-                    <div className="row between">
-                      <strong>{c.label}</strong>
-                      <span className={`badge ${c.ok ? 'badge-success' : 'badge-warning'}`}>{c.ok ? 'Готово' : 'Нужно'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
+          <h2>Публикация салона</h2>
+          {orgReadiness.data && !orgReadiness.data.ready && (
+            <p className="muted">Заполните контакты филиала, чтобы опубликовать салон для клиентов.</p>
           )}
           {branchReadiness.data && primaryBranch && (
             <>
-              <h3>Филиал «{primaryBranch.name}»</h3>
-              <div className="list">
-                {branchReadiness.data.checks.map((c) => (
-                  <div key={c.key} className="list-item">
-                    <div className="row between">
-                      <strong>{c.label}</strong>
-                      <span className={`badge ${c.ok ? 'badge-success' : 'badge-warning'}`}>{c.ok ? 'Готово' : 'Нужно'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <p>
+                Филиал «{primaryBranch.name}»: {primaryBranch.published ? 'опубликован' : 'скрыт'}
+              </p>
               <div className="row">
                 <button
                   className="btn btn-primary"
@@ -595,12 +555,12 @@ export function MasterCabinetPage() {
                 </button>
                 {primaryBranch.published && (
                   <button
-                    className="btn"
+                    className="btn btn-secondary"
                     type="button"
                     disabled={publishBranch.isPending}
                     onClick={() => publishBranch.mutate(false)}
                   >
-                    Снять с публикации
+                    Скрыть филиал
                   </button>
                 )}
               </div>
@@ -615,25 +575,21 @@ export function MasterCabinetPage() {
         <div className="stack-sm">
           <h3>Фото профиля</h3>
           {master.data?.master.photo_media_id ? (
-            <p className="muted">Фото профиля загружено</p>
+            <div className="avatar-circle" style={{ width: 120, height: 120 }}>
+              <MediaImage mediaId={master.data.master.photo_media_id} token={accessToken} alt="Профиль" />
+            </div>
           ) : (
             <p className="state-box">Фото профиля не загружено</p>
           )}
-          {photoStatus && <p className="muted">{photoStatus}</p>}
-          <div className="field">
-            <label htmlFor="profile-photo">Загрузить фото (JPEG, PNG, WebP, до 5 МБ)</label>
-            <input
-              id="profile-photo"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              disabled={photoUploading}
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void uploadProfilePhoto(file)
-                e.target.value = ''
-              }}
-            />
-          </div>
+          <MediaDropzone
+            purpose="profile"
+            value={profilePhotoDraft}
+            onChange={(mediaId) => {
+              setProfilePhotoDraft(mediaId)
+              if (mediaId) void attachProfilePhoto(mediaId)
+            }}
+            label="Загрузить фото профиля"
+          />
         </div>
         <form className="stack" onSubmit={masterForm.handleSubmit((v) => saveMaster.mutate(v))}>
           <div className="field">
@@ -654,10 +610,26 @@ export function MasterCabinetPage() {
             {masterForm.formState.errors.experience_years && <span className="error">{masterForm.formState.errors.experience_years.message}</span>}
           </div>
           <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
-          <label className="row"><input type="checkbox" {...masterForm.register('published')} /><span>Опубликовать в поиске (только при полной готовности)</span></label>
+          <div className="field">
+            <label htmlFor="work_type">Формат работы</label>
+            <select id="work_type" {...masterForm.register('work_type')}>
+              {WORK_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <label className="field-check"><input type="checkbox" {...masterForm.register('published')} /><span>Показать профиль в поиске</span></label>
           <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
         </form>
-        {master.data && <p className="muted">Профиль: {master.data.master.published ? 'опубликован' : 'скрыт'} · услуг: {master.data.services.length}</p>}
+        {master.data && (
+          <p className="muted">
+            {master.data.master.published ? 'В поиске' : 'Скрыт'}
+            {' · '}
+            {workTypeLabel(master.data.master.work_type)}
+            {' · услуг: '}
+            {master.data.services.length}
+          </p>
+        )}
       </section>
 
       <section className="card stack">
@@ -683,20 +655,16 @@ export function MasterCabinetPage() {
         {branchPhotos.data && branchPhotos.data.items.length === 0 && (
           <div className="state-box">Фото салона пока нет</div>
         )}
-        <div className="field">
-          <label htmlFor="salon-photo">Добавить фото филиала</label>
-          <input
-            id="salon-photo"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            disabled={salonPhotoUploading || !primaryBranch}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadSalonPhoto(file)
-              e.target.value = ''
-            }}
-          />
-        </div>
+        <MediaDropzone
+          purpose="salon"
+          value={salonDraft}
+          onChange={(mediaId) => {
+            setSalonDraft(mediaId)
+            if (mediaId) void attachSalonPhoto(mediaId)
+          }}
+          label="Добавить фото филиала"
+          disabled={!primaryBranch}
+        />
       </section>
 
       <section className="card stack">
@@ -727,20 +695,16 @@ export function MasterCabinetPage() {
           <label htmlFor="portfolio-caption">Подпись (необязательно)</label>
           <input id="portfolio-caption" value={portfolioCaption} onChange={(e) => setPortfolioCaption(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="portfolio-photo">Добавить работу</label>
-          <input
-            id="portfolio-photo"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            disabled={portfolioUploading || !master.data}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadPortfolioPhoto(file)
-              e.target.value = ''
-            }}
-          />
-        </div>
+        <MediaDropzone
+          purpose="portfolio"
+          value={portfolioDraft}
+          onChange={(mediaId) => {
+            setPortfolioDraft(mediaId)
+            if (mediaId) void attachPortfolioPhoto(mediaId)
+          }}
+          label="Добавить работу в портфолио"
+          disabled={!master.data}
+        />
       </section>
 
       <section className="card stack">
@@ -779,7 +743,7 @@ export function MasterCabinetPage() {
               return (
                 <article key={r.id} className="list-item">
                   <div className="row between">
-                    <strong>{product ? `${product.brand ? `${product.brand} · ` : ''}${product.name}` : r.product_id}</strong>
+                    <strong>{product ? `${product.brand ? `${product.brand} · ` : ''}${product.name}` : 'Товар'}</strong>
                     <button
                       className="btn btn-secondary btn-compact"
                       type="button"
@@ -798,39 +762,24 @@ export function MasterCabinetPage() {
       </section>
 
       <section className="card stack">
-        <h2>3. Услуга</h2>
-        <form className="stack" onSubmit={serviceForm.handleSubmit((v) => createService.mutate(v))}>
-          <div className="field">
-            <label>Название</label>
-            <input aria-invalid={Boolean(serviceForm.formState.errors.name)} {...serviceForm.register('name')} placeholder="Окрашивание волос" />
-            {serviceForm.formState.errors.name && <span className="error">{serviceForm.formState.errors.name.message}</span>}
-          </div>
-          <div className="field">
-            <label>Категория</label>
-            <input aria-invalid={Boolean(serviceForm.formState.errors.category)} {...serviceForm.register('category')} />
-            {serviceForm.formState.errors.category && <span className="error">{serviceForm.formState.errors.category.message}</span>}
-          </div>
-          <div className="field">
-            <label>Длительность, мин</label>
-            <input type="number" aria-invalid={Boolean(serviceForm.formState.errors.duration_minutes)} {...serviceForm.register('duration_minutes')} />
-            {serviceForm.formState.errors.duration_minutes && <span className="error">{serviceForm.formState.errors.duration_minutes.message}</span>}
-          </div>
-          <div className="field">
-            <label>Цена, ₽</label>
-            <input type="number" aria-invalid={Boolean(serviceForm.formState.errors.price_rubles)} {...serviceForm.register('price_rubles')} />
-            {serviceForm.formState.errors.price_rubles && <span className="error">{serviceForm.formState.errors.price_rubles.message}</span>}
-          </div>
-          <button className="btn btn-primary btn-block" type="submit" disabled={createService.isPending}>Добавить услугу</button>
-        </form>
+        <h2>3. Услуги</h2>
+        <p className="muted">Прайс и длительности удобнее вести на отдельной странице.</p>
+        <div className="row">
+          <Link className="btn btn-primary" to="/services">Управлять услугами</Link>
+          <span className="muted">Сейчас: {master.data?.services.length ?? 0}</span>
+        </div>
       </section>
 
       <section className="card stack">
         <h2>4. Расписание</h2>
-        <p>Стандартное окно пн–пт 10:00–19:00 в часовом поясе филиала. Слоты считает сервер.</p>
+        <p>Рабочие часы по умолчанию: пн–пт 10:00–19:00. Исключения дней — в календаре.</p>
         {hours.isError && <div className="state-box error">Не удалось загрузить расписание</div>}
-        <button className="btn btn-primary btn-block" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
-          Установить пн–пт 10:00–19:00
-        </button>
+        <div className="row">
+          <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
+            Установить пн–пт 10:00–19:00
+          </button>
+          <Link className="btn btn-secondary" to="/calendar">Календарь и исключения</Link>
+        </div>
         {hours.data && hours.data.items.length > 0 && (
           <p className="muted">Сохранено интервалов: {hours.data.items.length}</p>
         )}
@@ -845,7 +794,7 @@ export function MasterCabinetPage() {
         <div className="row">
           <Link className="btn btn-primary" to="/warehouse">Открыть склад</Link>
           <Link className="btn btn-secondary" to="/reports">Отчёты салона</Link>
-          <Link className="btn btn-secondary" to="/supplier">Панель показателей</Link>
+          <Link className="btn btn-secondary" to="/cosmetics">Косметика</Link>
         </div>
       </section>
     </main>

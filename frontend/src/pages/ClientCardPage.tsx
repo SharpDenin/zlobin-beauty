@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { apiRequest, ApiError } from '@/shared/api/client'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
 
@@ -34,6 +34,7 @@ type Formula = {
   ratio: string
   comment: string
   created_at: string
+  components?: Array<{ label?: string; amount?: string } | string>
 }
 
 const noteSchema = z.object({
@@ -50,9 +51,18 @@ const formulaSchema = z.object({
   comment: z.string().optional(),
 })
 
+function formulaComponents(f: Formula): string[] {
+  if (!f.components || f.components.length === 0) return []
+  return f.components.map((c) => {
+    if (typeof c === 'string') return c
+    return [c.label, c.amount].filter(Boolean).join(' ')
+  }).filter(Boolean)
+}
+
 export function ClientCardPage() {
   const { id, appointmentId } = useParams()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
+  const canMaster = hasMasterAccess(user)
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -70,6 +80,7 @@ export function ClientCardPage() {
   })
 
   const cardId = cardQuery.data?.id
+  const clientUserId = cardQuery.data?.user_id
   const visits = useQuery({
     queryKey: ['client-visits', cardId],
     queryFn: () => apiRequest<{ items: Visit[] }>(`/v1/clients/id/${cardId}/visits`, { token: accessToken }),
@@ -79,6 +90,28 @@ export function ClientCardPage() {
     queryKey: ['client-formulas', cardId],
     queryFn: () => apiRequest<{ items: Formula[] }>(`/v1/clients/id/${cardId}/formulas`, { token: accessToken }),
     enabled: Boolean(cardId && accessToken),
+  })
+  const autoConfirm = useQuery({
+    queryKey: ['client-auto-confirm', clientUserId],
+    queryFn: () =>
+      apiRequest<{ auto_confirm: boolean }>(`/v1/me/clients/${clientUserId}/auto-confirm`, {
+        token: accessToken,
+      }),
+    enabled: Boolean(canMaster && clientUserId && accessToken),
+  })
+  const setAutoConfirm = useMutation({
+    mutationFn: (auto_confirm: boolean) =>
+      apiRequest(`/v1/me/clients/${clientUserId}/auto-confirm`, {
+        method: 'PUT',
+        token: accessToken,
+        body: { auto_confirm },
+      }),
+    onSuccess: async () => {
+      setOk('Автоподтверждение обновлено')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
   })
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
@@ -126,26 +159,48 @@ export function ClientCardPage() {
 
   return (
     <main className="page stack">
-      <h1>{card.display_name}</h1>
-      <section className="card stack-sm">
-        <p>{card.email ?? 'Email не указан'}</p>
-        <p>{card.phone ?? 'Телефон не указан'}</p>
-        <p>Предпочтения: {card.preferences || '—'}</p>
+      <section className="hero">
+        <div className="stack">
+          <h1>{card.display_name}</h1>
+          <p>{card.phone || card.email || 'Контакты не указаны'}</p>
+          {card.preferences && <p className="muted">Предпочтения: {card.preferences}</p>}
+        </div>
       </section>
 
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
 
-      <section className="card stack">
+      {canMaster && (
+        <section className="card stack">
+          <h2>Автоподтверждение записей</h2>
+          <p className="muted">Новые записи этого клиента будут подтверждаться автоматически.</p>
+          {autoConfirm.data && (
+            <label className="field-check">
+              <input
+                type="checkbox"
+                checked={autoConfirm.data.auto_confirm}
+                disabled={setAutoConfirm.isPending}
+                onChange={(e) => setAutoConfirm.mutate(e.target.checked)}
+              />
+              <span>Автоподтверждение для этого клиента</span>
+            </label>
+          )}
+        </section>
+      )}
+
+      <section className="stack">
         <h2>История посещений</h2>
         {visits.isLoading && <div className="state-box">Загрузка…</div>}
-        {visits.data && visits.data.items.length === 0 && <div className="state-box">Посещений пока нет</div>}
+        {visits.data && visits.data.items.length === 0 && <div className="empty-state"><h2>Посещений пока нет</h2></div>}
         <div className="list">
           {visits.data?.items.map((v) => (
-            <div key={v.id} className="list-item">
-              <strong>{v.service_name}</strong>
-              <p>{new Date(v.completed_at).toLocaleString('ru-RU')} · {formatMoney(v.price_minor)}</p>
-            </div>
+            <article key={v.id} className="history-card">
+              <div className="row between">
+                <strong>{v.service_name}</strong>
+                <span>{formatMoney(v.price_minor)}</span>
+              </div>
+              <p className="muted">{new Date(v.completed_at).toLocaleString('ru-RU')}</p>
+            </article>
           ))}
         </div>
       </section>
@@ -172,19 +227,33 @@ export function ClientCardPage() {
         </form>
       </section>
 
-      <section className="card stack">
+      <section className="stack">
         <h2>Составы окрашивания</h2>
-        {formulas.data && formulas.data.items.length === 0 && <div className="state-box">Составов пока нет</div>}
+        {formulas.data && formulas.data.items.length === 0 && (
+          <div className="empty-state"><h2>Составов пока нет</h2></div>
+        )}
         <div className="list">
-          {formulas.data?.items.map((f) => (
-            <div key={f.id} className="list-item">
-              <strong>{f.name}</strong>
-              <p>{f.brand} · {f.oxidizer} · {f.ratio}</p>
-              <p>{f.comment}</p>
-            </div>
-          ))}
+          {formulas.data?.items.map((f) => {
+            const comps = formulaComponents(f)
+            return (
+              <article key={f.id} className="formula-card">
+                <div className="row between">
+                  <strong>{f.name}</strong>
+                  <span className="muted">{new Date(f.created_at).toLocaleDateString('ru-RU')}</span>
+                </div>
+                <div className="formula-grid">
+                  <div className="formula-field"><span>Бренд</span><strong>{f.brand || '—'}</strong></div>
+                  <div className="formula-field"><span>Окислитель</span><strong>{f.oxidizer || '—'}</strong></div>
+                  <div className="formula-field"><span>Пропорция</span><strong>{f.ratio || '—'}</strong></div>
+                  <div className="formula-field"><span>Компоненты</span><strong>{comps.join(', ') || '—'}</strong></div>
+                </div>
+                {f.comment && <p>{f.comment}</p>}
+              </article>
+            )
+          })}
         </div>
-        <form className="stack" onSubmit={formulaForm.handleSubmit((v) => saveFormula.mutate(v))}>
+        <form className="card stack" onSubmit={formulaForm.handleSubmit((v) => saveFormula.mutate(v))}>
+          <h3>Новый состав</h3>
           <div className="field"><label>Название</label><input {...formulaForm.register('name')} /></div>
           <div className="field"><label>Бренд</label><input {...formulaForm.register('brand')} /></div>
           <div className="field"><label>Компоненты через запятую</label><input {...formulaForm.register('components_text')} placeholder="8.1 30g, 9.13 20g" /></div>

@@ -50,7 +50,8 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*UploadResult, er
 	if !domain.ValidPurpose(purpose) {
 		return nil, apperr.Validation("invalid purpose")
 	}
-	limitReader := io.LimitReader(in.Reader, domain.MaxUploadBytes+1)
+	maxBytes := domain.MaxBytesForPurpose(purpose)
+	limitReader := io.LimitReader(in.Reader, maxBytes+1)
 	head := make([]byte, 512)
 	n, err := io.ReadFull(limitReader, head)
 	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
@@ -62,6 +63,9 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*UploadResult, er
 	}
 	if !domain.ValidContentType(ct) {
 		return nil, apperr.Validation("unsupported content type")
+	}
+	if strings.HasPrefix(ct, "video/") && purpose != domain.PurposeVideo {
+		return nil, apperr.Validation("video uploads require purpose=video")
 	}
 	ext := domain.ExtensionForContentType(ct)
 	if ext == "" {
@@ -75,8 +79,8 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*UploadResult, er
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if written > domain.MaxUploadBytes {
-		return nil, apperr.Validation("file exceeds 5 MiB limit")
+	if written > maxBytes {
+		return nil, apperr.Validation("file exceeds size limit")
 	}
 	if written == 0 {
 		return nil, apperr.Validation("empty file")

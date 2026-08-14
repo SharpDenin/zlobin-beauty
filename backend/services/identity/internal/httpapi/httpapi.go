@@ -38,6 +38,7 @@ type registerReq struct {
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
 	AsMaster    bool   `json:"as_master"`
+	AsSupplier  bool   `json:"as_supplier"`
 }
 
 type loginReq struct {
@@ -90,7 +91,8 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.svc.Register(r.Context(), service.RegisterInput{
-		Email: req.Email, Phone: req.Phone, Password: req.Password, DisplayName: req.DisplayName, AsMaster: req.AsMaster,
+		Email: req.Email, Phone: req.Phone, Password: req.Password, DisplayName: req.DisplayName,
+		AsMaster: req.AsMaster, AsSupplier: req.AsSupplier,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)

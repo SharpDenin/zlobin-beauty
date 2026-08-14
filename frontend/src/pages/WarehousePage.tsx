@@ -6,7 +6,9 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { fetchSuppliers } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
+import { statusLabel } from '@/shared/lib/status'
 
 type OrgItem = {
   organization: { id: string; name: string }
@@ -127,6 +129,12 @@ export function WarehousePage() {
     queryKey: ['commerce-stock', locationId],
     queryFn: () => apiRequest<{ items: StockItem[] }>(`/v1/commerce/stock?location_id=${locationId}`, { token: accessToken }),
     enabled: Boolean(accessToken && locationId),
+  })
+
+  const suppliers = useQuery({
+    queryKey: ['suppliers'],
+    queryFn: () => fetchSuppliers(accessToken),
+    enabled: Boolean(accessToken),
   })
 
   const forecast = useQuery({
@@ -493,7 +501,7 @@ export function WarehousePage() {
       {activeLoc && criticalItems.length > 0 && (
         <section className="card stack">
           <h2>Заказ поставщику (критический остаток)</h2>
-          <p>Укажите UUID организации-поставщика. Для MVP можно использовать другую организацию с каталогом товаров.</p>
+          <p className="muted">Выберите поставщика из каталога или оформите заказ в разделе «Косметика».</p>
           <form className="stack" onSubmit={supplierOrderForm.handleSubmit((v) => {
             if (!locationId) {
               setError('Выберите склад')
@@ -506,14 +514,31 @@ export function WarehousePage() {
               <select {...supplierOrderForm.register('product_id')}>
                 <option value="">Выберите</option>
                 {criticalItems.map((s) => (
-                  <option key={s.product_id} value={s.product_id}>{s.brand} {s.product_name} ({s.status})</option>
+                  <option key={s.product_id} value={s.product_id}>
+                    {s.brand} {s.product_name} ({statusLabel(s.status)})
+                  </option>
                 ))}
               </select>
             </div>
             <div className="field"><label>Количество</label><input type="number" step="0.001" {...supplierOrderForm.register('qty')} /></div>
-            <div className="field"><label>UUID поставщика (supplier_org_id)</label><input {...supplierOrderForm.register('supplier_org_id')} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></div>
+            <div className="field">
+              <label>Поставщик</label>
+              <select {...supplierOrderForm.register('supplier_org_id')}>
+                <option value="">Выберите поставщика</option>
+                {(suppliers.data ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}{s.city ? ` · ${s.city}` : ''}</option>
+                ))}
+              </select>
+              {suppliers.isError && <span className="error">Не удалось загрузить поставщиков</span>}
+              {!suppliers.isLoading && (suppliers.data?.length ?? 0) === 0 && (
+                <span className="hint">Каталог поставщиков пока пуст. Можно заказать через «Косметика».</span>
+              )}
+            </div>
             <div className="field"><label>Комментарий</label><input {...supplierOrderForm.register('comment')} placeholder="Заказ по критическому остатку" /></div>
-            <button className="btn btn-primary btn-block" type="submit" disabled={createSupplierOrder.isPending}>Создать заказ</button>
+            <div className="row">
+              <button className="btn btn-primary" type="submit" disabled={createSupplierOrder.isPending}>Создать заказ</button>
+              <Link className="btn btn-secondary" to="/cosmetics">Каталог косметики</Link>
+            </div>
           </form>
         </section>
       )}

@@ -44,12 +44,12 @@ func main() {
 	}
 	st := store.New(pool)
 	svc := service.New(st).WithOrganizations(os.Getenv("ORGANIZATIONS_URL"), os.Getenv("INTERNAL_TOKEN")).WithBooking(os.Getenv("BOOKING_URL"))
-	api := httpapi.New(svc, log)
+	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))
 	api.Routes(mux, cfg.JWTSecret)
-	handler := httpx.WithRequestID(httpx.SecurityHeaders(httpx.CORS(cfg.CORSOrigins)(httpx.MaxBytes(1<<20)(httpx.AccessLog(log)(mux)))))
+	handler := httpx.WithRequestID(httpx.SecurityHeaders(httpx.CORS(cfg.CORSOrigins)(httpx.MaxBytes(1 << 20)(httpx.AccessLog(log)(mux)))))
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,

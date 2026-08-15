@@ -91,6 +91,25 @@ function DocNode({ node, token }: { node: JSONContent; token?: string | null }) 
         </figure>
       ) : null
     }
+    case 'video': {
+      const src = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
+      const title = typeof node.attrs?.title === 'string' ? node.attrs.title : 'Видео'
+      if (!src) return null
+      return (
+        <figure className="article-video">
+          <video src={src} controls playsInline preload="metadata" title={title} style={{ width: '100%', borderRadius: 12 }} />
+          {title ? <figcaption className="muted">{title}</figcaption> : null}
+        </figure>
+      )
+    }
+    case 'callout': {
+      const kind = typeof node.attrs?.kind === 'string' ? node.attrs.kind : 'tip'
+      return (
+        <aside className={`callout callout-${kind}`}>
+          {(node.content ?? []).map((child, i) => <DocNode key={i} node={child} token={token} />)}
+        </aside>
+      )
+    }
     case 'hardBreak':
       return <br />
     default:

@@ -1,11 +1,14 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { ApiError } from '@/shared/api/client'
+import { ApiError, API_BASE_URL } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import {
   MEDIA_ACCEPT_IMAGES,
+  MEDIA_ACCEPT_IMAGE_OR_VIDEO,
   MEDIA_MAX_BYTES_DEFAULT,
+  MEDIA_MAX_VIDEO_BYTES,
+  isVideoFile,
   uploadMedia,
-  validateImageFile,
+  validateMediaFile,
 } from '@/shared/lib/mediaUpload'
 import { MediaImage } from '@/shared/ui/MediaImage'
 
@@ -14,9 +17,10 @@ type DropzoneState = 'idle' | 'dragging' | 'uploading' | 'error' | 'preview'
 type Props = {
   purpose: string
   value: string | null
-  onChange: (mediaId: string | null) => void
+  onChange: (mediaId: string | null, meta?: { contentType?: string }) => void
   accept?: string
   maxBytes?: number
+  allowVideo?: boolean
   label?: string
   disabled?: boolean
   className?: string
@@ -26,9 +30,10 @@ export function MediaDropzone({
   purpose,
   value,
   onChange,
-  accept = MEDIA_ACCEPT_IMAGES,
+  accept,
   maxBytes = MEDIA_MAX_BYTES_DEFAULT,
-  label = 'Перетащите фото или нажмите для выбора',
+  allowVideo = false,
+  label = 'Перетащите файл или нажмите для выбора',
   disabled = false,
   className,
 }: Props) {
@@ -41,6 +46,10 @@ export function MediaDropzone({
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
   const [localPreview, setLocalPreview] = useState<string | null>(null)
+  const [localIsVideo, setLocalIsVideo] = useState(false)
+  const [remoteIsVideo, setRemoteIsVideo] = useState(false)
+
+  const resolvedAccept = accept ?? (allowVideo ? MEDIA_ACCEPT_IMAGE_OR_VIDEO : MEDIA_ACCEPT_IMAGES)
 
   useEffect(() => {
     if (value) {
@@ -53,7 +62,6 @@ export function MediaDropzone({
     if (!localPreview) {
       setState((prev) => (prev === 'uploading' || prev === 'dragging' || prev === 'error' ? prev : 'idle'))
     }
-    // sync when value changes from outside
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value])
 
@@ -71,18 +79,23 @@ export function MediaDropzone({
     const url = URL.createObjectURL(file)
     objectUrlRef.current = url
     setLocalPreview(url)
+    setLocalIsVideo(isVideoFile(file))
   }
 
   async function handleFile(file: File) {
     if (disabled) return
-    const validation = validateImageFile(file, maxBytes)
+    const validation = validateMediaFile(file, {
+      allowVideo,
+      maxImageBytes: maxBytes,
+      maxVideoBytes: MEDIA_MAX_VIDEO_BYTES,
+    })
     if (validation) {
       setError(validation)
       setState('error')
       return
     }
     if (!accessToken) {
-      setError('Войдите, чтобы загрузить фото')
+      setError('Войдите, чтобы загрузить файл')
       setState('error')
       return
     }
@@ -93,15 +106,17 @@ export function MediaDropzone({
     setObjectPreview(file)
 
     try {
-      const res = await uploadMedia(file, purpose, accessToken, setProgress)
-      onChange(res.id)
+      const res = await uploadMedia(file, purpose, accessToken, setProgress, { allowVideo })
+      const ct = res.content_type || res.mime_type || file.type
+      setRemoteIsVideo(Boolean(ct?.startsWith('video/')))
+      onChange(res.id, { contentType: ct })
       clearObjectUrl()
       setLocalPreview(null)
       setState('preview')
     } catch (e) {
       clearObjectUrl()
       setLocalPreview(null)
-      setError(e instanceof ApiError ? e.message : 'Не удалось загрузить фото')
+      setError(e instanceof ApiError ? e.message : 'Не удалось загрузить файл')
       setState('error')
     }
   }
@@ -144,6 +159,8 @@ export function MediaDropzone({
     if (disabled || state === 'uploading') return
     clearObjectUrl()
     setLocalPreview(null)
+    setLocalIsVideo(false)
+    setRemoteIsVideo(false)
     setError(null)
     setProgress(0)
     setState('idle')
@@ -160,6 +177,10 @@ export function MediaDropzone({
     disabled ? 'dropzone-disabled' : '',
     className ?? '',
   ].filter(Boolean).join(' ')
+
+  const hint = allowVideo
+    ? `Фото или видео · до ${Math.round(MEDIA_MAX_VIDEO_BYTES / (1024 * 1024))} МБ`
+    : `JPEG, PNG или WebP · до ${Math.round(maxBytes / (1024 * 1024))} МБ`
 
   return (
     <div className="dropzone-wrap stack-sm">
@@ -181,7 +202,7 @@ export function MediaDropzone({
           id={inputId}
           ref={inputRef}
           type="file"
-          accept={accept}
+          accept={resolvedAccept}
           className="dropzone-input"
           disabled={disabled || state === 'uploading'}
           aria-hidden
@@ -196,15 +217,23 @@ export function MediaDropzone({
         {showPreview ? (
           <div className="dropzone-media">
             {localPreview ? (
-              <img src={localPreview} alt="Превью загружаемого фото" />
+              localIsVideo ? (
+                <video src={localPreview} controls playsInline muted />
+              ) : (
+                <img src={localPreview} alt="Превью" />
+              )
             ) : value ? (
-              <MediaImage mediaId={value} token={accessToken} alt="Загруженное фото" />
+              remoteIsVideo || purpose === 'video' ? (
+                <video src={`${API_BASE_URL}/v1/media/${value}/content`} controls playsInline />
+              ) : (
+                <MediaImage mediaId={value} token={accessToken} alt="Загруженный файл" />
+              )
             ) : null}
           </div>
         ) : (
           <div className="dropzone-placeholder">
             <strong>{label}</strong>
-            <span className="muted">JPEG, PNG или WebP · до {Math.round(maxBytes / (1024 * 1024))} МБ</span>
+            <span className="muted">{hint}</span>
           </div>
         )}
 
@@ -223,13 +252,13 @@ export function MediaDropzone({
           type="button"
           className="btn btn-secondary btn-compact"
           disabled={disabled}
-          aria-label="Удалить выбранное фото"
+          aria-label="Удалить файл"
           onClick={(e) => {
             e.stopPropagation()
             remove()
           }}
         >
-          Удалить фото
+          Удалить
         </button>
       )}
     </div>

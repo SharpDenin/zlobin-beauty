@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useBuyerOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { datetimeLocalToIso } from '@/shared/lib/time'
 
 type Appointment = {
   id: string
@@ -57,6 +59,8 @@ async function fetchExceptions(token: string | null): Promise<ScheduleException[
 
 export function CalendarPage() {
   const { accessToken } = useAuth()
+  const { buyerOrg } = useBuyerOrg()
+  const salonTimezone = buyerOrg?.branches[0]?.timezone || 'Europe/Moscow'
   const qc = useQueryClient()
   const [selectedDay, setSelectedDay] = useState(() => toKey(new Date()))
   const [excMode, setExcMode] = useState<'off' | 'custom'>('off')
@@ -65,6 +69,9 @@ export function CalendarPage() {
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [blockTitle, setBlockTitle] = useState('Блок')
+  const [blockStart, setBlockStart] = useState('12:00')
+  const [blockEnd, setBlockEnd] = useState('13:00')
 
   function timeToMinutes(value: string) {
     const [h, m] = value.split(':').map(Number)
@@ -154,6 +161,54 @@ export function CalendarPage() {
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
   })
 
+  const createBlock = useMutation({
+    mutationFn: () => {
+      return apiRequest('/v1/planner/blocks', {
+        token: accessToken,
+        body: {
+          title: blockTitle.trim() || 'Блок',
+          category: 'block',
+          starts_at: datetimeLocalToIso(`${selectedDay}T${blockStart}`, salonTimezone),
+          ends_at: datetimeLocalToIso(`${selectedDay}T${blockEnd}`, salonTimezone),
+          timezone: salonTimezone,
+        },
+      })
+    },
+    onSuccess: async () => {
+      setOk('Блок добавлен')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось создать блок'),
+  })
+
+  const deleteBlock = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/planner/blocks/${id}`, { method: 'DELETE', token: accessToken }),
+    onSuccess: async () => {
+      setOk('Блок удалён')
+      await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить блок'),
+  })
+
+  const moveBlock = useMutation({
+    mutationFn: (block: { id: string; starts_at: string; ends_at: string }) =>
+      apiRequest(`/v1/planner/blocks/${block.id}`, {
+        method: 'PATCH',
+        token: accessToken,
+        body: {
+          starts_at: new Date(new Date(block.starts_at).getTime() + 30 * 60_000).toISOString(),
+          ends_at: new Date(new Date(block.ends_at).getTime() + 30 * 60_000).toISOString(),
+        },
+      }),
+    onSuccess: async () => {
+      setOk('Блок сдвинут на 30 минут')
+      await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сдвинуть блок'),
+  })
+
   return (
     <main className="page stack">
       <div className="row between">
@@ -223,6 +278,14 @@ export function CalendarPage() {
                   –
                   {new Date(b.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
                 </p>
+                <div className="row">
+                  <button className="btn btn-secondary btn-compact" type="button" onClick={() => moveBlock.mutate(b)}>
+                    +30 минут
+                  </button>
+                  <button className="btn btn-secondary btn-compact" type="button" onClick={() => deleteBlock.mutate(b.id)}>
+                    Удалить блок
+                  </button>
+                </div>
               </article>
             ))}
           {dayItems.map((a) => (
@@ -241,6 +304,28 @@ export function CalendarPage() {
             </Link>
           ))}
         </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Блок в планере</h2>
+        <p className="muted">Личное занятие / недоступность на выбранный день.</p>
+        <div className="field">
+          <label htmlFor="block-title">Название</label>
+          <input id="block-title" value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} />
+        </div>
+        <div className="row">
+          <div className="field" style={{ flex: 1 }}>
+            <label>Начало</label>
+            <input type="time" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Конец</label>
+            <input type="time" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} />
+          </div>
+        </div>
+        <button className="btn btn-primary" type="button" disabled={createBlock.isPending} onClick={() => createBlock.mutate()}>
+          Добавить блок
+        </button>
       </section>
 
       <section className="card stack">

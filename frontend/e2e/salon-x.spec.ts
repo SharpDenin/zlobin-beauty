@@ -1,7 +1,12 @@
-import { test, expect, type Page, type TestInfo } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
+/**
+ * Hardened Salon-X P0 e2e.
+ * When API is down → skip (no stack). When API is up but seed/login missing → FAIL.
+ */
 const api = process.env.VITE_API_BASE_URL ?? 'http://localhost:8090'
 const password = process.env.SEED_PASSWORD ?? 'Password123!'
+const requireSeed = process.env.E2E_REQUIRE_SEED !== '0'
 
 async function apiHealthy(): Promise<boolean> {
   try {
@@ -12,71 +17,147 @@ async function apiHealthy(): Promise<boolean> {
   }
 }
 
-async function skipIfApiDown(info: TestInfo) {
-  if (!(await apiHealthy())) info.skip(true, `API unhealthy at ${api}`)
-}
-
-async function tryLoginUI(page: Page, email: string): Promise<boolean> {
-  try {
-    await page.goto('/login')
-    await page.getByLabel('Email').fill(email)
-    await page.getByLabel('Пароль').fill(password)
-    await page.getByRole('button', { name: 'Войти' }).click()
-    await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
-    return true
-  } catch {
-    return false
+async function requireApi() {
+  if (!(await apiHealthy())) {
+    test.skip(true, `API unhealthy at ${api} — start docker stack to run these tests`)
   }
 }
 
-test.describe('Salon-X P0 flows', () => {
-  test('supplier catalog and analytics', async ({ page }, info) => {
-    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1440', 'two viewports')
-    await skipIfApiDown(info)
-    if (!(await tryLoginUI(page, 'supplier1@demo.local'))) info.skip(true, 'login failed')
-    await page.goto('/supplier/products')
-    await expect(page.getByRole('heading', { name: 'Товары' })).toBeVisible({ timeout: 15_000 })
-    await page.goto('/supplier/analytics')
-    await expect(page.getByRole('heading', { name: 'Аналитика' })).toBeVisible({ timeout: 15_000 })
+async function loginUI(page: Page, email: string) {
+  await page.goto('/login')
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Пароль').fill(password)
+  await page.getByRole('button', { name: 'Войти' }).click()
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
+}
+
+async function apiLogin(email: string) {
+  const res = await fetch(`${api}/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  expect(res.ok, `login ${email} → ${res.status}`).toBeTruthy()
+  return res.json() as Promise<{ access_token: string }>
+}
+
+test.describe('Salon-X P0 flows (seeded stack)', () => {
+  test.beforeEach(async () => {
+    await requireApi()
   })
 
-  test('master knowledge filters and favorite', async ({ page }, info) => {
+  test('supplier products + analytics + warehouse', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1440', 'two viewports')
+    await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/supplier/products')
+    await expect(page.getByRole('heading', { name: 'Товары' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.product-card, .list-item, a[href*="/supplier/products/"]').first()).toBeVisible({ timeout: 15_000 })
+    await page.goto('/supplier/analytics')
+    await expect(page.getByRole('heading', { name: 'Аналитика' })).toBeVisible({ timeout: 15_000 })
+    await page.goto('/warehouse')
+    await expect(page.getByRole('heading', { name: 'Склад', exact: true })).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('master knowledge filters + favorite', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
-    await skipIfApiDown(info)
-    if (!(await tryLoginUI(page, 'master1@demo.local'))) info.skip(true, 'login failed')
+    await loginUI(page, 'master1@demo.local')
     await page.goto('/knowledge')
     await expect(page.getByRole('heading', { name: 'База знаний' })).toBeVisible({ timeout: 15_000 })
     await page.getByRole('button', { name: 'Колористика' }).click()
-    const first = page.locator('a.list-item, a.product-card, article a').first()
-    if (await first.isVisible().catch(() => false)) {
-      await first.click()
-      const fav = page.getByRole('button', { name: /избранное/i })
-      if (await fav.isVisible().catch(() => false)) await fav.click()
-    }
+    const article = page.locator('a[href*="/knowledge/"]').first()
+    await expect(article).toBeVisible({ timeout: 15_000 })
+    await article.click()
+    await expect(page.getByRole('button', { name: /избранное/i })).toBeVisible({ timeout: 10_000 })
+    await page.getByRole('button', { name: /избранное/i }).click()
   })
 
-  test('representative home', async ({ page }, info) => {
+  test('representative route and tasks', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
-    await skipIfApiDown(info)
-    if (!(await tryLoginUI(page, 'rep1@demo.local'))) info.skip(true, 'login failed')
+    await loginUI(page, 'rep1@demo.local')
     await page.goto('/rep')
-    await expect(page.locator('h1, h2').first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Маршрут и задачи', exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Аналитика поставщика', exact: true })).toBeVisible({ timeout: 15_000 })
   })
 
-  test('professional-only product is hidden from client API', async ({}, info) => {
-    await skipIfApiDown(info)
-    const login = await fetch(`${api}/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'client1@demo.local', password }),
-    })
-    if (!login.ok) info.skip(true, 'client login failed')
-    const body = await login.json() as { access_token: string }
+  test('salon owner staff + contact policy', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/staff')
+    await expect(page.getByRole('heading', { name: /команда/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/контакты клиентов/i)).toBeVisible()
+  })
+
+  test('professional-only hidden from client shop API', async () => {
+    const { access_token } = await apiLogin('client1@demo.local')
     const res = await fetch(`${api}/v1/commerce/shop/products`, {
-      headers: { Authorization: `Bearer ${body.access_token}` },
+      headers: { Authorization: `Bearer ${access_token}` },
     })
-    if (!res.ok) return
-    const data = await res.json() as { items?: Array<{ name: string; audience?: string }> }
+    expect(res.ok).toBeTruthy()
+    const data = await res.json() as { items?: Array<{ name: string }> }
     expect((data.items ?? []).some((p) => /Pro Fiber/i.test(p.name))).toBeFalsy()
+  })
+
+  test('subscription snapshot exists', async () => {
+    const { access_token } = await apiLogin('master1@demo.local')
+    const res = await fetch(`${api}/v1/me/subscription`, {
+      headers: { Authorization: `Bearer ${access_token}` },
+    })
+    expect(res.ok).toBeTruthy()
+    const snap = await res.json() as { effective_plan?: string; status?: string }
+    expect(snap.effective_plan || snap.status).toBeTruthy()
+  })
+
+  test('seeded recurring supply is visible to buyer', async () => {
+    const { access_token } = await apiLogin('master1@demo.local')
+    const orgsRes = await fetch(`${api}/v1/organizations/mine`, {
+      headers: { Authorization: `Bearer ${access_token}` },
+    })
+    expect(orgsRes.ok).toBeTruthy()
+    const orgs = await orgsRes.json() as { items?: Array<{ organization: { id: string; type: string } }> }
+    const buyer = (orgs.items ?? []).find((item) => item.organization.type !== 'supplier')
+    expect(buyer?.organization.id).toBeTruthy()
+    const recurring = await fetch(
+      `${api}/v1/commerce/recurring?organization_id=${buyer!.organization.id}&role=buyer`,
+      { headers: { Authorization: `Bearer ${access_token}` } },
+    )
+    expect(recurring.ok).toBeTruthy()
+    const data = await recurring.json() as { items?: unknown[] }
+    expect((data.items ?? []).length).toBeGreaterThan(0)
+  })
+
+  test('planner block controls and blacklist status are available', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/calendar')
+    await expect(page.getByRole('heading', { name: 'Блок в планере', exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'Добавить блок', exact: true })).toBeVisible()
+
+    const client = await apiLogin('client1@demo.local')
+    const master = await apiLogin('master1@demo.local')
+    const clientMe = await fetch(`${api}/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    const clientUser = await clientMe.json() as { id?: string; user?: { id?: string } }
+    const clientId = clientUser.id ?? clientUser.user?.id
+    expect(clientId).toBeTruthy()
+    const status = await fetch(`${api}/v1/me/clients/${clientId}/blacklist`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(status.ok).toBeTruthy()
+    const body = await status.json() as { blocked?: boolean; no_show_count?: number }
+    expect(typeof body.blocked).toBe('boolean')
+    expect(typeof body.no_show_count).toBe('number')
+  })
+
+  test('seed accounts exist when E2E_REQUIRE_SEED', async () => {
+    if (!requireSeed) return
+    for (const email of [
+      'client1@demo.local',
+      'master1@demo.local',
+      'supplier1@demo.local',
+      'rep1@demo.local',
+    ]) {
+      await apiLogin(email)
+    }
   })
 })

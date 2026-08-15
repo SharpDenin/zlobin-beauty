@@ -166,7 +166,11 @@ export function MasterPage() {
       await qc.invalidateQueries({ queryKey: ['service-occurrences'] })
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Не удалось создать запись'
+      const msg = e instanceof ApiError
+        ? e.message
+        : e instanceof Error
+          ? e.message
+          : 'Не удалось создать запись'
       setMessage(null)
       setError(msg)
       toast.error(msg)

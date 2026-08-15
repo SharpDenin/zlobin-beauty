@@ -86,10 +86,17 @@ const workTypeMap: Record<string, string> = {
 /** Prefer Russian action labels over raw status enums in supplier order buttons. */
 export const supplierOrderActionLabel: Record<string, string> = {
   confirmed: 'Принять',
-  picking: 'Собирается',
-  in_transit: 'В пути',
-  delivered: 'Доставлен',
+  picking: 'В сборку',
+  ready_for_dispatch: 'Готов к отгрузке',
   cancelled: 'Отменить',
+}
+
+/** Physical delivery lifecycle — not commercial order status. */
+export const deliveryActionLabel: Record<string, string> = {
+  preparing: 'Готовить к отправке',
+  in_transit: 'В путь',
+  arrived: 'Прибыл',
+  delivered: 'Выдан / доставлен',
 }
 
 const map: Record<string, string> = {

@@ -21,8 +21,15 @@ type Article = {
   author_name: string
   author_org_id?: string | null
   product_id?: string | null
+  product_ids?: string[]
   published?: boolean
   created_at: string
+}
+
+type SupplierProduct = {
+  id: string
+  brand?: string
+  name: string
 }
 
 type Draft = {
@@ -33,6 +40,7 @@ type Draft = {
   doc: JSONContent
   coverMediaId: string | null
   published: boolean
+  productIds: string
 }
 
 const emptyDraft = (): Draft => ({
@@ -42,6 +50,7 @@ const emptyDraft = (): Draft => ({
   doc: emptyDoc(),
   coverMediaId: null,
   published: true,
+  productIds: '',
 })
 
 function parseDoc(content?: string, format?: string): JSONContent {
@@ -115,9 +124,23 @@ export function KnowledgeListPage() {
     enabled: Boolean(accessToken && isSupplier),
   })
 
+  const supplierProducts = useQuery({
+    queryKey: ['knowledge-supplier-products', supplierOrgId],
+    queryFn: () =>
+      apiRequest<{ items: SupplierProduct[] }>(
+        `/v1/commerce/products?organization_id=${encodeURIComponent(supplierOrgId ?? '')}`,
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken && isSupplier && supplierOrgId),
+  })
+
   const save = useMutation({
     mutationFn: () => {
       const content = JSON.stringify(draft.doc)
+      const product_ids = draft.productIds
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
       const body = {
         title: draft.title.trim(),
         category: draft.category.trim(),
@@ -129,6 +152,7 @@ export function KnowledgeListPage() {
         author_name: user?.display_name ?? '',
         organization_id: supplierOrgId,
         published: draft.published,
+        product_ids,
       }
       if (draft.id) {
         return apiRequest(`/v1/knowledge/${draft.id}`, {
@@ -167,6 +191,7 @@ export function KnowledgeListPage() {
           author_name: input.article.author_name,
           organization_id: supplierOrgId,
           published: input.published,
+          product_ids: input.article.product_ids ?? (input.article.product_id ? [input.article.product_id] : []),
         },
       }),
     onSuccess: async () => {
@@ -191,6 +216,7 @@ export function KnowledgeListPage() {
       doc: parseDoc(a.content, a.content_format),
       coverMediaId: a.cover_media_id ?? null,
       published: a.published !== false,
+      productIds: (a.product_ids ?? (a.product_id ? [a.product_id] : [])).join(', '),
     })
     setOk(null)
     setError(null)
@@ -272,6 +298,29 @@ export function KnowledgeListPage() {
             onChange={(id) => setDraft((d) => ({ ...d, coverMediaId: id }))}
             label="Обложка: перетащите изображение или нажмите для выбора"
           />
+          <fieldset className="card stack-sm">
+            <legend>Связанные товары</legend>
+            {supplierProducts.isLoading && <span className="muted">Загрузка товаров…</span>}
+            {(supplierProducts.data?.items ?? []).map((product) => {
+              const selected = draft.productIds.split(/[\s,;]+/).filter(Boolean)
+              const checked = selected.includes(product.id)
+              return (
+                <label key={product.id} className="field-check">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...selected, product.id]
+                        : selected.filter((id) => id !== product.id)
+                      setDraft((d) => ({ ...d, productIds: next.join(',') }))
+                    }}
+                  />
+                  <span>{[product.brand, product.name].filter(Boolean).join(' · ')}</span>
+                </label>
+              )
+            })}
+          </fieldset>
           <div className="field">
             <label>Текст</label>
             <RichDocEditor

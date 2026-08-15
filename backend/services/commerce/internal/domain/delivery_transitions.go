@@ -29,18 +29,14 @@ var orderSupplierTransitions = map[string]map[string]bool{
 	},
 	OrderStatusPicking: {
 		OrderStatusReadyForDispatch: true,
-		OrderStatusInTransit:        true, // legacy
 		OrderStatusCancelled:        true,
 	},
 	OrderStatusReadyForDispatch: {
-		OrderStatusInTransit: true, // legacy
 		OrderStatusCompleted: true,
 		OrderStatusCancelled: true,
 	},
-	OrderStatusInTransit: {
-		OrderStatusDelivered: true, // legacy
-		OrderStatusCompleted: true,
-	},
+	// Legacy order statuses in_transit/delivered are no longer reachable via
+	// order transitions — physical progress belongs on Delivery only.
 }
 
 // deliveryTransitions defines allowed delivery status changes.

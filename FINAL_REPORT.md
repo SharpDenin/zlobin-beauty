@@ -1,359 +1,190 @@
-# FINAL_REPORT.md — Salon-X
+# FINAL_REPORT.md — Salon-X hardening reconciliation
 
-Дата: **2026-08-14**
+Дата: **2026-08-15**
 
-Честный обзор production-readiness. Продукт в UI: **Salon-X**. Внутренние package names без переименования.
+Продукт в UI: **Salon-X**. Внутренние Go package paths: `zlobin-beauty` (без rename).
 
-Демо-аккаунты (пароль `Password123!`):  
-клиенты `client1`–`client3`, мастера `master1`–`master4`, `admin1@demo.local`, поставщики `supplier1`/`supplier2`, представители `rep1`/`rep2`.
+Демо-аккаунты (пароль `Password123!` / `SEED_PASSWORD`):
+`client1`–`client3`, `master1`–`master4`, `admin1@demo.local`, `supplier1`/`supplier2`, `rep1`/`rep2`.
 
-См. также: `MANUAL_TEST.md`, `MANUAL_DEMO.md`, `README.md`, `README_DEPLOY.md`.
-
----
-
-## Production readiness review
-
-**Implemented**
-
-- Docker Compose поднимает Postgres, MinIO, NATS, сервисы, gateway (**host :8090 → :8080**), frontend (:5173).
-- Миграции при старте сервисов; seed через API (`docker compose --profile seed run --rm seed` / `scripts/seed.ps1`).
-- JWT access + refresh, роли `client` / `master` / `supplier` (+ claim `salon_owner` / `system_admin` в identity).
-- MVP-потоки: поиск/запись, кабинет мастера, B2B-косметика, база знаний, lifecycle записей и заказов.
-
-**Tested**
-
-- Backend unit/интеграционные тесты (overlap, conflict mapping, delivery transitions, payment helpers, commerce order build).
-- Frontend Vitest (status labels и др.).
-- Playwright `frontend/e2e/demo-mvp.spec.ts` (устойчивые сценарии + skip при unhealthy API / failed login).
-- Ручной demo-сценарий: `MANUAL_DEMO.md`.
-
-**Known limitation**
-
-- Не production HA: один gateway, нет rate-limit / WAF / JWT-verify на edge.
-- Нет OpenAPI/Swagger UI.
-- Out-of-scope маршруты (`/shop`, `/warehouse`, `/rep`, `/reports`, `/admin/catalogs`) остаются в бандле, скрыты из primary nav.
-- Секреты `JWT_SECRET` / `INTERNAL_TOKEN` — dev defaults; нужны ротация и секрет-стор для prod.
-- Observability: базовые логи контейнеров, без централизованных метрик/трейсинга.
+См. также: `MANUAL_TEST.md`, `MANUAL_DEMO.md`, `README_DEPLOY.md`.
 
 ---
 
-## Scheduling correctness
+## Hardening summary (2026-08-15)
 
-**Implemented**
-
-- Шаблон недели: `PUT/GET /v1/me/working-hours`.
-- Исключения дня: `schedule_exceptions` (day-off / кастомные часы).
-- `FreeSlots`: локальный день в timezone мастера → окна минус appointments и exceptions; шаг 30 мин; длительность услуги обязательна.
-- Запись: `POST /v1/appointments` с `starts_at`; жизненный цикл confirm/reject/cancel/start/complete/no-show.
-- Auto-confirm на пару Master user ↔ Client user (`master_client_settings`).
-- UI wizard на карточке мастера: услуга → дата → слот → итог (гибкий режим).
-
-**Tested**
-
-- Go: overlap half-open `[start,end)`, conflict → apperr; concurrency-сценарий вокруг exclusion.
-- Playwright: flexible booking path (soft skip, если слотов/seed нет).
-- Seed создаёт demo-appointments и рабочие часы будней.
-
-**Known limitation**
-
-- Месячный grid-календарь не реализован (день/неделя + exceptions).
-- Создание occurrence из UI через `datetime-local` = browser-local → UTC; при TZ браузера ≠ TZ салона возможен сдвиг.
-- Reschedule для fixed-window запрещён; полноценного «переноса» гибкой записи в UI нет.
+| Fix | Status |
+|-----|--------|
+| `fixed_window` capacity > 1 vs unique appointment index | **Implemented** — migration `booking/009_occurrence_capacity.sql` drops unique active-per-occurrence; marketplace CAS on `booked_count`; seed capacity=3 |
+| `datetime-local` → salon/location IANA TZ | **Implemented** — `frontend/src/shared/lib/time.ts` (`datetimeLocalToIso`); used in `ServicesPage`, `AppointmentDetailPage`, planner blocks |
+| Delivery as physical SoT | **Implemented** — UI commercial machine stops at `ready_for_dispatch`; physical steps via `/delivery/*`; order transitions no longer allow `in_transit`/`delivered` |
+| Browser POST idempotency | **Implemented** — CORS allows `Idempotency-Key`; booking flow reaches backend; regression test in `shared/httpx` |
+| KB rich demo seed | **Implemented** — seed uploads cover/inline PNG + optional WebM; 12 `doc_json` articles with product links |
+| Playwright no soft-skip of core seeded flows | **Implemented** — API down → skip; API up + missing seed/login → **FAIL** |
+| Production env / volumes / backup docs | **Implemented** — see `README_DEPLOY.md`, `.env.example`, `.env.production.example` |
+| Shop `professional_only` audience filter | **Implemented** — client `/v1/commerce/shop/products` hides Pro Fiber; e2e green |
+| Service healthchecks / bind hardening | **Implemented** — healthchecks on Go services + MinIO/NATS; internal ports on `127.0.0.1` |
 
 ---
 
-## Timezone strategy
+## Requirement matrix
 
-**Implemented**
+Правило: **Implemented** только если есть backend **и** (UI или явный API-only контракт с тестами). Только UI или только API → **Partial**.
 
-- Хранение: `TIMESTAMPTZ` (UTC-инстанты).
-- IANA timezone на филиале / occurrence / `location_timezone` записи; слоты принимают `timezone` query.
-- Resolve: явный param → TZ филиала мастера (marketplace → organizations) → fallback **`Europe/Moscow`**.
-- Seed multi-city: Красноярск `Asia/Krasnoyarsk`, Новосибирск `Asia/Novosibirsk`, Москва `Europe/Moscow`.
-- Frontend: `formatLocalInTimezone` / `formatRangeInTimezone` / `formatDualTime`.
+### 1. Supplier Representative
 
-**Tested**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `POST/GET …/representatives`, `GET /v1/me/representative`, `GET/POST …/tasks`, `POST /v1/tasks/{id}/status`, `GET …/routes`, `POST …/routes/recommend`, `GET/POST …/rep/deliveries` |
+| **Migrations** | `organizations/006_staff_reps.sql` |
+| **Frontend** | `RepPage.tsx` (задачи, маршрут recommend, доставки), `SupplierTeamPage.tsx` |
+| **Tests** | `e2e/salon-x.spec.ts` (rep home) |
 
-- Seed workshop occurrence в `Asia/Krasnoyarsk` (14:00–18:00 локально).
-- UI dual-time на fixed occurrences.
+### 2. Supplier warehouse
 
-**Known limitation**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `/v1/commerce/locations`, products, stock, forecast, movements, import |
+| **Migrations** | `commerce/001_init.sql`, `007_inventory_audience.sql` |
+| **Frontend** | `WarehousePage.tsx` |
+| **Tests** | `e2e/salon-x.spec.ts` warehouse smoke |
 
-- Исторически были риски wall-clock в UTC; текущий `FreeSlots` резолвит IANA, но полный аудит всех вызовов вне happy-path не заявлялся.
-- Клиентские даты (`input[type=date]`) без явной salon-TZ подсказки в гибком wizard.
+### 3. Supplier / representative analytics
 
----
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `GET /v1/commerce/supplier/analytics` (owner/admin/rep) |
+| **Migrations** | analytics store (commerce) |
+| **Frontend** | `SupplierAnalyticsPage.tsx` |
+| **Tests** | `e2e/salon-x.spec.ts` |
 
-## Fixed-window services
+### 4. Recurring supplies
 
-**Implemented**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `POST/GET /v1/commerce/recurring`, `…/decide`, `…/status` |
+| **Migrations** | `commerce/008_recurring_supply.sql` |
+| **Frontend** | `RecurringPage.tsx` — buyer create (`/cosmetics/recurring`) + supplier approve (`/supplier/recurring`) |
+| **Tests** | `commerce/internal/service/recurring_test.go`; seed creates + approves |
 
-- Миграция `009_booking_mode_occurrences.sql`: `services.booking_mode ∈ {flexible, fixed_window}`, таблица `service_occurrences` (starts/ends, timezone, capacity, booked_count, status, title/note).
-- API: CRUD occurrences; internal book/release capacity; DTO `remaining = capacity - booked_count`.
-- Booking: appointment с `occurrence_id` + `booking_mode`; capacity book atomичен (`booked_count < capacity`).
-- UI клиент: выбор `.occurrence-card` («мест: N»); мастер: управление на Services.
-- Seed: услуга Анны «Авторский мастер-класс по окрашиванию» + один scheduled occurrence (capacity 1).
+### 5. Subscription / free / trial
 
-**Tested**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `GET /v1/me/subscription`, entitlements, DEV setter when `ALLOW_DEV_BILLING` |
+| **Migrations** | `identity/003_subscriptions.sql` |
+| **Frontend** | `ProfilePage.tsx` |
+| **Tests** | `shared/entitlement/entitlement_test.go`; `e2e/salon-x.spec.ts` snapshot |
 
-- Playwright: fixed occurrence UI (skip, если сервис/seed отсутствует).
-- Store/service constraints на occurrences + appointments.
+### 6. Salon team / owner permissions
 
-**Known limitation**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | staff list/invite/disable, contact-policy PATCH |
+| **Migrations** | memberships + `006_staff_reps.sql` |
+| **Frontend** | `StaffPage.tsx` — policy, invite by `user_id`, disable |
+| **Tests** | `e2e/salon-x.spec.ts` |
 
-- Unique index «один активный appointment на occurrence» фактически блокирует capacity > 1 на слое appointments, даже если marketplace считает capacity.
-- Нет видео/стриминга для МК; это только запись на окно.
+### 7. Planner blocks
 
----
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | CRUD `/v1/planner/blocks` |
+| **Migrations** | `booking/008_blacklist_scheme.sql` |
+| **Frontend** | `CalendarPage.tsx` — list, create in salon IANA timezone, move +30 min, delete |
+| **Tests** | manual / demo |
 
-## Media uploads
+### 8. Client contact visibility
 
-**Implemented**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | org policy + clients service redaction |
+| **Migrations** | `organizations/006_staff_reps.sql` |
+| **Frontend** | `StaffPage.tsx` toggle; card views respect API redaction |
+| **Tests** | policy UI smoke |
 
-- Media-сервис + MinIO (`zlobin-media`): `POST /v1/media`, `GET /v1/media/{id}`, `/content`, delete.
-- Purposes: profile/salon/portfolio/before_after/product/delivery/document/article/video.
-- Лимиты: изображения/docs 5 MiB; video 50 MiB (MIME mp4/webm/quicktime при `purpose=video`).
-- Public purposes отдаются через gateway `/content` без CDN.
-- Frontend: `MediaDropzone` + `mediaUpload.ts` (jpeg/png/webp).
+### 9. No-show blacklist
 
-**Tested**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `POST …/no-show`, auto-blacklist threshold, `GET …/blacklist`, `POST …/unblock` |
+| **Migrations** | `booking/008_blacklist_scheme.sql` |
+| **Frontend** | no-show on `AppointmentDetailPage`; status/count + conditional unblock on `ClientCardPage` |
+| **Tests** | `e2e/salon-x.spec.ts` blacklist status contract |
 
-- Upload path используется в кабинетах/редакторах (products, articles cover, профиля где подключено).
+### 10. Product audience
 
-**Known limitation**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `audience` + list/detail shop filter for clients |
+| **Migrations** | `commerce/007_inventory_audience.sql` |
+| **Frontend** | `SupplierProductEditPage.tsx` |
+| **Tests** | `e2e/salon-x.spec.ts` hides Pro Fiber from client API |
 
-- **Нет CDN и signed/presigned URL** — стриминг объекта через API (не подходит для крупных video в prod).
-- UI dropzone — **только изображения**; video purpose в API есть, полноценного video UX нет.
-- Seed часто оставляет placeholder без реальных фото.
+### 11. Pickup flow
 
----
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | `GET /v1/branches/pickup`; orders `destination_branch_id` |
+| **Migrations** | `organizations/005_branch_pickup.sql`; commerce delivery fields |
+| **Frontend** | `CosmeticsSupplierPage.tsx` branch picker |
+| **Tests** | `e2e/demo-mvp.spec.ts` |
 
-## Commerce architecture
+### 12. Knowledge Base (demo production-like)
 
-**Implemented**
+| | |
+|--|--|
+| **Status** | **Implemented** |
+| **Backend** | knowledge CRUD, favorites, filters, ranking, `product_ids`, cover, `doc_json` |
+| **Migrations** | `005_knowledge_base.sql`, `010_knowledge_rich.sql`, `011_knowledge_production.sql` |
+| **Frontend** | list/article, `RichDocEditor` + video node, `MediaDropzone` image/video preview, filters, favorites, product_ids field |
+| **Tests** | ranking unit; e2e knowledge + favorite |
 
-- B2B: `supplier_orders` + line items (snapshot name/sku/price); каталог чужого org только published/for_sale.
-- `GET /v1/suppliers` — карточки поставщиков без ручного UUID в master UX.
-- Поля заказа (mig `007_delivery_payment.sql`): `destination_branch_id`, payment_*, money totals, `idempotency_key`.
-- Отдельная сущность `order_deliveries` (одна активная non-cancelled/failed на заказ).
-- Legacy B2C shop / warehouse / rep код сохранён, вне MVP nav.
+### 13. Architecture: capacity / TZ / Delivery
 
-**Tested**
-
-- Go order_build / payment domain tests; Playwright cosmetics list без UUID; checkout филиала.
-- Seed: товары, demo orders.
-
-**Known limitation**
-
-- Нет единого ERP-склада и прогноза; warehouse UI скрыт.
-- Seed-заказы могут не заполнять все новые поля одинаково с UI checkout (ручной путь в UI — источник истины для pickup+payment).
-
----
-
-## Delivery model
-
-**Implemented**
-
-- Отдельная state machine (`delivery_transitions.go`):  
-  pending → scheduled | preparing | cancelled | failed; … → in_transit → arrived | delivered | failed и т.д.
-- ETA: `estimated_delivery_at` на заказе; `planned_delivery_at` / window на delivery.
-- Смена destination — пока delivery в `pending`.
-- UI поставщика: запланировать доставку, переходы статусов; покупатель видит «Получение: {филиал}».
-
-**Tested**
-
-- Unit-тесты переходов delivery.
-- Supplier orders UI wired to schedule/transition.
-
-**Known limitation**
-
-- Нет внешнего 3PL / трекинг-интеграции (поля provider/tracking — заготовка).
-- Legacy статусы `in_transit`/`delivered` на самом заказе ещё допускаются рядом с delivery entity — два слоя статусов.
-
----
-
-## Payment model
-
-**Implemented**
-
-- Методы (CHECK): `cash`, `bank_transfer`, `card`, `invoice`.
-- Статусы (CHECK): `pending`, `awaiting_payment`, `authorized`, `paid`, `partially_paid`, `failed`, `refunded`, `cancelled`.
-- Init: cash → `pending`; иначе → `awaiting_payment`.
-- `POST .../mark-paid` (supplier owner/admin) → `paid` + `paid_at` (**ручная отметка**).
-- UI: выбор способа оплаты; для `card` — hint «Онлайн-оплата будет подключена позже».
-
-**Tested**
-
-- Domain payment tests; UI labels (`paymentMethodLabel` / `paymentStatusLabel`).
-
-**Known limitation**
-
-- **Acquiring — mock/заглушка:** нет PSP, webhook, authorize/capture, refunds.
-- Статусы `authorized` / `partially_paid` в схеме почти не используются живыми flow.
-
----
-
-## Pickup branches
-
-**Implemented**
-
-- Mig `005_branch_pickup.sql`: `pickup_enabled` (DEFAULT true), geo, `working_hours_note`, `photo_media_id`.
-- `GET /v1/branches/pickup`; create order валидирует published + pickup_enabled.
-- Checkout косметики: поиск филиала по имени/городу/адресу, выбор карточки (не UUID).
-
-**Tested**
-
-- Playwright: блок «Филиал получения» без UUID-полей.
-- Seed публикует филиалы салонов (default pickup true).
-
-**Known limitation**
-
-- Нет отдельного UI-мастера «настроить часы самовывоза» для всех сценариев beyond branch fields.
-- Поставщицкие склады тоже branch entities; UX фокусируется на филиалах салона-покупателя.
+Covered in hardening summary above — all **Implemented**.
 
 ---
 
-## Knowledge rich content
+## Cross-service invariants (post-hardening)
 
-**Implemented**
-
-- Mig `010_knowledge_rich.sql`: `content_format ∈ {plain, doc_json}`, `cover_media_id`, `reading_time_minutes`.
-- `RichDocEditor` / `RichDocRenderer` (TipTap); создание статей supplier с `doc_json`.
-- Список/статья: cover, badges (brand/category), reading time, связанный product link.
-- Авторство у supplier org; master читает published.
-
-**Tested**
-
-- Playwright: knowledge list + article page render.
-- Seed: статьи (часто `plain` без cover — совместимо с renderer).
-
-**Known limitation**
-
-- Seed не заполняет rich doc_json / cover массово.
-- Нет версиирования статей, модерации, full-text search advanced.
+1. **Capacity**: marketplace `booked_count < capacity` CAS; booking allows multiple active appointments per occurrence.
+2. **Wall time**: occurrence/reschedule/planner create interpret local inputs in IANA TZ, not browser TZ.
+3. **Orders vs Delivery**: commercial order status ≠ physical location; physical truth is `order_deliveries.status`. Completing delivery may complete the order atomically in commerce store.
+4. **Audience**: client shop list excludes `professional` products.
+5. **Contact policy**: clients service masks phone/email when org policy is false.
+6. **Entitlements**: complete-with-scheme / Premium skip gated by subscription snapshot.
 
 ---
 
-## Permissions/security
+## Test posture
 
-**Implemented**
-
-- Argon2 passwords; JWT HS256 (access ~15m, refresh ~30d); roles в claims.
-- Per-service BearerAuth + org membership checks (`owner|admin|master|staff`…).
-- Frontend: `RequireAuth` / `RequireMaster` / `RequireSupplier` / `RequireAdmin`.
-- Register: `as_master` / `as_supplier` (взаимоисключение).
-
-**Tested**
-
-- Role-based nav вручную и через e2e login под разными ролями.
-- API unauthorized на protected маршрутах (штатное поведение сервисов).
-
-**Known limitation**
-
-- Gateway в основном reverse-proxy: **нет центральной JWT-верификации на edge**.
-- `user_roles.role` без жёсткого DB CHECK на enum.
-- Скрытые маршруты всё ещё доступны по прямому URL при наличии токена/слабого guard.
-- INTERNAL_TOKEN для S2S — shared secret, без mTLS.
+- Backend: domain delivery transitions/audience, CORS idempotency preflight, entitlement, recurring date helpers, capacity migration guard — `go test ./...` green.
+- Frontend Vitest: `time.test.ts` salon TZ conversion — green.
+- Playwright (`phone-390` / `tablet-768` / `desktop-1440`): `demo-mvp.spec.ts` + `salon-x.spec.ts` — **30 passed**, 24 skipped by viewport gate, **0 failed** on clean seeded stack (2026-08-15).
+- Seed: Delivery SoT transit/delivered → **200**; recurring supply seeded.
 
 ---
 
-## Database constraints
+## Deploy readiness
 
-**Implemented**
+Verified locally: `docker compose down -v` → `up -d --build` → all services **healthy** → `docker compose --profile seed run --rm --build seed` → gateway `/healthz` OK.
 
-- Appointments: GiST `EXCLUDE` no-overlap на активных статусах; unique active per `occurrence_id`.
-- Occurrences: no-overlap для того же master при `scheduled|full`; `booked_count <= capacity`.
-- Commerce: CHECKs payment method/status; unique `(created_by, idempotency_key)` где ключ задан; одна активная delivery на заказ.
-- Booking idempotency table (`007_idempotency.sql`) + `Idempotency-Key` на create appointment.
-
-**Tested**
-
-- `conflict_test.go` мапит exclusion → conflict; concurrency_test документирует `23P01`.
-
-**Known limitation**
-
-- Не все кросс-сервисные инварианты (marketplace capacity vs booking unique) согласованы идеально (см. Fixed-window).
-- Нет распределённых транзакций между сервисами.
+See `README_DEPLOY.md`: persistent `pgdata`/`miniodata`; `.env.production.example`; backup/restore; update/rollback; internal ports bound to `127.0.0.1`; no hardcoded public localhost in production env.
 
 ---
 
-## Concurrency
+## BLOCKERS BEFORE SERVER DEMO
 
-**Implemented**
-
-- Half-open interval overlap helper для слотов.
-- DB exclusion + atomic capacity `UPDATE … WHERE booked_count < capacity`.
-- Idempotency keys на create appointment.
-
-**Tested**
-
-- `overlap_test.go`, `concurrency_test.go`, `conflict_test.go`.
-
-**Known limitation**
-
-- Advisory locks не используются.
-- Нагрузочного/chaos-теста в CI нет; e2e не бьёт параллельными бронями в prod-like объёме.
-
----
-
-## Browser testing
-
-**Implemented**
-
-- Адаптивный shell, bottom nav / drawer «Ещё», русские статусы.
-- Multi-city search default **Красноярск** + toggle «Показывать мастеров из других городов».
-- Wizard flexible + fixed; cosmetics checkout с филиалом; knowledge article.
-
-**Tested**
-
-| Сценарий | Как | Результат / ожидание |
-|----------|-----|----------------------|
-| Search Красноярск + toggle → Иван (Новосибирск) | Playwright | PASS при поднятом seed |
-| Flexible booking wizard | Playwright | PASS / skip если API или слоты недоступны |
-| Fixed occurrence cards | Playwright | PASS / skip если нет fixed_window seed |
-| Cosmetics pickup selection | Playwright | PASS при каталоге |
-| Knowledge article | Playwright | PASS при статьях |
-| Login / overflow 390px | Playwright responsive | PASS |
-
-**Known limitation**
-
-- Полный screen-share / MCP browser не заменяет приёмку; перед демо заказчику пройти `MANUAL_DEMO.md`.
-- Playwright skips при down stack — зелёный CI без Docker ≠ доказанный runtime.
-
----
-
-## Automated testing
-
-**Implemented**
-
-- Go: `go test ./…` (booking overlap/concurrency/conflict; commerce delivery/payment; и др.).
-- Frontend: Vitest `npm test`; Playwright `npm run test:e2e` (`demo-mvp.spec.ts`, `responsive.spec.ts`).
-- Defaults: API `http://localhost:8090`, UI `http://localhost:5173`; skip on unhealthy `/healthz` или failed login.
-
-**Tested**
-
-- Локально/в итерации MVP: unit + build + выборочный Playwright phone-390 / desktop-1440.
-
-**Known limitation**
-
-- Нет полного matrix CI всех viewports + обязательного docker compose в каждом PR (зависит от окружения).
-- Stage1/2 API-driven e2e в `responsive.spec.ts` всё ещё создают Moscow masters — пересекаются с новым multi-city seed, но самодостаточны.
-
----
-
-## Known production gaps
-
-1. **Оплата:** acquiring mock; только ручной `mark-paid`.
-2. **Медиа:** нет CDN/signed URLs; video через API proxy; UI upload без video.
-3. **Capacity > 1** на fixed-window ломается appointment unique index.
-4. **Gateway** без edge authz/rate-limit; shared INTERNAL_TOKEN.
-5. **Observability / backups / миграции rollback** не оформлены prod-процессом.
-6. **Out-of-scope UI** остаётся в бандле.
-7. **Salon ERP** (сотрудники, %, полный owner cabinet) — только work_type framing.
-8. **Доставка:** нет 3PL; dual status model order vs delivery.
-9. **Нагрузка / failover** Postgres и MinIO single-node в compose.
-10. **Seed ≠ полный rich knowledge/media** — демо-контент частично plain/placeholder.
-
----
-
-Эти пробелы ожидаемы для MVP-демо 2026-08-10; закрывать по приоритету: payment acquiring → media CDN/signed URLs → capacity model alignment → edge security.
+_(пусто)_

@@ -55,6 +55,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("DELETE /v1/appointments/{id}/photos/{photoID}", auth(http.HandlerFunc(a.deletePhoto)))
 	mux.Handle("GET /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.getAutoConfirm)))
 	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
+	mux.Handle("GET /v1/me/clients/{clientUserID}/blacklist", auth(http.HandlerFunc(a.getBlacklistStatus)))
 	mux.Handle("POST /v1/me/clients/{clientUserID}/unblock", auth(http.HandlerFunc(a.unblockClient)))
 	a.registerReportRoutes(mux, auth)
 }
@@ -444,6 +445,24 @@ func (a *API) unblockClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"unblocked": true})
+}
+
+func (a *API) getBlacklistStatus(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client id"))
+		return
+	}
+	blocked, noShows, err := a.svc.ClientBlacklistStatus(r.Context(), claims.UserID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"blocked":       blocked,
+		"no_show_count": noShows,
+	})
 }
 
 func (a *API) cancel(w http.ResponseWriter, r *http.Request) {

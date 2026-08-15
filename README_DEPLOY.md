@@ -1,107 +1,142 @@
 # README_DEPLOY.md — Salon-X на сервере
 
-Развёртывание через Docker Compose. Приложение: SPA (nginx) + API gateway + микросервисы + PostgreSQL + MinIO.
+Развёртывание через Docker Compose. SPA (nginx) + API gateway + микросервисы + PostgreSQL + MinIO.
 
-## Требования к серверу
+## Требования
 
-- Docker Engine 24+ и Docker Compose v2
+- Docker Engine 24+ / Compose v2
 - 2 vCPU, 4 GB RAM минимум (8 GB комфортно)
-- 20 GB диск (тома Postgres и MinIO)
-- Открытые порты: `80`/`443` (если ставите reverse proxy), либо `5173` (UI) и `8090` (API) как в compose
+- 20+ GB диск (тома `pgdata`, `miniodata`)
+- Порты: `5173` (UI), `8090` (API) — или reverse proxy на 80/443
 
-## Подготовка
+## Подготовка secrets (обязательно на сервере)
 
 ```bash
 git clone <repo-url> salon-x && cd salon-x
-cp .env.example .env
-# отредактируйте .env: JWT_SECRET, INTERNAL_TOKEN, публичные URL, CORS
+cp .env.production.example .env
 ```
+
+В `.env` **замените** defaults:
+
+| Переменная | Правило |
+|------------|---------|
+| `JWT_SECRET` | ≥32 случайных символа (`openssl rand -hex 32`) |
+| `INTERNAL_TOKEN` | отдельный случайный токен S2S |
+| `VITE_API_BASE_URL` | **публичный** URL API (не `localhost`) |
+| `PUBLIC_APP_URL` | публичный URL SPA |
+| `CORS_ORIGINS` | origins SPA через запятую |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | не `minioadmin` в prod |
+| `POSTGRES_PASSWORD` | случайный пароль Postgres superuser |
+| `SEED_PASSWORD` | пароль demo-аккаунтов (или отключите seed на prod) |
+| `APP_ENV` | `production` |
+| `ALLOW_DEV_BILLING` | `false` на сервере |
+
+Compose defaults с `localhost` — **только для локальной разработки**. Frontend **bake-ит** `VITE_API_BASE_URL` на этапе `docker build`; после смены URL нужен rebuild frontend.
+Postgres, MinIO и NATS по умолчанию публикуются только на `127.0.0.1` через `INTERNAL_BIND_HOST`; не выставляйте их наружу без firewall.
 
 Не коммитьте реальный `.env`.
 
-## Переменные
-
-См. `.env.example`:
-
-| Переменная | Назначение |
-|------------|------------|
-| `JWT_SECRET` | Подпись JWT, ≥32 символа |
-| `INTERNAL_TOKEN` | S2S вызовы |
-| `VITE_API_BASE_URL` | Публичный URL API для браузера (bake в frontend image) |
-| `PUBLIC_APP_URL` | Публичный URL SPA |
-| `CORS_ORIGINS` | Разрешённые origin, через запятую |
-| `SEED_PASSWORD` | Пароль demo-аккаунтов |
-| `ROUTING_PROVIDER` | `haversine` (по умолчанию) или `osrm` |
-| `OSRM_BASE_URL` | Если выбран OSRM |
-| `ALLOW_DEV_BILLING` | `true` для DEV смены trial/premium |
-| `APP_ENV` | `development` / `production` |
-
-На сервере `VITE_API_BASE_URL` должен быть **публичным** URL API (не `localhost`), иначе браузеры с телефона не достучатся до API.
-
-## Старт
+## Чистый старт
 
 ```bash
-docker compose down -v   # чистый старт (удалит данные)
+docker compose down -v          # удалит volumes Postgres/MinIO
 docker compose up -d --build
-docker compose --profile seed run --rm seed
+# дождаться healthy gateway:
+docker compose ps
+curl -fsS http://127.0.0.1:8090/healthz
+docker compose --profile seed run --rm --build seed
 ```
 
-Health:
+Миграции применяются автоматически при старте каждого сервиса из `backend/services/*/migrations`.
 
-- API: `GET http://<host>:8090/healthz`
-- UI: `http://<host>:5173`
+### Healthchecks
+
+| Компонент | Проверка |
+|-----------|----------|
+| Postgres | compose `healthcheck` (`pg_isready`) |
+| Все Go services + Gateway | `GET /healthz`; gateway ждёт `service_healthy` всех upstream |
+| UI | `http://<host>:5173` |
 
 Логи: `docker compose logs -f gateway frontend postgres`
 
-Перезапуск: `docker compose restart`
+## Persistent volumes
 
-Обновление:
+| Volume | Данные |
+|--------|--------|
+| `pgdata` | все service DBs в одном Postgres |
+| `miniodata` | медиа (обложки KB, фото товаров, video) |
+
+`down` без `-v` сохраняет данные. `down -v` — полный wipe.
+
+## Backup
+
+Postgres:
 
 ```bash
-git pull
+docker compose exec -T postgres pg_dumpall -U postgres > backup-$(date +%F).sql
+```
+
+MinIO: скопируйте том `miniodata` или используйте `mc mirror`.
+
+## Restore
+
+На пустой стек (или после `down -v` + `up -d`):
+
+```bash
+docker compose up -d postgres
+# дождаться healthy
+docker compose exec -T postgres psql -U postgres < backup-YYYY-MM-DD.sql
 docker compose up -d --build
 ```
 
-Миграции применяются при старте сервисов из `backend/services/*/migrations`.
+Медиа: восстановите `miniodata` до старта `media`/frontend.
+
+## Update
+
+```bash
+git pull
+# при смене VITE_API_BASE_URL / CORS — правьте .env
+docker compose up -d --build
+# seed только если нужны demo-данные заново (идемпотентен по заголовкам)
+```
+
+Миграции только **вперёд**. Schema rollback = restore из backup.
+
+## Rollback
+
+1. Checkout предыдущего git tag/commit
+2. `docker compose up -d --build`
+3. Если данные несовместимы — restore SQL dump + MinIO volume
 
 ## Reverse proxy / TLS
 
-Compose отдаёт HTTP. TLS ставьте на nginx/caddy/traefik перед контейнерами.
-
-Рекомендуемая схема:
+Compose отдаёт HTTP. TLS на nginx/caddy/traefik:
 
 - `https://app.example.com` → frontend `:5173`
 - `https://api.example.com` → gateway `:8090`
 
-Нужны заголовки:
+Нужны `X-Forwarded-*`, `client_max_body_size 64m` для media/video.
 
-- `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`
-- WebSocket (если понадобится): `Upgrade`, `Connection`
-- `client_max_body_size 64m` для медиа
+Frontend build: `VITE_API_BASE_URL=https://api.example.com`.
 
-Frontend собирается с `VITE_API_BASE_URL=https://api.example.com`.
+## Hardcoded localhost check
 
-## Бэкап / restore Postgres
+Перед серверным демо убедитесь, что в **runtime** `.env` / bake args **нет** `localhost` для:
 
-```bash
-docker compose exec -T postgres pg_dumpall -U postgres > backup.sql
-# restore на пустой том:
-docker compose exec -T postgres psql -U postgres < backup.sql
-```
+- `VITE_API_BASE_URL`
+- `PUBLIC_APP_URL`
+- `CORS_ORIGINS` (должен совпадать с публичным SPA origin)
 
-MinIO: том `miniodata`.
+Поиск в репо (`localhost` в compose defaults) — нормален для local-dev; сервер обязан переопределять.
 
-## Rollback
+## Demo seed accounts
 
-- Код: предыдущий git tag + `docker compose up -d --build`
-- Данные: restore dump. SQL-миграции **вперёд**; отдельного down-скрипта нет — откатывайте из бэкапа.
-
-## Seed аккаунты
-
-Пароль: `SEED_PASSWORD` (по умолчанию `Password123!`).
+Пароль: `SEED_PASSWORD` (default `Password123!`).
 
 - Clients: `client1@demo.local` …
 - Masters: `master1@demo.local` …
 - Salon admin: `admin1@demo.local`
 - Supplier: `supplier1@demo.local`
 - Representatives: `rep1@demo.local`, `rep2@demo.local`
+
+На production demo seed обычно не запускают.

@@ -20,6 +20,12 @@ type Delivery = {
   items: Array<{ product_id: string; product_name: string; brand: string; qty: number; qty_delivered: number; price_minor: number }>
 }
 
+type Analytics = {
+  revenue_minor?: number
+  orders_count?: number
+  unpaid_orders?: number
+}
+
 export function RepPage() {
   const { accessToken } = useAuth()
   const qc = useQueryClient()
@@ -54,6 +60,74 @@ export function RepPage() {
       { token: accessToken },
     ),
     enabled: Boolean(accessToken && orgId),
+  })
+
+  const myRep = useQuery({
+    queryKey: ['my-rep'],
+    queryFn: () => apiRequest<{ id: string }>(`/v1/me/representative`, { token: accessToken }),
+    enabled: Boolean(accessToken),
+    retry: false,
+  })
+
+  const routes = useQuery({
+    queryKey: ['rep-routes', orgId],
+    queryFn: () =>
+      apiRequest<{ items: Array<{ id: string; status: string; total_km?: number; total_minutes?: number; label?: string }> }>(
+        `/v1/organizations/${orgId}/routes`,
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken && orgId),
+  })
+
+  const analytics = useQuery({
+    queryKey: ['rep-analytics', orgId],
+    queryFn: () =>
+      apiRequest<Analytics>(`/v1/commerce/supplier/analytics?organization_id=${orgId}`, {
+        token: accessToken,
+      }),
+    enabled: Boolean(accessToken && orgId),
+  })
+
+  const recommend = useMutation({
+    mutationFn: () =>
+      apiRequest(`/v1/organizations/${orgId}/routes/recommend`, {
+        token: accessToken,
+        body: {
+          representative_id: myRep.data?.id,
+          date: new Date().toISOString().slice(0, 10),
+          origin_lat: 56.0153,
+          origin_lng: 92.8932,
+          stops: (deliveries.data?.items ?? [])
+            .filter((d) => d.status === 'in_delivery')
+            .slice(0, 5)
+            .map((d) => ({
+              kind: 'delivery',
+              priority: 'normal',
+              expected_duration_min: 20,
+              latitude: 56.01,
+              longitude: 92.87,
+              // address kept for display only on client
+              note: d.delivery_address,
+            })),
+        },
+      }),
+    onSuccess: async () => {
+      setOk('Рекомендованный маршрут построен')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['rep-routes'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось построить маршрут'),
+  })
+
+  const taskDone = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/tasks/${id}/status`, {
+        token: accessToken,
+        body: { status: 'done' },
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['rep-tasks'] })
+    },
   })
 
   const complete = useMutation({
@@ -110,9 +184,59 @@ export function RepPage() {
           {(tasks.data?.items ?? []).map((t) => (
             <article key={t.id} className="list-item row between">
               <strong>{t.title}</strong>
-              <span className={`badge ${statusBadgeClass(t.status)}`}>{t.status === 'open' ? 'Открыта' : t.status}</span>
+              <div className="row">
+                <span className={`badge ${statusBadgeClass(t.status)}`}>{t.status === 'open' ? 'Открыта' : t.status}</span>
+                {t.status === 'open' && (
+                  <button className="btn btn-secondary btn-compact" type="button" onClick={() => taskDone.mutate(t.id)}>
+                    Готово
+                  </button>
+                )}
+              </div>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Маршрут</h2>
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={recommend.isPending || !myRep.data?.id}
+          onClick={() => recommend.mutate()}
+        >
+          Построить рекомендованный маршрут
+        </button>
+        {(routes.data?.items ?? []).length === 0 && <p className="muted">Маршрутов пока нет</p>}
+        <div className="list">
+          {(routes.data?.items ?? []).map((r) => (
+            <article key={r.id} className="list-item">
+              <strong>{r.label || 'Маршрут'}</strong>
+              <p className="muted">
+                {[r.total_km != null ? `${r.total_km.toFixed(1)} км` : null, r.total_minutes != null ? `${r.total_minutes} мин` : null, r.status]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Аналитика поставщика</h2>
+        <div className="cards-grid">
+          <article className="card stack-sm">
+            <span className="muted">Выручка</span>
+            <strong>{formatMoney(analytics.data?.revenue_minor ?? 0)}</strong>
+          </article>
+          <article className="card stack-sm">
+            <span className="muted">Заказы</span>
+            <strong>{analytics.data?.orders_count ?? 0}</strong>
+          </article>
+          <article className="card stack-sm">
+            <span className="muted">Не оплачено</span>
+            <strong>{analytics.data?.unpaid_orders ?? 0}</strong>
+          </article>
         </div>
       </section>
 

@@ -5,50 +5,54 @@
 ```bash
 docker compose down -v
 docker compose up -d --build
-docker compose --profile seed run --rm seed
+curl -fsS http://127.0.0.1:8090/healthz
+docker compose --profile seed run --rm --build seed
 ```
 
-Откройте UI по README_DEPLOY.md. Пароль всех demo-аккаунтов: **`Password123!`**
+UI: `http://localhost:5173` (или публичный URL из README_DEPLOY).
+Пароль demo: **`Password123!`**
+
+Проверьте viewports: **390 / 768 / 1366+**.
 
 ---
 
-## 1. Клиент и Salon-X (2 мин)
+## 1. Клиент (2 мин)
 
-`client1@demo.local` — поиск в Красноярске, запись к Анне, auto-confirm если пара уже знакома.
+`client1@demo.local` — поиск (Красноярск), запись к Анне; fixed_window МК с `мест: N` (capacity > 1).
 
-## 2. База знаний (2 мин)
+## 2. База знаний (3 мин)
 
-`master1@demo.local` → **База знаний**: фильтры категория/бренд/поиск, чип «Колористика», избранное. Открыть rich-статью.
+`master1@demo.local` → **База знаний**: фильтр «Колористика», избранное, статья с cover / inline image / video / product links.
 
-`supplier1@demo.local` → создать/править статью (drag-and-drop обложка, редактор).
+`supplier1@demo.local` → новая статья: dropzone обложки, video в редакторе, UUID товаров.
 
-## 3. Склад и товары (2 мин)
+## 3. Склад, заказы, Delivery SoT (3 мин)
 
-Поставщик → **Товары** (крупные карточки) → товар с аудиторией «только профессионалы». **Склад** / остатки. **Аналитика** — выручка с заказов, не из текущей цены.
+Поставщик → **Товары** / **Склад** / **Аналитика**.
+**Заказы**: коммерческие статусы до `ready_for_dispatch`; физика только через Delivery (preparing → in_transit → arrived → delivered). Legacy order `in_transit`/`delivered` из UI не переводятся.
 
 ## 4. Представитель (3 мин)
 
 `supplier1` → **Представители**.  
-`rep1@demo.local` → маршрут/доставки, задачи, календарь. Сумма «к получению» при закрытии доставки.
+`rep1@demo.local` → задачи (Готово), **Построить рекомендованный маршрут**, доставки.
 
 ## 5. Владелец салона (2 мин)
 
-`master1` (owner) → **Команда**, политика контактов клиентов, календарь через записи.
+`master1` → **Команда**: политика контактов, приглашение по user_id, отключение.
+**Календарь**: блок планера create/move/delete.
+Карточка клиента: разблокировка после no-show blacklist.
 
-## 6. Планер и схема визита (2 мин)
+## 6. Регулярные поставки / подписка / pickup (3 мин)
 
-Календарь: день + блоки. Завершение визита — схема техники/материалов (Free обязательна, trial Premium может skip).
+`master1` → `/cosmetics/recurring` — заявка.
+`supplier1` → `/supplier/recurring` — approve.
+Профиль: subscription / trial.
+Checkout косметики: филиал получения без UUID.
 
-## 7. Самовывоз и видимость (2 мин)
+## 7. Audience (1 мин)
 
-Косметика → checkout: ближайший филиал / смена. Клиент не видит professional-only.
+Товар Pro Fiber не виден клиенту в shop API; виден мастеру/поставщику.
 
-## 8. Регулярные поставки и подписка (2 мин)
+---
 
-Поставщик → **Регулярные поставки** (pending/active). Профиль → план Free/Premium trial 3 месяца, подсказки.
-
-## 9. No-show (1 мин)
-
-Мастер: две неявки → локальный blacklist, новая запись блокируется API. Unblock в карточке клиента.
-
-Не править БД руками. Seed идемпотентен.
+После демо: сверьте `FINAL_REPORT.md` → **BLOCKERS BEFORE SERVER DEMO** должен быть пустым.

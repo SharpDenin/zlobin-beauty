@@ -5,6 +5,8 @@ import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import Placeholder from '@tiptap/extension-placeholder'
 import { ApiError, API_BASE_URL } from '@/shared/api/client'
+import { uploadMedia } from '@/shared/lib/mediaUpload'
+import { Video } from '@/shared/ui/tiptapVideo'
 
 type Props = {
   value?: JSONContent | null
@@ -34,6 +36,7 @@ export function RichDocEditor({
         HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
       }),
       Image.configure({ allowBase64: false }),
+      Video,
       Placeholder.configure({ placeholder }),
     ],
     content: value ?? { type: 'doc', content: [{ type: 'paragraph' }] },
@@ -64,27 +67,32 @@ export function RichDocEditor({
       const file = input.files?.[0]
       if (!file) return
       try {
-        const body = new FormData()
-        body.append('file', file)
-        body.append('purpose', imagePurpose)
-        const res = await fetch(`${API_BASE_URL}/v1/media`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body,
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) {
-          throw new ApiError(
-            data?.error?.message ?? 'Не удалось загрузить изображение',
-            data?.error?.code ?? 'error',
-            res.status,
-          )
-        }
-        const mediaId = data.id as string
-        const src = `${API_BASE_URL}/v1/media/${mediaId}/content`
+        const res = await uploadMedia(file, imagePurpose, token)
+        const src = `${API_BASE_URL}/v1/media/${res.id}/content`
         editor.chain().focus().setImage({ src, alt: file.name }).run()
+      } catch (e) {
+        if (e instanceof ApiError) {
+          // parent forms handle toast; keep editor usable
+        }
+      }
+    }
+    input.click()
+  }
+
+  async function uploadVideo() {
+    if (!editor || !token) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'video/mp4,video/webm,video/quicktime'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+      try {
+        const res = await uploadMedia(file, 'video', token, undefined, { allowVideo: true })
+        const src = `${API_BASE_URL}/v1/media/${res.id}/content`
+        editor.chain().focus().setVideo({ src, title: file.name }).run()
       } catch {
-        // Keep editor usable; toast-level UX is handled by parent forms.
+        /* keep editor usable */
       }
     }
     input.click()
@@ -156,6 +164,9 @@ export function RichDocEditor({
         </button>
         <button type="button" disabled={disabled || !token} onClick={() => void uploadImage()}>
           Изображение
+        </button>
+        <button type="button" disabled={disabled || !token} onClick={() => void uploadVideo()}>
+          Видео
         </button>
       </div>
       <EditorContent editor={editor} className="rich-doc-surface" />

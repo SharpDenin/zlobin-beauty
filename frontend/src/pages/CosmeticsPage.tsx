@@ -38,7 +38,10 @@ export function CosmeticsPage() {
           <h1>Косметика</h1>
           <p className="muted">Поставщики для салона «{buyerOrg?.organization.name}»</p>
         </div>
-        <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Мои заказы</Link>
+        <div className="row">
+          <Link className="btn btn-secondary btn-compact" to="/cosmetics/recurring">Регулярные поставки</Link>
+          <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Мои заказы</Link>
+        </div>
       </div>
 
       {suppliers.isLoading && <div className="state-box">Загрузка поставщиков…</div>}

@@ -99,6 +99,14 @@ export function ClientCardPage() {
       }),
     enabled: Boolean(canMaster && clientUserId && accessToken),
   })
+  const blacklist = useQuery({
+    queryKey: ['client-blacklist', clientUserId],
+    queryFn: () =>
+      apiRequest<{ blocked: boolean; no_show_count: number }>(`/v1/me/clients/${clientUserId}/blacklist`, {
+        token: accessToken,
+      }),
+    enabled: Boolean(canMaster && clientUserId && accessToken),
+  })
   const setAutoConfirm = useMutation({
     mutationFn: (auto_confirm: boolean) =>
       apiRequest(`/v1/me/clients/${clientUserId}/auto-confirm`, {
@@ -112,6 +120,19 @@ export function ClientCardPage() {
       await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+  })
+
+  const unblock = useMutation({
+    mutationFn: () =>
+      apiRequest(`/v1/me/clients/${clientUserId}/unblock`, {
+        token: accessToken,
+      }),
+    onSuccess: async () => {
+      setOk('Клиент разблокирован')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['client-blacklist', clientUserId] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось разблокировать'),
   })
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
@@ -184,6 +205,26 @@ export function ClientCardPage() {
               />
               <span>Автоподтверждение для этого клиента</span>
             </label>
+          )}
+        </section>
+      )}
+
+      {canMaster && card.user_id && (
+        <section className="card stack">
+          <h2>Чёрный список (no-show)</h2>
+          <p className="muted">
+            No-show: {blacklist.data?.no_show_count ?? 0} · статус:{' '}
+            {blacklist.data?.blocked ? 'заблокирован' : 'доступна запись'}
+          </p>
+          {blacklist.data?.blocked && (
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={unblock.isPending}
+              onClick={() => unblock.mutate()}
+            >
+              Разблокировать клиента
+            </button>
           )}
         </section>
       )}

@@ -97,6 +97,7 @@ export function App() {
                   <Route path="/services/:id" element={<ServicesPage />} />
                   <Route path="/cosmetics" element={<CosmeticsPage />} />
                   <Route path="/cosmetics/orders" element={<CosmeticsOrdersPage />} />
+                  <Route path="/cosmetics/recurring" element={<RecurringPage />} />
                   <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
                   <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
                   <Route path="/staff" element={<StaffPage />} />

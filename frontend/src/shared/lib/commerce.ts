@@ -15,7 +15,15 @@ export type BranchCard = {
 }
 
 export type OrgItem = {
-  organization: { id: string; name: string; type: string; published?: boolean; description?: string; delivery_note?: string }
+  organization: {
+    id: string
+    name: string
+    type: string
+    published?: boolean
+    description?: string
+    delivery_note?: string
+    masters_see_client_contacts?: boolean
+  }
   branches: BranchCard[]
   roles: string[]
 }

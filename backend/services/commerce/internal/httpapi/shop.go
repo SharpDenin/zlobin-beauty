@@ -34,6 +34,12 @@ func (a *API) registerShopRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 }
 
 func (a *API) listShopProducts(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	professional := hasProfessionalRole(roles)
 	q := r.URL.Query().Get("q")
 	brand := r.URL.Query().Get("brand")
 	limit := 50
@@ -49,12 +55,20 @@ func (a *API) listShopProducts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, p := range items {
+		if !domain.ProductVisibleTo(p.Audience, professional) {
+			continue
+		}
 		out = append(out, shopProductDTO(p))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) getShopProduct(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
@@ -63,6 +77,10 @@ func (a *API) getShopProduct(w http.ResponseWriter, r *http.Request) {
 	p, err := a.svc.GetShopProduct(r.Context(), id)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if !domain.ProductVisibleTo(p.Audience, hasProfessionalRole(roles)) {
+		httpx.WriteError(w, r, a.log, apperr.NotFound("product not found"))
 		return
 	}
 	variants, err := a.svc.ListShopProductVariants(r.Context(), id)
@@ -83,6 +101,16 @@ func shopProductDTO(p domain.ShopProduct) map[string]any {
 	dto := productDTO(p.Product)
 	dto["available"] = p.Available
 	return dto
+}
+
+func hasProfessionalRole(roles []string) bool {
+	for _, role := range roles {
+		switch role {
+		case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
+			return true
+		}
+	}
+	return false
 }
 
 func (a *API) getCart(w http.ResponseWriter, r *http.Request) {

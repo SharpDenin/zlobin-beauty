@@ -758,6 +758,18 @@ func (s *Service) UnblockClient(ctx context.Context, masterID, clientID uuid.UUI
 	return nil
 }
 
+func (s *Service) ClientBlacklistStatus(ctx context.Context, masterID, clientID uuid.UUID) (bool, int, error) {
+	blocked, err := s.store.IsBlacklisted(ctx, masterID, clientID)
+	if err != nil {
+		return false, 0, apperr.Internal(err)
+	}
+	noShows, err := s.store.CountNoShows(ctx, masterID, clientID)
+	if err != nil {
+		return false, 0, apperr.Internal(err)
+	}
+	return blocked, noShows, nil
+}
+
 func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uuid.UUID, startsAt time.Time) (*domain.Appointment, error) {
 	if startsAt.Before(s.now().UTC()) {
 		return nil, apperr.Validation("starts_at must be in the future")

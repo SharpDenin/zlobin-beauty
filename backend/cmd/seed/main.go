@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"strings"
 	"time"
@@ -178,7 +180,7 @@ func main() {
 		log.Printf("ok supplier representatives")
 	}
 
-	if err := seedKnowledge(client, base, supplier1, "Поставщик Профи", sup1Org); err != nil {
+	if err := seedKnowledge(client, base, supplier1, "Поставщик Профи", sup1Org, products1); err != nil {
 		log.Printf("warn knowledge: %v", err)
 	} else {
 		log.Printf("ok knowledge articles (supplier-authored)")
@@ -607,9 +609,9 @@ func seedFixedWindowWorkshop(c *http.Client, base string, user authUser, orgID, 
 		"starts_at":  startsLocal.UTC().Format(time.RFC3339),
 		"ends_at":    endsLocal.UTC().Format(time.RFC3339),
 		"timezone":   "Asia/Krasnoyarsk",
-		"capacity":   1,
+		"capacity":   3,
 		"title":      workshopName,
-		"note":       "Демо fixed_window occurrence (seed)",
+		"note":       "Демо fixed_window occurrence capacity=3 (Salon-X)",
 	}, &created)
 	if err != nil {
 		return err
@@ -823,51 +825,86 @@ func ensureLocation(c *http.Client, base string, user authUser, orgID, name, kin
 
 // --- knowledge ---
 
-func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID string) error {
-	docJSON := `{"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Заголовок"}]},{"type":"paragraph","content":[{"type":"text","text":"Текст статьи"}]}]}`
-	articles := []struct {
+func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID string, productIDs []string) error {
+	coverID, err := uploadSeedPNG(c, base, user.Token, "article", "kb-cover.png")
+	if err != nil {
+		log.Printf("warn kb cover upload: %v", err)
+	}
+	inlineID, err := uploadSeedPNG(c, base, user.Token, "article", "kb-inline.png")
+	if err != nil {
+		log.Printf("warn kb inline upload: %v", err)
+	}
+	videoID, err := uploadSeedWebM(c, base, user.Token)
+	if err != nil {
+		log.Printf("warn kb video upload: %v (articles still seeded)", err)
+	}
+
+	apiMedia := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		return base + "/v1/media/" + id + "/content"
+	}
+
+	richDoc := func(title, body string) string {
+		nodes := []map[string]any{
+			{"type": "heading", "attrs": map[string]any{"level": 2}, "content": []map[string]any{{"type": "text", "text": title}}},
+			{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": body}}},
+			{"type": "bulletList", "content": []map[string]any{
+				{"type": "listItem", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Диагностика и подготовка"}}}}},
+				{"type": "listItem", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Формула и время выдержки"}}}}},
+				{"type": "listItem", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Финишный уход и рекомендации дома"}}}}},
+			}},
+			{"type": "blockquote", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Проверяйте патч-тест перед агрессивным осветлением."}}}}},
+			{"type": "horizontalRule"},
+		}
+		if inlineID != "" {
+			nodes = append(nodes, map[string]any{
+				"type": "image", "attrs": map[string]any{"src": apiMedia(inlineID), "alt": "Иллюстрация протокола"},
+			})
+		}
+		if videoID != "" {
+			nodes = append(nodes, map[string]any{
+				"type": "video", "attrs": map[string]any{"src": apiMedia(videoID), "title": "Демо-ролик техники"},
+			})
+		}
+		nodes = append(nodes, map[string]any{
+			"type": "paragraph", "content": []map[string]any{{"type": "text", "marks": []map[string]any{{"type": "bold"}}, "text": "Salon-X · база знаний поставщика"}},
+		})
+		b, _ := json.Marshal(map[string]any{"type": "doc", "content": nodes})
+		return string(b)
+	}
+
+	type art struct {
 		Title, Category, Brand, Content, ContentFormat string
-	}{
-		{
-			Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
-			Content: "Краткий гид по уровням тона и фону осветления для демо базы знаний Zlobin Beauty.",
-			ContentFormat: "plain",
-		},
-		{
-			Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
-			Content: "Пошаговый протокол реконструкции волос: диагностика, нанесение, время выдержки, финальный уход.",
-			ContentFormat: "plain",
-		},
-		{
-			Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
-			Content: "Разница между 3%, 6% и 9% окислителями и рекомендации по совместимости с красками.",
-			ContentFormat: "plain",
-		},
-		{
-			Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
-			Content: "Практика поэтапного осветления, контроль фонов и защита структуры волос.",
-			ContentFormat: "plain",
-		},
-		{
-			Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
-			Content: "Какие продукты рекомендовать клиенту после окрашивания и как объяснить схему применения.",
-			ContentFormat: "plain",
-		},
-		{
-			Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
-			Content: "Подбор средств фиксации под тип волос и желаемый результат укладки.",
-			ContentFormat: "plain",
-		},
-		{
-			Title: "Rich-док: формула окрашивания", Category: "Колористика", Brand: "L'Oreal",
-			Content: docJSON,
-			ContentFormat: "doc_json",
-		},
-		{Title: "Кислотный уход vs протеиновый", Category: "Уход", Brand: "Olaplex", Content: docJSON, ContentFormat: "doc_json"},
-		{Title: "Коррекция цвета после домашнего окрашивания", Category: "Колористика", Brand: "Wella", Content: docJSON, ContentFormat: "doc_json"},
-		{Title: "Санитарные нормы рабочего места", Category: "Салон", Brand: "Salon-X", Content: docJSON, ContentFormat: "doc_json"},
-		{Title: "Подбор окислителя для седины", Category: "Продукция", Brand: "Estel", Content: docJSON, ContentFormat: "doc_json"},
-		{Title: "Летний уход: UV-защита волос", Category: "Уход", Brand: "L'Oreal", Content: docJSON, ContentFormat: "doc_json"},
+		ProductIDs                                     []string
+		WithCover                                      bool
+	}
+	articles := []art{
+		{Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
+			Content: richDoc("Тон и фон осветления", "Практический гид по уровням тона для мастеров Salon-X."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 1)},
+		{Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
+			Content: richDoc("Протокол ухода", "Диагностика → нанесение → выдержка → финиш."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 2)},
+		{Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
+			Content: richDoc("Окислители 3% / 6% / 9%", "Совместимость с крем-красками и контроль фона."), ContentFormat: "doc_json", WithCover: true},
+		{Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
+			Content: richDoc("Блонд без ломкости", "Поэтапное осветление и защита структуры."), ContentFormat: "doc_json", WithCover: true},
+		{Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
+			Content: richDoc("Рекомендации клиенту", "Что рекомендовать после окрашивания."), ContentFormat: "doc_json", WithCover: true},
+		{Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
+			Content: richDoc("Фиксация", "Подбор средств под тип волос."), ContentFormat: "doc_json"},
+		{Title: "Rich-док: формула окрашивания", Category: "Колористика", Brand: "L'Oreal",
+			Content: richDoc("Формула окрашивания", "Пример структурированной схемы с медиа."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 2)},
+		{Title: "Кислотный уход vs протеиновый", Category: "Уход", Brand: "Olaplex",
+			Content: richDoc("Кислота и протеин", "Когда какой протокол выбирать."), ContentFormat: "doc_json", WithCover: true},
+		{Title: "Коррекция цвета после домашнего окрашивания", Category: "Колористика", Brand: "Wella",
+			Content: richDoc("Коррекция", "Безопасный путь после домашнего окрашивания."), ContentFormat: "doc_json", WithCover: true},
+		{Title: "Санитарные нормы рабочего места", Category: "Салон", Brand: "Salon-X",
+			Content: richDoc("Санитария", "Чек-лист подготовки места мастера."), ContentFormat: "doc_json"},
+		{Title: "Подбор окислителя для седины", Category: "Продукция", Brand: "Estel",
+			Content: richDoc("Седины", "Процент окислителя и покрытие."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 1)},
+		{Title: "Летний уход: UV-защита волос", Category: "Уход", Brand: "L'Oreal",
+			Content: richDoc("UV-защита", "Летний протокол для окрашенных волос."), ContentFormat: "doc_json", WithCover: true},
 	}
 
 	var list struct {
@@ -892,9 +929,13 @@ func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID
 		payload := map[string]any{
 			"title": a.Title, "category": a.Category, "content": a.Content, "brand": a.Brand,
 			"author_name": authorName, "organization_id": orgID, "published": pub,
+			"content_format": a.ContentFormat, "reading_time_minutes": 4,
 		}
-		if a.ContentFormat != "" {
-			payload["content_format"] = a.ContentFormat
+		if a.WithCover && coverID != "" {
+			payload["cover_media_id"] = coverID
+		}
+		if len(a.ProductIDs) > 0 {
+			payload["product_ids"] = a.ProductIDs
 		}
 		status, err := doJSON(c, http.MethodPost, base+"/v1/knowledge", user.Token, payload, nil)
 		if err != nil {
@@ -905,6 +946,81 @@ func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID
 		}
 	}
 	return nil
+}
+
+func firstN(ids []string, n int) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) < n {
+		return ids
+	}
+	return ids[:n]
+}
+
+// Minimal 1×1 PNG (transparent).
+var seedPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+	0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+	0x42, 0x60, 0x82,
+}
+
+func uploadSeedPNG(c *http.Client, base, token, purpose, filename string) (string, error) {
+	return uploadSeedBytes(c, base, token, purpose, filename, "image/png", seedPNG)
+}
+
+// Tiny silent WebM (EBML header + empty Cluster) — enough for purpose=video acceptance demos.
+var seedWebM = []byte{
+	0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x42, 0x86, 0x81, 0x01,
+	0x42, 0xf7, 0x81, 0x01, 0x42, 0xf2, 0x81, 0x04, 0x42, 0xf3, 0x81, 0x08, 0x42, 0x82, 0x84, 0x77,
+	0x65, 0x62, 0x6d, 0x42, 0x87, 0x81, 0x02, 0x42, 0x85, 0x81, 0x02,
+}
+
+func uploadSeedWebM(c *http.Client, base, token string) (string, error) {
+	return uploadSeedBytes(c, base, token, "video", "kb-demo.webm", "video/webm", seedWebM)
+}
+
+func uploadSeedBytes(c *http.Client, base, token, purpose, filename, contentType string, data []byte) (string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	h.Set("Content-Type", contentType)
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", err
+	}
+	_ = w.WriteField("purpose", purpose)
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/media", &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("media upload %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || out.ID == "" {
+		return "", fmt.Errorf("media upload parse: %s", truncate(string(body), 200))
+	}
+	return out.ID, nil
 }
 
 // --- appointments / client cards ---
@@ -965,10 +1081,16 @@ func seedAppointments(c *http.Client, base string, client, master authUser, mast
 	}, nil)
 	log.Printf("ok auto-confirm client=%s master=%s", client.ID, master.ID)
 
-	// Complete flow so a visit appears on the client card.
+	// Complete flow so a visit appears on the client card (scheme required on Free; trial Premium may skip).
 	if appt.Status != "completed" {
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/start", master.Token, map[string]any{}, &appt)
-		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/complete", master.Token, map[string]any{}, &appt)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/complete", master.Token, map[string]any{
+			"technique": "Демо seed окрашивание",
+			"components": []map[string]any{
+				{"name": "Majirel 7.1", "brand": "L'Oreal", "qty": "30", "unit": "г", "proportion": "1:1.5"},
+			},
+			"notes": "Создано seed",
+		}, &appt)
 	}
 
 	var card struct {
@@ -1131,6 +1253,11 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 		return st
 	}
 
+	deliveryStep := func(id, step string) int {
+		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/delivery/"+step, supplier.Token, map[string]any{}, nil)
+		return st
+	}
+
 	if !have["new"] {
 		id, err := createOrder("[seed-new] Демо заказ (new)")
 		if err != nil {
@@ -1150,41 +1277,45 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 			est := time.Now().UTC().AddDate(0, 0, 3)
 			st1 := transition(id, "confirmed", nil)
 			st2 := transition(id, "picking", &est)
+			st3 := transition(id, "ready_for_dispatch", nil)
 			stPay := markPaid(id)
-			log.Printf("ok supplier order flow id=%s confirmed=%d picking=%d mark_paid=%d", id, st1, st2, stPay)
+			log.Printf("ok supplier order flow id=%s confirmed=%d picking=%d ready=%d mark_paid=%d", id, st1, st2, st3, stPay)
 		}
 	} else {
 		log.Printf("skip [seed-flow] order — already exists")
 	}
 
 	if !have["transit"] {
-		id, err := createOrder("[seed-transit] Демо заказ (→in_transit)")
+		id, err := createOrder("[seed-transit] Демо заказ (delivery in_transit)")
 		if err != nil {
 			log.Printf("warn create transit order: %v", err)
 		} else {
 			est := time.Now().UTC().AddDate(0, 0, 2)
 			_ = transition(id, "confirmed", nil)
-			_ = transition(id, "picking", &est)
 			stSched := scheduleDelivery(id)
-			st := transition(id, "in_transit", &est)
-			log.Printf("ok supplier order transit id=%s schedule=%d status_code=%d", id, stSched, st)
+			_ = transition(id, "picking", &est)
+			_ = transition(id, "ready_for_dispatch", nil)
+			st := deliveryStep(id, "in-transit")
+			log.Printf("ok supplier order transit id=%s schedule=%d in_transit=%d", id, stSched, st)
 		}
 	} else {
 		log.Printf("skip [seed-transit] order — already exists")
 	}
 
 	if !have["delivered"] {
-		id, err := createOrder("[seed-delivered] Демо заказ (→delivered)")
+		id, err := createOrder("[seed-delivered] Демо заказ (delivery delivered)")
 		if err != nil {
 			log.Printf("warn create delivered order: %v", err)
 		} else {
 			est := time.Now().UTC().AddDate(0, 0, 1)
 			_ = transition(id, "confirmed", nil)
+			stSched := scheduleDelivery(id)
 			_ = transition(id, "picking", &est)
-			_ = scheduleDelivery(id)
-			_ = transition(id, "in_transit", &est)
-			st := transition(id, "delivered", nil)
-			log.Printf("ok supplier order delivered id=%s status_code=%d", id, st)
+			_ = transition(id, "ready_for_dispatch", nil)
+			_ = deliveryStep(id, "in-transit")
+			_ = deliveryStep(id, "arrived")
+			st := deliveryStep(id, "delivered")
+			log.Printf("ok supplier order delivered via Delivery SoT id=%s schedule=%d delivered=%d", id, stSched, st)
 		}
 	} else {
 		log.Printf("skip [seed-delivered] order — already exists")

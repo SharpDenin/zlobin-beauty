@@ -8,6 +8,7 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { datetimeLocalToIso } from '@/shared/lib/time'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
@@ -24,6 +25,7 @@ type Appointment = {
   client_user_id: string
   organization_id: string
   cancel_reason?: string
+  location_timezone?: string
 }
 
 const cancelSchema = z.object({ reason: z.string().min(2, 'Укажите причину') })
@@ -235,9 +237,12 @@ export function AppointmentDetailPage() {
         )}
 
         {cancellable && (
-          <form className="stack" onSubmit={rescheduleForm.handleSubmit((v) => act.mutate({ path: `/v1/appointments/${a.id}/reschedule`, body: { starts_at: new Date(v.starts_at).toISOString() } }))}>
+          <form className="stack" onSubmit={rescheduleForm.handleSubmit((v) => act.mutate({
+            path: `/v1/appointments/${a.id}/reschedule`,
+            body: { starts_at: datetimeLocalToIso(v.starts_at, a.location_timezone || 'Europe/Moscow') },
+          }))}>
             <div className="field">
-              <label htmlFor="starts_at">Перенос · новое время (локальное)</label>
+              <label htmlFor="starts_at">Перенос · новое время (часовой пояс салона: {a.location_timezone || 'Europe/Moscow'})</label>
               <input id="starts_at" type="datetime-local" aria-invalid={Boolean(rescheduleForm.formState.errors.starts_at)} {...rescheduleForm.register('starts_at')} />
               {rescheduleForm.formState.errors.starts_at && <span className="error">{rescheduleForm.formState.errors.starts_at.message}</span>}
             </div>

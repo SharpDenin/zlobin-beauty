@@ -26,6 +26,7 @@ type Service struct {
 	clientsURL        string
 	communicationsURL string
 	commerceURL       string
+	identityURL       string
 	internalToken     string
 	httpClient        *http.Client
 	now               func() time.Time
@@ -417,6 +418,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("bad master user id"))
 	}
+	blocked, err := s.store.IsBlacklisted(ctx, masterUserID, in.ClientUserID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if blocked {
+		return nil, apperr.Forbidden("client is blacklisted for this master")
+	}
 	orgID, err := uuid.Parse(payload.Master.OrganizationID)
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("bad org id"))
@@ -718,12 +726,36 @@ func (s *Service) NoShow(ctx context.Context, appointmentID, actorUserID uuid.UU
 	if strings.TrimSpace(reason) == "" {
 		reason = "no_show"
 	}
-	return s.changeStatus(ctx, appointmentID, actorUserID, domain.StatusNoShow, reason, func(a *domain.Appointment) error {
+	a, err := s.changeStatus(ctx, appointmentID, actorUserID, domain.StatusNoShow, reason, func(a *domain.Appointment) error {
 		if a.MasterUserID != actorUserID {
 			return apperr.Forbidden("only assigned master can mark no-show")
 		}
 		return domain.Transition(a.Status, domain.StatusNoShow)
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.afterNoShow(ctx, a, actorUserID)
+	return a, nil
+}
+
+func (s *Service) afterNoShow(ctx context.Context, a *domain.Appointment, actor uuid.UUID) {
+	n, err := s.store.CountNoShows(ctx, a.MasterUserID, a.ClientUserID)
+	if err != nil || n < 2 {
+		return
+	}
+	now := s.now().UTC()
+	_ = s.store.UpsertBlacklist(ctx, a.MasterUserID, a.ClientUserID, actor, "no_show_threshold", now)
+	_ = s.store.AddBookingAudit(ctx, actor, "blacklist.auto", "client", a.ClientUserID, `{"reason":"no_show_threshold"}`, now)
+}
+
+func (s *Service) UnblockClient(ctx context.Context, masterID, clientID uuid.UUID) error {
+	now := s.now().UTC()
+	if err := s.store.UnblockClient(ctx, masterID, clientID, masterID, now); err != nil {
+		return apperr.Internal(err)
+	}
+	_ = s.store.AddBookingAudit(ctx, masterID, "blacklist.unblocked", "client", clientID, `{}`, now)
+	return nil
 }
 
 func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uuid.UUID, startsAt time.Time) (*domain.Appointment, error) {

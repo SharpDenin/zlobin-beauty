@@ -35,6 +35,7 @@ FROM products p
 WHERE p.published = true
   AND p.for_sale = true
   AND p.parent_id IS NULL
+  AND p.archived_at IS NULL
   AND ($1 = '' OR p.name ILIKE '%' || $1 || '%' OR p.brand ILIKE '%' || $1 || '%')
   AND ($2 = '' OR p.brand ILIKE $2)
 ORDER BY p.created_at DESC
@@ -68,7 +69,7 @@ WHERE sb.product_id = $1 AND sl.organization_id = p.organization_id AND sl.kind 
 func scanShopProduct(row pgx.Row) (*domain.ShopProduct, error) {
 	var sp domain.ShopProduct
 	if err := row.Scan(&sp.ID, &sp.OrganizationID, &sp.ParentID, &sp.CategoryID, &sp.Brand, &sp.Name, &sp.SKU, &sp.Description, &sp.Unit, &sp.VolumeLabel,
-		&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.ForSale, &sp.DeliveryDays, &sp.PhotoMediaID, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
+		&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.ForSale, &sp.DeliveryDays, &sp.PhotoMediaID, &sp.Audience, &sp.ArchivedAt, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -82,7 +83,7 @@ func scanShopProducts(rows pgx.Rows) ([]domain.ShopProduct, error) {
 	for rows.Next() {
 		var sp domain.ShopProduct
 		if err := rows.Scan(&sp.ID, &sp.OrganizationID, &sp.ParentID, &sp.CategoryID, &sp.Brand, &sp.Name, &sp.SKU, &sp.Description, &sp.Unit, &sp.VolumeLabel,
-			&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.ForSale, &sp.DeliveryDays, &sp.PhotoMediaID, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
+			&sp.PriceMinor, &sp.Currency, &sp.MinStock, &sp.Published, &sp.ForSale, &sp.DeliveryDays, &sp.PhotoMediaID, &sp.Audience, &sp.ArchivedAt, &sp.CreatedAt, &sp.UpdatedAt, &sp.Available); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)

@@ -44,6 +44,9 @@ export function AppointmentDetailPage() {
   const [ok, setOk] = useState<string | null>(null)
   const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
   const [afterDraft, setAfterDraft] = useState<string | null>(null)
+  const [technique, setTechnique] = useState('')
+  const [material, setMaterial] = useState('')
+  const [skipScheme, setSkipScheme] = useState(false)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -176,9 +179,39 @@ export function AppointmentDetailPage() {
             </button>
           )}
           {canComplete && (
-            <button className="btn btn-primary" type="button" disabled={act.isPending} onClick={() => act.mutate({ path: `/v1/appointments/${a.id}/complete` })}>
-              Завершить
-            </button>
+            <div className="stack">
+              <h3>Схема услуги</h3>
+              <p className="muted">На бесплатном тарифе схема обязательна. Premium trial может пропустить.</p>
+              <div className="field">
+                <label>Техника</label>
+                <input value={technique} onChange={(e) => setTechnique(e.target.value)} placeholder="Балаяж / тонирование" />
+              </div>
+              <div className="field">
+                <label>Материал / продукт</label>
+                <input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder="Majirel 7.1 + 6%" />
+              </div>
+              <label className="field-check">
+                <input type="checkbox" checked={skipScheme} onChange={(e) => setSkipScheme(e.target.checked)} />
+                <span>Пропустить (только Premium)</span>
+              </label>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={act.isPending}
+                onClick={() =>
+                  act.mutate({
+                    path: `/v1/appointments/${a.id}/complete`,
+                    body: {
+                      skipped: skipScheme,
+                      technique,
+                      components: material ? [{ name: material }] : [],
+                    },
+                  })
+                }
+              >
+                Завершить
+              </button>
+            </div>
           )}
           {canNoShow && (
             <button className="btn btn-danger" type="button" disabled={act.isPending} onClick={() => act.mutate({ path: `/v1/appointments/${a.id}/no-show`, body: { reason: 'no_show' } })}>

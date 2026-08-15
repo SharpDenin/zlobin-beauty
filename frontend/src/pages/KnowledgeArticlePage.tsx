@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
@@ -17,6 +17,7 @@ type Article = {
   brand?: string
   author_name: string
   product_id?: string | null
+  favorite?: boolean
   published?: boolean
   created_at: string
 }
@@ -24,11 +25,21 @@ type Article = {
 export function KnowledgeArticlePage() {
   const { id } = useParams()
   const { accessToken } = useAuth()
+  const qc = useQueryClient()
 
   const query = useQuery({
     queryKey: ['knowledge', id],
     queryFn: () => apiRequest<Article>(`/v1/knowledge/${id}`, { token: accessToken }),
     enabled: Boolean(accessToken && id),
+  })
+
+  const fav = useMutation({
+    mutationFn: () =>
+      apiRequest(`/v1/knowledge/${id}/favorite`, {
+        method: query.data?.favorite ? 'DELETE' : 'POST',
+        token: accessToken,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['knowledge', id] }),
   })
 
   if (query.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
@@ -70,6 +81,9 @@ export function KnowledgeArticlePage() {
             .filter(Boolean)
             .join(' · ')}
         </p>
+        <button className="btn btn-secondary btn-compact" type="button" disabled={fav.isPending} onClick={() => fav.mutate()}>
+          {a.favorite ? 'Убрать из избранного' : 'В избранное'}
+        </button>
       </div>
       <section className="card">
         <RichDocRenderer

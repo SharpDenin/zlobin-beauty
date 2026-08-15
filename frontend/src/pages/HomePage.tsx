@@ -45,7 +45,7 @@ function ClientHome() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Zlobin Beauty</div>
+          <div className="brand">Salon-X</div>
           <h1>Здравствуйте, {user?.display_name}</h1>
           <p>Запишитесь к мастеру или откройте ближайшую запись.</p>
           <div className="row">
@@ -115,7 +115,7 @@ function MasterHome() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Zlobin Beauty</div>
+          <div className="brand">Salon-X</div>
           <h1>Сегодня, {user?.display_name}</h1>
           <p>Записи на день и быстрые действия.</p>
           <div className="row">

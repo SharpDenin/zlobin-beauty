@@ -1,0 +1,123 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+)
+
+type SchemeComponent struct {
+	Name       string
+	Brand      string
+	Qty        string
+	Unit       string
+	Proportion string
+	Notes      string
+}
+
+type ServiceScheme struct {
+	AppointmentID  uuid.UUID
+	Technique      string
+	Notes          string
+	CategoryFields json.RawMessage
+	Skipped        bool
+	CreatedBy      uuid.UUID
+	Components     []SchemeComponent
+}
+
+func (s *Store) UpsertServiceScheme(ctx context.Context, in ServiceScheme, now time.Time) error {
+	fields := in.CategoryFields
+	if len(fields) == 0 {
+		fields = []byte("{}")
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, created_by, created_at, updated_at)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$7)
+ON CONFLICT (appointment_id) DO UPDATE SET
+  technique=EXCLUDED.technique, notes=EXCLUDED.notes, category_fields=EXCLUDED.category_fields,
+  skipped=EXCLUDED.skipped, updated_at=EXCLUDED.updated_at`,
+		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.CreatedBy, now)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM appointment_scheme_components WHERE appointment_id=$1`, in.AppointmentID); err != nil {
+		return err
+	}
+	for i, c := range in.Components {
+		if _, err := s.pool.Exec(ctx, `
+INSERT INTO appointment_scheme_components(id, appointment_id, name, brand, qty, unit, proportion, notes, sort_order)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			ids.New(), in.AppointmentID, c.Name, c.Brand, c.Qty, c.Unit, c.Proportion, c.Notes, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PlannerBlock struct {
+	ID             uuid.UUID
+	OwnerUserID    uuid.UUID
+	OrganizationID *uuid.UUID
+	Title          string
+	Category       string
+	StartsAt       time.Time
+	EndsAt         time.Time
+	Timezone       string
+	Color          string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+func (s *Store) ListPlannerBlocks(ctx context.Context, owner uuid.UUID, from, to time.Time) ([]PlannerBlock, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, owner_user_id, organization_id, title, category, starts_at, ends_at, timezone, color, created_at, updated_at
+FROM planner_blocks
+WHERE owner_user_id=$1 AND starts_at < $3 AND ends_at > $2
+ORDER BY starts_at`, owner, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PlannerBlock
+	for rows.Next() {
+		var b PlannerBlock
+		if err := rows.Scan(&b.ID, &b.OwnerUserID, &b.OrganizationID, &b.Title, &b.Category, &b.StartsAt, &b.EndsAt, &b.Timezone, &b.Color, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) InsertPlannerBlock(ctx context.Context, b PlannerBlock) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO planner_blocks(id, owner_user_id, organization_id, title, category, starts_at, ends_at, timezone, color, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		b.ID, b.OwnerUserID, b.OrganizationID, b.Title, b.Category, b.StartsAt, b.EndsAt, b.Timezone, b.Color, b.CreatedAt, b.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetPlannerBlock(ctx context.Context, id uuid.UUID) (*PlannerBlock, error) {
+	var b PlannerBlock
+	err := s.pool.QueryRow(ctx, `
+SELECT id, owner_user_id, organization_id, title, category, starts_at, ends_at, timezone, color, created_at, updated_at
+FROM planner_blocks WHERE id=$1`, id).Scan(
+		&b.ID, &b.OwnerUserID, &b.OrganizationID, &b.Title, &b.Category, &b.StartsAt, &b.EndsAt, &b.Timezone, &b.Color, &b.CreatedAt, &b.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (s *Store) UpdatePlannerBlockTimes(ctx context.Context, id uuid.UUID, starts, ends time.Time, now time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE planner_blocks SET starts_at=$2, ends_at=$3, updated_at=$4 WHERE id=$1`, id, starts, ends, now)
+	return err
+}
+
+func (s *Store) DeletePlannerBlock(ctx context.Context, id, owner uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM planner_blocks WHERE id=$1 AND owner_user_id=$2`, id, owner)
+	return err
+}

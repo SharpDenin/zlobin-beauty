@@ -22,6 +22,7 @@ const schema = z.object({
   delivery_days: z.coerce.number().int().min(0),
   for_sale: z.boolean(),
   published: z.boolean(),
+  audience: z.enum(['all', 'professional_only']),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -57,6 +58,7 @@ export function SupplierProductEditPage() {
       delivery_days: 3,
       for_sale: true,
       published: true,
+      audience: 'all' as const,
     },
   })
 
@@ -75,6 +77,7 @@ export function SupplierProductEditPage() {
       delivery_days: p.delivery_days ?? 3,
       for_sale: p.for_sale !== false,
       published: p.published !== false,
+      audience: (p as { audience?: string }).audience === 'professional_only' ? 'professional_only' : 'all',
     })
     setPhotoMediaId(p.photo_media_id ?? null)
   }, [existing.data, form])
@@ -95,6 +98,7 @@ export function SupplierProductEditPage() {
         delivery_days: values.delivery_days,
         for_sale: values.for_sale,
         published: values.published,
+        audience: values.audience,
         photo_media_id: photoMediaId,
         min_stock: 0,
       }
@@ -220,6 +224,13 @@ export function SupplierProductEditPage() {
           <input type="checkbox" {...form.register('published')} />
           <span>Опубликован в каталоге</span>
         </label>
+        <div className="field">
+          <label>Кто видит товар</label>
+          <select {...form.register('audience')}>
+            <option value="all">Все: клиенты и мастера</option>
+            <option value="professional_only">Только профессионалы</option>
+          </select>
+        </div>
         <button className="btn btn-primary btn-block" type="submit" disabled={save.isPending}>
           {save.isPending ? 'Сохраняем…' : 'Сохранить'}
         </button>

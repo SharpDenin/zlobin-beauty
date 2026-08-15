@@ -91,7 +91,7 @@ export function SupplierHomePage() {
       <main className="page stack">
         <section className="hero">
           <div className="stack">
-            <div className="brand">Zlobin Beauty</div>
+            <div className="brand">Salon-X</div>
             <h1>Профиль поставщика</h1>
             <p>Создайте организацию, чтобы публиковать товары для салонов.</p>
           </div>
@@ -131,7 +131,7 @@ export function SupplierHomePage() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Zlobin Beauty</div>
+          <div className="brand">Salon-X</div>
           <h1>{supplierOrg?.organization.name || user?.display_name}</h1>
           <p>Новые заказы салонов и каталог товаров.</p>
           <div className="row">

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/service"
+	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 )
@@ -43,12 +45,17 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
+	mux.Handle("GET /v1/planner/blocks", auth(http.HandlerFunc(a.listPlannerBlocks)))
+	mux.Handle("POST /v1/planner/blocks", auth(http.HandlerFunc(a.createPlannerBlock)))
+	mux.Handle("PATCH /v1/planner/blocks/{id}", auth(http.HandlerFunc(a.movePlannerBlock)))
+	mux.Handle("DELETE /v1/planner/blocks/{id}", auth(http.HandlerFunc(a.deletePlannerBlock)))
 	mux.Handle("POST /v1/appointments/{id}/no-show", auth(http.HandlerFunc(a.noShow)))
 	mux.Handle("GET /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.listPhotos)))
 	mux.Handle("POST /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.addPhoto)))
 	mux.Handle("DELETE /v1/appointments/{id}/photos/{photoID}", auth(http.HandlerFunc(a.deletePhoto)))
 	mux.Handle("GET /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.getAutoConfirm)))
 	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
+	mux.Handle("POST /v1/me/clients/{clientUserID}/unblock", auth(http.HandlerFunc(a.unblockClient)))
 	a.registerReportRoutes(mux, auth)
 }
 
@@ -425,6 +432,20 @@ func (a *API) setAutoConfirm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) unblockClient(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client id"))
+		return
+	}
+	if err := a.svc.UnblockClient(r.Context(), claims.UserID, clientID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"unblocked": true})
+}
+
 func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	id, err := uuid.Parse(r.PathValue("id"))
@@ -474,7 +495,44 @@ func (a *API) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) complete(w http.ResponseWriter, r *http.Request) {
-	a.simpleAction(w, r, a.svc.Complete)
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Technique      string `json:"technique"`
+		Notes          string `json:"notes"`
+		Skipped        bool   `json:"skipped"`
+		CategoryFields any    `json:"category_fields"`
+		Components     []struct {
+			Name       string `json:"name"`
+			Brand      string `json:"brand"`
+			Qty        string `json:"qty"`
+			Unit       string `json:"unit"`
+			Proportion string `json:"proportion"`
+			Notes      string `json:"notes"`
+		} `json:"components"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	scheme := &service.VisitSchemeInput{Technique: req.Technique, Notes: req.Notes, Skipped: req.Skipped}
+	if req.CategoryFields != nil {
+		if b, err := json.Marshal(req.CategoryFields); err == nil {
+			scheme.CategoryFields = b
+		}
+	}
+	for _, c := range req.Components {
+		scheme.Components = append(scheme.Components, store.SchemeComponent{
+			Name: c.Name, Brand: c.Brand, Qty: c.Qty, Unit: c.Unit, Proportion: c.Proportion, Notes: c.Notes,
+		})
+	}
+	item, err := a.svc.CompleteVisit(r.Context(), id, claims.UserID, scheme)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
 }
 
 func (a *API) noShow(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +678,120 @@ func (a *API) deletePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.svc.DeleteAppointmentPhoto(r.Context(), photoID, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func plannerDTO(b store.PlannerBlock) map[string]any {
+	var org any
+	if b.OrganizationID != nil {
+		org = b.OrganizationID.String()
+	}
+	return map[string]any{
+		"id": b.ID.String(), "title": b.Title, "category": b.Category,
+		"starts_at": b.StartsAt, "ends_at": b.EndsAt, "timezone": b.Timezone, "color": b.Color,
+		"organization_id": org,
+	}
+}
+
+func (a *API) listPlannerBlocks(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	from, err1 := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	to, err2 := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err1 != nil || err2 != nil {
+		now := time.Now().UTC()
+		from = now.Add(-24 * time.Hour)
+		to = now.Add(14 * 24 * time.Hour)
+	}
+	items, err := a.svc.ListPlannerBlocks(r.Context(), claims.UserID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, b := range items {
+		out = append(out, plannerDTO(b))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) createPlannerBlock(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Title          string `json:"title"`
+		Category       string `json:"category"`
+		StartsAt       string `json:"starts_at"`
+		EndsAt         string `json:"ends_at"`
+		Timezone       string `json:"timezone"`
+		Color          string `json:"color"`
+		OrganizationID string `json:"organization_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	starts, err1 := time.Parse(time.RFC3339, req.StartsAt)
+	ends, err2 := time.Parse(time.RFC3339, req.EndsAt)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("starts_at and ends_at must be RFC3339"))
+		return
+	}
+	var orgID *uuid.UUID
+	if req.OrganizationID != "" {
+		id, err := uuid.Parse(req.OrganizationID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &id
+	}
+	item, err := a.svc.CreatePlannerBlock(r.Context(), claims.UserID, req.Title, req.Category, req.Timezone, req.Color, starts, ends, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, plannerDTO(*item))
+}
+
+func (a *API) movePlannerBlock(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		StartsAt string `json:"starts_at"`
+		EndsAt   string `json:"ends_at"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	starts, err1 := time.Parse(time.RFC3339, req.StartsAt)
+	ends, err2 := time.Parse(time.RFC3339, req.EndsAt)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("starts_at and ends_at must be RFC3339"))
+		return
+	}
+	item, err := a.svc.MovePlannerBlock(r.Context(), claims.UserID, id, starts, ends)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, plannerDTO(*item))
+}
+
+func (a *API) deletePlannerBlock(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.DeletePlannerBlock(r.Context(), claims.UserID, id); err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}

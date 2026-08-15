@@ -80,7 +80,10 @@ export function KnowledgeListPage() {
   const { supplierOrgId } = useSupplierOrg()
   const qc = useQueryClient()
   const [category, setCategory] = useState('')
-  const [submitted, setSubmitted] = useState('')
+  const [brand, setBrand] = useState('')
+  const [search, setSearch] = useState('')
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [submitted, setSubmitted] = useState({ category: '', brand: '', q: '', favorites: false })
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft>(emptyDraft)
@@ -88,7 +91,12 @@ export function KnowledgeListPage() {
   const published = useQuery({
     queryKey: ['knowledge', submitted],
     queryFn: () => {
-      const qs = submitted ? `?category=${encodeURIComponent(submitted)}` : ''
+      const p = new URLSearchParams()
+      if (submitted.category) p.set('category', submitted.category)
+      if (submitted.brand) p.set('brand', submitted.brand)
+      if (submitted.q) p.set('q', submitted.q)
+      if (submitted.favorites) p.set('favorites', '1')
+      const qs = p.toString() ? `?${p.toString()}` : ''
       return apiRequest<{ items: Article[] }>(`/v1/knowledge${qs}`, { token: accessToken })
     },
     enabled: Boolean(accessToken) && !isSupplier,
@@ -205,21 +213,36 @@ export function KnowledgeListPage() {
           className="card search-form"
           onSubmit={(e) => {
             e.preventDefault()
-            setSubmitted(category.trim())
+            setSubmitted({ category: category.trim(), brand: brand.trim(), q: search.trim(), favorites: favoritesOnly })
           }}
         >
+          <div className="field">
+            <label htmlFor="kb-search">Поиск</label>
+            <input id="kb-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Текст статьи" />
+          </div>
           <div className="field">
             <label htmlFor="category">Категория</label>
             <input
               id="category"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              placeholder="Например: техники, материалы"
+              placeholder="Например: колористика"
             />
           </div>
+          <div className="field">
+            <label htmlFor="brand">Бренд</label>
+            <input id="brand" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="L'Oreal" />
+          </div>
+          <div className="row">
+            <button className="chip" type="button" onClick={() => { setFavoritesOnly((v) => !v); setSubmitted((s) => ({ ...s, favorites: !favoritesOnly })) }}>
+              {favoritesOnly ? 'Избранное включено' : 'Только избранное'}
+            </button>
+            <button className="chip" type="button" onClick={() => { setCategory('Колористика'); setSubmitted((s) => ({ ...s, category: 'Колористика' })) }}>Колористика</button>
+            <button className="chip" type="button" onClick={() => { setBrand("L'Oreal"); setSubmitted((s) => ({ ...s, brand: "L'Oreal" })) }}>L'Oreal</button>
+          </div>
           <button className="btn btn-primary" type="submit">Фильтровать</button>
-          {submitted && (
-            <button className="btn btn-secondary" type="button" onClick={() => { setCategory(''); setSubmitted('') }}>
+          {(submitted.category || submitted.brand || submitted.q || submitted.favorites) && (
+            <button className="btn btn-secondary" type="button" onClick={() => { setCategory(''); setBrand(''); setSearch(''); setFavoritesOnly(false); setSubmitted({ category: '', brand: '', q: '', favorites: false }) }}>
               Сбросить
             </button>
           )}

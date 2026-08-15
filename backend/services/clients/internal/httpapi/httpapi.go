@@ -103,6 +103,7 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, c := range items {
+		a.svc.ApplyContactPolicy(r.Context(), claims.UserID, claims.Roles, &c.Card)
 		out = append(out, cardListDTO(c))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
@@ -120,6 +121,7 @@ func (a *API) byAppointment(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	a.svc.ApplyContactPolicy(r.Context(), claims.UserID, claims.Roles, card)
 	httpx.JSON(w, http.StatusOK, cardDTO(*card))
 }
 
@@ -135,6 +137,7 @@ func (a *API) getCard(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	a.svc.ApplyContactPolicy(r.Context(), claims.UserID, claims.Roles, card)
 	httpx.JSON(w, http.StatusOK, cardDTO(*card))
 }
 

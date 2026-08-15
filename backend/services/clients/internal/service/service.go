@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,13 +17,20 @@ import (
 )
 
 type Service struct {
-	store         *store.Store
-	internalToken string
-	now           func() time.Time
+	store             *store.Store
+	internalToken     string
+	organizationsURL  string
+	httpClient        *http.Client
+	now               func() time.Time
 }
 
 func New(st *store.Store, internalToken string) *Service {
-	return &Service{store: st, internalToken: internalToken, now: time.Now}
+	return &Service{store: st, internalToken: internalToken, httpClient: &http.Client{Timeout: 4 * time.Second}, now: time.Now}
+}
+
+func (s *Service) WithOrganizations(url string) *Service {
+	s.organizationsURL = strings.TrimRight(url, "/")
+	return s
 }
 
 func (s *Service) CheckInternal(token string) error {
@@ -306,4 +316,90 @@ func wrap(err error) error {
 		return apperr.Internal(err)
 	}
 	return nil
+}
+
+func hasRole(roles []string, want string) bool {
+	for _, r := range roles {
+		if r == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) ApplyContactPolicy(ctx context.Context, actor uuid.UUID, roles []string, card *domain.ClientCard) {
+	if card == nil || card.UserID == actor {
+		return
+	}
+	if hasRole(roles, "salon_owner") || hasRole(roles, "salon_admin") || hasRole(roles, "admin") {
+		return
+	}
+	if s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin") {
+		return
+	}
+	if s.mastersSeeContacts(ctx, card.OrganizationID) {
+		return
+	}
+	card.Phone = nil
+	card.Email = nil
+}
+
+func (s *Service) membershipHas(ctx context.Context, orgID, userID uuid.UUID, roles ...string) bool {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return false
+	}
+	q := url.Values{}
+	q.Set("organization_id", orgID.String())
+	q.Set("user_id", userID.String())
+	for _, role := range roles {
+		q.Add("role", role)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/internal/memberships/check?"+q.Encode(), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode >= 300 {
+		return false
+	}
+	var out struct {
+		Active bool `json:"active"`
+	}
+	if json.Unmarshal(body, &out) != nil {
+		return false
+	}
+	return out.Active
+}
+
+func (s *Service) mastersSeeContacts(ctx context.Context, orgID uuid.UUID) bool {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return true
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/internal/organizations/"+orgID.String()+"/contact-policy", nil)
+	if err != nil {
+		return true
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode >= 300 {
+		return true
+	}
+	var out struct {
+		MastersSeeClientContacts bool `json:"masters_see_client_contacts"`
+	}
+	if json.Unmarshal(body, &out) != nil {
+		return true
+	}
+	return out.MastersSeeClientContacts
 }

@@ -31,6 +31,10 @@ import { CosmeticsOrdersPage } from '@/pages/CosmeticsOrdersPage'
 import { ServicesPage } from '@/pages/ServicesPage'
 import { KnowledgeListPage } from '@/pages/KnowledgeListPage'
 import { KnowledgeArticlePage } from '@/pages/KnowledgeArticlePage'
+import { SupplierAnalyticsPage } from '@/pages/SupplierAnalyticsPage'
+import { SupplierTeamPage } from '@/pages/SupplierTeamPage'
+import { RecurringPage } from '@/pages/RecurringPage'
+import { StaffPage } from '@/pages/StaffPage'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
 
@@ -81,20 +85,21 @@ export function App() {
                 <Route path="/rep" element={<RepPage />} />
                 <Route path="/knowledge" element={<KnowledgeListPage />} />
                 <Route path="/knowledge/:id" element={<KnowledgeArticlePage />} />
+                <Route path="/calendar" element={<CalendarPage />} />
+                <Route path="/warehouse" element={<WarehousePage />} />
                 <Route element={<RequireAdmin />}>
                   <Route path="/admin/catalogs" element={<AdminCatalogsPage />} />
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
                   <Route path="/clients" element={<ClientsPage />} />
-                  <Route path="/calendar" element={<CalendarPage />} />
                   <Route path="/services" element={<ServicesPage />} />
                   <Route path="/services/:id" element={<ServicesPage />} />
                   <Route path="/cosmetics" element={<CosmeticsPage />} />
                   <Route path="/cosmetics/orders" element={<CosmeticsOrdersPage />} />
                   <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
                   <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
-                  <Route path="/warehouse" element={<WarehousePage />} />
+                  <Route path="/staff" element={<StaffPage />} />
                   <Route path="/reports" element={<SalonReportsPage />} />
                 </Route>
                 <Route element={<RequireSupplier />}>
@@ -103,6 +108,9 @@ export function App() {
                   <Route path="/supplier/products/new" element={<SupplierProductEditPage />} />
                   <Route path="/supplier/products/:id" element={<SupplierProductEditPage />} />
                   <Route path="/supplier/orders" element={<SupplierOrdersPage />} />
+                  <Route path="/supplier/analytics" element={<SupplierAnalyticsPage />} />
+                  <Route path="/supplier/team" element={<SupplierTeamPage />} />
+                  <Route path="/supplier/recurring" element={<RecurringPage />} />
                 </Route>
               </Route>
             </Route>

@@ -1,6 +1,10 @@
 package domain
 
-import "github.com/google/uuid"
+import (
+	"strings"
+
+	"github.com/google/uuid"
+)
 
 // orderSupplierTransitions defines allowed commercial + legacy order status changes.
 // Legacy in_transit/delivered remain for old clients; new flow prefers delivery status.
@@ -110,4 +114,11 @@ func ShouldPrepareDeliveryOnOrderTransition(toStatus string) bool {
 // ProductEligibleForOrder checks published + for_sale + supplier ownership.
 func ProductEligibleForOrder(published, forSale bool, productOrgID, supplierOrgID uuid.UUID) bool {
 	return published && forSale && productOrgID == supplierOrgID
+}
+
+func ProductVisibleTo(audience string, professional bool) bool {
+	if strings.EqualFold(audience, "professional_only") {
+		return professional
+	}
+	return true
 }

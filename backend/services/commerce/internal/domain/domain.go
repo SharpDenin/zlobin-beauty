@@ -23,6 +23,8 @@ const (
 	MovementReturn      = "return"
 	MovementReserve     = "reserve"
 	MovementUnreserve   = "unreserve"
+	MovementRelease     = "release"
+	MovementShipment    = "shipment"
 )
 
 // Stock balance status buckets.
@@ -114,6 +116,8 @@ type Product struct {
 	ForSale        bool
 	DeliveryDays   int
 	PhotoMediaID   *uuid.UUID
+	Audience       string
+	ArchivedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

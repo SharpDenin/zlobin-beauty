@@ -47,6 +47,15 @@ export function RepPage() {
     enabled: Boolean(accessToken && orgId),
   })
 
+  const tasks = useQuery({
+    queryKey: ['rep-tasks', orgId],
+    queryFn: () => apiRequest<{ items: Array<{ id: string; title: string; status: string; priority?: string }> }>(
+      `/v1/organizations/${orgId}/tasks`,
+      { token: accessToken },
+    ),
+    enabled: Boolean(accessToken && orgId),
+  })
+
   const complete = useMutation({
     mutationFn: (order: Delivery) =>
       apiRequest(`/v1/commerce/rep/deliveries/${order.id}/complete`, {
@@ -89,10 +98,23 @@ export function RepPage() {
 
   return (
     <main className="page stack">
-      <h1>Доставки</h1>
-      <p>Маршрут — упорядоченный список адресов. Карта появится после подключения картографической службы.</p>
+      <h1>Маршрут и задачи</h1>
+      <p className="muted">Рекомендованный маршрут: сроки, километраж и остановки. Карта — через ROUTING_PROVIDER.</p>
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
+
+      <section className="card stack">
+        <h2>Задачи</h2>
+        {(tasks.data?.items ?? []).length === 0 && <p className="muted">Нет назначенных задач</p>}
+        <div className="list">
+          {(tasks.data?.items ?? []).map((t) => (
+            <article key={t.id} className="list-item row between">
+              <strong>{t.title}</strong>
+              <span className={`badge ${statusBadgeClass(t.status)}`}>{t.status === 'open' ? 'Открыта' : t.status}</span>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section className="card stack">
         <h2>Сегодня / в пути</h2>

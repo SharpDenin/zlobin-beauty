@@ -7,12 +7,30 @@ import (
 )
 
 const (
-	RoleSystemAdmin = "system_admin"
-	RoleClient      = "client"
-	RoleMaster      = "master"
-	RoleSupplier    = "supplier"
-	RoleSalonOwner  = "salon_owner"
+	RoleSystemAdmin  = "system_admin"
+	RoleClient       = "client"
+	RoleMaster       = "master"
+	RoleSupplier     = "supplier"
+	RoleSupplierRep  = "supplier_rep"
+	RoleSalonOwner   = "salon_owner"
+	RoleSalonAdmin   = "salon_admin"
 )
+
+func HasAnyRole(roles []string, want ...string) bool {
+	set := map[string]struct{}{}
+	for _, r := range roles {
+		set[r] = struct{}{}
+	}
+	if _, ok := set[RoleSystemAdmin]; ok {
+		return true
+	}
+	for _, w := range want {
+		if _, ok := set[w]; ok {
+			return true
+		}
+	}
+	return false
+}
 
 type User struct {
 	ID            uuid.UUID
@@ -26,6 +44,32 @@ type User struct {
 	PhoneVerified bool
 	Roles         []string
 	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type Subscription struct {
+	UserID         uuid.UUID
+	Plan           string
+	Status         string
+	TrialStartedAt *time.Time
+	TrialEndsAt    *time.Time
+	StartedAt      *time.Time
+	PaidUntil      *time.Time
+	CancelledAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type DashboardLayout struct {
+	UserID    uuid.UUID
+	Widgets   []byte
+	UpdatedAt time.Time
+}
+
+type HintPrefs struct {
+	UserID        uuid.UUID
+	HintsEnabled  bool
+	Dismissed     []byte
 	UpdatedAt     time.Time
 }
 

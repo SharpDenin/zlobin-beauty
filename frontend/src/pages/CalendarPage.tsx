@@ -90,6 +90,21 @@ export function CalendarPage() {
     enabled: Boolean(accessToken),
   })
 
+  const blocks = useQuery({
+    queryKey: ['planner-blocks'],
+    queryFn: () => {
+      const from = new Date()
+      from.setDate(from.getDate() - 1)
+      const to = new Date()
+      to.setDate(to.getDate() + 21)
+      return apiRequest<{ items: Array<{ id: string; title: string; starts_at: string; ends_at: string; category: string }> }>(
+        `/v1/planner/blocks?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
+        { token: accessToken },
+      )
+    },
+    enabled: Boolean(accessToken),
+  })
+
   const dayItems = useMemo(() => {
     return [...(query.data?.items ?? [])]
       .filter((a) => dateKey(a.starts_at) === selectedDay)
@@ -195,6 +210,21 @@ export function CalendarPage() {
           </div>
         )}
         <div className="timeline">
+          {(blocks.data?.items ?? [])
+            .filter((b) => dateKey(b.starts_at) === selectedDay)
+            .map((b) => (
+              <article key={b.id} className="list-item timeline-item">
+                <div className="row between">
+                  <strong>{b.title}</strong>
+                  <span className="badge badge-default">{b.category || 'блок'}</span>
+                </div>
+                <p className="muted">
+                  {new Date(b.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                  –
+                  {new Date(b.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </article>
+            ))}
           {dayItems.map((a) => (
             <Link key={a.id} to={`/appointments/${a.id}`} className="list-item timeline-item">
               <div className="row between">

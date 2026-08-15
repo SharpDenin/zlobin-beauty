@@ -7,17 +7,18 @@ import (
 )
 
 type Organization struct {
-	ID           uuid.UUID
-	Name         string
-	Description  string
-	Type         string
-	Status       string
-	Published    bool
-	LogoMediaID  *uuid.UUID
-	DeliveryNote string
-	CreatedBy    uuid.UUID
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                        uuid.UUID
+	Name                      string
+	Description               string
+	Type                      string
+	Status                    string
+	Published                 bool
+	LogoMediaID               *uuid.UUID
+	DeliveryNote              string
+	MastersSeeClientContacts  bool
+	CreatedBy                 uuid.UUID
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 // SupplierListItem is a published supplier org with first-branch city for catalog UI.
@@ -43,8 +44,72 @@ type Branch struct {
 	Longitude         *float64
 	WorkingHoursNote  string
 	PhotoMediaID      *uuid.UUID
+	Active            bool
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+type SupplierRepresentative struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	City           string
+	Territory      string
+	Active         bool
+	SalonBranchIDs []uuid.UUID
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type RepresentativeTask struct {
+	ID               uuid.UUID
+	OrganizationID   uuid.UUID
+	RepresentativeID uuid.UUID
+	BranchID         *uuid.UUID
+	Title            string
+	Description      string
+	DueAt            *time.Time
+	Priority         string
+	Status           string
+	ResultComment    string
+	CreatedBy        uuid.UUID
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type FieldRoute struct {
+	ID               uuid.UUID
+	OrganizationID   uuid.UUID
+	RepresentativeID uuid.UUID
+	PlannedDate      time.Time
+	Status           string
+	TotalKm          float64
+	TotalMinutes     int
+	Provider         string
+	Stops            []FieldRouteStop
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type FieldRouteStop struct {
+	ID                  uuid.UUID
+	RouteID             uuid.UUID
+	Kind                string
+	BranchID            *uuid.UUID
+	DeliveryID          *uuid.UUID
+	TaskID              *uuid.UUID
+	Latitude            *float64
+	Longitude           *float64
+	DeadlineAt          *time.Time
+	WindowStart         *time.Time
+	WindowEnd           *time.Time
+	Priority            string
+	ExpectedDurationMin int
+	Status              string
+	SortOrder           int
+	KmFromPrev          float64
+	ETAAt               *time.Time
+	CreatedAt           time.Time
 }
 
 type ReadinessCheck struct {

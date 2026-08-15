@@ -23,7 +23,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
 
   return (
     <div className="page page-narrow stack" style={{ paddingTop: 48 }}>
-        <div className="brand">Zlobin Beauty</div>
+        <div className="brand">Salon-X</div>
         <h1>Вход</h1>
         <p>Войдите, чтобы искать мастеров и управлять записями.</p>
         <form

@@ -74,9 +74,13 @@ const stockStateMap: Record<string, string> = {
 const workTypeMap: Record<string, string> = {
   employee: 'Сотрудник салона',
   renter: 'Арендатор кресла',
+  chair_master: 'Арендатор кресла',
   owner: 'Владелец точки',
   salon_owner: 'Владелец салона',
+  chain_owner: 'Владелец сети',
   independent: 'Частный мастер',
+  private_master: 'Частный мастер',
+  mobile_master: 'Выездной мастер',
 }
 
 /** Prefer Russian action labels over raw status enums in supplier order buttons. */
@@ -136,9 +140,13 @@ export function workTypeLabel(workType: string | null | undefined) {
 export const WORK_TYPE_OPTIONS = [
   { value: 'employee', label: workTypeMap.employee },
   { value: 'renter', label: workTypeMap.renter },
+  { value: 'chair_master', label: workTypeMap.chair_master },
   { value: 'owner', label: workTypeMap.owner },
   { value: 'salon_owner', label: workTypeMap.salon_owner },
+  { value: 'chain_owner', label: workTypeMap.chain_owner },
   { value: 'independent', label: workTypeMap.independent },
+  { value: 'private_master', label: workTypeMap.private_master },
+  { value: 'mobile_master', label: workTypeMap.mobile_master },
 ] as const
 
 export function statusBadgeClass(status: string) {

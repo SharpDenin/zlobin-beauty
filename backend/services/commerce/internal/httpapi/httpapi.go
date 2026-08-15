@@ -48,6 +48,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("DELETE /v1/commerce/units/{id}", auth(http.HandlerFunc(a.deleteUnit)))
 	mux.Handle("POST /v1/internal/stock/consume-appointment", internal(http.HandlerFunc(a.consumeAppointment)))
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
+	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
 	mux.Handle("POST /v1/commerce/supplier-orders", auth(http.HandlerFunc(a.createSupplierOrder)))
 	mux.Handle("GET /v1/commerce/supplier-orders", auth(http.HandlerFunc(a.listSupplierOrders)))
 	mux.Handle("GET /v1/commerce/supplier-orders/{id}", auth(http.HandlerFunc(a.getSupplierOrder)))
@@ -70,6 +71,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/commerce/supplier/orders/{id}/accept", auth(http.HandlerFunc(a.acceptSupplierOrderLegacy)))
 	a.registerShopRoutes(mux, auth)
 	a.registerRecommendationRoutes(mux, auth)
+	a.registerRecurringRoutes(mux, auth)
 }
 
 // --- locations ---
@@ -149,6 +151,7 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		ForSale        *bool   `json:"for_sale"`
 		DeliveryDays   *int    `json:"delivery_days"`
 		PhotoMediaID   *string `json:"photo_media_id"`
+		Audience       string  `json:"audience"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -186,7 +189,7 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		OrganizationID: orgID, ParentID: parentID, CategoryID: categoryID, Brand: req.Brand, Name: req.Name, SKU: req.SKU,
 		Description: req.Description, Unit: req.Unit, VolumeLabel: req.VolumeLabel, PriceMinor: req.PriceMinor,
 		Currency: req.Currency, MinStock: req.MinStock, Published: req.Published,
-		ForSale: forSale, DeliveryDays: deliveryDays, PhotoMediaID: photoMediaID,
+		ForSale: forSale, DeliveryDays: deliveryDays, PhotoMediaID: photoMediaID, Audience: req.Audience,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -226,8 +229,20 @@ func (a *API) listCatalogProducts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	prof := false
+	if claims != nil {
+		for _, r := range claims.Roles {
+			switch r {
+			case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
+				prof = true
+			}
+		}
+	}
 	out := make([]map[string]any, 0, len(items))
 	for _, p := range items {
+		if !domain.ProductVisibleTo(p.Audience, prof) {
+			continue
+		}
 		out = append(out, productDTO(p))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
@@ -270,6 +285,7 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 		ForSale      *bool    `json:"for_sale"`
 		DeliveryDays *int     `json:"delivery_days"`
 		PhotoMediaID *string  `json:"photo_media_id"`
+		Audience     *string  `json:"audience"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -283,7 +299,7 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 	patch := service.ProductPatch{
 		Brand: req.Brand, Name: req.Name, SKU: req.SKU, Description: req.Description, Unit: req.Unit,
 		VolumeLabel: req.VolumeLabel, PriceMinor: req.PriceMinor, Currency: req.Currency, MinStock: req.MinStock,
-		Published: req.Published, ForSale: req.ForSale, DeliveryDays: req.DeliveryDays,
+		Published: req.Published, ForSale: req.ForSale, DeliveryDays: req.DeliveryDays, Audience: req.Audience,
 	}
 	if req.CategoryID != nil {
 		patch.CategoryID = categoryID
@@ -326,7 +342,7 @@ func productDTO(p domain.Product) map[string]any {
 		"brand": p.Brand, "name": p.Name, "sku": p.SKU, "description": p.Description, "unit": p.Unit,
 		"volume_label": p.VolumeLabel, "price_minor": p.PriceMinor, "currency": p.Currency,
 		"min_stock": p.MinStock, "published": p.Published, "for_sale": p.ForSale, "delivery_days": p.DeliveryDays,
-		"photo_media_id": photo, "created_at": p.CreatedAt, "updated_at": p.UpdatedAt,
+		"photo_media_id": photo, "audience": p.Audience, "created_at": p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
 
@@ -735,6 +751,21 @@ func deltaPercent(current, previous int64) any {
 		return nil
 	}
 	return float64(current-previous) / float64(previous) * 100
+}
+
+func (a *API) supplierAnalytics(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	body, err := a.svc.SupplierAnalytics(r.Context(), claims.UserID, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, body)
 }
 
 // --- supplier orders ---

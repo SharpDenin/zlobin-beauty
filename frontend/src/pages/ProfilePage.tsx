@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -78,6 +78,7 @@ export function ProfilePage() {
             Сохранить
           </button>
         </form>
+        <SubscriptionHints />
         <div className="row">
           <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
@@ -85,5 +86,50 @@ export function ProfilePage() {
         </div>
       </section>
     </main>
+  )
+}
+
+function SubscriptionHints() {
+  const { accessToken } = useAuth()
+  const sub = useQuery({
+    queryKey: ['me-subscription'],
+    queryFn: () =>
+      apiRequest<{ effective_plan: string; status: string; trial_ends_at?: string }>(
+        '/v1/me/subscription',
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken),
+  })
+  const hints = useQuery({
+    queryKey: ['me-hints'],
+    queryFn: () => apiRequest<{ hints_enabled: boolean }>('/v1/me/hints', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const toggleHints = useMutation({
+    mutationFn: () =>
+      apiRequest('/v1/me/hints', {
+        method: 'PATCH',
+        token: accessToken,
+        body: { hints_enabled: !(hints.data?.hints_enabled ?? true) },
+      }),
+  })
+  const plan = sub.data?.effective_plan === 'premium' ? 'Premium' : 'Free'
+  const trial = sub.data?.status === 'trial' && sub.data.trial_ends_at
+    ? `Пробный период до ${new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}`
+    : null
+  return (
+    <section className="stack-sm">
+      <h2>Подписка</h2>
+      <p>{plan}{trial ? ` · ${trial}` : ''}</p>
+      <p className="muted">Новым пользователям — 3 месяца Premium. После trial без оплаты включается Free.</p>
+      <label className="field-check">
+        <input
+          type="checkbox"
+          checked={hints.data?.hints_enabled !== false}
+          onChange={() => toggleHints.mutate()}
+        />
+        <span>Показывать подсказки новичкам</span>
+      </label>
+    </section>
   )
 }

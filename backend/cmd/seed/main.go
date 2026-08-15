@@ -30,12 +30,16 @@ func main() {
 	accounts := []accountSpec{
 		{Email: "client1@demo.local", Name: "Клиент Один", Role: "client", City: "Красноярск"},
 		{Email: "client2@demo.local", Name: "Клиент Два", Role: "client"},
+		{Email: "client3@demo.local", Name: "Клиент Три", Role: "client", City: "Москва"},
 		{Email: "master1@demo.local", Name: "Мастер Анна", Role: "master"},
 		{Email: "master2@demo.local", Name: "Мастер Иван", Role: "master"},
 		{Email: "master3@demo.local", Name: "Мастер Ольга", Role: "master"},
 		{Email: "master4@demo.local", Name: "Мастер Дмитрий", Role: "master"},
+		{Email: "admin1@demo.local", Name: "Админ Салона", Role: "salon_admin"},
 		{Email: "supplier1@demo.local", Name: "Поставщик Профи", Role: "supplier"},
 		{Email: "supplier2@demo.local", Name: "Поставщик БьютиЛайн", Role: "supplier"},
+		{Email: "rep1@demo.local", Name: "Представитель Елена", Role: "supplier_rep", City: "Красноярск"},
+		{Email: "rep2@demo.local", Name: "Представитель Павел", Role: "supplier_rep", City: "Москва"},
 	}
 	users := map[string]authUser{}
 	for _, a := range accounts {
@@ -63,7 +67,7 @@ func main() {
 	m1Org, m1Branch, m1Profile, m1Service, err := seedMaster(client, base, master1, masterSeed{
 		OrgName: "Салон Анны (demo)", BranchName: "Красноярск центр",
 		City: "Красноярск", Address: "ул. Ленина, 50", Phone: "+79001112233", Timezone: "Asia/Krasnoyarsk",
-		Display: "Анна Колористика", Bio: "Мастер-колорист в Красноярске. Демо-профиль для Zlobin Beauty.",
+		Display: "Анна Колористика", Bio: "Мастер-колорист в Красноярске. Демо-профиль для Salon-X.",
 		Specs: []string{"колористика", "стрижки"}, Experience: 7, Education: "Академия колористики",
 		WorkType: "owner",
 		Services: []serviceSpec{
@@ -166,6 +170,14 @@ func main() {
 	}
 	log.Printf("ok supplier2 org=%s products=%d", sup2Org, len(products2))
 
+	rep1 := users["rep1@demo.local"]
+	rep2 := users["rep2@demo.local"]
+	if err := seedRepresentatives(client, base, supplier1, sup1Org, m1Branch, rep1, rep2); err != nil {
+		log.Printf("warn representatives: %v", err)
+	} else {
+		log.Printf("ok supplier representatives")
+	}
+
 	if err := seedKnowledge(client, base, supplier1, "Поставщик Профи", sup1Org); err != nil {
 		log.Printf("warn knowledge: %v", err)
 	} else {
@@ -183,6 +195,12 @@ func main() {
 		log.Printf("warn orders: %v", err)
 	} else {
 		log.Printf("ok supplier orders")
+	}
+
+	if err := seedRecurring(client, base, master1, supplier1, m1Org, m1Branch, sup1Org, products1); err != nil {
+		log.Printf("warn recurring: %v", err)
+	} else {
+		log.Printf("ok recurring supply")
 	}
 
 	log.Printf("seed complete")
@@ -234,6 +252,7 @@ type prodSpec struct {
 	Price                                                 int64
 	Published, ForSale                                    bool
 	DeliveryDays                                          int
+	Audience                                              string
 }
 
 type supplierSeed struct {
@@ -264,6 +283,7 @@ func supplier1Products() []prodSpec {
 		{Brand: "Estel", Name: "Essex краска", SKU: "S1-EST-ESX-001", Unit: "pcs", Volume: "60ml", Category: "краска", Description: "Крем-краска Essex", Price: 42000, Published: true, ForSale: true, DeliveryDays: 1},
 		{Brand: "Estel", Name: "Curex Therapy маска", SKU: "S1-EST-CTX-MSK", Unit: "pcs", Volume: "500ml", Category: "маска", Description: "Терапевтическая маска для повреждённых волос", Price: 78000, Published: true, ForSale: true, DeliveryDays: 2},
 		{Brand: "Estel", Name: "De Luxe окислитель 6%", SKU: "S1-EST-DLX-OX6", Unit: "pcs", Volume: "1000ml", Category: "окислитель", Description: "Оксигент 6% De Luxe", Price: 38000, Published: false, ForSale: false, DeliveryDays: 7},
+		{Brand: "L'Oreal", Name: "Pro Fiber концентрат", SKU: "S1-LOR-PRO-FIB", Unit: "pcs", Volume: "150ml", Category: "уход", Description: "Только для мастеров: профессиональный концентрат", Price: 410000, Published: true, ForSale: true, DeliveryDays: 2, Audience: "professional_only"},
 		{Brand: "Wella", Name: "EIMI Super Set", SKU: "S1-WEL-EIMI-SS", Unit: "pcs", Volume: "300ml", Category: "стайлинг", Description: "Лак сильной фиксации", Price: 145000, Published: true, ForSale: true, DeliveryDays: 4},
 		{Brand: "Olaplex", Name: "No.6 Bond Smoother", SKU: "S1-OLA-N6", Unit: "pcs", Volume: "100ml", Category: "уход", Description: "Крем-несмывашка для гладкости", Price: 280000, Published: true, ForSale: true, DeliveryDays: 6},
 	}
@@ -304,6 +324,10 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 		reg["as_master"] = true
 	case "supplier":
 		reg["as_supplier"] = true
+	case "supplier_rep":
+		reg["as_supplier_rep"] = true
+	case "salon_admin":
+		reg["as_salon_admin"] = true
 	}
 	status, err = doJSON(c, http.MethodPost, base+"/v1/auth/register", "", reg, &loginResp)
 	if err != nil {
@@ -682,6 +706,9 @@ func seedSupplier(c *http.Client, base string, user authUser, cfg supplierSeed) 
 				"delivery_days":   w.DeliveryDays,
 				"description":     w.Description,
 			}
+			if w.Audience != "" {
+				payload["audience"] = w.Audience
+			}
 			if catID := catIDs[strings.ToLower(w.Category)]; catID != "" {
 				payload["category_id"] = catID
 			}
@@ -723,6 +750,41 @@ func listProductCategoryIDs(c *http.Client, base string, user authUser) map[stri
 		out[strings.ToLower(it.Slug)] = it.ID
 	}
 	return out
+}
+
+func seedRepresentatives(c *http.Client, base string, supplier authUser, orgID, salonBranchID string, rep1, rep2 authUser) error {
+	if orgID == "" || rep1.ID == "" {
+		return fmt.Errorf("missing supplier or rep")
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/representatives", supplier.Token, map[string]any{
+		"user_id": rep1.ID, "city": "Красноярск", "territory": "Красноярск",
+		"salon_branch_ids": []string{salonBranchID},
+	}, &created)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("create rep1 status %d", status)
+	}
+	repID := created.ID
+	if rep2.ID != "" {
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/representatives", supplier.Token, map[string]any{
+			"user_id": rep2.ID, "city": "Москва", "territory": "Москва",
+		}, &created)
+	}
+	if repID != "" {
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/tasks", supplier.Token, map[string]any{
+			"representative_id": repID,
+			"title":             "Визит в салон Анны",
+			"description":       "Показать новинки L'Oreal и снять заказ.",
+			"branch_id":         salonBranchID,
+			"priority":          "high",
+		}, nil)
+	}
+	return nil
 }
 
 func ensureLocation(c *http.Client, base string, user authUser, orgID, name, kind string) (string, error) {
@@ -801,6 +863,11 @@ func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID
 			Content: docJSON,
 			ContentFormat: "doc_json",
 		},
+		{Title: "Кислотный уход vs протеиновый", Category: "Уход", Brand: "Olaplex", Content: docJSON, ContentFormat: "doc_json"},
+		{Title: "Коррекция цвета после домашнего окрашивания", Category: "Колористика", Brand: "Wella", Content: docJSON, ContentFormat: "doc_json"},
+		{Title: "Санитарные нормы рабочего места", Category: "Салон", Brand: "Salon-X", Content: docJSON, ContentFormat: "doc_json"},
+		{Title: "Подбор окислителя для седины", Category: "Продукция", Brand: "Estel", Content: docJSON, ContentFormat: "doc_json"},
+		{Title: "Летний уход: UV-защита волос", Category: "Уход", Brand: "L'Oreal", Content: docJSON, ContentFormat: "doc_json"},
 	}
 
 	var list struct {
@@ -1161,6 +1228,39 @@ func doJSON(c *http.Client, method, url, token string, body any, out any) (int, 
 	}
 	// Non-2xx is not a transport error — callers branch on status.
 	return resp.StatusCode, nil
+}
+
+func seedRecurring(c *http.Client, base string, master, supplier authUser, buyerOrgID, pickupBranchID, supplierOrgID string, productIDs []string) error {
+	if len(productIDs) == 0 || buyerOrgID == "" || supplierOrgID == "" || pickupBranchID == "" {
+		return fmt.Errorf("missing recurring deps")
+	}
+	var list struct {
+		Items []struct{ ID string `json:"id"` } `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/recurring?organization_id="+supplierOrgID+"&role=supplier", supplier.Token, nil, &list)
+	if len(list.Items) > 0 {
+		log.Printf("skip recurring — already %d", len(list.Items))
+		return nil
+	}
+	start := time.Now().UTC().AddDate(0, 0, 7).Format("2006-01-02")
+	var created struct{ ID string `json:"id"` }
+	status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/recurring", master.Token, map[string]any{
+		"supplier_org_id":  supplierOrgID,
+		"buyer_org_id":     buyerOrgID,
+		"pickup_branch_id": pickupBranchID,
+		"frequency":        "weekly",
+		"start_date":       start,
+		"horizon_days":     28,
+		"items":            []map[string]any{{"product_id": productIDs[0], "qty": 2}},
+	}, &created)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("create recurring status %d", status)
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/recurring/"+created.ID+"/decide", supplier.Token, map[string]any{"action": "approve"}, nil)
+	return nil
 }
 
 func waitHealth(c *http.Client, base string) error {

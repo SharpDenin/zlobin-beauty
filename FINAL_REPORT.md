@@ -1,14 +1,13 @@
-# FINAL_REPORT.md — Zlobin Beauty MVP
+# FINAL_REPORT.md — Salon-X
 
-Дата: **2026-08-10**
+Дата: **2026-08-14**
 
-Честный обзор production-readiness по коду, миграциям, seed и автотестам.  
-Стек: React/Vite frontend → HTTP gateway `:8090` → Go-микросервисы → PostgreSQL per service; медиа через MinIO.
+Честный обзор production-readiness. Продукт в UI: **Salon-X**. Внутренние package names без переименования.
 
 Демо-аккаунты (пароль `Password123!`):  
-`client1@demo.local`, `client2@demo.local`, `master1@demo.local` … `master4@demo.local`, `supplier1@demo.local`, `supplier2@demo.local`.
+клиенты `client1`–`client3`, мастера `master1`–`master4`, `admin1@demo.local`, поставщики `supplier1`/`supplier2`, представители `rep1`/`rep2`.
 
-См. также: `MANUAL_TEST.md`, `MANUAL_DEMO.md`, `README.md`.
+См. также: `MANUAL_TEST.md`, `MANUAL_DEMO.md`, `README.md`, `README_DEPLOY.md`.
 
 ---
 

@@ -3,6 +3,9 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/domain"
@@ -28,6 +31,19 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/organizations/{orgID}/readiness", auth(http.HandlerFunc(a.orgReadiness)))
 	mux.Handle("PATCH /v1/organizations/{orgID}", auth(http.HandlerFunc(a.updateOrg)))
 	mux.Handle("POST /v1/organizations/{orgID}/masters", auth(http.HandlerFunc(a.addMaster)))
+	mux.Handle("GET /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.listStaff)))
+	mux.Handle("POST /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.inviteStaff)))
+	mux.Handle("POST /v1/organizations/{orgID}/staff/disable", auth(http.HandlerFunc(a.disableStaff)))
+	mux.Handle("PATCH /v1/organizations/{orgID}/contact-policy", auth(http.HandlerFunc(a.setContactPolicy)))
+	mux.Handle("GET /v1/organizations/{orgID}/representatives", auth(http.HandlerFunc(a.listReps)))
+	mux.Handle("POST /v1/organizations/{orgID}/representatives", auth(http.HandlerFunc(a.createRep)))
+	mux.Handle("GET /v1/organizations/{orgID}/representatives/{id}", auth(http.HandlerFunc(a.getRep)))
+	mux.Handle("GET /v1/me/representative", auth(http.HandlerFunc(a.myRep)))
+	mux.Handle("GET /v1/organizations/{orgID}/tasks", auth(http.HandlerFunc(a.listTasks)))
+	mux.Handle("POST /v1/organizations/{orgID}/tasks", auth(http.HandlerFunc(a.createTask)))
+	mux.Handle("POST /v1/tasks/{id}/status", auth(http.HandlerFunc(a.taskStatus)))
+	mux.Handle("GET /v1/organizations/{orgID}/routes", auth(http.HandlerFunc(a.listRoutes)))
+	mux.Handle("POST /v1/organizations/{orgID}/routes/recommend", auth(http.HandlerFunc(a.recommendRoute)))
 	mux.Handle("GET /v1/branches/{branchID}/readiness", auth(http.HandlerFunc(a.branchReadiness)))
 	mux.Handle("PATCH /v1/branches/{branchID}", auth(http.HandlerFunc(a.updateBranch)))
 	mux.Handle("POST /v1/branches/{branchID}/photos", auth(http.HandlerFunc(a.addBranchPhoto)))
@@ -41,6 +57,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/suppliers/{id}", a.getSupplier)
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
 	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
+	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 }
 
 func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +338,28 @@ func (a *API) getBranch(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listPickupBranches(w http.ResponseWriter, r *http.Request) {
 	city := r.URL.Query().Get("city")
+	var lat, lng *float64
+	if v := strings.TrimSpace(r.URL.Query().Get("lat")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			lat = &f
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("lng")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			lng = &f
+		}
+	}
+	if lat != nil || lng != nil || r.URL.Query().Get("nearest") == "1" {
+		items, err := a.svc.PickupNearest(r.Context(), city, lat, lng)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
+		return
+	}
 	items, err := a.svc.ListPickupBranches(r.Context(), city)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -342,6 +381,7 @@ func orgDTO(o domain.Organization) map[string]any {
 		"id": o.ID.String(), "name": o.Name, "description": o.Description,
 		"type": o.Type, "status": o.Status, "published": o.Published,
 		"logo_media_id": logo, "delivery_note": o.DeliveryNote,
+		"masters_see_client_contacts": o.MastersSeeClientContacts,
 		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
 	}
 }
@@ -471,4 +511,409 @@ func (a *API) deleteBranchPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) internalContactPolicy(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	ok, err := a.svc.ContactPolicy(r.Context(), orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"masters_see_client_contacts": ok})
+}
+
+func (a *API) listStaff(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	items, err := a.svc.ListStaff(r.Context(), orgID, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, m := range items {
+		out = append(out, map[string]any{
+			"id": m.ID.String(), "user_id": m.UserID.String(), "role": m.Role, "status": m.Status, "created_at": m.CreatedAt,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) inviteStaff(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	uid, err := uuid.Parse(req.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_id"))
+		return
+	}
+	if err := a.svc.InviteStaff(r.Context(), orgID, claims.UserID, uid, req.Role); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) disableStaff(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	uid, err := uuid.Parse(req.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_id"))
+		return
+	}
+	if err := a.svc.DisableStaff(r.Context(), orgID, claims.UserID, uid, req.Role); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) setContactPolicy(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		MastersSeeClientContacts bool `json:"masters_see_client_contacts"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	org, err := a.svc.SetContactPolicy(r.Context(), orgID, claims.UserID, req.MastersSeeClientContacts)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, orgDTO(*org))
+}
+
+func parseUUIDList(raw []string) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, s := range raw {
+		id, err := uuid.Parse(s)
+		if err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func repDTO(r domain.SupplierRepresentative) map[string]any {
+	salons := make([]string, 0, len(r.SalonBranchIDs))
+	for _, id := range r.SalonBranchIDs {
+		salons = append(salons, id.String())
+	}
+	return map[string]any{
+		"id": r.ID.String(), "organization_id": r.OrganizationID.String(), "user_id": r.UserID.String(),
+		"city": r.City, "territory": r.Territory, "active": r.Active, "salon_branch_ids": salons,
+		"created_at": r.CreatedAt,
+	}
+}
+
+func (a *API) listReps(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	items, err := a.svc.ListRepresentatives(r.Context(), claims.UserID, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, repDTO(it))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) createRep(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		UserID         string   `json:"user_id"`
+		City           string   `json:"city"`
+		Territory      string   `json:"territory"`
+		SalonBranchIDs []string `json:"salon_branch_ids"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	uid, err := uuid.Parse(req.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_id"))
+		return
+	}
+	rep, err := a.svc.CreateRepresentative(r.Context(), claims.UserID, orgID, uid, req.City, req.Territory, parseUUIDList(req.SalonBranchIDs))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, repDTO(*rep))
+}
+
+func (a *API) getRep(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	id, err2 := uuid.Parse(r.PathValue("id"))
+	if err != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	rep, err := a.svc.GetRepresentative(r.Context(), claims.UserID, orgID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, repDTO(*rep))
+}
+
+func (a *API) myRep(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	rep, err := a.svc.MyRepresentative(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, repDTO(*rep))
+}
+
+func taskDTO(t domain.RepresentativeTask) map[string]any {
+	var bid, due any
+	if t.BranchID != nil {
+		bid = t.BranchID.String()
+	}
+	if t.DueAt != nil {
+		due = *t.DueAt
+	}
+	return map[string]any{
+		"id": t.ID.String(), "title": t.Title, "description": t.Description, "priority": t.Priority,
+		"status": t.Status, "result_comment": t.ResultComment, "branch_id": bid, "due_at": due,
+		"representative_id": t.RepresentativeID.String(),
+	}
+}
+
+func (a *API) listTasks(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var repID *uuid.UUID
+	if v := r.URL.Query().Get("representative_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid representative_id"))
+			return
+		}
+		repID = &id
+	}
+	items, err := a.svc.ListTasks(r.Context(), claims.UserID, orgID, repID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, t := range items {
+		out = append(out, taskDTO(t))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) createTask(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		RepresentativeID string     `json:"representative_id"`
+		Title            string     `json:"title"`
+		Description      string     `json:"description"`
+		BranchID         *string    `json:"branch_id"`
+		DueAt            *time.Time `json:"due_at"`
+		Priority         string     `json:"priority"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	repID, err := uuid.Parse(req.RepresentativeID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid representative_id"))
+		return
+	}
+	var branchID *uuid.UUID
+	if req.BranchID != nil && *req.BranchID != "" {
+		id, err := uuid.Parse(*req.BranchID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch_id"))
+			return
+		}
+		branchID = &id
+	}
+	t, err := a.svc.CreateTask(r.Context(), claims.UserID, orgID, repID, req.Title, req.Description, branchID, req.DueAt, req.Priority)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, taskDTO(*t))
+}
+
+func (a *API) taskStatus(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Status  string `json:"status"`
+		Comment string `json:"comment"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	t, err := a.svc.UpdateTaskStatus(r.Context(), claims.UserID, id, req.Status, req.Comment)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, taskDTO(*t))
+}
+
+func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	items, err := a.svc.ListRoutes(r.Context(), claims.UserID, orgID, nil)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, rt := range items {
+		out = append(out, map[string]any{
+			"id": rt.ID.String(), "planned_date": rt.PlannedDate, "status": rt.Status,
+			"total_km": rt.TotalKm, "total_minutes": rt.TotalMinutes, "provider": rt.Provider,
+			"label": "Рекомендованный маршрут", "stops": len(rt.Stops),
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) recommendRoute(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		RepresentativeID string  `json:"representative_id"`
+		Date             string  `json:"date"`
+		OriginLat        float64 `json:"origin_lat"`
+		OriginLng        float64 `json:"origin_lng"`
+		Stops            []struct {
+			Kind     string   `json:"kind"`
+			BranchID *string  `json:"branch_id"`
+			Lat      *float64 `json:"latitude"`
+			Lng      *float64 `json:"longitude"`
+			Priority string   `json:"priority"`
+			Duration int      `json:"expected_duration_min"`
+		} `json:"stops"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	repID, err := uuid.Parse(req.RepresentativeID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid representative_id"))
+		return
+	}
+	day, err := time.Parse("2006-01-02", req.Date)
+	if err != nil {
+		day = time.Now().UTC()
+	}
+	stops := make([]domain.FieldRouteStop, 0, len(req.Stops))
+	for _, st := range req.Stops {
+		item := domain.FieldRouteStop{Kind: st.Kind, Latitude: st.Lat, Longitude: st.Lng, Priority: st.Priority, ExpectedDurationMin: st.Duration, Status: "pending"}
+		if st.BranchID != nil {
+			id, err := uuid.Parse(*st.BranchID)
+			if err == nil {
+				item.BranchID = &id
+			}
+		}
+		if item.Priority == "" {
+			item.Priority = "normal"
+		}
+		if item.ExpectedDurationMin == 0 {
+			item.ExpectedDurationMin = 20
+		}
+		stops = append(stops, item)
+	}
+	rt, err := a.svc.RecommendRoute(r.Context(), claims.UserID, orgID, repID, day, req.OriginLat, req.OriginLng, stops)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"id": rt.ID.String(), "status": rt.Status, "total_km": rt.TotalKm, "total_minutes": rt.TotalMinutes,
+		"provider": rt.Provider, "label": "Рекомендованный маршрут", "stops": rt.Stops,
+	})
 }

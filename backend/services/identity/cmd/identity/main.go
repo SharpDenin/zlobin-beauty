@@ -46,13 +46,15 @@ func main() {
 	}
 
 	st := store.New(pool)
-	svc := service.New(st, cfg.JWTSecret)
+	allowDev := os.Getenv("ALLOW_DEV_BILLING") == "true" || os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == ""
+	svc := service.New(st, cfg.JWTSecret).WithDevBilling(allowDev)
 	api := httpapi.New(svc, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))
 	api.Routes(mux, cfg.JWTSecret)
+	api.InternalRoutes(mux, os.Getenv("INTERNAL_TOKEN"))
 
 	handler := httpx.WithRequestID(
 		httpx.SecurityHeaders(

@@ -58,9 +58,20 @@ export function CosmeticsSupplierPage() {
     enabled: Boolean(accessToken && supplierId),
   })
 
+  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null)
+
+  useEffect(() => {
+    if (!checkoutOpen || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => setGeo(null),
+      { timeout: 4000 },
+    )
+  }, [checkoutOpen])
+
   const pickupBranches = useQuery({
-    queryKey: ['pickup-branches', buyerOrgId],
-    queryFn: () => fetchPickupBranches(accessToken, buyerOrgId, buyerOrg?.branches),
+    queryKey: ['pickup-branches', buyerOrgId, geo?.lat, geo?.lng],
+    queryFn: () => fetchPickupBranches(accessToken, buyerOrgId, buyerOrg?.branches, geo),
     enabled: Boolean(accessToken && buyerOrgId && checkoutOpen),
   })
 
@@ -255,6 +266,11 @@ export function CosmeticsSupplierPage() {
 
             <section className="stack-sm">
               <h3>Филиал получения</h3>
+              <p className="muted">
+                {geo
+                  ? 'Предлагаем ближайший доступный салон. Можно выбрать другой.'
+                  : 'Геолокация недоступна — выберите филиал по городу и адресу.'}
+              </p>
               <div className="field">
                 <label htmlFor="branch-search">Поиск филиала</label>
                 <input

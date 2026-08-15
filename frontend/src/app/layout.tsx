@@ -1,6 +1,6 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, type ReactNode } from 'react'
-import { hasMasterAccess, hasSupplierAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -66,6 +66,7 @@ function masterSecondary(): NavLink[] {
     { to: '/services', label: 'Услуги' },
     { to: '/cosmetics', label: 'Косметика' },
     { to: '/knowledge', label: 'База знаний' },
+    { to: '/staff', label: 'Команда' },
     { to: '/master', label: 'Кабинет' },
     { to: '/profile', label: 'Профиль' },
   ]
@@ -77,6 +78,23 @@ function supplierPrimary(): NavLink[] {
     { to: '/supplier/products', label: 'Товары' },
     { to: '/supplier/orders', label: 'Заказы' },
     { to: '/knowledge', label: 'База' },
+    { to: '/profile', label: 'Профиль' },
+  ]
+}
+
+function supplierSecondary(): NavLink[] {
+  return [
+    { to: '/supplier/analytics', label: 'Аналитика' },
+    { to: '/supplier/team', label: 'Представители' },
+    { to: '/supplier/recurring', label: 'Регулярные поставки' },
+    { to: '/warehouse', label: 'Склад' },
+  ]
+}
+
+function repPrimary(): NavLink[] {
+  return [
+    { to: '/rep', label: 'Маршрут', end: true },
+    { to: '/calendar', label: 'Календарь' },
     { to: '/profile', label: 'Профиль' },
   ]
 }
@@ -163,14 +181,20 @@ export function AppShell() {
 
   const isMaster = hasMasterAccess(user)
   const isSupplier = hasSupplierAccess(user) && !isMaster
+  const isRep = hasSupplierRepAccess(user) && !isSupplier && !isMaster
 
   const primary = useMemo(() => {
     if (isMaster) return masterPrimary()
     if (isSupplier) return supplierPrimary()
+    if (isRep) return repPrimary()
     return clientPrimary()
-  }, [isMaster, isSupplier])
+  }, [isMaster, isSupplier, isRep])
 
-  const secondary = useMemo(() => (isMaster ? masterSecondary() : []), [isMaster])
+  const secondary = useMemo(() => {
+    if (isMaster) return masterSecondary()
+    if (isSupplier) return supplierSecondary()
+    return []
+  }, [isMaster, isSupplier])
 
   const sideLinks = useMemo(() => {
     if (isMaster) {
@@ -181,14 +205,15 @@ export function AppShell() {
         ...masterSecondary(),
       ]
     }
-    if (isSupplier) return supplierPrimary()
+    if (isSupplier) return [...supplierPrimary(), ...supplierSecondary()]
+    if (isRep) return repPrimary()
     return clientPrimary()
-  }, [isMaster, isSupplier])
+  }, [isMaster, isSupplier, isRep])
 
   return (
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
-        <div className="brand">Zlobin Beauty</div>
+        <div className="brand">Salon-X</div>
         <nav className="stack-sm" style={{ marginTop: 24 }}>
           <NavLinks links={sideLinks} pathname={location.pathname} />
         </nav>
@@ -199,7 +224,7 @@ export function AppShell() {
       </aside>
       <div className="shell-main">
         <header className="topbar">
-          <div className="brand">Zlobin Beauty</div>
+          <div className="brand">Salon-X</div>
           <div className="row">
             <span className="muted topbar-name">{user?.display_name}</span>
             <button className="btn btn-secondary btn-compact" type="button" onClick={() => void logout()}>

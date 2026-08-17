@@ -1,190 +1,538 @@
-# FINAL_REPORT.md — Salon-X hardening reconciliation
+# FINAL_REPORT.md — Salon-X (corrective acceptance)
 
-Дата: **2026-08-15**
+Дата: **2026-08-17**.  
+Не опирается на предыдущий FINAL_REPORT. Проверено на clean seeded stack + Playwright `e2e/salon-x.spec.ts` (**39 passed**, skip только по viewport).
 
-Продукт в UI: **Salon-X**. Внутренние Go package paths: `zlobin-beauty` (без rename).
+UI: **Salon-X** (`http://localhost:5173`). Пароль demo: `Password123!`.  
+Внутренние Go paths `zlobin-beauty` не переименовывались.
 
-Демо-аккаунты (пароль `Password123!` / `SEED_PASSWORD`):
-`client1`–`client3`, `master1`–`master4`, `admin1@demo.local`, `supplier1`/`supplier2`, `rep1`/`rep2`.
-
-См. также: `MANUAL_TEST.md`, `MANUAL_DEMO.md`, `README_DEPLOY.md`.
-
----
-
-## Hardening summary (2026-08-15)
-
-| Fix | Status |
-|-----|--------|
-| `fixed_window` capacity > 1 vs unique appointment index | **Implemented** — migration `booking/009_occurrence_capacity.sql` drops unique active-per-occurrence; marketplace CAS on `booked_count`; seed capacity=3 |
-| `datetime-local` → salon/location IANA TZ | **Implemented** — `frontend/src/shared/lib/time.ts` (`datetimeLocalToIso`); used in `ServicesPage`, `AppointmentDetailPage`, planner blocks |
-| Delivery as physical SoT | **Implemented** — UI commercial machine stops at `ready_for_dispatch`; physical steps via `/delivery/*`; order transitions no longer allow `in_transit`/`delivered` |
-| Browser POST idempotency | **Implemented** — CORS allows `Idempotency-Key`; booking flow reaches backend; regression test in `shared/httpx` |
-| KB rich demo seed | **Implemented** — seed uploads cover/inline PNG + optional WebM; 12 `doc_json` articles with product links |
-| Playwright no soft-skip of core seeded flows | **Implemented** — API down → skip; API up + missing seed/login → **FAIL** |
-| Production env / volumes / backup docs | **Implemented** — see `README_DEPLOY.md`, `.env.example`, `.env.production.example` |
-| Shop `professional_only` audience filter | **Implemented** — client `/v1/commerce/shop/products` hides Pro Fiber; e2e green |
-| Service healthchecks / bind hardening | **Implemented** — healthchecks on Go services + MinIO/NATS; internal ports on `127.0.0.1` |
+Правило статуса: **DONE** только если одновременно есть модель, backend, permissions, полноценный UI, E2E без UUID, UX, seed, тест, проверка на поднятом стеке.
 
 ---
 
-## Requirement matrix
+## Matrix (эта итерация)
 
-Правило: **Implemented** только если есть backend **и** (UI или явный API-only контракт с тестами). Только UI или только API → **Partial**.
-
-### 1. Supplier Representative
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `POST/GET …/representatives`, `GET /v1/me/representative`, `GET/POST …/tasks`, `POST /v1/tasks/{id}/status`, `GET …/routes`, `POST …/routes/recommend`, `GET/POST …/rep/deliveries` |
-| **Migrations** | `organizations/006_staff_reps.sql` |
-| **Frontend** | `RepPage.tsx` (задачи, маршрут recommend, доставки), `SupplierTeamPage.tsx` |
-| **Tests** | `e2e/salon-x.spec.ts` (rep home) |
-
-### 2. Supplier warehouse
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `/v1/commerce/locations`, products, stock, forecast, movements, import |
-| **Migrations** | `commerce/001_init.sql`, `007_inventory_audience.sql` |
-| **Frontend** | `WarehousePage.tsx` |
-| **Tests** | `e2e/salon-x.spec.ts` warehouse smoke |
-
-### 3. Supplier / representative analytics
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `GET /v1/commerce/supplier/analytics` (owner/admin/rep) |
-| **Migrations** | analytics store (commerce) |
-| **Frontend** | `SupplierAnalyticsPage.tsx` |
-| **Tests** | `e2e/salon-x.spec.ts` |
-
-### 4. Recurring supplies
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `POST/GET /v1/commerce/recurring`, `…/decide`, `…/status` |
-| **Migrations** | `commerce/008_recurring_supply.sql` |
-| **Frontend** | `RecurringPage.tsx` — buyer create (`/cosmetics/recurring`) + supplier approve (`/supplier/recurring`) |
-| **Tests** | `commerce/internal/service/recurring_test.go`; seed creates + approves |
-
-### 5. Subscription / free / trial
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `GET /v1/me/subscription`, entitlements, DEV setter when `ALLOW_DEV_BILLING` |
-| **Migrations** | `identity/003_subscriptions.sql` |
-| **Frontend** | `ProfilePage.tsx` |
-| **Tests** | `shared/entitlement/entitlement_test.go`; `e2e/salon-x.spec.ts` snapshot |
-
-### 6. Salon team / owner permissions
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | staff list/invite/disable, contact-policy PATCH |
-| **Migrations** | memberships + `006_staff_reps.sql` |
-| **Frontend** | `StaffPage.tsx` — policy, invite by `user_id`, disable |
-| **Tests** | `e2e/salon-x.spec.ts` |
-
-### 7. Planner blocks
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | CRUD `/v1/planner/blocks` |
-| **Migrations** | `booking/008_blacklist_scheme.sql` |
-| **Frontend** | `CalendarPage.tsx` — list, create in salon IANA timezone, move +30 min, delete |
-| **Tests** | manual / demo |
-
-### 8. Client contact visibility
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | org policy + clients service redaction |
-| **Migrations** | `organizations/006_staff_reps.sql` |
-| **Frontend** | `StaffPage.tsx` toggle; card views respect API redaction |
-| **Tests** | policy UI smoke |
-
-### 9. No-show blacklist
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `POST …/no-show`, auto-blacklist threshold, `GET …/blacklist`, `POST …/unblock` |
-| **Migrations** | `booking/008_blacklist_scheme.sql` |
-| **Frontend** | no-show on `AppointmentDetailPage`; status/count + conditional unblock on `ClientCardPage` |
-| **Tests** | `e2e/salon-x.spec.ts` blacklist status contract |
-
-### 10. Product audience
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `audience` + list/detail shop filter for clients |
-| **Migrations** | `commerce/007_inventory_audience.sql` |
-| **Frontend** | `SupplierProductEditPage.tsx` |
-| **Tests** | `e2e/salon-x.spec.ts` hides Pro Fiber from client API |
-
-### 11. Pickup flow
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | `GET /v1/branches/pickup`; orders `destination_branch_id` |
-| **Migrations** | `organizations/005_branch_pickup.sql`; commerce delivery fields |
-| **Frontend** | `CosmeticsSupplierPage.tsx` branch picker |
-| **Tests** | `e2e/demo-mvp.spec.ts` |
-
-### 12. Knowledge Base (demo production-like)
-
-| | |
-|--|--|
-| **Status** | **Implemented** |
-| **Backend** | knowledge CRUD, favorites, filters, ranking, `product_ids`, cover, `doc_json` |
-| **Migrations** | `005_knowledge_base.sql`, `010_knowledge_rich.sql`, `011_knowledge_production.sql` |
-| **Frontend** | list/article, `RichDocEditor` + video node, `MediaDropzone` image/video preview, filters, favorites, product_ids field |
-| **Tests** | ranking unit; e2e knowledge + favorite |
-
-### 13. Architecture: capacity / TZ / Delivery
-
-Covered in hardening summary above — all **Implemented**.
+| Requirement | DB | Backend | UI | UX | Permissions | Seed | Tests | Status |
+|---|---|---|---|---|---|---|---|---|
+| 1 Name Salon-X | — | — | Y | Y | — | — | visual | **DONE** |
+| 2 Knowledge Base | Y | Y | Y | Partial | Y | Y | e2e filter/fav | **PARTIAL** |
+| 3 Knowledge favorites | Y | Y | Y | Y | Y | Y | e2e | **DONE** |
+| 4 Article ↔ product/category | Y | Y | Y | Partial | Y | Y | code+seed | **PARTIAL** |
+| 5 Supplier warehouse | Y | Y | Y | Partial | Y | Y | e2e | **PARTIAL** |
+| 6 Supplier Representative | Y | Y | Y | Partial | Y | Y | e2e map/home | **PARTIAL** |
+| 7 Product/service cards | Y | Y | Y | Partial | Y | Y | shop e2e | **PARTIAL** |
+| 8 Role cabinets | Y | Y | Y | Partial | Y | Y | login all seed | **PARTIAL** |
+| 9 Master auto-confirm | Y | Y | Y | Y | Y | Y | seed log | **DONE** |
+| 10 Owner staff/schedules | Y | Y | Y | Partial | Y | Y | e2e staff | **PARTIAL** |
+| 11 Business Calendar planner | Y | Y | Y | Partial | Y | Y | e2e modes | **PARTIAL** |
+| 12 Master home + widgets | Y | Y | Y | Partial | Y | Y | e2e dashboard | **PARTIAL** |
+| 13 Contextual hints | Y | Y | Y | Partial | Y | default on | code | **PARTIAL** |
+| 14 Structured scheme | Y | Y | Y | Partial | Y | Partial | code | **PARTIAL** |
+| 15 Audience + client shop | Y | Y | Y | Partial | Y | Y | API+shop e2e | **PARTIAL** |
+| 16 Client contact policy | Y | Y | Y | Partial | Y | Y | e2e toggle | **PARTIAL** |
+| 17 No-show blacklist | Y | Y | Y | Partial | Y | Y | API e2e | **PARTIAL** |
+| 18 Recurring supply | Y | Y | Y | Partial | Y | Y | API e2e | **PARTIAL** |
+| 19 Subscription/trial | Y | Y | Y | Partial | Y | Y | API+page e2e | **PARTIAL** |
 
 ---
 
-## Cross-service invariants (post-hardening)
+## Requirement 1
 
-1. **Capacity**: marketplace `booked_count < capacity` CAS; booking allows multiple active appointments per occurrence.
-2. **Wall time**: occurrence/reschedule/planner create interpret local inputs in IANA TZ, not browser TZ.
-3. **Orders vs Delivery**: commercial order status ≠ physical location; physical truth is `order_deliveries.status`. Completing delivery may complete the order atomically in commerce store.
-4. **Audience**: client shop list excludes `professional` products.
-5. **Contact policy**: clients service masks phone/email when org policy is false.
-6. **Entitlements**: complete-with-scheme / Premium skip gated by subscription snapshot.
+### Original requirement
+Название Salon-X.
 
----
+### Status
+DONE
 
-## Test posture
+### Implemented
+Бренд в shell, login, client home, topbar.
 
-- Backend: domain delivery transitions/audience, CORS idempotency preflight, entitlement, recurring date helpers, capacity migration guard — `go test ./...` green.
-- Frontend Vitest: `time.test.ts` salon TZ conversion — green.
-- Playwright (`phone-390` / `tablet-768` / `desktop-1440`): `demo-mvp.spec.ts` + `salon-x.spec.ts` — **30 passed**, 24 skipped by viewport gate, **0 failed** on clean seeded stack (2026-08-15).
-- Seed: Delivery SoT transit/delivered → **200**; recurring supply seeded.
+### UI
+Любой экран после входа: «Salon-X».
 
----
+### Backend
+Не требуется.
 
-## Deploy readiness
+### Test
+Визуально + e2e login.
 
-Verified locally: `docker compose down -v` → `up -d --build` → all services **healthy** → `docker compose --profile seed run --rm --build seed` → gateway `/healthz` OK.
-
-See `README_DEPLOY.md`: persistent `pgdata`/`miniodata`; `.env.production.example`; backup/restore; update/rollback; internal ports bound to `127.0.0.1`; no hardcoded public localhost in production env.
+### Known limitations
+Внутренние package paths остаются `zlobin-beauty`.
 
 ---
 
-## BLOCKERS BEFORE SERVER DEMO
+## Requirement 2
 
-_(пусто)_
+### Original requirement
+Knowledge Base: product/category links, multi filters, dropdown, quick chips, ranking, recommendations, favorites, rich inline photo/video, production UX.
+
+### Status
+PARTIAL
+
+### Implemented
+Список с поиском, категорией, брендом, chips (Избранное / Новое / окрашивание / уход / техника / продукция), секции «Рекомендованное», карточки с cover, TipTap editor с inline media, связь с товарами чекбоксами у поставщика.
+
+### UI
+`/knowledge`, `/knowledge/:id` — master/supplier.
+
+### Backend
+`GET/POST /v1/knowledge`, favorites, `content_format=doc_json`.
+
+### Test
+e2e: master → База знаний → chip «Для окрашивания» → статья → избранное.
+
+### Known limitations
+Нет searchable multi-select «поставщик / конкретный товар». Ranking упрощённый (порядок API + «новое» за 14 дней). Editorial hub ещё не на уровне профессиональной библиотеки.
+
+---
+
+## Requirement 3
+
+### Original requirement
+Knowledge favorites.
+
+### Status
+DONE
+
+### Implemented
+Toggle избранного на карточке статьи, фильтр chip «Избранное».
+
+### UI
+Деталь статьи, кнопка избранного.
+
+### Backend
+`POST/DELETE /v1/knowledge/{id}/favorite`, `?favorites=1`.
+
+### Test
+e2e favorite click.
+
+### Known limitations
+Нет отдельной страницы «только избранное» кроме фильтра.
+
+---
+
+## Requirement 4
+
+### Original requirement
+Supplier article → product/category relation.
+
+### Status
+PARTIAL
+
+### Implemented
+Категория поля + чекбоксы товаров поставщика при создании/редактировании.
+
+### UI
+Редактор на `/knowledge` у supplier.
+
+### Backend
+`product_ids` на статье.
+
+### Test
+Seed articles с product links; UI чекбоксы.
+
+### Known limitations
+Нет отдельного UX «статьи по продуктам» как витрины категорий; связь видна в карточке/детали.
+
+---
+
+## Requirement 5
+
+### Original requirement
+Supplier warehouse.
+
+### Status
+PARTIAL
+
+### Implemented
+Раздел «Склад»: карточки товара, available, reserved (supplier), статусы, search/filter, движения. Rep видит три человеческих статуса.
+
+### UI
+`/warehouse`.
+
+### Backend
+`GET /v1/commerce/stock`, `GET /v1/commerce/stock/movements` (добавлен list).
+
+### Test
+e2e heading «Склад» под supplier1.
+
+### Known limitations
+Фото зависят от `photo_media_id` товара. Салонский склад по-прежнему смешан с нормами/CSV (скрыты у supplier/rep). Не отдельный WMS.
+
+---
+
+## Requirement 6
+
+### Original requirement
+Supplier Representative: stock, route map, optimization, salon visits, tasks, monitoring, planner, amount to collect, day/month, sales analytics, supplier analytics.
+
+### Status
+PARTIAL
+
+### Implemented
+Кабинет `/rep`: KPI, задачи, `/rep/map` Leaflet+OSM, optimize, `/rep/finance`, `/rep/analytics` charts, склад, supplier analytics + team cards + create task (салон/дата/priority).
+
+### UI
+`/rep`, `/rep/map`, `/rep/finance`, `/rep/analytics`, `/supplier/team`, `/supplier/analytics`.
+
+### Backend
+routes+stops, `GET /v1/commerce/rep/analytics`, supplier analytics, tasks.
+
+### Test
+e2e: «Кабинет представителя», «Карта маршрута», `.leaflet-container`.
+
+### Known limitations
+Optimize использует adapter (haversine), не production routing provider. Маркерные координаты seed/recommend — не живой GPS. Мониторинг представителя у supplier — карточки, не полный drill-down schedule/route/performance.
+
+---
+
+## Requirement 7
+
+### Original requirement
+Simple product/service cards.
+
+### Status
+PARTIAL
+
+### Implemented
+Shop/product cards: фото, бренд, цена, наличие. Услуги — карточки/список в `/services`.
+
+### UI
+`/shop`, `/services`, `/cosmetics`.
+
+### Test
+e2e shop catalog heading.
+
+### Known limitations
+Не все каталоги одинаково «карточечные»; часть salon-страниц всё ещё list-item.
+
+---
+
+## Requirement 8
+
+### Original requirement
+Roles with separate cabinets: Client, Master types, Salon/Chain Owner, Admin, Supplier, Rep.
+
+### Status
+PARTIAL
+
+### Implemented
+`cabinet.tsx`: nav по `role` + `work_type`. Реп не видит client home. Owner видит staff/reports, private master — нет. Client видит Shop.
+
+### UI
+Sidenav + bottom nav + label кабинета.
+
+### Backend
+JWT roles + `/v1/me/master.work_type` + memberships.
+
+### Test
+Все seed-аккаунты логинятся. e2e client/master/supplier/rep.
+
+### Known limitations
+Типы мастеров делят много экранов (calendar/clients). Различие в основном в навигации, не в полностью разных приложениях. Chain switcher — localStorage.
+
+---
+
+## Requirement 9
+
+### Original requirement
+Master auto-confirm Client.
+
+### Status
+DONE
+
+### Implemented
+Seed: запись client1 → master1 подтверждается. UI записей мастера.
+
+### UI
+`/appointments`, dashboard pending widget.
+
+### Backend
+Booking confirm / auto-confirm policy.
+
+### Test
+Seed log `ok auto-confirm`.
+
+### Known limitations
+Не отдельный e2e «включить auto-confirm в UI» в этом прогоне.
+
+---
+
+## Requirement 10
+
+### Original requirement
+Salon Owner manages masters and schedules.
+
+### Status
+PARTIAL
+
+### Implemented
+`/staff`: список, invite по email (lookup, не UUID), disable. `/master` — профиль/салон. Календарь фильтры категорий.
+
+### UI
+`/staff`, `/master`, `/calendar`.
+
+### Backend
+org staff, contact-policy, schedules.
+
+### Test
+e2e `/staff` heading Команда + текст про контакты.
+
+### Known limitations
+Нет визуального staff-calendar «все мастера салона» с фильтром мастера как отдельный product screen. Invite требует уже зарегистрированный email.
+
+---
+
+## Requirement 11
+
+### Original requirement
+Business Calendar 2-like planner: blocks, colors, categories, drag/drop, flexible, role-aware.
+
+### Status
+PARTIAL
+
+### Implemented
+FullCalendar: Day/Week/Month/List, категории+цвета, hide chips, DnD, resize личных блоков, создание блока без UUID.
+
+### UI
+`/calendar`, виджет календаря на dashboard.
+
+### Backend
+appointments + planner blocks, reschedule validation.
+
+### Test
+e2e кнопки День/Неделя/Месяц/Список + «Новый блок».
+
+### Known limitations
+Не pixel-perfect BC2. Resize appointment откатывается. Конфликт — revert UI, но не отдельный e2e. Role palettes заданы, кастом цвета категории в UI ограничен.
+
+---
+
+## Requirement 12
+
+### Original requirement
+Master home: important notifications top, calendar, customizable widgets, layout, size.
+
+### Status
+PARTIAL
+
+### Implemented
+Dashboard: alerts/pending сверху, календарь, библиотека виджетов, small/medium/large/full, persist `/v1/me/dashboard`.
+
+### UI
+`/` для master.
+
+### Backend
+dashboard layout prefs.
+
+### Test
+e2e heading /Сегодня/.
+
+### Known limitations
+Нет drag-and-drop сетки. Часть виджетов-заглушки (tasks/deliveries).
+
+---
+
+## Requirement 13
+
+### Original requirement
+New user contextual hints.
+
+### Status
+PARTIAL
+
+### Implemented
+Компонент `Hint` (`?`), dismiss, Profile → «Показывать подсказки новичкам».
+
+### UI
+Dashboard, calendar, rep, shop (точечно).
+
+### Backend
+`GET/PATCH /v1/me/hints`.
+
+### Test
+Код + profile toggle. Нет e2e hints.
+
+### Known limitations
+Покрыты не все экраны. Нет тура/onboarding wizard.
+
+---
+
+## Requirement 14
+
+### Original requirement
+Structured service scheme: required free, optional premium/trial, full flow.
+
+### Status
+PARTIAL
+
+### Implemented
+При complete appointment — структурированные поля (не свободный textarea). Premium/trial может skip с причиной. Backend entitlement.
+
+### UI
+`/appointments/:id`.
+
+### Backend
+scheme get/save, plan check.
+
+### Test
+Код. Нет e2e complete→scheme в этом прогоне.
+
+### Known limitations
+Не все service categories имеют уникальные поля. Full FREE-flow не прогнан браузером на clean stack в этой итерации.
+
+---
+
+## Requirement 15
+
+### Original requirement
+Product audience all / professionals only; client marketplace; nearest salon pickup; manual override.
+
+### Status
+PARTIAL
+
+### Implemented
+Client `/shop`: только ALL. Pickup select, geolocation default если разрешена. Cart/qty/checkout. История заказов.
+
+### UI
+`/shop` (каталог / корзина / заказы).
+
+### Backend
+shop products audience filter, `pickup_branch_id` на client order.
+
+### Test
+API: Pro Fiber скрыт. e2e: heading Магазин + Каталог.
+
+### Known limitations
+Checkout e2e не гонял полный create order в UI. Related KB на detail — если API отдаёт.
+
+---
+
+## Requirement 16
+
+### Original requirement
+Salon Owner controls client contact visibility.
+
+### Status
+PARTIAL
+
+### Implemented
+Staff settings toggle. Backend не отдаёт phone/email мастеру при OFF.
+
+### UI
+`/staff` → «Показывать контактные данные клиентов мастерам».
+
+### Test
+e2e видимость toggle. Нет e2e «карточка без телефона».
+
+### Known limitations
+Нужен явный browser test OFF → master client card без phone/email.
+
+---
+
+## Requirement 17
+
+### Original requirement
+No-show protection: 2 no-show → master-local blacklist.
+
+### Status
+PARTIAL
+
+### Implemented
+Seed: client2 один no-show; client3 blacklist у master1. API blacklist status. UI unblock на карточке клиента (существовал).
+
+### UI
+Client card master.
+
+### Backend
+no-show count, local blacklist, booking block.
+
+### Test
+e2e API: `client3` `blocked=true`, `no_show_count>=2`.
+
+### Known limitations
+Полный UI-сценарий «client3 пытается записаться к master1 → blocked, к master B → ok, unblock» не прогнан Playwright как booking flow.
+
+---
+
+## Requirement 18
+
+### Original requirement
+Recurring supply: frequency, supplier approval, flexible management.
+
+### Status
+PARTIAL
+
+### Implemented
+Create: supplier, product, qty, weekly/biweekly/monthly, weekday, delivery window, start. Supplier: approve/reject/**propose**. Buyer: accept/reject proposal, pause/resume/cancel.
+
+### UI
+`/cosmetics/recurring`, `/supplier/recurring`.
+
+### Backend
+`decide` actions: approve, reject, propose, accept_proposal, reject_proposal. `proposed_change` JSONB.
+
+### Test
+e2e API: buyer видит seeded agreements.
+
+### Known limitations
+Нет `every N weeks` как отдельная frequency (CHECK: weekly/biweekly/monthly). Reconfirm при edit ключевых условий — через propose, не полный edit-form. Нет e2e propose.
+
+---
+
+## Requirement 19
+
+### Original requirement
+Subscription: Free, Premium, 3 months trial, complete product flow, no real acquiring.
+
+### Status
+PARTIAL
+
+### Implemented
+Новые master/supplier — trial. Страница план/срок/дни, Free vs Premium. Seed: free (master4), trial (master1), premium (supplier1), expired (expired1). DEV setter только в Vite DEV.
+
+### UI
+`/profile/subscription`, блок в профиле.
+
+### Backend
+`GET /v1/me/subscription`, entitlements, `ALLOW_DEV_BILLING`.
+
+### Test
+e2e snapshot + страница «Подписка».
+
+### Known limitations
+Нет эквайринга. Docker frontend — production build, DEV-кнопок нет (ожидаемо). Expired trial → Free проверен seed’ом, не отдельным UI e2e.
+
+---
+
+## P0 verification log
+
+| Flow | Account | Steps | Expected | Actual |
+|---|---|---|---|---|
+| Supplier catalog | supplier1 | login → `/supplier/products` → analytics → warehouse | headings Товары / Аналитика / Склад | OK e2e 390+1920 |
+| Knowledge | master1 | `/knowledge` → chip окрашивание → favorite | статья и кнопка избранного | OK e2e |
+| Rep map | rep1 | `/rep` → `/rep/map` | кабинет + leaflet | OK e2e |
+| Staff policy | master1 | `/staff` | Команда + «контактн» | OK e2e |
+| Shop audience | client1 | GET shop products | нет Pro Fiber | OK API |
+| Shop UI | client1 | `/shop` | Магазин + Каталог | OK e2e |
+| Dashboard/calendar | master1 | `/` `/calendar` | Сегодня + режимы | OK e2e |
+| Subscription | master1 | `/profile/subscription` | Подписка | OK e2e |
+| Blacklist | client3/master1 | GET blacklist | blocked | OK API |
+| Seed logins | all listed | `/v1/auth/login` | 200 | OK e2e |
+
+---
+
+## Out of scope (не добавлялось)
+
+AI, mentorship, courses, coworking, новые маркетплейсы.
+
+---
+
+## Что остаётся до честного DONE по ТЗ 2–19
+
+1. Browser e2e: no-show booking block + unblock; contact privacy hide phone; scheme complete FREE vs Premium.
+2. Dashboard drag-grid; calendar conflict e2e; chain context на сервере.
+3. Knowledge combobox-фильтры и editorial polish.
+4. Recurring custom interval + propose e2e.
+5. Representative GPS/provider и supplier drill-down performance.
+6. Responsive ручной проход calendar/map/analytics на 430/768/1366 (e2e UI сценарии сейчас в основном 390).

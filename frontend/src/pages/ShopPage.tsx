@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { clientOrderLabel, statusBadgeClass } from '@/shared/lib/status'
+import { fetchPickupBranches, type BranchCard } from '@/shared/lib/commerce'
+import { MediaImage } from '@/shared/ui/MediaImage'
+import { Hint } from '@/shared/ui/Hint'
 
 type ShopProduct = {
   id: string
@@ -18,6 +21,9 @@ type ShopProduct = {
   price_minor: number
   available: number
   published: boolean
+  photo_media_id?: string | null
+  category?: string
+  audience?: string
   variants?: ShopProduct[]
 }
 
@@ -60,6 +66,9 @@ export function ShopPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [address, setAddress] = useState('')
   const [comment, setComment] = useState('')
+  const [payment, setPayment] = useState('cash_on_delivery')
+  const [pickup, setPickup] = useState<BranchCard[]>([])
+  const [pickupId, setPickupId] = useState('')
 
   const products = useQuery({
     queryKey: ['shop-products', search],
@@ -103,6 +112,29 @@ export function ShopPage() {
     enabled: Boolean(accessToken && selectedId),
   })
 
+  useEffect(() => {
+    let cancelled = false
+    async function loadPickup() {
+      const coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+        if (!navigator.geolocation) return resolve(null)
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+          () => resolve(null),
+          { timeout: 4000 },
+        )
+      })
+      const items = await fetchPickupBranches(accessToken, undefined, [], coords)
+      if (cancelled) return
+      setPickup(items)
+      if (items[0] && !pickupId) {
+        setPickupId(items[0].id)
+        setAddress([items[0].city, items[0].address_line, items[0].name].filter(Boolean).join(', '))
+      }
+    }
+    if (accessToken) void loadPickup()
+    return () => { cancelled = true }
+  }, [accessToken])
+
   const addToCart = useMutation({
     mutationFn: (input: { product_id: string; qty: number }) =>
       apiRequest<Cart>('/v1/commerce/shop/cart/items', {
@@ -139,7 +171,8 @@ export function ShopPage() {
         body: {
           delivery_address: address.trim(),
           delivery_comment: comment.trim(),
-          payment_method: 'cash_on_delivery',
+          payment_method: payment,
+          pickup_branch_id: pickupId || undefined,
         },
       }),
     onSuccess: async () => {
@@ -172,8 +205,14 @@ export function ShopPage() {
   return (
     <main className="page stack">
       <div className="row between">
-        <h1>Магазин</h1>
-        <span className="muted">Цены и наличие с сервера</span>
+        <div className="stack-sm">
+          <h1>Магазин</h1>
+          <p className="muted">
+            Только товары для клиентов. Самовывоз в ближайшем салоне.
+            <Hint id="shop-pickup" title="Самовывоз">По умолчанию выбран ближайший салон. Можно сменить вручную.</Hint>
+          </p>
+        </div>
+        <span className="muted">Цены с сервера</span>
       </div>
 
       <div className="row">
@@ -253,17 +292,20 @@ export function ShopPage() {
             </div>
           )}
 
-          <div className="list">
+          <div className="product-grid">
             {products.data?.items.map((p) => (
-              <article key={p.id} className="list-item">
+              <article key={p.id} className="product-card">
+                {p.photo_media_id ? (
+                  <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} className="product-photo" />
+                ) : (
+                  <div className="product-photo placeholder">Salon-X</div>
+                )}
+                <strong>{p.name}</strong>
+                <p className="muted">{[p.brand, p.volume_label || p.unit].filter(Boolean).join(' · ')}</p>
                 <div className="row between">
-                  <strong>{p.brand ? `${p.brand} · ` : ''}{p.name}</strong>
                   <span>{formatMoney(p.price_minor)}</span>
+                  <span className="muted">{p.available > 0 ? 'В наличии' : 'Нет'}</span>
                 </div>
-                <p>
-                  {p.volume_label || p.unit}
-                  {p.available > 0 ? ` · в наличии ${p.available}` : ' · нет в наличии'}
-                </p>
                 <div className="row">
                   <button className="btn btn-secondary btn-compact" type="button" onClick={() => setSelectedId(p.id)}>
                     Подробнее
@@ -380,14 +422,38 @@ export function ShopPage() {
                 <strong>{formatMoney(cart.data.total_minor)}</strong>
               </div>
               <div className="field">
-                <label>Адрес доставки</label>
+                <label>Салон самовывоза</label>
+                <select
+                  value={pickupId}
+                  onChange={(e) => {
+                    const id = e.target.value
+                    setPickupId(id)
+                    const b = pickup.find((x) => x.id === id)
+                    if (b) setAddress([b.city, b.address_line, b.name].filter(Boolean).join(', '))
+                  }}
+                >
+                  {pickup.length === 0 && <option value="">Салоны загружаются…</option>}
+                  {pickup.map((b) => (
+                    <option key={b.id} value={b.id}>{b.city} · {b.name} · {b.address_line}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Адрес / комментарий к салону</label>
                 <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Город, улица, дом" />
+              </div>
+              <div className="field">
+                <label>Оплата</label>
+                <select value={payment} onChange={(e) => setPayment(e.target.value)}>
+                  <option value="cash_on_delivery">Наличные при получении</option>
+                  <option value="card">Карта при получении</option>
+                </select>
               </div>
               <div className="field">
                 <label>Комментарий</label>
                 <input value={comment} onChange={(e) => setComment(e.target.value)} />
               </div>
-              <p className="muted">Оплата при получении. Перед оформлением сервер перепроверяет цены и остатки.</p>
+              <p className="muted">Самовывоз в салоне. Профессиональные позиции клиенту недоступны.</p>
               <button
                 className="btn btn-primary btn-block"
                 type="button"

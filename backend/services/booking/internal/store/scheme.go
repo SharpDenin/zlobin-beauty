@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
@@ -55,6 +57,36 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		}
 	}
 	return nil
+}
+
+func (s *Store) GetServiceScheme(ctx context.Context, appointmentID uuid.UUID) (*ServiceScheme, error) {
+	var out ServiceScheme
+	out.AppointmentID = appointmentID
+	err := s.pool.QueryRow(ctx, `
+SELECT technique, notes, category_fields, skipped, created_by
+FROM appointment_service_schemes WHERE appointment_id=$1`, appointmentID).Scan(
+		&out.Technique, &out.Notes, &out.CategoryFields, &out.Skipped, &out.CreatedBy)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT name, brand, qty, unit, proportion, notes
+FROM appointment_scheme_components WHERE appointment_id=$1 ORDER BY sort_order`, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c SchemeComponent
+		if err := rows.Scan(&c.Name, &c.Brand, &c.Qty, &c.Unit, &c.Proportion, &c.Notes); err != nil {
+			return nil, err
+		}
+		out.Components = append(out.Components, c)
+	}
+	return &out, rows.Err()
 }
 
 type PlannerBlock struct {

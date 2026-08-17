@@ -30,6 +30,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/organizations/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/organizations/{orgID}/readiness", auth(http.HandlerFunc(a.orgReadiness)))
 	mux.Handle("PATCH /v1/organizations/{orgID}", auth(http.HandlerFunc(a.updateOrg)))
+	mux.Handle("POST /v1/organizations/{orgID}/branches", auth(http.HandlerFunc(a.createBranch)))
 	mux.Handle("POST /v1/organizations/{orgID}/masters", auth(http.HandlerFunc(a.addMaster)))
 	mux.Handle("GET /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.listStaff)))
 	mux.Handle("POST /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.inviteStaff)))
@@ -224,6 +225,37 @@ func (a *API) updateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, orgDTO(*org))
+}
+
+func (a *API) createBranch(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		Name        string   `json:"name"`
+		City        string   `json:"city"`
+		AddressLine string   `json:"address_line"`
+		Phone       string   `json:"phone"`
+		Timezone    string   `json:"timezone"`
+		Latitude    *float64 `json:"latitude"`
+		Longitude   *float64 `json:"longitude"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	b, err := a.svc.AddBranch(r.Context(), claims.UserID, orgID, service.AddBranchInput{
+		Name: req.Name, City: req.City, AddressLine: req.AddressLine, Phone: req.Phone,
+		Timezone: req.Timezone, Latitude: req.Latitude, Longitude: req.Longitude,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, branchDTO(*b))
 }
 
 type patchBranchReq struct {
@@ -847,10 +879,30 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, rt := range items {
+		stops := make([]map[string]any, 0, len(rt.Stops))
+		for _, st := range rt.Stops {
+			var branchID, deliveryID, taskID any
+			if st.BranchID != nil {
+				branchID = st.BranchID.String()
+			}
+			if st.DeliveryID != nil {
+				deliveryID = st.DeliveryID.String()
+			}
+			if st.TaskID != nil {
+				taskID = st.TaskID.String()
+			}
+			stops = append(stops, map[string]any{
+				"id": st.ID.String(), "kind": st.Kind, "branch_id": branchID, "delivery_id": deliveryID, "task_id": taskID,
+				"latitude": st.Latitude, "longitude": st.Longitude, "priority": st.Priority,
+				"expected_duration_min": st.ExpectedDurationMin, "status": st.Status, "sort_order": st.SortOrder,
+				"km_from_prev": st.KmFromPrev, "eta_at": st.ETAAt, "deadline_at": st.DeadlineAt,
+				"window_start": st.WindowStart, "window_end": st.WindowEnd,
+			})
+		}
 		out = append(out, map[string]any{
 			"id": rt.ID.String(), "planned_date": rt.PlannedDate, "status": rt.Status,
 			"total_km": rt.TotalKm, "total_minutes": rt.TotalMinutes, "provider": rt.Provider,
-			"label": "Рекомендованный маршрут", "stops": len(rt.Stops),
+			"label": "Рекомендованный маршрут", "stops": stops,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})

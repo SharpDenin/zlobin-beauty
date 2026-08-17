@@ -150,6 +150,7 @@ type StockBalanceView struct {
 	PriceMinor   int64
 	Currency     string
 	Status       string
+	PhotoMediaID *uuid.UUID
 }
 
 type StockMovement struct {
@@ -312,6 +313,7 @@ type ClientOrder struct {
 	DeliveredAt          *time.Time
 	DeliveryNote         string
 	AmountCollectedMinor int64
+	PickupBranchID       *uuid.UUID
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }

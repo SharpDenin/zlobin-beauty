@@ -107,6 +107,43 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	return &OrgBundle{Organization: org, Branch: branch}, nil
 }
 
+type AddBranchInput struct {
+	Name        string
+	City        string
+	AddressLine string
+	Phone       string
+	Timezone    string
+	Latitude    *float64
+	Longitude   *float64
+}
+
+func (s *Service) AddBranch(ctx context.Context, actor, orgID uuid.UUID, in AddBranchInput) (*domain.Branch, error) {
+	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(in.Name)
+	city := strings.TrimSpace(in.City)
+	addr := strings.TrimSpace(in.AddressLine)
+	if name == "" || city == "" || addr == "" {
+		return nil, apperr.Validation("name, city and address_line are required")
+	}
+	tz := strings.TrimSpace(in.Timezone)
+	if tz == "" {
+		tz = "Europe/Moscow"
+	}
+	now := s.now().UTC()
+	b := domain.Branch{
+		ID: ids.New(), OrganizationID: orgID, Name: name, City: city, AddressLine: addr,
+		Phone: strings.TrimSpace(in.Phone), Timezone: tz, CancelWindowHours: 12,
+		PickupEnabled: true, Published: true, Latitude: in.Latitude, Longitude: in.Longitude,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.store.CreateBranch(ctx, b); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &b, nil
+}
+
 func (s *Service) MyOrgs(ctx context.Context, userID uuid.UUID) ([]domain.Organization, map[uuid.UUID][]domain.Branch, map[uuid.UUID][]domain.Membership, error) {
 	memberships, err := s.store.ListMembershipsByUser(ctx, userID)
 	if err != nil {

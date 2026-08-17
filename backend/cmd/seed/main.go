@@ -42,6 +42,9 @@ func main() {
 		{Email: "supplier2@demo.local", Name: "Поставщик БьютиЛайн", Role: "supplier"},
 		{Email: "rep1@demo.local", Name: "Представитель Елена", Role: "supplier_rep", City: "Красноярск"},
 		{Email: "rep2@demo.local", Name: "Представитель Павел", Role: "supplier_rep", City: "Москва"},
+		{Email: "chain1@demo.local", Name: "Сеть Владелец", Role: "master"},
+		{Email: "mobile1@demo.local", Name: "Выездной Мастер", Role: "master", City: "Красноярск"},
+		{Email: "expired1@demo.local", Name: "Мастер Trial Expired", Role: "master"},
 	}
 	users := map[string]authUser{}
 	for _, a := range accounts {
@@ -205,6 +208,70 @@ func main() {
 		log.Printf("ok recurring supply")
 	}
 
+	admin1 := users["admin1@demo.local"]
+	if err := seedAdminMembership(client, base, master1, admin1, m1Org); err != nil {
+		log.Printf("warn admin membership: %v", err)
+	} else {
+		log.Printf("ok salon administrator membership")
+	}
+
+	chain := users["chain1@demo.local"]
+	if chain.ID != "" {
+		if err := seedChainOwner(client, base, chain); err != nil {
+			log.Printf("warn chain owner: %v", err)
+		} else {
+			log.Printf("ok chain owner")
+		}
+	}
+	mobile := users["mobile1@demo.local"]
+	if mobile.ID != "" {
+		_, _, _, _, err = seedMaster(client, base, mobile, masterSeed{
+			OrgName: "Выездной сервис (demo)", BranchName: "Красноярск выезд",
+			City: "Красноярск", Address: "выезд к клиенту", Phone: "+79001230000", Timezone: "Asia/Krasnoyarsk",
+			Display: "Мария Выезд", Bio: "Выездной мастер окрашивания.",
+			Specs: []string{"колористика"}, Experience: 6, Education: "Academy",
+			WorkType: "mobile_master",
+			Services: []serviceSpec{
+				{Name: "Окрашивание на дому", Category: "колористика", Description: "Выезд с материалами.", Duration: 150, Price: 650000},
+			},
+		})
+		if err != nil {
+			log.Printf("warn mobile master: %v", err)
+		} else {
+			log.Printf("ok mobile master")
+		}
+	}
+
+	if err := seedSubscriptions(client, base, users); err != nil {
+		log.Printf("warn subscriptions: %v", err)
+	} else {
+		log.Printf("ok subscription variants")
+	}
+
+	client2 := users["client2@demo.local"]
+	client3 := users["client3@demo.local"]
+	if err := seedNoShowScenario(client, base, client2, client3, master1, m1Profile, m1Service); err != nil {
+		log.Printf("warn no-show scenario: %v", err)
+	} else {
+		log.Printf("ok no-show + blacklist")
+	}
+
+	if err := seedPlannerBlocks(client, base, master1); err != nil {
+		log.Printf("warn planner blocks: %v", err)
+	}
+
+	if err := seedClientShopOrder(client, base, client1, products1, m1Branch); err != nil {
+		log.Printf("warn client shop order: %v", err)
+	} else {
+		log.Printf("ok client marketplace order")
+	}
+
+	if err := seedRepRoute(client, base, supplier1, sup1Org, m1Branch, users["rep1@demo.local"]); err != nil {
+		log.Printf("warn rep route: %v", err)
+	} else {
+		log.Printf("ok representative route")
+	}
+
 	log.Printf("seed complete")
 	log.Printf("demo accounts password=%s", password)
 	log.Printf("Open /cosmetics — suppliers appear as cards")
@@ -214,7 +281,12 @@ func main() {
 	log.Printf("master1@demo.local city=Красноярск Asia/Krasnoyarsk      work_type=owner (+ fixed_window МК)")
 	log.Printf("master2@demo.local city=Новосибирск Asia/Novosibirsk     work_type=renter (other city)")
 	log.Printf("master3@demo.local city=Москва Europe/Moscow             work_type=employee")
-	log.Printf("master4@demo.local city=Красноярск Asia/Krasnoyarsk      work_type=independent")
+	log.Printf("master4@demo.local city=Красноярск Asia/Krasnoyarsk      work_type=independent (FREE)")
+	log.Printf("chain1@demo.local  work_type=chain_owner (2 branches)")
+	log.Printf("mobile1@demo.local work_type=mobile_master")
+	log.Printf("admin1@demo.local  salon_admin of Anna salon")
+	log.Printf("expired1@demo.local expired trial → FREE")
+	log.Printf("client2@demo.local one no-show; client3@demo.local blacklisted at master1")
 	log.Printf("supplier1@demo.local org=%s", truncate(sup1Org, 36))
 	log.Printf("supplier2@demo.local org=%s", truncate(sup2Org, 36))
 }
@@ -366,6 +438,7 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
 		"phone": cfg.Phone, "city": cfg.City, "address_line": cfg.Address, "timezone": cfg.Timezone,
 		"name": cfg.BranchName, "pickup_enabled": true,
+		"latitude": cityLat(cfg.City), "longitude": cityLng(cfg.City),
 	}, nil)
 
 	// Draft profile first (publication needs services + hours).
@@ -406,6 +479,7 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 	pub := true
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
 		"published": pub, "pickup_enabled": true,
+		"latitude": cityLat(cfg.City), "longitude": cityLng(cfg.City),
 	}, nil)
 	_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
 		"published": pub, "description": cfg.Bio,
@@ -1437,6 +1511,222 @@ func uniqueStrings(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+func cityLat(city string) float64 {
+	switch strings.ToLower(strings.TrimSpace(city)) {
+	case "красноярск":
+		return 56.010543
+	case "новосибирск":
+		return 55.030199
+	case "химки":
+		return 55.889345
+	default:
+		return 55.755864
+	}
+}
+
+func cityLng(city string) float64 {
+	switch strings.ToLower(strings.TrimSpace(city)) {
+	case "красноярск":
+		return 92.852576
+	case "новосибирск":
+		return 82.920430
+	case "химки":
+		return 37.441029
+	default:
+		return 37.617698
+	}
+}
+
+func seedAdminMembership(c *http.Client, base string, owner, admin authUser, orgID string) error {
+	if admin.ID == "" || orgID == "" {
+		return fmt.Errorf("missing admin or org")
+	}
+	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/staff", owner.Token, map[string]any{
+		"user_id": admin.ID, "role": "admin",
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("invite admin status %d", status)
+	}
+	return nil
+}
+
+func seedChainOwner(c *http.Client, base string, user authUser) error {
+	orgID, branchID, _, _, err := seedMaster(c, base, user, masterSeed{
+		OrgName: "Сеть Salon-X (demo)", BranchName: "Красноярск",
+		City: "Красноярск", Address: "ул. Мира, 10", Phone: "+79009990001", Timezone: "Asia/Krasnoyarsk",
+		Display: "Сеть Salon-X", Bio: "Сеть из двух филиалов.",
+		Specs: []string{"колористика", "уход"}, Experience: 10, Education: "Network Academy",
+		WorkType: "chain_owner",
+		Services: []serviceSpec{
+			{Name: "Стрижка сети", Category: "стрижки", Description: "Стрижка в филиале сети.", Duration: 50, Price: 180000},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
+		"published": true,
+	}, nil)
+	lat, lng := 55.030199, 82.920430
+	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/branches", user.Token, map[string]any{
+		"name": "Новосибирск", "city": "Новосибирск", "address_line": "Красный проспект, 1",
+		"phone": "+79009990002", "timezone": "Asia/Novosibirsk", "latitude": lat, "longitude": lng,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("second branch status %d", status)
+	}
+	log.Printf("ok chain org=%s first_branch=%s", orgID, branchID)
+	return nil
+}
+
+func seedSubscriptions(c *http.Client, base string, users map[string]authUser) error {
+	set := func(email, plan, status string, extra map[string]any) {
+		u := users[email]
+		if u.Token == "" {
+			return
+		}
+		body := map[string]any{"plan": plan, "status": status}
+		for k, v := range extra {
+			body[k] = v
+		}
+		st, err := doJSON(c, http.MethodPost, base+"/v1/me/subscription/dev", u.Token, body, nil)
+		if err != nil || st >= 300 {
+			log.Printf("warn subscription %s status=%d err=%v", email, st, err)
+		}
+	}
+	set("master4@demo.local", "free", "expired", nil)
+	set("expired1@demo.local", "premium", "expired", map[string]any{
+		"trial_ends_at": time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339),
+	})
+	set("supplier1@demo.local", "premium", "active", map[string]any{
+		"paid_until": time.Now().UTC().AddDate(0, 6, 0).Format(time.RFC3339),
+	})
+	set("master1@demo.local", "premium", "trial", nil)
+	return nil
+}
+
+func seedNoShowScenario(c *http.Client, base string, oneShow, blacklisted, master authUser, profileID, serviceID string) error {
+	if profileID == "" || serviceID == "" {
+		return fmt.Errorf("missing profile/service")
+	}
+	bookNoShow := func(client authUser) error {
+		starts, err := findSlot(c, base, master.ID, 60)
+		if err != nil {
+			return err
+		}
+		var appt struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		}
+		st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
+			"master_id": profileID, "service_id": serviceID, "starts_at": starts,
+		}, &appt)
+		if err != nil {
+			return err
+		}
+		if st >= 300 || appt.ID == "" {
+			return fmt.Errorf("create no-show appt status %d", st)
+		}
+		if appt.Status == "pending_confirmation" || appt.Status == "pending" || appt.Status == "" {
+			_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/confirm", master.Token, map[string]any{}, &appt)
+		}
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/no-show", master.Token, map[string]any{
+			"reason": "seed no-show",
+		}, nil)
+		return nil
+	}
+	if err := bookNoShow(oneShow); err != nil {
+		return err
+	}
+	if err := bookNoShow(blacklisted); err != nil {
+		return err
+	}
+	if err := bookNoShow(blacklisted); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedPlannerBlocks(c *http.Client, base string, master authUser) error {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	end := start.Add(45 * time.Minute)
+	st, err := doJSON(c, http.MethodPost, base+"/v1/planner/blocks", master.Token, map[string]any{
+		"title": "Обед", "category": "break",
+		"starts_at": start.UTC().Format(time.RFC3339), "ends_at": end.UTC().Format(time.RFC3339),
+		"timezone": "Asia/Krasnoyarsk", "color": "#7a7a7a",
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if st >= 300 {
+		return fmt.Errorf("planner block status %d", st)
+	}
+	return nil
+}
+
+func seedClientShopOrder(c *http.Client, base string, client authUser, productIDs []string, pickupBranchID string) error {
+	if len(productIDs) == 0 {
+		return fmt.Errorf("no products")
+	}
+	st, err := doJSON(c, http.MethodPut, base+"/v1/commerce/shop/cart/items", client.Token, map[string]any{
+		"product_id": productIDs[0], "qty": 1,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if st >= 300 {
+		return fmt.Errorf("cart status %d", st)
+	}
+	st, err = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/checkout", client.Token, map[string]any{
+		"delivery_address":  "Салон Анны, ул. Ленина, 50",
+		"delivery_comment":  "seed pickup",
+		"payment_method":    "cash_on_delivery",
+		"pickup_branch_id": pickupBranchID,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if st >= 300 {
+		return fmt.Errorf("checkout status %d", st)
+	}
+	return nil
+}
+
+func seedRepRoute(c *http.Client, base string, supplier authUser, orgID, branchID string, rep authUser) error {
+	var me struct {
+		ID string `json:"id"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/me/representative", rep.Token, nil, &me)
+	if me.ID == "" {
+		return fmt.Errorf("rep profile missing")
+	}
+	lat, lng := cityLat("Красноярск"), cityLng("Красноярск")
+	st, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/routes/recommend", supplier.Token, map[string]any{
+		"representative_id": me.ID,
+		"date":              time.Now().UTC().Format("2006-01-02"),
+		"origin_lat":        lat,
+		"origin_lng":        lng,
+		"stops": []map[string]any{
+			{"kind": "salon_visit", "branch_id": branchID, "latitude": lat, "longitude": lng, "priority": "high", "expected_duration_min": 25},
+			{"kind": "delivery", "latitude": lat + 0.012, "longitude": lng + 0.018, "priority": "normal", "expected_duration_min": 20},
+		},
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if st >= 300 {
+		return fmt.Errorf("recommend route status %d", st)
+	}
+	return nil
 }
 
 func fatal(format string, args ...any) {

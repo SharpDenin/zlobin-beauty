@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/commerce/internal/domain"
@@ -81,11 +82,18 @@ func (s *Service) shipOrderStock(ctx context.Context, actor uuid.UUID, o *domain
 	return nil
 }
 
-func (s *Service) SupplierAnalytics(ctx context.Context, actor, orgID uuid.UUID) (map[string]any, error) {
+func (s *Service) SupplierAnalytics(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time) (map[string]any, error) {
 	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
 		if s.requireMembership(ctx, orgID, actor, "rep") != nil {
 			return nil, err
 		}
 	}
-	return s.store.SupplierAnalytics(ctx, orgID)
+	return s.store.SupplierAnalytics(ctx, orgID, from, to)
+}
+
+func (s *Service) RepAnalytics(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time) (map[string]any, error) {
+	if err := s.requireMembership(ctx, orgID, actor, "rep", "owner", "admin"); err != nil {
+		return nil, err
+	}
+	return s.store.RepAnalytics(ctx, orgID, actor, from, to)
 }

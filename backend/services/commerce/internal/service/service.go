@@ -470,6 +470,21 @@ func (s *Service) ListStock(ctx context.Context, actor, locationID uuid.UUID) ([
 	return items, nil
 }
 
+func (s *Service) ListMovements(ctx context.Context, actor, locationID uuid.UUID) ([]domain.StockMovement, error) {
+	loc, err := s.getLocationOrErr(ctx, locationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireAnyMembership(ctx, loc.OrganizationID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListMovements(ctx, locationID, 40)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return items, nil
+}
+
 // --- consumption norms ---
 
 func (s *Service) CreateNorm(ctx context.Context, actor, orgID, serviceID, productID uuid.UUID, qty float64, required bool) (*domain.ConsumptionNorm, error) {

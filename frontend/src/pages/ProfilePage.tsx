@@ -81,6 +81,7 @@ export function ProfilePage() {
         <SubscriptionHints />
         <div className="row">
           <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
+          <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
           <button className="btn btn-danger" type="button" onClick={() => void logout()}>Выйти</button>
         </div>

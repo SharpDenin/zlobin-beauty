@@ -46,7 +46,7 @@ test.describe('demo MVP flows', () => {
   })
 
   test('search defaults to Красноярск; other cities toggle shows Новосибирск master', async ({ page }, info) => {
-    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1440', 'two viewports')
+    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'two viewports')
     await loginUI(page, 'client1@demo.local')
 
     await page.goto('/search')
@@ -195,7 +195,7 @@ test.describe('demo MVP flows', () => {
   })
 
   test('supplier products page usable', async ({ page }, info) => {
-    test.skip(info.project.name !== 'desktop-1440', 'once')
+    test.skip(info.project.name !== 'desktop-1920', 'once')
     await loginUI(page, 'supplier1@demo.local')
     await page.goto('/supplier/products')
     await expect(page.getByRole('heading', { name: /Товар/i })).toBeVisible({ timeout: 10_000 })

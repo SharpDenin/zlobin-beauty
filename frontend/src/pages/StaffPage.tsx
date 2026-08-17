@@ -12,7 +12,7 @@ export function StaffPage() {
   const qc = useQueryClient()
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
   const [seeContacts, setSeeContacts] = useState(true)
-  const [inviteUserId, setInviteUserId] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('master')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -40,15 +40,20 @@ export function StaffPage() {
   })
 
   const invite = useMutation({
-    mutationFn: () =>
-      apiRequest(`/v1/organizations/${buyerOrgId}/staff`, {
+    mutationFn: async () => {
+      const lookup = await apiRequest<{ user: { id: string } }>('/v1/auth/lookup', {
         token: accessToken,
-        body: { user_id: inviteUserId.trim(), role: inviteRole },
-      }),
+        body: { email: inviteEmail.trim() },
+      })
+      return apiRequest(`/v1/organizations/${buyerOrgId}/staff`, {
+        token: accessToken,
+        body: { user_id: lookup.user.id, role: inviteRole },
+      })
+    },
     onSuccess: async () => {
       setOk('Сотрудник добавлен')
       setError(null)
-      setInviteUserId('')
+      setInviteEmail('')
       await qc.invalidateQueries({ queryKey: ['staff'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось пригласить'),
@@ -75,10 +80,10 @@ export function StaffPage() {
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
       <section className="card stack">
-        <h2>Контакты клиентов Salon-X</h2>
+        <h2>Показывать контактные данные клиентов мастерам</h2>
         <label className="field-check">
           <input type="checkbox" checked={seeContacts} onChange={(e) => setSeeContacts(e.target.checked)} />
-          <span>Мастера видят телефон и email</span>
+          <span>Мастера видят телефон и email клиента</span>
         </label>
         <button className="btn btn-primary" type="button" disabled={policy.isPending} onClick={() => policy.mutate()}>
           Сохранить политику
@@ -86,10 +91,10 @@ export function StaffPage() {
       </section>
       <section className="card stack">
         <h2>Добавить сотрудника</h2>
-        <p className="muted">Укажите UUID пользователя (из профиля / identity) и роль в салоне.</p>
+        <p className="muted">Приглашение по email уже зарегистрированного пользователя.</p>
         <div className="field">
-          <label htmlFor="invite-uid">User ID</label>
-          <input id="invite-uid" value={inviteUserId} onChange={(e) => setInviteUserId(e.target.value)} placeholder="xxxxxxxx-xxxx-…" />
+          <label htmlFor="invite-email">Email</label>
+          <input id="invite-email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="admin1@demo.local" />
         </div>
         <div className="field">
           <label htmlFor="invite-role">Роль</label>
@@ -98,7 +103,7 @@ export function StaffPage() {
             <option value="admin">Администратор</option>
           </select>
         </div>
-        <button className="btn btn-primary" type="button" disabled={invite.isPending || inviteUserId.trim().length < 8} onClick={() => invite.mutate()}>
+        <button className="btn btn-primary" type="button" disabled={invite.isPending || inviteEmail.trim().length < 5} onClick={() => invite.mutate()}>
           Пригласить
         </button>
       </section>

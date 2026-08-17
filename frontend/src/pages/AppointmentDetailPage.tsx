@@ -47,8 +47,13 @@ export function AppointmentDetailPage() {
   const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
   const [afterDraft, setAfterDraft] = useState<string | null>(null)
   const [technique, setTechnique] = useState('')
-  const [material, setMaterial] = useState('')
+  const [formula, setFormula] = useState('')
+  const [notes, setNotes] = useState('')
+  const [productName, setProductName] = useState('')
+  const [productQty, setProductQty] = useState('')
+  const [proportion, setProportion] = useState('')
   const [skipScheme, setSkipScheme] = useState(false)
+  const [skipReason, setSkipReason] = useState('')
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -183,30 +188,56 @@ export function AppointmentDetailPage() {
           {canComplete && (
             <div className="stack">
               <h3>Схема услуги</h3>
-              <p className="muted">На бесплатном тарифе схема обязательна. Premium trial может пропустить.</p>
+              <p className="muted">На Free схема обязательна: техника и хотя бы один продукт. Premium/Trial может не раскрывать схему с явной причиной.</p>
               <div className="field">
                 <label>Техника</label>
                 <input value={technique} onChange={(e) => setTechnique(e.target.value)} placeholder="Балаяж / тонирование" />
               </div>
               <div className="field">
-                <label>Материал / продукт</label>
-                <input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder="Majirel 7.1 + 6%" />
+                <label>Формула</label>
+                <input value={formula} onChange={(e) => setFormula(e.target.value)} placeholder="7.1 + 6% 1:1.5" />
+              </div>
+              <div className="field">
+                <label>Продукт / материал</label>
+                <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Majirel 7.1" />
+              </div>
+              <div className="row">
+                <div className="field" style={{ flex: 1 }}>
+                  <label>Количество</label>
+                  <input value={productQty} onChange={(e) => setProductQty(e.target.value)} placeholder="30" />
+                </div>
+                <div className="field" style={{ flex: 1 }}>
+                  <label>Пропорция</label>
+                  <input value={proportion} onChange={(e) => setProportion(e.target.value)} placeholder="1:1.5" />
+                </div>
+              </div>
+              <div className="field">
+                <label>Заметки</label>
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
               <label className="field-check">
                 <input type="checkbox" checked={skipScheme} onChange={(e) => setSkipScheme(e.target.checked)} />
-                <span>Пропустить (только Premium)</span>
+                <span>Не раскрывать схему (Premium / Trial)</span>
               </label>
+              {skipScheme && (
+                <div className="field">
+                  <label>Причина</label>
+                  <input value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="Коммерческая тайна / entitlement" />
+                </div>
+              )}
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={act.isPending}
+                disabled={act.isPending || (skipScheme && skipReason.trim().length < 2)}
                 onClick={() =>
                   act.mutate({
                     path: `/v1/appointments/${a.id}/complete`,
                     body: {
                       skipped: skipScheme,
                       technique,
-                      components: material ? [{ name: material }] : [],
+                      notes: skipScheme ? skipReason : notes,
+                      category_fields: { formula },
+                      components: productName ? [{ name: productName, qty: productQty, proportion, unit: 'г' }] : [],
                     },
                   })
                 }

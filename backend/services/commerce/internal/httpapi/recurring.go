@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -29,9 +30,21 @@ func recurringDTO(a store.RecurringAgreement) map[string]any {
 	return map[string]any{
 		"id": a.ID.String(), "supplier_org_id": a.SupplierOrgID.String(), "buyer_org_id": a.BuyerOrgID.String(),
 		"pickup_branch_id": a.PickupBranchID.String(), "frequency": a.Frequency, "status": a.Status,
+		"preferred_weekday": a.PreferredWeekday, "window_start_minute": a.WindowStartMinute, "window_end_minute": a.WindowEndMinute,
 		"start_date": a.StartDate.Format("2006-01-02"), "horizon_days": a.HorizonDays, "items": items,
-		"created_at": a.CreatedAt,
+		"proposed_change": jsonRaw(a.ProposedChange), "created_at": a.CreatedAt,
 	}
+}
+
+func jsonRaw(raw []byte) any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return map[string]any{}
+	}
+	return v
 }
 
 func (a *API) createRecurring(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +55,8 @@ func (a *API) createRecurring(w http.ResponseWriter, r *http.Request) {
 		PickupBranchID   string `json:"pickup_branch_id"`
 		Frequency        string `json:"frequency"`
 		PreferredWeekday *int   `json:"preferred_weekday"`
+		WindowStart      *int   `json:"window_start_minute"`
+		WindowEnd        *int   `json:"window_end_minute"`
 		StartDate        string `json:"start_date"`
 		HorizonDays      int    `json:"horizon_days"`
 		Items            []struct {
@@ -67,7 +82,8 @@ func (a *API) createRecurring(w http.ResponseWriter, r *http.Request) {
 	}
 	in := service.CreateRecurringInput{
 		SupplierOrgID: sup, BuyerOrgID: buy, PickupBranchID: br, Frequency: req.Frequency,
-		PreferredWeekday: req.PreferredWeekday, StartDate: start, HorizonDays: req.HorizonDays,
+		PreferredWeekday: req.PreferredWeekday, WindowStart: req.WindowStart, WindowEnd: req.WindowEnd,
+		StartDate: start, HorizonDays: req.HorizonDays,
 	}
 	for _, it := range req.Items {
 		pid, err := uuid.Parse(it.ProductID)
@@ -113,14 +129,33 @@ func (a *API) decideRecurring(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action string `json:"action"`
+		Action    string                    `json:"action"`
+		Frequency string                    `json:"frequency"`
+		StartDate string                    `json:"start_date"`
+		Qty       *float64                  `json:"qty"`
+		Reason    string                    `json:"reason"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	approve := strings.EqualFold(req.Action, "approve")
-	item, err := a.svc.DecideRecurring(r.Context(), claims.UserID, id, approve)
+	act := strings.ToLower(strings.TrimSpace(req.Action))
+	var item *store.RecurringAgreement
+	switch act {
+	case "propose":
+		item, err = a.svc.ProposeRecurring(r.Context(), claims.UserID, id, service.RecurringProposal{
+			Frequency: req.Frequency, StartDate: req.StartDate, Qty: req.Qty, Reason: req.Reason,
+		})
+	case "accept_proposal":
+		item, err = a.svc.RespondRecurringProposal(r.Context(), claims.UserID, id, true)
+	case "reject_proposal":
+		item, err = a.svc.RespondRecurringProposal(r.Context(), claims.UserID, id, false)
+	case "approve", "reject":
+		item, err = a.svc.DecideRecurring(r.Context(), claims.UserID, id, act == "approve")
+	default:
+		httpx.WriteError(w, r, a.log, apperr.Validation("action must be approve, reject, propose, accept_proposal or reject_proposal"))
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

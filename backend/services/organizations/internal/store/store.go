@@ -77,6 +77,18 @@ VALUES ($1,$2,$3,$4,$5,$6)`, membership.ID, membership.OrganizationID, membershi
 	return tx.Commit(ctx)
 }
 
+func (s *Store) CreateBranch(ctx context.Context, branch domain.Branch) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO branches(id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
+pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, active, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		branch.ID, branch.OrganizationID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone,
+		branch.CancelWindowHours, branch.AutoConfirm, branch.Published,
+		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, true,
+		branch.CreatedAt, branch.UpdatedAt)
+	return err
+}
+
 func (s *Store) ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]domain.Membership, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT id, organization_id, user_id, role, status, created_at

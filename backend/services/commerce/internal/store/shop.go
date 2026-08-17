@@ -13,7 +13,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 )
 
-const clientOrderColumns = `id, user_id, supplier_org_id, status, currency, total_minor, delivery_address, delivery_comment, payment_method, rep_user_id, delivered_at, delivery_note, amount_collected_minor, created_at, updated_at`
+const clientOrderColumns = `id, user_id, supplier_org_id, status, currency, total_minor, delivery_address, delivery_comment, payment_method, rep_user_id, delivered_at, delivery_note, amount_collected_minor, created_at, updated_at, pickup_branch_id`
 
 const availableSubquery = `
 COALESCE((
@@ -231,9 +231,9 @@ func (s *Store) CreateClientOrderWithItems(ctx context.Context, p CreateClientOr
 	o := p.Order
 	if _, err := tx.Exec(ctx, `
 INSERT INTO client_orders(`+clientOrderColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		o.ID, o.UserID, o.SupplierOrgID, o.Status, o.Currency, o.TotalMinor, o.DeliveryAddress, o.DeliveryComment,
-		o.PaymentMethod, o.RepUserID, o.DeliveredAt, o.DeliveryNote, o.AmountCollectedMinor, o.CreatedAt, o.UpdatedAt); err != nil {
+		o.PaymentMethod, o.RepUserID, o.DeliveredAt, o.DeliveryNote, o.AmountCollectedMinor, o.CreatedAt, o.UpdatedAt, o.PickupBranchID); err != nil {
 		return nil, nil, err
 	}
 	items := p.Items
@@ -380,7 +380,7 @@ func scanClientOrder(row pgx.Row) (*domain.ClientOrder, error) {
 	var o domain.ClientOrder
 	if err := row.Scan(&o.ID, &o.UserID, &o.SupplierOrgID, &o.Status, &o.Currency, &o.TotalMinor,
 		&o.DeliveryAddress, &o.DeliveryComment, &o.PaymentMethod, &o.RepUserID, &o.DeliveredAt,
-		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt, &o.PickupBranchID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -406,7 +406,7 @@ func scanClientOrderRow(rows pgx.Rows) (*domain.ClientOrder, error) {
 	var o domain.ClientOrder
 	if err := rows.Scan(&o.ID, &o.UserID, &o.SupplierOrgID, &o.Status, &o.Currency, &o.TotalMinor,
 		&o.DeliveryAddress, &o.DeliveryComment, &o.PaymentMethod, &o.RepUserID, &o.DeliveredAt,
-		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt, &o.PickupBranchID); err != nil {
 		return nil, err
 	}
 	return &o, nil
@@ -462,7 +462,7 @@ func (s *Store) MarkDelivered(ctx context.Context, p MarkDeliveredParams) (*doma
 	if err := tx.QueryRow(ctx, `SELECT `+clientOrderColumns+` FROM client_orders WHERE id=$1 FOR UPDATE`, p.OrderID).Scan(
 		&order.ID, &order.UserID, &order.SupplierOrgID, &order.Status, &order.Currency, &order.TotalMinor,
 		&order.DeliveryAddress, &order.DeliveryComment, &order.PaymentMethod, &order.RepUserID, &order.DeliveredAt,
-		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt); err != nil {
+		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, apperr.NotFound("order not found")
 		}
@@ -713,7 +713,7 @@ func (s *Store) TransitionClientOrder(ctx context.Context, p TransitionClientOrd
 	if err := tx.QueryRow(ctx, `SELECT `+clientOrderColumns+` FROM client_orders WHERE id=$1 FOR UPDATE`, p.OrderID).Scan(
 		&order.ID, &order.UserID, &order.SupplierOrgID, &order.Status, &order.Currency, &order.TotalMinor,
 		&order.DeliveryAddress, &order.DeliveryComment, &order.PaymentMethod, &order.RepUserID, &order.DeliveredAt,
-		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt); err != nil {
+		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound("order not found")
 		}

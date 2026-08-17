@@ -12,6 +12,10 @@ type Agreement = {
   start_date: string
   supplier_org_id?: string
   buyer_org_id?: string
+  preferred_weekday?: number | null
+  window_start_minute?: number | null
+  window_end_minute?: number | null
+  proposed_change?: { frequency?: string; start_date?: string; qty?: number; reason?: string }
 }
 
 type Product = { id: string; name: string; brand?: string }
@@ -27,11 +31,17 @@ export function RecurringPage() {
 
   const [frequency, setFrequency] = useState('weekly')
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [weekday, setWeekday] = useState('1')
+  const [windowStart, setWindowStart] = useState('10:00')
+  const [windowEnd, setWindowEnd] = useState('18:00')
   const [supplierId, setSupplierId] = useState('')
   const [productId, setProductId] = useState('')
   const [qty, setQty] = useState('1')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [proposeId, setProposeId] = useState<string | null>(null)
+  const [proposeQty, setProposeQty] = useState('1')
+  const [proposeReason, setProposeReason] = useState('')
 
   const list = useQuery({
     queryKey: ['recurring', orgId, role],
@@ -64,19 +74,25 @@ export function RecurringPage() {
   )
 
   const create = useMutation({
-    mutationFn: () =>
-      apiRequest('/v1/commerce/recurring', {
+    mutationFn: () => {
+      const [sh, sm] = windowStart.split(':').map(Number)
+      const [eh, em] = windowEnd.split(':').map(Number)
+      return apiRequest('/v1/commerce/recurring', {
         token: accessToken,
         body: {
           supplier_org_id: supplierId,
           buyer_org_id: buyerOrgId,
           pickup_branch_id: pickupBranchId,
           frequency,
+          preferred_weekday: Number(weekday),
+          window_start_minute: (sh || 0) * 60 + (sm || 0),
+          window_end_minute: (eh || 18) * 60 + (em || 0),
           start_date: startDate,
           horizon_days: 30,
           items: [{ product_id: productId, qty: Number(qty) || 1 }],
         },
-      }),
+      })
+    },
     onSuccess: async () => {
       setOk('Заявка на регулярную поставку создана')
       setError(null)
@@ -86,10 +102,15 @@ export function RecurringPage() {
   })
 
   const decide = useMutation({
-    mutationFn: (input: { id: string; action: 'approve' | 'reject' }) =>
+    mutationFn: (input: { id: string; action: string; qty?: number; reason?: string; frequency?: string }) =>
       apiRequest(`/v1/commerce/recurring/${input.id}/decide`, {
         token: accessToken,
-        body: { action: input.action },
+        body: {
+          action: input.action,
+          qty: input.qty,
+          reason: input.reason,
+          frequency: input.frequency,
+        },
       }),
     onSuccess: async () => {
       setOk('Решение сохранено')
@@ -161,8 +182,18 @@ export function RecurringPage() {
               <label htmlFor="freq">Частота</label>
               <select id="freq" value={frequency} onChange={(e) => setFrequency(e.target.value)}>
                 <option value="weekly">Еженедельно</option>
-                <option value="biweekly">Раз в две недели</option>
+                <option value="biweekly">Каждые 2 недели</option>
                 <option value="monthly">Ежемесячно</option>
+              </select>
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label htmlFor="wd">День недели</label>
+              <select id="wd" value={weekday} onChange={(e) => setWeekday(e.target.value)}>
+                <option value="1">Понедельник</option>
+                <option value="2">Вторник</option>
+                <option value="3">Среда</option>
+                <option value="4">Четверг</option>
+                <option value="5">Пятница</option>
               </select>
             </div>
             <div className="field" style={{ flex: 1 }}>
@@ -172,6 +203,16 @@ export function RecurringPage() {
             <div className="field" style={{ flex: 1 }}>
               <label htmlFor="start">Старт</label>
               <input id="start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+          </div>
+          <div className="row">
+            <div className="field" style={{ flex: 1 }}>
+              <label>Окно с</label>
+              <input type="time" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label>Окно до</label>
+              <input type="time" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
             </div>
           </div>
           <p className="muted">Филиал получения: {pickupBranchId ? 'выбран из филиалов салона' : 'нет филиала'}</p>
@@ -201,12 +242,30 @@ export function RecurringPage() {
               <div className="row">
                 <button className="btn btn-primary btn-compact" type="button" onClick={() => decide.mutate({ id: a.id, action: 'approve' })}>Одобрить</button>
                 <button className="btn btn-secondary btn-compact" type="button" onClick={() => decide.mutate({ id: a.id, action: 'reject' })}>Отклонить</button>
+                <button className="btn btn-secondary btn-compact" type="button" onClick={() => setProposeId(a.id)}>Предложить изменения</button>
+              </div>
+            )}
+            {isSupplier && proposeId === a.id && (
+              <div className="stack-sm">
+                <div className="field"><label>Новое количество</label><input value={proposeQty} onChange={(e) => setProposeQty(e.target.value)} /></div>
+                <div className="field"><label>Причина</label><input value={proposeReason} onChange={(e) => setProposeReason(e.target.value)} /></div>
+                <button className="btn btn-primary btn-compact" type="button" onClick={() => decide.mutate({ id: a.id, action: 'propose', qty: Number(proposeQty) || 1, reason: proposeReason, frequency: a.frequency })}>Отправить предложение</button>
+              </div>
+            )}
+            {!isSupplier && a.status === 'pending_reconfirm' && (
+              <div className="stack-sm">
+                <p>Предложение поставщика: {a.proposed_change?.qty ? `кол-во ${a.proposed_change.qty}` : ''} {a.proposed_change?.frequency || ''} {a.proposed_change?.reason || ''}</p>
+                <div className="row">
+                  <button className="btn btn-primary btn-compact" type="button" onClick={() => decide.mutate({ id: a.id, action: 'accept_proposal' })}>Принять</button>
+                  <button className="btn btn-secondary btn-compact" type="button" onClick={() => decide.mutate({ id: a.id, action: 'reject_proposal' })}>Отклонить</button>
+                </div>
               </div>
             )}
             {!isSupplier && a.status === 'active' && (
-              <button className="btn btn-secondary btn-compact" type="button" onClick={() => setStatus.mutate({ id: a.id, status: 'paused' })}>
-                Пауза
-              </button>
+              <div className="row">
+                <button className="btn btn-secondary btn-compact" type="button" onClick={() => setStatus.mutate({ id: a.id, status: 'paused' })}>Пауза</button>
+                <button className="btn btn-secondary btn-compact" type="button" onClick={() => setStatus.mutate({ id: a.id, status: 'cancelled' })}>Отменить</button>
+              </div>
             )}
             {!isSupplier && a.status === 'paused' && (
               <button className="btn btn-secondary btn-compact" type="button" onClick={() => setStatus.mutate({ id: a.id, status: 'active' })}>

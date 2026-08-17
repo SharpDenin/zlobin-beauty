@@ -32,7 +32,7 @@ const masterSchema = z.object({
   specializations: z.string().optional(),
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
-  work_type: z.enum(['employee', 'renter', 'owner', 'salon_owner', 'independent']),
+  work_type: z.enum(['employee', 'renter', 'owner', 'salon_owner', 'independent', 'chain_owner', 'mobile_master', 'chair_master', 'private_master']),
   published: z.boolean(),
 })
 

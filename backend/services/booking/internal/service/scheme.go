@@ -99,6 +99,17 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 	return a, nil
 }
 
+func (s *Service) GetVisitScheme(ctx context.Context, appointmentID, actor uuid.UUID) (*store.ServiceScheme, error) {
+	if _, err := s.Get(ctx, appointmentID, actor); err != nil {
+		return nil, err
+	}
+	item, err := s.store.GetServiceScheme(ctx, appointmentID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return item, nil
+}
+
 func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title, category, timezone, color string, starts, ends time.Time, orgID *uuid.UUID) (*store.PlannerBlock, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {

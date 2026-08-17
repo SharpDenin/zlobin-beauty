@@ -8,6 +8,7 @@ import { useSupplierOrg } from '@/shared/lib/commerce'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { emptyDoc, estimateReadingMinutes, docHasText, RichDocEditor } from '@/shared/ui/RichDocEditor'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
+import { MediaImage } from '@/shared/ui/MediaImage'
 
 type Article = {
   id: string
@@ -85,13 +86,13 @@ async function fetchMyKnowledge(token: string | null): Promise<Article[] | null>
 export function KnowledgeListPage() {
   const { accessToken, user } = useAuth()
   const isSupplier = hasSupplierAccess(user) && !hasMasterAccess(user)
-  const isMaster = hasMasterAccess(user)
   const { supplierOrgId } = useSupplierOrg()
   const qc = useQueryClient()
   const [category, setCategory] = useState('')
   const [brand, setBrand] = useState('')
   const [search, setSearch] = useState('')
   const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [chip, setChip] = useState('')
   const [submitted, setSubmitted] = useState({ category: '', brand: '', q: '', favorites: false })
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -224,55 +225,108 @@ export function KnowledgeListPage() {
   }
 
   const canSave = draft.title.trim().length >= 2 && docHasText(draft.doc)
+  const chips = [
+    { id: 'fav', label: 'Избранное' },
+    { id: 'new', label: 'Новое' },
+    { id: 'Колористика', label: 'Для окрашивания' },
+    { id: 'Уход', label: 'Уход' },
+    { id: 'Стайлинг', label: 'Техника' },
+    { id: 'Продукция', label: 'Продукция' },
+  ]
+
+  function applyChip(id: string) {
+    if (id === 'fav') {
+      setFavoritesOnly(true)
+      setSubmitted((s) => ({ ...s, favorites: true }))
+      setChip('fav')
+      return
+    }
+    if (id === 'new') {
+      setChip('new')
+      return
+    }
+    setCategory(id)
+    setChip(id)
+    setSubmitted((s) => ({ ...s, category: id }))
+  }
+
+  const visibleItems = useMemo(() => {
+    let list = items
+    if (chip === 'new') {
+      const cut = Date.now() - 14 * 86400000
+      list = list.filter((a) => new Date(a.created_at).getTime() >= cut)
+    }
+    return list
+  }, [items, chip])
+  const recommended = visibleItems.slice(0, 3)
+  const popular = visibleItems.slice(3, 8)
 
   return (
     <main className="page stack">
+      {isSupplier && (
       <div className="stack-sm">
         <h1>База знаний</h1>
-        <p className="muted">
-          {isSupplier ? 'Ваши материалы для мастеров' : isMaster ? 'Опубликованные статьи и техники' : 'Полезные материалы'}
-        </p>
+        <p className="muted">Ваши материалы для мастеров</p>
       </div>
+      )}
 
       {!isSupplier && (
-        <form
-          className="card search-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setSubmitted({ category: category.trim(), brand: brand.trim(), q: search.trim(), favorites: favoritesOnly })
-          }}
-        >
-          <div className="field">
-            <label htmlFor="kb-search">Поиск</label>
-            <input id="kb-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Текст статьи" />
-          </div>
-          <div className="field">
-            <label htmlFor="category">Категория</label>
-            <input
-              id="category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="Например: колористика"
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="brand">Бренд</label>
-            <input id="brand" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="L'Oreal" />
-          </div>
-          <div className="row">
-            <button className="chip" type="button" onClick={() => { setFavoritesOnly((v) => !v); setSubmitted((s) => ({ ...s, favorites: !favoritesOnly })) }}>
-              {favoritesOnly ? 'Избранное включено' : 'Только избранное'}
-            </button>
-            <button className="chip" type="button" onClick={() => { setCategory('Колористика'); setSubmitted((s) => ({ ...s, category: 'Колористика' })) }}>Колористика</button>
-            <button className="chip" type="button" onClick={() => { setBrand("L'Oreal"); setSubmitted((s) => ({ ...s, brand: "L'Oreal" })) }}>L'Oreal</button>
-          </div>
-          <button className="btn btn-primary" type="submit">Фильтровать</button>
-          {(submitted.category || submitted.brand || submitted.q || submitted.favorites) && (
-            <button className="btn btn-secondary" type="button" onClick={() => { setCategory(''); setBrand(''); setSearch(''); setFavoritesOnly(false); setSubmitted({ category: '', brand: '', q: '', favorites: false }) }}>
-              Сбросить
-            </button>
-          )}
-        </form>
+        <section className="kb-hero card stack">
+          <h1>База знаний</h1>
+          <p className="muted">Профессиональная библиотека протоколов, формул и техник.</p>
+          <form
+            className="search-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setSubmitted({ category: category.trim(), brand: brand.trim(), q: search.trim(), favorites: favoritesOnly })
+            }}
+          >
+            <div className="field">
+              <label htmlFor="kb-search">Поиск</label>
+              <input id="kb-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Найти статью, бренд или технику" />
+            </div>
+            <div className="filters-grid">
+              <div className="field">
+                <label>Категория</label>
+                <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                  <option value="">Все</option>
+                  {['Колористика', 'Уход', 'Стайлинг', 'Продукция', 'Процедуры', 'Салон'].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Бренд</label>
+                <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="L'Oreal, Wella…" list="kb-brands" />
+                <datalist id="kb-brands">
+                  <option value="L'Oreal" />
+                  <option value="Wella" />
+                  <option value="Olaplex" />
+                  <option value="Estel" />
+                </datalist>
+              </div>
+            </div>
+            <div className="chip-row">
+              {chips.map((c) => (
+                <button key={c.id} className={`chip ${chip === c.id || (c.id === 'fav' && favoritesOnly) ? 'active' : ''}`} type="button" onClick={() => applyChip(c.id)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            {(submitted.category || submitted.brand || submitted.q || submitted.favorites || chip) && (
+              <div className="row">
+                {submitted.category && <span className="chip active">{submitted.category}</span>}
+                {submitted.brand && <span className="chip active">{submitted.brand}</span>}
+                {submitted.favorites && <span className="chip active">Избранное</span>}
+                <button className="btn btn-secondary btn-compact" type="button" onClick={() => {
+                  setCategory(''); setBrand(''); setSearch(''); setFavoritesOnly(false); setChip('')
+                  setSubmitted({ category: '', brand: '', q: '', favorites: false })
+                }}>Очистить всё</button>
+              </div>
+            )}
+            <button className="btn btn-primary" type="submit">Найти</button>
+          </form>
+        </section>
       )}
 
       {isSupplier && (
@@ -365,9 +419,29 @@ export function KnowledgeListPage() {
         </div>
       )}
 
-      <div className="list">
-        {items.map((a) => (
-          <article key={a.id} className="list-item">
+      {!isSupplier && recommended.length > 0 && (
+        <section className="stack">
+          <h2>Рекомендованное</h2>
+          <div className="kb-grid">
+            {recommended.map((a) => (
+              <Link key={a.id} to={`/knowledge/${a.id}`} className="kb-card">
+                <div className="kb-cover">
+                  {a.cover_media_id
+                    ? <MediaImage mediaId={a.cover_media_id} token={accessToken} alt="" className="product-photo" />
+                    : <div className="product-photo placeholder">{(a.category || 'KB').slice(0, 2)}</div>}
+                </div>
+                <strong>{a.title}</strong>
+                <p className="muted">{[a.author_name, a.category, a.brand].filter(Boolean).join(' · ')}</p>
+                <span className="muted">{a.reading_time_minutes ? `${a.reading_time_minutes} мин` : 'Статья'}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className={isSupplier ? 'list' : 'kb-grid'}>
+        {(isSupplier ? items : popular.length ? popular : visibleItems).map((a) => (
+          <article key={a.id} className={isSupplier ? 'list-item' : 'kb-card'}>
             <Link to={`/knowledge/${a.id}`} className="stack-sm">
               <div className="row between">
                 <strong>{a.title}</strong>

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/commerce/internal/domain"
@@ -27,6 +28,7 @@ func (a *API) registerShopRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.Handle("POST /v1/commerce/shop/supplier/orders/{id}/transition", auth(http.HandlerFunc(a.transitionClientOrder)))
 	mux.Handle("GET /v1/commerce/rep/deliveries", auth(http.HandlerFunc(a.listRepDeliveries)))
 	mux.Handle("POST /v1/commerce/rep/deliveries/{id}/complete", auth(http.HandlerFunc(a.completeRepDelivery)))
+	mux.Handle("GET /v1/commerce/rep/analytics", auth(http.HandlerFunc(a.repAnalytics)))
 	mux.Handle("GET /v1/commerce/shop/debt", auth(http.HandlerFunc(a.getDebtBalance)))
 	mux.Handle("POST /v1/commerce/imports/products/validate", auth(http.HandlerFunc(a.validateProductImport)))
 	mux.Handle("POST /v1/commerce/imports/{id}/apply", auth(http.HandlerFunc(a.applyProductImport)))
@@ -167,14 +169,24 @@ func (a *API) checkout(w http.ResponseWriter, r *http.Request) {
 		DeliveryAddress string `json:"delivery_address"`
 		DeliveryComment string `json:"delivery_comment"`
 		PaymentMethod   string `json:"payment_method"`
+		PickupBranchID  string `json:"pickup_branch_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	order, items, err := a.svc.Checkout(r.Context(), claims.UserID, service.CheckoutInput{
+	in := service.CheckoutInput{
 		DeliveryAddress: req.DeliveryAddress, DeliveryComment: req.DeliveryComment, PaymentMethod: req.PaymentMethod,
-	})
+	}
+	if strings.TrimSpace(req.PickupBranchID) != "" {
+		id, err := uuid.Parse(req.PickupBranchID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid pickup_branch_id"))
+			return
+		}
+		in.PickupBranchID = &id
+	}
+	order, items, err := a.svc.Checkout(r.Context(), claims.UserID, in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -313,6 +325,22 @@ func (a *API) listRepDeliveries(w http.ResponseWriter, r *http.Request) {
 		out = append(out, clientOrderDTO(o, items))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) repAnalytics(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	from, to := parseAnalyticsRange(r)
+	body, err := a.svc.RepAnalytics(r.Context(), claims.UserID, orgID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, body)
 }
 
 func (a *API) completeRepDelivery(w http.ResponseWriter, r *http.Request) {
@@ -459,9 +487,14 @@ func cartDTO(c service.CartResult) map[string]any {
 }
 
 func clientOrderSummaryDTO(o domain.ClientOrder) map[string]any {
+	var pickup any
+	if o.PickupBranchID != nil {
+		pickup = o.PickupBranchID.String()
+	}
 	return map[string]any{
 		"id": o.ID.String(), "status": o.Status, "total_minor": o.TotalMinor, "currency": o.Currency,
 		"supplier_org_id": o.SupplierOrgID.String(), "created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
+		"delivery_address": o.DeliveryAddress, "payment_method": o.PaymentMethod, "pickup_branch_id": pickup,
 	}
 }
 
@@ -481,13 +514,17 @@ func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem) map[st
 	if o.DeliveredAt != nil {
 		deliveredAt = *o.DeliveredAt
 	}
+	var pickup any
+	if o.PickupBranchID != nil {
+		pickup = o.PickupBranchID.String()
+	}
 	return map[string]any{
 		"id": o.ID.String(), "user_id": o.UserID.String(), "supplier_org_id": o.SupplierOrgID.String(),
 		"status": o.Status, "currency": o.Currency, "total_minor": o.TotalMinor,
 		"delivery_address": o.DeliveryAddress, "delivery_comment": o.DeliveryComment,
 		"payment_method": o.PaymentMethod, "rep_user_id": repUser, "delivered_at": deliveredAt,
 		"delivery_note": o.DeliveryNote, "amount_collected_minor": o.AmountCollectedMinor,
-		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt, "items": itemsOut,
+		"pickup_branch_id": pickup, "created_at": o.CreatedAt, "updated_at": o.UpdatedAt, "items": itemsOut,
 	}
 }
 

@@ -47,7 +47,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   })
 
   test('supplier products + analytics + warehouse', async ({ page }, info) => {
-    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1440', 'two viewports')
+    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'two viewports')
     await loginUI(page, 'supplier1@demo.local')
     await page.goto('/supplier/products')
     await expect(page.getByRole('heading', { name: 'Товары' })).toBeVisible({ timeout: 15_000 })
@@ -63,7 +63,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'master1@demo.local')
     await page.goto('/knowledge')
     await expect(page.getByRole('heading', { name: 'База знаний' })).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: 'Колористика' }).click()
+    await page.getByRole('button', { name: 'Для окрашивания' }).click()
     const article = page.locator('a[href*="/knowledge/"]').first()
     await expect(article).toBeVisible({ timeout: 15_000 })
     await article.click()
@@ -75,8 +75,10 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'rep1@demo.local')
     await page.goto('/rep')
-    await expect(page.getByRole('heading', { name: 'Маршрут и задачи', exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('heading', { name: 'Аналитика поставщика', exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Кабинет представителя' })).toBeVisible({ timeout: 15_000 })
+    await page.goto('/rep/map')
+    await expect(page.getByRole('heading', { name: 'Карта маршрута' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.leaflet-container')).toBeVisible({ timeout: 15_000 })
   })
 
   test('salon owner staff + contact policy', async ({ page }, info) => {
@@ -84,7 +86,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'master1@demo.local')
     await page.goto('/staff')
     await expect(page.getByRole('heading', { name: /команда/i })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText(/контакты клиентов/i)).toBeVisible()
+    await expect(page.getByText(/контактн/i)).toBeVisible()
   })
 
   test('professional-only hidden from client shop API', async () => {
@@ -129,7 +131,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
-    await expect(page.getByRole('heading', { name: 'Блок в планере', exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Новый блок', exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('button', { name: 'Добавить блок', exact: true })).toBeVisible()
 
     const client = await apiLogin('client1@demo.local')
@@ -149,15 +151,68 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(typeof body.no_show_count).toBe('number')
   })
 
+  test('client shop catalog is in navigation', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'client1@demo.local')
+    await page.goto('/shop')
+    await expect(page.getByRole('heading', { name: 'Магазин' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'Каталог' })).toBeVisible()
+  })
+
+  test('master dashboard and calendar modes', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'master1@demo.local')
+    await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
+    await page.goto('/calendar')
+    await expect(page.getByRole('button', { name: 'Неделя' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'День' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Месяц' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Список' })).toBeVisible()
+  })
+
+  test('subscription page shows trial or plan', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/profile/subscription')
+    await expect(page.getByRole('heading', { name: 'Подписка' })).toBeVisible({ timeout: 15_000 })
+  })
+
   test('seed accounts exist when E2E_REQUIRE_SEED', async () => {
     if (!requireSeed) return
     for (const email of [
       'client1@demo.local',
+      'client2@demo.local',
+      'client3@demo.local',
       'master1@demo.local',
+      'master2@demo.local',
+      'master3@demo.local',
+      'master4@demo.local',
+      'chain1@demo.local',
+      'mobile1@demo.local',
+      'admin1@demo.local',
+      'expired1@demo.local',
       'supplier1@demo.local',
+      'supplier2@demo.local',
       'rep1@demo.local',
+      'rep2@demo.local',
     ]) {
       await apiLogin(email)
     }
+  })
+
+  test('blacklisted client is blocked for master1 and has no-show count', async () => {
+    const client3 = await apiLogin('client3@demo.local')
+    const master = await apiLogin('master1@demo.local')
+    const me = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${client3.access_token}` } })
+    const body = await me.json() as { id?: string; user?: { id?: string } }
+    const clientId = body.id ?? body.user?.id
+    expect(clientId).toBeTruthy()
+    const status = await fetch(`${api}/v1/me/clients/${clientId}/blacklist`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(status.ok).toBeTruthy()
+    const bl = await status.json() as { blocked?: boolean; no_show_count?: number }
+    expect(bl.blocked).toBe(true)
+    expect((bl.no_show_count ?? 0)).toBeGreaterThanOrEqual(2)
   })
 })

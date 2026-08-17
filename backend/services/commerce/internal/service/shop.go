@@ -122,6 +122,7 @@ type CheckoutInput struct {
 	DeliveryAddress string
 	DeliveryComment string
 	PaymentMethod   string
+	PickupBranchID  *uuid.UUID
 }
 
 func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, in CheckoutInput) (*domain.ClientOrder, []domain.ClientOrderItem, error) {
@@ -176,7 +177,7 @@ func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, in CheckoutInp
 		ID: ids.New(), UserID: userID, SupplierOrgID: supplierOrg,
 		Status: domain.ClientOrderStatusSubmitted, Currency: "RUB", TotalMinor: totalMinor,
 		DeliveryAddress: addr, DeliveryComment: strings.TrimSpace(in.DeliveryComment),
-		PaymentMethod: payment, CreatedAt: now, UpdatedAt: now,
+		PaymentMethod: payment, PickupBranchID: in.PickupBranchID, CreatedAt: now, UpdatedAt: now,
 	}
 	history := domain.ClientOrderStatusHistory{
 		ID: ids.New(), OrderID: order.ID, FromStatus: "", ToStatus: domain.ClientOrderStatusSubmitted,

@@ -5,10 +5,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
 import { fetchSuppliers } from '@/shared/lib/commerce'
-import { formatMoney } from '@/shared/lib/money'
 import { statusLabel } from '@/shared/lib/status'
+import { MediaImage } from '@/shared/ui/MediaImage'
 
 type OrgItem = {
   organization: { id: string; name: string }
@@ -20,9 +20,20 @@ type StockItem = {
   brand: string
   product_name: string
   available: number
+  qty_reserved?: number
   status: string
   min_stock: number
   price_minor: number
+  photo_media_id?: string | null
+}
+
+type Movement = {
+  id: string
+  kind: string
+  qty: number
+  reason: string
+  product_id: string
+  created_at: string
 }
 
 type ForecastItem = {
@@ -77,11 +88,15 @@ type NormItem = {
 type MasterService = { id: string; name: string }
 
 export function WarehousePage() {
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
+  const supplierMode = hasSupplierAccess(user)
+  const repMode = hasSupplierRepAccess(user) && !supplierMode
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [locationId, setLocationId] = useState('')
+  const [stockQ, setStockQ] = useState('')
+  const [stockStatus, setStockStatus] = useState('')
 
   const orgs = useQuery({
     queryKey: ['orgs-mine'],
@@ -129,6 +144,11 @@ export function WarehousePage() {
     queryKey: ['commerce-stock', locationId],
     queryFn: () => apiRequest<{ items: StockItem[] }>(`/v1/commerce/stock?location_id=${locationId}`, { token: accessToken }),
     enabled: Boolean(accessToken && locationId),
+  })
+  const movements = useQuery({
+    queryKey: ['commerce-movements', locationId],
+    queryFn: () => apiRequest<{ items: Movement[] }>(`/v1/commerce/stock/movements?location_id=${locationId}`, { token: accessToken }),
+    enabled: Boolean(accessToken && locationId && (supplierMode || repMode)),
   })
 
   const suppliers = useQuery({
@@ -218,6 +238,7 @@ export function WarehousePage() {
       setOk('Приёмка записана, остаток обновлён')
       receiptForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
+      await qc.invalidateQueries({ queryKey: ['commerce-movements'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка приёмки'),
   })
@@ -327,9 +348,9 @@ export function WarehousePage() {
     <main className="page stack">
       <div className="row between">
         <h1>Склад</h1>
-        <Link className="btn btn-secondary" to="/supplier">Панель</Link>
+        {(supplierMode || repMode) && <Link className="btn btn-secondary" to={supplierMode ? '/supplier' : '/rep'}>Панель</Link>}
       </div>
-      <p>Товары и остатки создаются рабочими операциями — без начальных сидов.</p>
+      <p className="muted">{repMode ? 'Состояние запаса для визитов и доставок.' : 'Остатки, резерв и движения по складу.'}</p>
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
 
@@ -356,6 +377,7 @@ export function WarehousePage() {
         )}
       </section>
 
+      {!supplierMode && !repMode && (
       <section className="card stack">
         <h2>Новый товар</h2>
         <form className="stack" onSubmit={productForm.handleSubmit((v) => createProduct.mutate(v))}>
@@ -389,7 +411,9 @@ export function WarehousePage() {
           <button className="btn btn-primary btn-block" type="submit" disabled={createProduct.isPending}>Создать товар</button>
         </form>
       </section>
+      )}
 
+      {!supplierMode && !repMode && (
       <section className="card stack">
         <h2>Нормы расхода</h2>
         <p className="muted">Списание со склада при завершении записи (по нормам услуги).</p>
@@ -438,8 +462,9 @@ export function WarehousePage() {
           })}
         </div>
       </section>
+      )}
 
-      {activeLoc && (
+      {activeLoc && !repMode && (
         <section className="card stack">
           <h2>Приёмка (начальный / пополнение)</h2>
           <form className="stack" onSubmit={receiptForm.handleSubmit((v) => {
@@ -464,23 +489,70 @@ export function WarehousePage() {
 
       <section className="card stack">
         <h2>Остатки</h2>
+        <div className="row">
+          <div className="field" style={{ flex: 1 }}>
+            <label>Поиск</label>
+            <input value={stockQ} onChange={(e) => setStockQ(e.target.value)} placeholder="Товар или бренд" />
+          </div>
+          <div className="field">
+            <label>Статус</label>
+            <select value={stockStatus} onChange={(e) => setStockStatus(e.target.value)}>
+              <option value="">Все</option>
+              <option value="sufficient">Достаточный запас</option>
+              <option value="low">Низкий запас</option>
+              <option value="critical">Критично</option>
+              <option value="out">Нет в наличии</option>
+            </select>
+          </div>
+        </div>
         {!activeLoc && <div className="state-box">Выберите или создайте склад</div>}
         {stock.isLoading && <div className="state-box">Загрузка…</div>}
         {stock.data && stock.data.items.length === 0 && <div className="state-box">Остатков нет — выполните приёмку</div>}
-        <div className="list">
-          {stock.data?.items.map((s) => (
-            <article key={s.product_id} className="list-item">
-              <div className="row between">
-                <strong>{s.brand} {s.product_name}</strong>
-                <span className="badge badge-default">{s.status}</span>
-              </div>
-              <p>{s.available} pcs · мин. {s.min_stock} · {formatMoney(s.price_minor)}</p>
-            </article>
-          ))}
+        <div className="product-grid">
+          {stock.data?.items
+            .filter((s) => {
+              const q = stockQ.trim().toLowerCase()
+              if (q && !`${s.brand} ${s.product_name}`.toLowerCase().includes(q)) return false
+              if (stockStatus === 'sufficient') return s.status === 'sufficient'
+              if (stockStatus === 'low') return s.status === 'low' || s.status === 'critical'
+              if (stockStatus && s.status !== stockStatus) return false
+              return true
+            })
+            .map((s) => {
+              const simple = repMode
+                ? s.status === 'out' ? 'Нет в наличии' : (s.status === 'low' || s.status === 'critical') ? 'Низкий запас' : 'Достаточный запас'
+                : s.status === 'out' ? 'Нет в наличии' : s.status === 'critical' ? 'Критично' : s.status === 'low' ? 'Низкий запас' : 'В норме'
+              return (
+                <article key={s.product_id} className="product-card">
+                  {s.photo_media_id
+                    ? <MediaImage mediaId={s.photo_media_id} token={accessToken} alt="" className="product-photo" />
+                    : <div className="product-photo placeholder">{(s.brand || s.product_name).slice(0, 1)}</div>}
+                  <strong>{s.product_name}</strong>
+                  <p className="muted">{s.brand}</p>
+                  <span className={`badge ${s.status === 'out' || s.status === 'critical' ? 'badge-danger' : s.status === 'low' ? 'badge-warning' : 'badge-success'}`}>{simple}</span>
+                  <p>доступно {s.available}{supplierMode || !repMode ? ` · резерв ${s.qty_reserved ?? 0}` : ''}</p>
+                </article>
+              )
+            })}
         </div>
       </section>
 
-      {activeLoc && (
+      {(supplierMode || repMode) && (
+        <section className="card stack">
+          <h2>Движения</h2>
+          {(movements.data?.items ?? []).length === 0 && <p className="muted">Пока нет движений</p>}
+          <div className="list">
+            {(movements.data?.items ?? []).map((m) => (
+              <article key={m.id} className="list-item">
+                <strong>{m.kind}</strong>
+                <p>{m.qty} · {m.reason || 'без комментария'} · {new Date(m.created_at).toLocaleString('ru-RU')}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {activeLoc && !supplierMode && !repMode && (
         <section className="card stack">
           <h2>Прогноз дефицита (7 дней)</h2>
           <p className="muted">deficit = max(0, demand + min_stock − available). demand = Σ норм расхода по confirmed/in_progress записям org (если BOOKING_URL настроен).</p>
@@ -498,7 +570,7 @@ export function WarehousePage() {
         </section>
       )}
 
-      {activeLoc && criticalItems.length > 0 && (
+      {activeLoc && criticalItems.length > 0 && !supplierMode && !repMode && (
         <section className="card stack">
           <h2>Заказ поставщику (критический остаток)</h2>
           <p className="muted">Выберите поставщика из каталога или оформите заказ в разделе «Косметика».</p>
@@ -543,6 +615,7 @@ export function WarehousePage() {
         </section>
       )}
 
+      {!supplierMode && !repMode && (
       <section className="card stack">
         <h2>Импорт товаров (CSV)</h2>
         <p className="muted">Шаблон: sku,brand,name,unit,price_rubles,min_stock. Повтор с тем же checksum не применяется повторно.</p>
@@ -579,6 +652,7 @@ export function WarehousePage() {
           <pre className="state-box" style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{importReport}</pre>
         )}
       </section>
+      )}
     </main>
   )
 }

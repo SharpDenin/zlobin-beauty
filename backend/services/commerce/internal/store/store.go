@@ -287,7 +287,7 @@ func (s *Store) CreateMovement(ctx context.Context, m domain.StockMovement) (*do
 func (s *Store) ListBalancesByLocation(ctx context.Context, locationID uuid.UUID) ([]domain.StockBalanceView, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT sb.location_id, sb.product_id, sb.qty_on_hand, sb.qty_reserved, sb.updated_at,
-       p.name, p.brand, p.sku, p.min_stock, p.price_minor, p.currency
+       p.name, p.brand, p.sku, p.min_stock, p.price_minor, p.currency, p.photo_media_id
 FROM stock_balances sb
 JOIN products p ON p.id = sb.product_id
 WHERE sb.location_id=$1
@@ -300,11 +300,36 @@ ORDER BY p.name`, locationID)
 	for rows.Next() {
 		var v domain.StockBalanceView
 		if err := rows.Scan(&v.LocationID, &v.ProductID, &v.QtyOnHand, &v.QtyReserved, &v.UpdatedAt,
-			&v.ProductName, &v.ProductBrand, &v.ProductSKU, &v.MinStock, &v.PriceMinor, &v.Currency); err != nil {
+			&v.ProductName, &v.ProductBrand, &v.ProductSKU, &v.MinStock, &v.PriceMinor, &v.Currency, &v.PhotoMediaID); err != nil {
 			return nil, err
 		}
 		v.Status = domain.StockStatus(v.QtyOnHand, v.QtyReserved, v.MinStock)
 		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListMovements(ctx context.Context, locationID uuid.UUID, limit int) ([]domain.StockMovement, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 40
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, location_id, product_id, kind, qty, qty_before, qty_after, reason, actor_user_id, ref_type, ref_id, created_at
+FROM stock_movements WHERE location_id=$1 ORDER BY created_at DESC LIMIT $2`, locationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.StockMovement
+	for rows.Next() {
+		var m domain.StockMovement
+		if err := rows.Scan(&m.ID, &m.LocationID, &m.ProductID, &m.Kind, &m.Qty, &m.QtyBefore, &m.QtyAfter, &m.Reason, &m.ActorUserID, &m.RefType, &m.RefID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []domain.StockMovement{}
 	}
 	return out, rows.Err()
 }

@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { AppShell, RequireAdmin, RequireAuth, RequireMaster, RequireSupplier } from '@/app/layout'
+import { CabinetProvider } from '@/shared/lib/cabinet'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { HomePage } from '@/pages/HomePage'
@@ -35,6 +36,7 @@ import { SupplierAnalyticsPage } from '@/pages/SupplierAnalyticsPage'
 import { SupplierTeamPage } from '@/pages/SupplierTeamPage'
 import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
+import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
 
@@ -66,6 +68,7 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ToastProvider>
+        <CabinetProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
@@ -81,8 +84,12 @@ export function App() {
                 <Route path="/clients/:id" element={<ClientCardPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/profile/subscription" element={<SubscriptionPage />} />
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/rep" element={<RepPage />} />
+                <Route path="/rep/map" element={<RepPage />} />
+                <Route path="/rep/finance" element={<RepPage />} />
+                <Route path="/rep/analytics" element={<RepPage />} />
                 <Route path="/knowledge" element={<KnowledgeListPage />} />
                 <Route path="/knowledge/:id" element={<KnowledgeArticlePage />} />
                 <Route path="/calendar" element={<CalendarPage />} />
@@ -118,6 +125,7 @@ export function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
+        </CabinetProvider>
         </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>

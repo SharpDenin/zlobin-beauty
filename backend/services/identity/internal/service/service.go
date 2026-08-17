@@ -489,6 +489,21 @@ func (s *Service) GrantRole(ctx context.Context, email, role string) (*domain.Us
 	return s.Me(ctx, user.ID)
 }
 
+func (s *Service) LookupByEmail(ctx context.Context, email string) (*domain.User, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return nil, apperr.Validation("email is required")
+	}
+	user, err := s.store.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if user == nil {
+		return nil, apperr.NotFound("user not found")
+	}
+	return user, nil
+}
+
 func defaultWidgets() []byte {
 	return []byte(`[
 	  {"id":"alerts","type":"important_messages","x":0,"y":0,"w":12,"h":2},

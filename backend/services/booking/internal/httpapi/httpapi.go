@@ -45,6 +45,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
+	mux.Handle("GET /v1/appointments/{id}/scheme", auth(http.HandlerFunc(a.getScheme)))
 	mux.Handle("GET /v1/planner/blocks", auth(http.HandlerFunc(a.listPlannerBlocks)))
 	mux.Handle("POST /v1/planner/blocks", auth(http.HandlerFunc(a.createPlannerBlock)))
 	mux.Handle("PATCH /v1/planner/blocks/{id}", auth(http.HandlerFunc(a.movePlannerBlock)))
@@ -552,6 +553,35 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := a.svc.GetVisitScheme(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if item == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"appointment_id": id.String(), "exists": false})
+		return
+	}
+	comps := make([]map[string]any, 0, len(item.Components))
+	for _, c := range item.Components {
+		comps = append(comps, map[string]any{
+			"name": c.Name, "brand": c.Brand, "qty": c.Qty, "unit": c.Unit, "proportion": c.Proportion, "notes": c.Notes,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"appointment_id": item.AppointmentID.String(), "exists": true,
+		"technique": item.Technique, "notes": item.Notes, "skipped": item.Skipped,
+		"category_fields": item.CategoryFields, "components": comps,
+	})
 }
 
 func (a *API) noShow(w http.ResponseWriter, r *http.Request) {

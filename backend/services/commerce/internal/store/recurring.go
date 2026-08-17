@@ -163,6 +163,32 @@ func (s *Store) UpdateRecurringStatus(ctx context.Context, id uuid.UUID, status 
 	return err
 }
 
+func (s *Store) UpdateRecurringProposal(ctx context.Context, id uuid.UUID, status string, proposed json.RawMessage, now time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE recurring_agreements SET status=$2, proposed_change=$3::jsonb, updated_at=$4 WHERE id=$1`,
+		id, status, stringOrJSON(proposed), now)
+	return err
+}
+
+func (s *Store) ApplyRecurringProposal(ctx context.Context, id uuid.UUID, frequency string, start *time.Time, qty *float64, now time.Time) error {
+	if frequency != "" {
+		if _, err := s.pool.Exec(ctx, `UPDATE recurring_agreements SET frequency=$2, updated_at=$3 WHERE id=$1`, id, frequency, now); err != nil {
+			return err
+		}
+	}
+	if start != nil {
+		if _, err := s.pool.Exec(ctx, `UPDATE recurring_agreements SET start_date=$2, updated_at=$3 WHERE id=$1`, id, *start, now); err != nil {
+			return err
+		}
+	}
+	if qty != nil {
+		if _, err := s.pool.Exec(ctx, `UPDATE recurring_agreement_items SET qty=$2 WHERE agreement_id=$1`, id, *qty); err != nil {
+			return err
+		}
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE recurring_agreements SET status='active', proposed_change='{}'::jsonb, updated_at=$2 WHERE id=$1`, id, now)
+	return err
+}
+
 func (s *Store) HasGeneratedOccurrence(ctx context.Context, agreementID uuid.UUID, day time.Time) (bool, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM recurring_generated_orders WHERE agreement_id=$1 AND occurrence_date=$2`, agreementID, day).Scan(&n)

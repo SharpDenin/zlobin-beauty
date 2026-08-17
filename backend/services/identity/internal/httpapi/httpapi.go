@@ -32,6 +32,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("POST /v1/auth/refresh", a.refresh)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
 	mux.Handle("GET /v1/auth/me", authMW(http.HandlerFunc(a.me)))
+	mux.Handle("POST /v1/auth/lookup", authMW(http.HandlerFunc(a.lookup)))
 	mux.Handle("PATCH /v1/auth/me", authMW(http.HandlerFunc(a.updateMe)))
 	mux.Handle("GET /v1/me/subscription", authMW(http.HandlerFunc(a.getSubscription)))
 	mux.Handle("POST /v1/me/subscription/dev", authMW(http.HandlerFunc(a.devSubscription)))
@@ -181,6 +182,24 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, toUserDTO(*user))
+}
+
+func (a *API) lookup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	user, err := a.svc.LookupByEmail(r.Context(), req.Email)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"user": map[string]any{
+		"id": user.ID.String(), "display_name": user.DisplayName, "email": user.Email,
+	}})
 }
 
 func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {

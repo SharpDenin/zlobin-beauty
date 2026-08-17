@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -123,6 +124,83 @@ func (s *Service) DecideRecurring(ctx context.Context, actor, id uuid.UUID, appr
 		}
 	}
 	return a, nil
+}
+
+type RecurringProposal struct {
+	Frequency string   `json:"frequency,omitempty"`
+	StartDate string   `json:"start_date,omitempty"`
+	Qty       *float64 `json:"qty,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+}
+
+func (s *Service) ProposeRecurring(ctx context.Context, actor, id uuid.UUID, p RecurringProposal) (*store.RecurringAgreement, error) {
+	a, err := s.store.GetRecurring(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if a == nil {
+		return nil, apperr.NotFound("agreement not found")
+	}
+	if err := s.requireMembership(ctx, a.SupplierOrgID, actor, "owner", "admin"); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	now := s.now().UTC()
+	if err := s.store.UpdateRecurringProposal(ctx, id, "pending_reconfirm", raw, now); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	_ = s.store.InsertCommerceAudit(ctx, actor, "recurring.proposed", "recurring_agreement", id, string(raw), now)
+	a.Status = "pending_reconfirm"
+	a.ProposedChange = raw
+	return a, nil
+}
+
+func (s *Service) RespondRecurringProposal(ctx context.Context, actor, id uuid.UUID, accept bool) (*store.RecurringAgreement, error) {
+	a, err := s.store.GetRecurring(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if a == nil {
+		return nil, apperr.NotFound("agreement not found")
+	}
+	if err := s.requireMembership(ctx, a.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	if !accept {
+		if err := s.store.UpdateRecurringProposal(ctx, id, "pending", []byte("{}"), now); err != nil {
+			return nil, apperr.Internal(err)
+		}
+		a.Status = "pending"
+		a.ProposedChange = []byte("{}")
+		return a, nil
+	}
+	var p RecurringProposal
+	if len(a.ProposedChange) > 0 {
+		_ = json.Unmarshal(a.ProposedChange, &p)
+	}
+	var start *time.Time
+	if p.StartDate != "" {
+		if t, err := time.Parse("2006-01-02", p.StartDate); err == nil {
+			start = &t
+		}
+	}
+	if err := s.store.ApplyRecurringProposal(ctx, id, p.Frequency, start, p.Qty, now); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	updated, err := s.store.GetRecurring(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if updated != nil && updated.Status == "active" {
+		if err := s.generateRecurringHorizon(ctx, updated); err != nil {
+			return nil, err
+		}
+	}
+	return updated, nil
 }
 
 func (s *Service) SetRecurringStatus(ctx context.Context, actor, id uuid.UUID, status string) (*store.RecurringAgreement, error) {

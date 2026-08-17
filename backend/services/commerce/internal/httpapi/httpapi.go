@@ -34,6 +34,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/commerce/products/{id}", auth(http.HandlerFunc(a.updateProduct)))
 	mux.Handle("GET /v1/commerce/catalog/suppliers/{orgID}/products", auth(http.HandlerFunc(a.listCatalogProducts)))
 	mux.Handle("POST /v1/commerce/stock/movements", auth(http.HandlerFunc(a.createMovement)))
+	mux.Handle("GET /v1/commerce/stock/movements", auth(http.HandlerFunc(a.listMovements)))
 	mux.Handle("GET /v1/commerce/stock", auth(http.HandlerFunc(a.listStock)))
 	mux.Handle("GET /v1/commerce/stock/forecast", auth(http.HandlerFunc(a.stockForecast)))
 	mux.Handle("POST /v1/commerce/norms", auth(http.HandlerFunc(a.createNorm)))
@@ -377,6 +378,25 @@ func (a *API) createMovement(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, movementDTO(*m))
 }
 
+func (a *API) listMovements(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	locID, err := uuid.Parse(r.URL.Query().Get("location_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("location_id is required"))
+		return
+	}
+	items, err := a.svc.ListMovements(r.Context(), claims.UserID, locID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, m := range items {
+		out = append(out, movementDTO(m))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
 func movementDTO(m domain.StockMovement) map[string]any {
 	var refID any
 	if m.RefID != nil {
@@ -409,6 +429,12 @@ func (a *API) listStock(w http.ResponseWriter, r *http.Request) {
 			"product_name": v.ProductName, "brand": v.ProductBrand, "sku": v.ProductSKU,
 			"min_stock": v.MinStock, "price_minor": v.PriceMinor, "currency": v.Currency,
 			"status": v.Status, "updated_at": v.UpdatedAt,
+			"photo_media_id": func() any {
+				if v.PhotoMediaID == nil {
+					return nil
+				}
+				return v.PhotoMediaID.String()
+			}(),
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
@@ -760,12 +786,50 @@ func (a *API) supplierAnalytics(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
 		return
 	}
-	body, err := a.svc.SupplierAnalytics(r.Context(), claims.UserID, orgID)
+	from, to := parseAnalyticsRange(r)
+	body, err := a.svc.SupplierAnalytics(r.Context(), claims.UserID, orgID, from, to)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, body)
+}
+
+func parseAnalyticsRange(r *http.Request) (time.Time, time.Time) {
+	to := time.Now().UTC()
+	from := to.AddDate(0, 0, -30)
+	if v := r.URL.Query().Get("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			from = t.UTC()
+		} else if t, err := time.Parse("2006-01-02", v); err == nil {
+			from = t.UTC()
+		}
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			to = t.UTC()
+		} else if t, err := time.Parse("2006-01-02", v); err == nil {
+			to = t.UTC().Add(24*time.Hour - time.Nanosecond)
+		}
+	}
+	period := r.URL.Query().Get("period")
+	now := time.Now().UTC()
+	switch period {
+	case "day":
+		from = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		to = now
+	case "week":
+		from = now.AddDate(0, 0, -7)
+		to = now
+	case "month":
+		from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		to = now
+	case "quarter":
+		m := ((int(now.Month())-1)/3)*3 + 1
+		from = time.Date(now.Year(), time.Month(m), 1, 0, 0, 0, 0, time.UTC)
+		to = now
+	}
+	return from, to
 }
 
 // --- supplier orders ---

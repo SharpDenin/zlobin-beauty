@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -287,17 +289,18 @@ type ClientCart struct {
 }
 
 type ClientCartItem struct {
-	CartID         uuid.UUID
-	ProductID      uuid.UUID
-	Qty            float64
-	Brand          string
-	Name           string
-	SKU            string
-	Unit           string
-	PriceMinor     int64
-	Currency       string
-	Available      float64
-	OrganizationID uuid.UUID
+	CartID            uuid.UUID
+	ProductID         uuid.UUID
+	Qty               float64
+	Brand             string
+	Name              string
+	SKU               string
+	Unit              string
+	CartPriceMinor    int64
+	CurrentPriceMinor int64
+	Currency          string
+	Available         float64
+	OrganizationID    uuid.UUID
 }
 
 type ClientOrder struct {
@@ -315,8 +318,19 @@ type ClientOrder struct {
 	DeliveryNote         string
 	AmountCollectedMinor int64
 	PickupBranchID       *uuid.UUID
+	PaymentStatus        string
+	IdempotencyKey       string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+// FormatClientOrderNumber returns a human-readable order reference for UI.
+func FormatClientOrderNumber(id uuid.UUID, createdAt time.Time) string {
+	hex := strings.ReplaceAll(id.String(), "-", "")
+	if len(hex) > 8 {
+		hex = strings.ToUpper(hex[:8])
+	}
+	return fmt.Sprintf("CL-%s-%s", createdAt.Format("20060102"), hex)
 }
 
 type ClientOrderItem struct {

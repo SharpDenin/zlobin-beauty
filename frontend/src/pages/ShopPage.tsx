@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, TileLayer } from 'react-leaflet'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
-import { clientOrderLabel, statusBadgeClass } from '@/shared/lib/status'
+import { clientOrderLabel, paymentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { fetchPickupBranches, type BranchCard, type SupplierCard } from '@/shared/lib/commerce'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { Hint } from '@/shared/ui/Hint'
@@ -36,26 +36,40 @@ type CartItem = {
   brand: string
   name: string
   price_minor: number
+  current_price_minor?: number
+  price_changed?: boolean
   available: number
   line_total_minor: number
   unit: string
+  organization_id?: string
 }
 
 type Cart = {
   id: string
   items: CartItem[]
   total_minor: number
+  multi_supplier?: boolean
+}
+
+type OrderHistoryEntry = {
+  from_status: string
+  to_status: string
+  created_at: string
+  note?: string
 }
 
 type ClientOrder = {
   id: string
+  order_number?: string
   status: string
   total_minor: number
   delivery_address: string
   payment_method?: string
+  payment_status?: string
   pickup_branch_id?: string | null
   created_at: string
   items?: Array<{ product_name: string; brand: string; qty: number; price_minor: number }>
+  status_history?: OrderHistoryEntry[]
 }
 
 type Category = { id: string; name: string; slug?: string }
@@ -70,18 +84,21 @@ type KnowledgeCard = {
 type SortKey = 'default' | 'price_asc' | 'price_desc' | 'name'
 
 const PAYMENTS = [
-  { value: 'cash_on_delivery', label: 'Наличные при получении' },
-  { value: 'card', label: 'Карта при получении' },
+  { value: 'cash', label: 'Оплата при получении' },
+  { value: 'bank_transfer', label: 'Банковский перевод' },
+  { value: 'card', label: 'Картой онлайн' },
 ] as const
 
 function paymentLabel(method?: string) {
-  return PAYMENTS.find((p) => p.value === method)?.label ?? 'При получении'
+  const normalized = method === 'cash_on_delivery' ? 'cash' : method
+  return PAYMENTS.find((p) => p.value === normalized)?.label ?? 'При получении'
 }
 
 function shopPaymentStatus(order: ClientOrder) {
+  if (order.payment_status) return paymentStatusLabel(order.payment_status)
   if (order.status === 'cancelled') return 'Отменён'
-  if (order.status === 'delivered') return 'Оплачено при получении'
-  return 'Ожидает оплаты при самовывозе'
+  if (order.status === 'delivered') return 'Оплачено'
+  return 'Ожидает оплаты'
 }
 
 function branchLabel(b: BranchCard) {
@@ -94,10 +111,12 @@ function branchAddress(b: BranchCard) {
 
 export function ShopPage() {
   const loc = useLocation()
-  const { id } = useParams()
+  const { id, orderId } = useParams()
   if (loc.pathname === '/shop/cart') return <CartView />
+  if (loc.pathname === '/shop/checkout/success') return <CheckoutSuccessView />
   if (loc.pathname === '/shop/checkout') return <CheckoutView />
-  if (loc.pathname === '/shop/orders') return <OrdersView />
+  if (loc.pathname === '/shop/orders' || loc.pathname === '/orders') return <OrdersView />
+  if (orderId) return <OrderDetailView id={orderId} />
   if (id) return <ProductView id={id} />
   return <CatalogView />
 }
@@ -133,7 +152,7 @@ function ShopChrome({
         <Link className={`btn ${loc.pathname === '/shop/cart' || loc.pathname === '/shop/checkout' ? 'btn-primary' : 'btn-secondary'}`} to="/shop/cart">
           Корзина{count ? ` (${count})` : ''}
         </Link>
-        <Link className={`btn ${loc.pathname === '/shop/orders' ? 'btn-primary' : 'btn-secondary'}`} to="/shop/orders">
+        <Link className={`btn ${loc.pathname === '/shop/orders' || loc.pathname === '/orders' ? 'btn-primary' : 'btn-secondary'}`} to="/orders">
           Мои заказы
         </Link>
       </div>
@@ -552,12 +571,22 @@ function CartView() {
           Корзина пуста. <Link className="btn btn-secondary btn-compact" to="/shop">В каталог</Link>
         </div>
       )}
+      {cart.data?.multi_supplier && (
+        <div className="state-box error">
+          В корзине товары разных поставщиков. Оформите заказ по одному поставщику за раз.
+        </div>
+      )}
       <div className="stack">
         {items.map((it) => (
           <article key={it.product_id} className="card shop-line">
             <div>
               <strong>{it.brand} {it.name}</strong>
-              <p className="muted">{formatMoney(it.price_minor)} · доступно {it.available}</p>
+              <p className="muted">
+                {formatMoney(it.price_minor)} · доступно {it.available}
+                {it.price_changed && it.current_price_minor != null && (
+                  <span className="badge badge-pending"> сейчас {formatMoney(it.current_price_minor)}</span>
+                )}
+              </p>
             </div>
             <label className="field shop-qty">
               <span>Кол-во</span>
@@ -584,7 +613,12 @@ function CartView() {
         <section className="card stack">
           <div className="row between"><span>Подытог</span><strong>{formatMoney(subtotal)}</strong></div>
           <div className="row between"><span>Итого</span><strong>{formatMoney(subtotal)}</strong></div>
-          <button className="btn btn-primary btn-block" type="button" onClick={() => navigate('/shop/checkout')}>
+          <button
+            className="btn btn-primary btn-block"
+            type="button"
+            disabled={Boolean(cart.data?.multi_supplier)}
+            onClick={() => navigate('/shop/checkout')}
+          >
             Оформить заказ
           </button>
         </section>
@@ -601,9 +635,12 @@ function CheckoutView() {
   const [pickupId, setPickupId] = useState('')
   const [address, setAddress] = useState('')
   const [comment, setComment] = useState('')
-  const [payment, setPayment] = useState('cash_on_delivery')
+  const [payment, setPayment] = useState('cash')
   const [changeOpen, setChangeOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [priceWarning, setPriceWarning] = useState<string | null>(null)
+  const [confirmPrices, setConfirmPrices] = useState(false)
+  const idempotencyKey = useRef(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()))
 
   const cart = useQuery({
     queryKey: ['shop-cart'],
@@ -650,19 +687,30 @@ function CheckoutView() {
     mutationFn: () =>
       apiRequest<ClientOrder>('/v1/commerce/shop/checkout', {
         token: accessToken,
+        idempotencyKey: idempotencyKey.current,
         body: {
           delivery_address: address.trim(),
           delivery_comment: comment.trim(),
           payment_method: payment,
           pickup_branch_id: pickupId || undefined,
+          confirm_price_changes: confirmPrices,
         },
       }),
-    onSuccess: async () => {
+    onSuccess: async (order) => {
       await qc.invalidateQueries({ queryKey: ['shop-cart'] })
       await qc.invalidateQueries({ queryKey: ['shop-orders'] })
-      navigate('/shop/orders')
+      navigate('/shop/checkout/success', { state: { order } })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка оформления'),
+    onError: async (e) => {
+      if (e instanceof ApiError && e.status === 409 && e.message.toLowerCase().includes('цена')) {
+        setPriceWarning(e.message)
+        setConfirmPrices(true)
+        await qc.invalidateQueries({ queryKey: ['shop-cart'] })
+        setStep(3)
+        return
+      }
+      setError(e instanceof ApiError ? e.message : 'Ошибка оформления')
+    },
   })
 
   const items = cart.data?.items ?? []
@@ -693,6 +741,11 @@ function CheckoutView() {
         ))}
       </div>
       {error && <div className="state-box error">{error}</div>}
+      {priceWarning && (
+        <div className="state-box">
+          {priceWarning} Проверьте обновлённые цены в сводке и подтвердите заказ снова.
+        </div>
+      )}
 
       {step === 1 && (
         <section className="stack">
@@ -863,20 +916,127 @@ function OrdersView() {
         {orders.data?.items.map((o) => (
           <article key={o.id} className="card shop-order">
             <div className="row between">
-              <strong>{formatMoney(o.total_minor)}</strong>
+              <strong>{o.order_number ?? formatMoney(o.total_minor)}</strong>
               <span className={`badge ${statusBadgeClass(o.status)}`}>{clientOrderLabel(o.status)}</span>
             </div>
-            <p className="muted">{new Date(o.created_at).toLocaleString('ru-RU')}</p>
+            <p className="muted">{new Date(o.created_at).toLocaleString('ru-RU')} · {formatMoney(o.total_minor)}</p>
             <p>{(o.items ?? []).map((it) => `${it.brand} ${it.product_name} × ${it.qty}`).join(', ') || 'Состав заказа'}</p>
             <p className="muted">Салон: {salonName(o.pickup_branch_id) || o.delivery_address || '—'}</p>
             <p className="muted">Оплата: {shopPaymentStatus(o)} · {paymentLabel(o.payment_method)}</p>
-            <p className="muted">Самовывоз: {clientOrderLabel(o.status)}</p>
-            <button className="btn btn-secondary btn-compact" type="button" disabled={reorder.isPending} onClick={() => reorder.mutate(o.id)}>
-              Повторить заказ
-            </button>
+            <div className="row">
+              <Link className="btn btn-secondary btn-compact" to={`/orders/${o.id}`}>Подробнее</Link>
+              <button className="btn btn-secondary btn-compact" type="button" disabled={reorder.isPending} onClick={() => reorder.mutate(o.id)}>
+                Повторить заказ
+              </button>
+            </div>
           </article>
         ))}
       </div>
+    </main>
+  )
+}
+
+function CheckoutSuccessView() {
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const order = (loc.state as { order?: ClientOrder } | null)?.order
+  const { accessToken } = useAuth()
+  const pickup = useQuery({
+    queryKey: ['shop-pickup'],
+    queryFn: () => fetchPickupBranches(accessToken),
+    enabled: Boolean(accessToken),
+  })
+  const salon = pickup.data?.find((b) => b.id === order?.pickup_branch_id)
+
+  if (!order) {
+    return (
+      <main className="page stack">
+        <ShopChrome title="Заказ оформлен" />
+        <div className="state-box">
+          Заказ создан. <Link to="/orders">Мои заказы</Link>
+        </div>
+      </main>
+    )
+  }
+
+  return (
+    <main className="page stack shop-page">
+      <ShopChrome title="Магазин" />
+      <section className="card stack success-panel">
+        <p className="eyebrow">Готово</p>
+        <h2>Заказ оформлен</h2>
+        <p className="order-number">{order.order_number ?? 'Ваш заказ'}</p>
+        <p><strong>Самовывоз:</strong> {salon ? branchLabel(salon) : order.delivery_address}</p>
+        <p><strong>Оплата:</strong> {paymentLabel(order.payment_method)} · {shopPaymentStatus(order)}</p>
+        <p className="muted">Мы сообщим, когда заказ будет готов к выдаче в салоне.</p>
+        <div className="row">
+          <Link className="btn btn-primary" to={`/orders/${order.id}`}>Детали заказа</Link>
+          <Link className="btn btn-secondary" to="/orders">Мои заказы</Link>
+          <button className="btn btn-secondary" type="button" onClick={() => navigate('/shop')}>Продолжить покупки</button>
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function OrderDetailView({ id }: { id: string }) {
+  const { accessToken } = useAuth()
+  const navigate = useNavigate()
+  const order = useQuery({
+    queryKey: ['shop-order', id],
+    queryFn: () => apiRequest<ClientOrder>(`/v1/commerce/shop/orders/${id}`, { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const pickup = useQuery({
+    queryKey: ['shop-pickup'],
+    queryFn: () => fetchPickupBranches(accessToken),
+    enabled: Boolean(accessToken),
+  })
+  const salon = pickup.data?.find((b) => b.id === order.data?.pickup_branch_id)
+  const history = order.data?.status_history ?? []
+
+  return (
+    <main className="page stack shop-page">
+      <ShopChrome title="Заказ" />
+      {order.isLoading && <div className="state-box">Загрузка…</div>}
+      {order.error && <div className="state-box error">Заказ не найден</div>}
+      {order.data && (
+        <>
+          <section className="card stack">
+            <div className="row between">
+              <h1>{order.data.order_number ?? 'Заказ'}</h1>
+              <span className={`badge ${statusBadgeClass(order.data.status)}`}>{clientOrderLabel(order.data.status)}</span>
+            </div>
+            <p className="muted">{new Date(order.data.created_at).toLocaleString('ru-RU')}</p>
+            <p><strong>Салон:</strong> {salon ? branchLabel(salon) : order.data.delivery_address}</p>
+            <p><strong>Оплата:</strong> {paymentLabel(order.data.payment_method)} · {shopPaymentStatus(order.data)}</p>
+            <p><strong>Итого:</strong> {formatMoney(order.data.total_minor)}</p>
+          </section>
+          <section className="card stack">
+            <h2>Товары</h2>
+            {(order.data.items ?? []).map((it, i) => (
+              <div key={i} className="row between">
+                <span>{it.brand} {it.product_name} × {it.qty}</span>
+                <span>{formatMoney(Math.round(it.price_minor * it.qty))}</span>
+              </div>
+            ))}
+          </section>
+          {history.length > 0 && (
+            <section className="card stack order-timeline">
+              <h2>Статус заказа</h2>
+              <ol className="timeline">
+                {history.map((h, i) => (
+                  <li key={i} className={`timeline-item ${i === history.length - 1 ? 'active' : ''}`}>
+                    <strong>{clientOrderLabel(h.to_status || h.from_status)}</strong>
+                    <span className="muted">{new Date(h.created_at).toLocaleString('ru-RU')}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+          <button className="btn btn-secondary" type="button" onClick={() => navigate('/orders')}>← Мои заказы</button>
+        </>
+      )}
     </main>
   )
 }

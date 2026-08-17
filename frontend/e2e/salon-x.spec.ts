@@ -163,6 +163,88 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.getByRole('link', { name: 'Мои заказы' })).toBeVisible()
   })
 
+  test('phase3 client shop checkout end-to-end', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'phase3 primary viewport')
+    await loginUI(page, 'client1@demo.local')
+    await page.goto('/shop')
+    await expect(page.getByRole('heading', { name: 'Магазин' })).toBeVisible({ timeout: 15_000 })
+    const productCard = page.locator('.shop-product-card').first()
+    await expect(productCard).toBeVisible({ timeout: 15_000 })
+    await productCard.getByRole('link', { name: 'Подробнее' }).click()
+    await expect(page.getByRole('button', { name: 'Добавить в корзину' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Добавить в корзину' }).click()
+    await page.goto('/shop/cart')
+    await expect(page.getByRole('heading', { name: 'Корзина' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Оформить заказ' }).click()
+    await expect(page.getByRole('heading', { name: 'Оформление заказа' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: /Далее · оплата/i }).click()
+    await page.getByRole('button', { name: /Далее · сводка/i }).click()
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    await page.getByRole('button', { name: 'Подтвердить заказ' }).click()
+    await expect(page.locator('.success-panel').getByText('Готово')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(/^CL-/)).toBeVisible()
+    await page.locator('.success-panel').getByRole('link', { name: 'Мои заказы' }).click()
+    await expect(page.getByRole('heading', { name: 'Мои заказы' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.shop-order').first()).toBeVisible()
+  })
+
+  test('phase3 audience security blocks professional product', async () => {
+    const master = await apiLogin('master1@demo.local')
+    const client = await apiLogin('client1@demo.local')
+    const list = await fetch(`${api}/v1/commerce/shop/products?limit=100`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(list.ok).toBeTruthy()
+    const products = await list.json() as { items?: Array<{ id: string; name: string }> }
+    const pro = (products.items ?? []).find((p) => /Pro Fiber/i.test(p.name))
+    expect(pro?.id).toBeTruthy()
+    const detail = await fetch(`${api}/v1/commerce/shop/products/${pro!.id}`, {
+      headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    expect(detail.status).toBe(404)
+    const cart = await fetch(`${api}/v1/commerce/shop/cart/items`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: pro!.id, qty: 1 }),
+    })
+    expect(cart.status).toBe(403)
+  })
+
+  test('phase3 checkout idempotency key', async () => {
+    const client = await apiLogin('client1@demo.local')
+    const products = await fetch(`${api}/v1/commerce/shop/products?limit=5`, {
+      headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    const { items } = await products.json() as { items?: Array<{ id: string }> }
+    const pid = items?.[0]?.id
+    expect(pid).toBeTruthy()
+    await fetch(`${api}/v1/commerce/shop/cart/items`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: pid, qty: 1 }),
+    })
+    const branches = await fetch(`${api}/v1/branches/pickup`, {
+      headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    const branchData = await branches.json() as { items?: Array<{ id: string }> }
+    const branchId = branchData.items?.[0]?.id
+    expect(branchId).toBeTruthy()
+    const idem = `e2e-idem-${Date.now()}`
+    const body = {
+      delivery_address: 'E2E Test Address 123',
+      payment_method: 'cash',
+      pickup_branch_id: branchId,
+    }
+    const h = { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json', 'Idempotency-Key': idem }
+    const first = await fetch(`${api}/v1/commerce/shop/checkout`, { method: 'POST', headers: h, body: JSON.stringify(body) })
+    expect(first.status).toBe(201)
+    const order1 = await first.json() as { id: string }
+    const second = await fetch(`${api}/v1/commerce/shop/checkout`, { method: 'POST', headers: h, body: JSON.stringify(body) })
+    expect(second.status).toBe(201)
+    const order2 = await second.json() as { id: string }
+    expect(order2.id).toBe(order1.id)
+  })
+
   test('master dashboard and calendar modes', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')

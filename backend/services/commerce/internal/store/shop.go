@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,7 +14,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 )
 
-const clientOrderColumns = `id, user_id, supplier_org_id, status, currency, total_minor, delivery_address, delivery_comment, payment_method, rep_user_id, delivered_at, delivery_note, amount_collected_minor, created_at, updated_at, pickup_branch_id`
+const clientOrderColumns = `id, user_id, supplier_org_id, status, currency, total_minor, delivery_address, delivery_comment, payment_method, rep_user_id, delivered_at, delivery_note, amount_collected_minor, created_at, updated_at, pickup_branch_id, payment_status, idempotency_key`
 
 const availableSubquery = `
 COALESCE((
@@ -143,7 +144,7 @@ INSERT INTO client_carts(id, user_id, updated_at, created_at) VALUES ($1,$2,$3,$
 func (s *Store) ListCartItems(ctx context.Context, cartID uuid.UUID) ([]domain.ClientCartItem, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT ci.cart_id, ci.product_id, ci.qty,
-       p.brand, p.name, p.sku, p.unit, p.price_minor, p.currency, p.organization_id,
+       p.brand, p.name, p.sku, p.unit, COALESCE(ci.price_minor, p.price_minor), p.price_minor, p.currency, p.organization_id,
        `+availableSubquery+` AS available
 FROM client_cart_items ci
 JOIN products p ON p.id = ci.product_id
@@ -157,7 +158,7 @@ ORDER BY p.name`, cartID)
 	for rows.Next() {
 		var it domain.ClientCartItem
 		if err := rows.Scan(&it.CartID, &it.ProductID, &it.Qty, &it.Brand, &it.Name, &it.SKU, &it.Unit,
-			&it.PriceMinor, &it.Currency, &it.OrganizationID, &it.Available); err != nil {
+			&it.CartPriceMinor, &it.CurrentPriceMinor, &it.Currency, &it.OrganizationID, &it.Available); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -165,15 +166,15 @@ ORDER BY p.name`, cartID)
 	return out, rows.Err()
 }
 
-func (s *Store) UpsertCartItem(ctx context.Context, cartID, productID uuid.UUID, qty float64, now time.Time) error {
+func (s *Store) UpsertCartItem(ctx context.Context, cartID, productID uuid.UUID, qty float64, priceMinor int64, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
-INSERT INTO client_cart_items(cart_id, product_id, qty) VALUES ($1,$2,$3)
-ON CONFLICT (cart_id, product_id) DO UPDATE SET qty = EXCLUDED.qty`, cartID, productID, qty); err != nil {
+INSERT INTO client_cart_items(cart_id, product_id, qty, price_minor) VALUES ($1,$2,$3,$4)
+ON CONFLICT (cart_id, product_id) DO UPDATE SET qty = EXCLUDED.qty, price_minor = EXCLUDED.price_minor`, cartID, productID, qty, priceMinor); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE client_carts SET updated_at=$2 WHERE id=$1`, cartID, now); err != nil {
@@ -231,9 +232,9 @@ func (s *Store) CreateClientOrderWithItems(ctx context.Context, p CreateClientOr
 	o := p.Order
 	if _, err := tx.Exec(ctx, `
 INSERT INTO client_orders(`+clientOrderColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		o.ID, o.UserID, o.SupplierOrgID, o.Status, o.Currency, o.TotalMinor, o.DeliveryAddress, o.DeliveryComment,
-		o.PaymentMethod, o.RepUserID, o.DeliveredAt, o.DeliveryNote, o.AmountCollectedMinor, o.CreatedAt, o.UpdatedAt, o.PickupBranchID); err != nil {
+		o.PaymentMethod, o.RepUserID, o.DeliveredAt, o.DeliveryNote, o.AmountCollectedMinor, o.CreatedAt, o.UpdatedAt, o.PickupBranchID, o.PaymentStatus, o.IdempotencyKey); err != nil {
 		return nil, nil, err
 	}
 	items := p.Items
@@ -357,6 +358,33 @@ func (s *Store) GetClientOrder(ctx context.Context, id uuid.UUID) (*domain.Clien
 	return scanClientOrder(s.pool.QueryRow(ctx, `SELECT `+clientOrderColumns+` FROM client_orders WHERE id=$1`, id))
 }
 
+func (s *Store) GetClientOrderByIdempotencyKey(ctx context.Context, userID uuid.UUID, key string) (*domain.ClientOrder, error) {
+	if strings.TrimSpace(key) == "" {
+		return nil, nil
+	}
+	return scanClientOrder(s.pool.QueryRow(ctx, `
+SELECT `+clientOrderColumns+` FROM client_orders WHERE user_id=$1 AND idempotency_key=$2`, userID, key))
+}
+
+func (s *Store) ListClientOrderStatusHistory(ctx context.Context, orderID uuid.UUID) ([]domain.ClientOrderStatusHistory, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, order_id, from_status, to_status, actor_user_id, note, created_at
+FROM client_order_status_history WHERE order_id=$1 ORDER BY created_at ASC`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ClientOrderStatusHistory
+	for rows.Next() {
+		var h domain.ClientOrderStatusHistory
+		if err := rows.Scan(&h.ID, &h.OrderID, &h.FromStatus, &h.ToStatus, &h.ActorUserID, &h.Note, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListClientOrderItems(ctx context.Context, orderID uuid.UUID) ([]domain.ClientOrderItem, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT id, order_id, product_id, product_name, brand, qty, price_minor, qty_delivered
@@ -380,7 +408,7 @@ func scanClientOrder(row pgx.Row) (*domain.ClientOrder, error) {
 	var o domain.ClientOrder
 	if err := row.Scan(&o.ID, &o.UserID, &o.SupplierOrgID, &o.Status, &o.Currency, &o.TotalMinor,
 		&o.DeliveryAddress, &o.DeliveryComment, &o.PaymentMethod, &o.RepUserID, &o.DeliveredAt,
-		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt, &o.PickupBranchID); err != nil {
+		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt, &o.PickupBranchID, &o.PaymentStatus, &o.IdempotencyKey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -406,7 +434,7 @@ func scanClientOrderRow(rows pgx.Rows) (*domain.ClientOrder, error) {
 	var o domain.ClientOrder
 	if err := rows.Scan(&o.ID, &o.UserID, &o.SupplierOrgID, &o.Status, &o.Currency, &o.TotalMinor,
 		&o.DeliveryAddress, &o.DeliveryComment, &o.PaymentMethod, &o.RepUserID, &o.DeliveredAt,
-		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt, &o.PickupBranchID); err != nil {
+		&o.DeliveryNote, &o.AmountCollectedMinor, &o.CreatedAt, &o.UpdatedAt, &o.PickupBranchID, &o.PaymentStatus, &o.IdempotencyKey); err != nil {
 		return nil, err
 	}
 	return &o, nil
@@ -462,7 +490,7 @@ func (s *Store) MarkDelivered(ctx context.Context, p MarkDeliveredParams) (*doma
 	if err := tx.QueryRow(ctx, `SELECT `+clientOrderColumns+` FROM client_orders WHERE id=$1 FOR UPDATE`, p.OrderID).Scan(
 		&order.ID, &order.UserID, &order.SupplierOrgID, &order.Status, &order.Currency, &order.TotalMinor,
 		&order.DeliveryAddress, &order.DeliveryComment, &order.PaymentMethod, &order.RepUserID, &order.DeliveredAt,
-		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID); err != nil {
+		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID, &order.PaymentStatus, &order.IdempotencyKey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, apperr.NotFound("order not found")
 		}
@@ -713,7 +741,7 @@ func (s *Store) TransitionClientOrder(ctx context.Context, p TransitionClientOrd
 	if err := tx.QueryRow(ctx, `SELECT `+clientOrderColumns+` FROM client_orders WHERE id=$1 FOR UPDATE`, p.OrderID).Scan(
 		&order.ID, &order.UserID, &order.SupplierOrgID, &order.Status, &order.Currency, &order.TotalMinor,
 		&order.DeliveryAddress, &order.DeliveryComment, &order.PaymentMethod, &order.RepUserID, &order.DeliveredAt,
-		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID); err != nil {
+		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID, &order.PaymentStatus, &order.IdempotencyKey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound("order not found")
 		}

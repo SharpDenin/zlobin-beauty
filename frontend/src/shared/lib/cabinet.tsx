@@ -186,7 +186,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
       { to: '/profile', label: 'Профиль' },
     ]
     const secondary: NavLink[] = [
-      { to: '/shop/orders', label: 'Мои заказы' },
+      { to: '/orders', label: 'Мои заказы' },
       { to: '/shop/cart', label: 'Корзина' },
     ]
     return { primary, secondary, side: [...primary, ...secondary] }

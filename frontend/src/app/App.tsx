@@ -89,7 +89,11 @@ export function App() {
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/shop/cart" element={<ShopPage />} />
                 <Route path="/shop/checkout" element={<ShopPage />} />
+                <Route path="/shop/checkout/success" element={<ShopPage />} />
                 <Route path="/shop/orders" element={<ShopPage />} />
+                <Route path="/shop/orders/:orderId" element={<ShopPage />} />
+                <Route path="/orders" element={<ShopPage />} />
+                <Route path="/orders/:orderId" element={<ShopPage />} />
                 <Route path="/shop/:id" element={<ShopPage />} />
                 <Route path="/rep" element={<RepPage />} />
                 <Route path="/rep/map" element={<RepPage />} />

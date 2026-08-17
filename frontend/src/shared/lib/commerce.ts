@@ -12,6 +12,9 @@ export type BranchCard = {
   timezone?: string
   published?: boolean
   pickup_enabled?: boolean
+  latitude?: number | null
+  longitude?: number | null
+  distance_km?: number | null
 }
 
 export type OrgItem = {

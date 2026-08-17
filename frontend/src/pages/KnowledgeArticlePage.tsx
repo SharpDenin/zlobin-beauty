@@ -1,7 +1,8 @@
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
+import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
@@ -17,20 +18,57 @@ type Article = {
   brand?: string
   author_name: string
   product_id?: string | null
+  product_ids?: string[]
   favorite?: boolean
   published?: boolean
   created_at: string
 }
 
+type RelatedProduct = {
+  id: string
+  name: string
+  brand: string
+  price_minor: number
+  photo_media_id?: string | null
+  volume_label?: string
+}
+
 export function KnowledgeArticlePage() {
   const { id } = useParams()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const qc = useQueryClient()
+  const professional = hasMasterAccess(user)
 
   const query = useQuery({
     queryKey: ['knowledge', id],
     queryFn: () => apiRequest<Article>(`/v1/knowledge/${id}`, { token: accessToken }),
     enabled: Boolean(accessToken && id),
+  })
+
+  const productIds = query.data?.product_ids?.length
+    ? query.data.product_ids
+    : query.data?.product_id
+      ? [query.data.product_id]
+      : []
+
+  const related = useQuery({
+    queryKey: ['knowledge-related-products', id, productIds.join(',')],
+    queryFn: async () => {
+      const items: RelatedProduct[] = []
+      for (const pid of productIds.slice(0, 8)) {
+        try {
+          const p = await apiRequest<RelatedProduct>(
+            professional ? `/v1/commerce/products/${pid}` : `/v1/commerce/shop/products/${pid}`,
+            { token: accessToken },
+          )
+          items.push(p)
+        } catch {
+          /* skip unpublished / invisible */
+        }
+      }
+      return items
+    },
+    enabled: Boolean(accessToken && productIds.length),
   })
 
   const fav = useMutation({
@@ -56,6 +94,7 @@ export function KnowledgeArticlePage() {
   const reading = a.reading_time_minutes && a.reading_time_minutes > 0
     ? `${a.reading_time_minutes} мин чтения`
     : null
+  const productHref = (pid: string) => professional ? `/cosmetics/products/${pid}` : `/shop/${pid}`
 
   return (
     <main className="page stack">
@@ -82,7 +121,7 @@ export function KnowledgeArticlePage() {
             .join(' · ')}
         </p>
         <button className="btn btn-secondary btn-compact" type="button" disabled={fav.isPending} onClick={() => fav.mutate()}>
-          {a.favorite ? 'Убрать из избранного' : 'В избранное'}
+          {a.favorite ? 'Убрать из избранного' : 'Избранное'}
         </button>
       </div>
       <section className="card">
@@ -92,10 +131,24 @@ export function KnowledgeArticlePage() {
           token={accessToken}
         />
       </section>
-      {a.product_id && (
-        <Link className="btn btn-secondary" to={`/cosmetics/products/${a.product_id}`}>
-          Открыть связанный товар
-        </Link>
+      {(related.data?.length ?? 0) > 0 && (
+        <section className="stack-sm">
+          <h2>Связанные товары</h2>
+          <div className="product-grid">
+            {related.data!.map((p) => (
+              <Link key={p.id} className="product-card" to={productHref(p.id)}>
+                {p.photo_media_id ? (
+                  <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} className="product-photo" />
+                ) : (
+                  <div className="product-photo placeholder">{p.brand || 'Salon-X'}</div>
+                )}
+                <p className="muted">{[p.brand, p.volume_label].filter(Boolean).join(' · ')}</p>
+                <strong>{p.name}</strong>
+                <span>{formatMoney(p.price_minor)}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
     </main>
   )

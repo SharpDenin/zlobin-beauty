@@ -35,6 +35,12 @@ export function SupplierHomePage() {
     },
     enabled: Boolean(accessToken && supplierOrgId),
   })
+  const sub = useQuery({
+    queryKey: ['me-subscription'],
+    queryFn: () =>
+      apiRequest<{ status: string; trial_ends_at?: string }>('/v1/me/subscription', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
 
   const orders = useQuery({
     queryKey: ['commerce-supplier-orders', 'supplier', supplierOrgId, 'home'],
@@ -134,6 +140,9 @@ export function SupplierHomePage() {
           <div className="brand">Salon-X</div>
           <h1>{supplierOrg?.organization.name || user?.display_name}</h1>
           <p>Новые заказы салонов и каталог товаров.</p>
+          {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
+            <p><strong>Premium активирован бесплатно на 3 месяца</strong> · до {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}</p>
+          )}
           <div className="row">
             <Link className="btn btn-primary" to="/supplier/products/new">Новый товар</Link>
             <Link className="btn btn-secondary" to="/supplier/orders">Заказы</Link>

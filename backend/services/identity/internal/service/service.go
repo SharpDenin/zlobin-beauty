@@ -32,6 +32,10 @@ func (s *Service) WithDevBilling(allow bool) *Service {
 	return s
 }
 
+func (s *Service) AllowDevBilling() bool {
+	return s.allowDevBilling
+}
+
 type RegisterInput struct {
 	Email          string
 	Phone          string
@@ -453,7 +457,25 @@ func (s *Service) DevSetSubscription(ctx context.Context, actor uuid.UUID, in De
 	if in.TrialEnds != nil {
 		sub.TrialEndsAt = in.TrialEnds
 	}
-	if status == entitlement.StatusCancelled {
+	switch status {
+	case entitlement.StatusTrial:
+		if sub.TrialStartedAt == nil {
+			sub.TrialStartedAt = &now
+		}
+		if sub.TrialEndsAt == nil || !sub.TrialEndsAt.After(now) {
+			end := now.AddDate(0, 3, 0)
+			sub.TrialEndsAt = &end
+		}
+	case entitlement.StatusActive:
+		if sub.PaidUntil == nil || !sub.PaidUntil.After(now) {
+			end := now.AddDate(1, 0, 0)
+			sub.PaidUntil = &end
+		}
+	case entitlement.StatusExpired:
+		past := now.Add(-24 * time.Hour)
+		sub.TrialEndsAt = &past
+		sub.PaidUntil = &past
+	case entitlement.StatusCancelled:
 		sub.CancelledAt = &now
 	}
 	if err := s.store.UpsertSubscription(ctx, sub); err != nil {

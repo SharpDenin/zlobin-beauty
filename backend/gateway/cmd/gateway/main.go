@@ -82,6 +82,7 @@ func main() {
 	mux.Handle("/v1/commerce/", commerce)
 	mux.Handle("/v1/planner", booking)
 	mux.Handle("/v1/planner/", booking)
+	mux.Handle("/v1/calendar/", booking)
 	mux.Handle("/v1/media", media)
 	mux.Handle("/v1/media/", media)
 	mux.Handle("/v1/masters", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

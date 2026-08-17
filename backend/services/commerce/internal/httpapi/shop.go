@@ -203,7 +203,12 @@ func (a *API) listMyClientOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(orders))
 	for _, o := range orders {
-		out = append(out, clientOrderSummaryDTO(o))
+		items, err := a.svc.ClientOrderItems(r.Context(), o.ID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, err)
+			return
+		}
+		out = append(out, clientOrderDTO(o, items))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

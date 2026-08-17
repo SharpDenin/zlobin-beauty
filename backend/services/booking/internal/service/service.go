@@ -989,6 +989,30 @@ func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string) (
 	return items, nil
 }
 
+func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time) ([]domain.Appointment, error) {
+	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+		return nil, err
+	}
+	statuses := []string{
+		domain.StatusPendingConfirmation,
+		domain.StatusConfirmed,
+		domain.StatusInProgress,
+		domain.StatusCompleted,
+		domain.StatusCancelledByClient,
+		domain.StatusCancelledByMaster,
+		domain.StatusCancelledBySalon,
+		domain.StatusNoShow,
+	}
+	items, err := s.store.ListByOrgInRange(ctx, orgID, from.UTC(), to.UTC(), statuses)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Appointment{}
+	}
+	return items, nil
+}
+
 func (s *Service) ListOrgAppointmentsInRange(ctx context.Context, orgID uuid.UUID, from, to time.Time, statuses []string) ([]domain.Appointment, error) {
 	if orgID == uuid.Nil {
 		return nil, apperr.Validation("organization_id is required")

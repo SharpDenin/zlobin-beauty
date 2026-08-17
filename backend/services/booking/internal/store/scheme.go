@@ -124,6 +124,19 @@ ORDER BY starts_at`, owner, from, to)
 	return out, rows.Err()
 }
 
+func (s *Store) PlannerBlockOverlaps(ctx context.Context, owner uuid.UUID, excludeID uuid.UUID, starts, ends time.Time) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+  SELECT 1 FROM planner_blocks
+  WHERE owner_user_id=$1
+    AND id <> $2
+    AND starts_at < $4
+    AND ends_at > $3
+)`, owner, excludeID, starts, ends).Scan(&exists)
+	return exists, err
+}
+
 func (s *Store) InsertPlannerBlock(ctx context.Context, b PlannerBlock) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO planner_blocks(id, owner_user_id, organization_id, title, category, starts_at, ends_at, timezone, color, created_at, updated_at)

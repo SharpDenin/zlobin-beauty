@@ -124,6 +124,9 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return nil, apperr.Validation("invalid timezone")
 	}
+	if err := s.validatePlannerInterval(ctx, actor, uuid.Nil, starts, ends, timezone); err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 	b := store.PlannerBlock{
 		ID: ids.New(), OwnerUserID: actor, OrganizationID: orgID, Title: title,
@@ -158,6 +161,9 @@ func (s *Service) MovePlannerBlock(ctx context.Context, actor, id uuid.UUID, sta
 	if b.OwnerUserID != actor {
 		return nil, apperr.Forbidden("access denied")
 	}
+	if err := s.validatePlannerInterval(ctx, actor, id, starts, ends, b.Timezone); err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 	if err := s.store.UpdatePlannerBlockTimes(ctx, id, starts.UTC(), ends.UTC(), now); err != nil {
 		return nil, apperr.Internal(err)
@@ -181,4 +187,52 @@ func colorOrDefault(c string) string {
 		return "#b45a6a"
 	}
 	return c
+}
+
+func (s *Service) validatePlannerInterval(ctx context.Context, owner, excludeID uuid.UUID, starts, ends time.Time, timezone string) error {
+	if !ends.After(starts) {
+		return apperr.Validation("ends_at must be after starts_at")
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return apperr.Validation("invalid timezone")
+	}
+	localStart := starts.In(loc)
+	localEnd := ends.In(loc)
+	if localStart.YearDay() != localEnd.YearDay() || localStart.Year() != localEnd.Year() {
+		return apperr.Validation("planner block must end on the same local day")
+	}
+	hours, err := s.store.ListWorkingHours(ctx, owner)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if len(hours) > 0 {
+		startMinute := localStart.Hour()*60 + localStart.Minute()
+		endMinute := localEnd.Hour()*60 + localEnd.Minute()
+		inside := false
+		for _, h := range hours {
+			if h.Weekday == int(localStart.Weekday()) && startMinute >= h.StartMinute && endMinute <= h.EndMinute {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			return apperr.Conflict("planner block is outside working hours")
+		}
+	}
+	blocks, err := s.store.PlannerBlockOverlaps(ctx, owner, excludeID, starts.UTC(), ends.UTC())
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if blocks {
+		return apperr.Conflict("planner block overlaps another event")
+	}
+	appointments, err := s.store.MasterAppointmentOverlaps(ctx, owner, uuid.Nil, starts.UTC(), ends.UTC())
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if appointments {
+		return apperr.Conflict("planner block overlaps an appointment")
+	}
+	return nil
 }

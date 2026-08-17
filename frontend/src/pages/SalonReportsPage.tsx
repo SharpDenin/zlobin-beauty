@@ -1,13 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMemo, useState } from 'react'
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE_URL, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
-
-type OrgItem = {
-  organization: { id: string; name: string; type: string }
-}
 
 type PeriodMetrics = {
   turnover_minor: number
@@ -82,17 +80,14 @@ function formatAvgCheck(v: number | null | undefined): string {
 
 export function SalonReportsPage() {
   const { accessToken } = useAuth()
+  const cabinet = useCabinet()
   const [days, setDays] = useState(7)
   const [csvError, setCsvError] = useState<string | null>(null)
   const [csvLoading, setCsvLoading] = useState(false)
   const range = useMemo(() => periodISO(days), [days])
-
-  const orgs = useQuery({
-    queryKey: ['orgs-mine'],
-    queryFn: () => apiRequest<{ items: OrgItem[] }>('/v1/organizations/mine', { token: accessToken }),
-    enabled: Boolean(accessToken),
-  })
-  const orgId = orgs.data?.items[0]?.organization.id
+  const salonOrgs = cabinet.orgs.filter((o) => o.organization.type !== 'supplier')
+  const orgId = cabinet.selectedOrg?.organization.id ?? salonOrgs[0]?.organization.id
+  const isChain = cabinet.kind === 'chain_owner' && salonOrgs.length > 1
 
   const report = useQuery({
     queryKey: ['salon-report', orgId, range.from, range.to],
@@ -102,6 +97,38 @@ export function SalonReportsPage() {
         { token: accessToken },
       ),
     enabled: Boolean(accessToken && orgId),
+  })
+
+  const network = useQuery({
+    queryKey: ['salon-report-network', salonOrgs.map((o) => o.organization.id).join(','), range.from, range.to],
+    queryFn: async () => {
+      const rows = await Promise.all(salonOrgs.map(async (org) => {
+        const data = await apiRequest<SalonReport>(
+          `/v1/reports/salon?organization_id=${org.organization.id}&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+          { token: accessToken },
+        )
+        return { name: org.organization.name, report: data }
+      }))
+      return rows
+    },
+    enabled: Boolean(accessToken && isChain),
+  })
+
+  const masterIDs = (report.data?.masters ?? []).map((m) => m.master_user_id)
+  const masters = useQuery({
+    queryKey: ['report-master-names', masterIDs.join(',')],
+    queryFn: async () => {
+      const entries = await Promise.all(masterIDs.map(async (id) => {
+        try {
+          const res = await apiRequest<{ master: { display_name: string } }>(`/v1/masters/${id}`)
+          return [id, res.master.display_name] as const
+        } catch {
+          return [id, `Мастер ${id.slice(0, 6)}`] as const
+        }
+      }))
+      return Object.fromEntries(entries) as Record<string, string>
+    },
+    enabled: masterIDs.length > 0,
   })
 
   async function downloadCSV() {
@@ -125,7 +152,6 @@ export function SalonReportsPage() {
     }
   }
 
-  if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
   if (!orgId) {
     return (
       <main className="page">
@@ -136,36 +162,39 @@ export function SalonReportsPage() {
     )
   }
 
-  const f = report.data?.formulas
+  const comparison = report.data ? [
+    { name: 'Выручка', current: report.data.current.turnover_minor / 100, previous: report.data.previous.turnover_minor / 100 },
+    { name: 'Визиты', current: report.data.current.completed_count, previous: report.data.previous.completed_count },
+    { name: 'Загрузка', current: report.data.current.master_load_percent ?? 0, previous: report.data.previous.master_load_percent ?? 0 },
+  ] : []
+  const masterChart = (report.data?.masters ?? []).map((m) => ({
+    name: masters.data?.[m.master_user_id] ?? m.master_user_id.slice(0, 6),
+    load: Number((m.load_percent ?? 0).toFixed(1)),
+  }))
+  const networkChart = (network.data ?? []).map((row) => ({
+    name: row.name,
+    revenue: row.report.current.turnover_minor / 100,
+    visits: row.report.current.completed_count,
+    load: row.report.current.master_load_percent ?? 0,
+  }))
 
   return (
     <main className="page stack">
-      <h1>Отчёты салона</h1>
-      <p className="muted">
-        KPI по завершённым визитам за выбранный период. Сравнение с предыдущим равным интервалом.
-      </p>
+      <div className="stack-sm">
+        <p className="eyebrow">{isChain ? 'Сеть' : 'Салон'}</p>
+        <h1>{isChain ? 'Аналитика сети' : 'Аналитика салона'}</h1>
+        <p className="muted">{cabinet.selectedOrg?.organization.name ?? 'Сводка по записям, загрузке и выручке.'}</p>
+      </div>
 
       <div className="row">
-        {[7, 30, 90].map((d) => (
-          <button
-            key={d}
-            type="button"
-            className={`btn ${days === d ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setDays(d)}
-          >
-            {d} дн.
+        {[{ d: 1, label: 'Сегодня' }, { d: 7, label: 'Неделя' }, { d: 30, label: 'Месяц' }].map((p) => (
+          <button key={p.d} type="button" className={`chip ${days === p.d ? 'active' : ''}`} onClick={() => setDays(p.d)}>
+            {p.label}
           </button>
         ))}
-        <button
-          type="button"
-          className="btn btn-secondary"
-          disabled={csvLoading || !orgId}
-          onClick={() => void downloadCSV()}
-        >
+        <button type="button" className="btn btn-secondary btn-compact" disabled={csvLoading || !orgId} onClick={() => void downloadCSV()}>
           {csvLoading ? 'Скачивание…' : 'CSV'}
         </button>
-        <Link className="btn btn-secondary" to="/master">Кабинет</Link>
-        <Link className="btn btn-secondary" to="/warehouse">Склад</Link>
       </div>
 
       {csvError && <div className="state-box error">{csvError}</div>}
@@ -175,61 +204,70 @@ export function SalonReportsPage() {
       {report.data && (
         <>
           <div className="kpi-grid">
-            <article className="card">
-              <p className="muted">Оборот</p>
-              <strong>{formatMoney(report.data.current.turnover_minor)}</strong>
-              <p className="muted">к пред. периоду: {formatDelta(report.data.deltas.turnover_percent)}</p>
-              {f && <p className="muted" style={{ fontSize: '0.85em' }}>{f.turnover}</p>}
-            </article>
-            <article className="card">
-              <p className="muted">Завершённых визитов</p>
-              <strong>{report.data.current.completed_count}</strong>
-              <p className="muted">к пред. периоду: {formatDelta(report.data.deltas.completed_count_percent)}</p>
-            </article>
-            <article className="card">
-              <p className="muted">Средний чек</p>
-              <strong>{formatAvgCheck(report.data.current.avg_check_minor)}</strong>
-              <p className="muted">к пред. периоду: {formatDelta(report.data.deltas.avg_check_percent)}</p>
-              {f && <p className="muted" style={{ fontSize: '0.85em' }}>{f.avg_check}</p>}
-            </article>
-            <article className="card">
-              <p className="muted">Повторные визиты</p>
-              <strong>{formatPercent(report.data.current.repeat_visit_percent)}</strong>
-              {f && <p className="muted" style={{ fontSize: '0.85em' }}>{f.repeat_visits}</p>}
-            </article>
-            <article className="card">
-              <p className="muted">Загрузка мастеров</p>
-              <strong>{formatPercent(report.data.current.master_load_percent)}</strong>
-              {f && <p className="muted" style={{ fontSize: '0.85em' }}>{f.master_load}</p>}
-            </article>
-            <article className="card">
-              <p className="muted">Удовлетворённость</p>
-              <strong>{formatRating(report.data.current.satisfaction_avg)}</strong>
-              <p className="muted">отзывов: {report.data.current.satisfaction_count}</p>
-              {f && <p className="muted" style={{ fontSize: '0.85em' }}>{f.satisfaction}</p>}
-            </article>
+            <article className="card"><p className="muted">Оборот</p><strong>{formatMoney(report.data.current.turnover_minor)}</strong><p className="muted">{formatDelta(report.data.deltas.turnover_percent)}</p></article>
+            <article className="card"><p className="muted">Записи</p><strong>{report.data.current.completed_count}</strong><p className="muted">{formatDelta(report.data.deltas.completed_count_percent)}</p></article>
+            <article className="card"><p className="muted">Средний чек</p><strong>{formatAvgCheck(report.data.current.avg_check_minor)}</strong><p className="muted">{formatDelta(report.data.deltas.avg_check_percent)}</p></article>
+            <article className="card"><p className="muted">Загрузка</p><strong>{formatPercent(report.data.current.master_load_percent)}</strong></article>
+            <article className="card"><p className="muted">Отмены / no-show</p><strong>{formatPercent(report.data.current.repeat_visit_percent)}</strong><p className="muted">повторные визиты как индикатор удержания</p></article>
+            <article className="card"><p className="muted">Удовлетворённость</p><strong>{formatRating(report.data.current.satisfaction_avg)}</strong><p className="muted">отзывов: {report.data.current.satisfaction_count}</p></article>
           </div>
 
           <section className="card stack">
-            <h2>Загрузка по мастерам</h2>
-            {report.data.masters.length === 0 && (
-              <div className="state-box">Нет данных о загрузке за период</div>
-            )}
-            <div className="list">
-              {report.data.masters.map((m) => (
-                <article key={m.master_user_id} className="list-item">
-                  <div className="row between">
-                    <strong className="muted">{m.master_user_id.slice(0, 8)}…</strong>
-                    <span>{formatPercent(m.load_percent)}</span>
-                  </div>
-                  <p className="muted">
-                    Забронировано {m.booked_minutes} мин · доступно {m.available_minutes} мин
-                  </p>
-                </article>
-              ))}
+            <h2>Период к предыдущему</h2>
+            <div className="dashboard-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={comparison}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="previous" name="Прошлый период" fill="#c4b7a6" radius={6} />
+                  <Bar dataKey="current" name="Текущий период" fill="#2f6f78" radius={6} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </section>
+
+          <section className="card stack">
+            <h2>Загрузка мастеров</h2>
+            {masterChart.length === 0 && <div className="state-box">Нет данных о загрузке за период</div>}
+            {masterChart.length > 0 && (
+              <div className="dashboard-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={masterChart} layout="vertical" margin={{ left: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} unit="%" />
+                    <YAxis type="category" dataKey="name" width={120} />
+                    <Tooltip />
+                    <Bar dataKey="load" name="Загрузка" fill="#8f6a55" radius={6} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </section>
         </>
+      )}
+
+      {isChain && (
+        <section className="card stack">
+          <h2>Сравнение филиалов</h2>
+          {network.isLoading && <div className="state-box">Сравниваем салоны…</div>}
+          {networkChart.length > 0 && (
+            <div className="dashboard-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={networkChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="revenue" name="Выручка, ₽" fill="#2f6f78" radius={6} />
+                  <Bar dataKey="visits" name="Записи" fill="#8f6a55" radius={6} />
+                  <Bar dataKey="load" name="Загрузка %" fill="#6b5d91" radius={6} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </section>
       )}
     </main>
   )

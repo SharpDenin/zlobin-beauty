@@ -54,6 +54,7 @@ export function AppointmentDetailPage() {
   const [proportion, setProportion] = useState('')
   const [skipScheme, setSkipScheme] = useState(false)
   const [skipReason, setSkipReason] = useState('')
+  const [skipConfirmed, setSkipConfirmed] = useState(false)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -78,6 +79,13 @@ export function AppointmentDetailPage() {
     enabled: Boolean(id && accessToken),
   })
 
+  const subscription = useQuery({
+    queryKey: ['me-subscription'],
+    queryFn: () =>
+      apiRequest<{ effective_plan: string; features?: string[] }>('/v1/me/subscription', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const canSkipScheme = Boolean(subscription.data?.features?.includes('skip_service_scheme'))
   const [photoPending, setPhotoPending] = useState(false)
 
   const deletePhoto = useMutation({
@@ -188,47 +196,71 @@ export function AppointmentDetailPage() {
           {canComplete && (
             <div className="stack">
               <h3>Схема услуги</h3>
-              <p className="muted">На Free схема обязательна: техника и хотя бы один продукт. Premium/Trial может не раскрывать схему с явной причиной.</p>
-              <div className="field">
-                <label>Техника</label>
-                <input value={technique} onChange={(e) => setTechnique(e.target.value)} placeholder="Балаяж / тонирование" />
-              </div>
-              <div className="field">
-                <label>Формула</label>
-                <input value={formula} onChange={(e) => setFormula(e.target.value)} placeholder="7.1 + 6% 1:1.5" />
-              </div>
-              <div className="field">
-                <label>Продукт / материал</label>
-                <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Majirel 7.1" />
-              </div>
-              <div className="row">
-                <div className="field" style={{ flex: 1 }}>
-                  <label>Количество</label>
-                  <input value={productQty} onChange={(e) => setProductQty(e.target.value)} placeholder="30" />
-                </div>
-                <div className="field" style={{ flex: 1 }}>
-                  <label>Пропорция</label>
-                  <input value={proportion} onChange={(e) => setProportion(e.target.value)} placeholder="1:1.5" />
-                </div>
-              </div>
-              <div className="field">
-                <label>Заметки</label>
-                <input value={notes} onChange={(e) => setNotes(e.target.value)} />
-              </div>
-              <label className="field-check">
-                <input type="checkbox" checked={skipScheme} onChange={(e) => setSkipScheme(e.target.checked)} />
-                <span>Не раскрывать схему (Premium / Trial)</span>
-              </label>
-              {skipScheme && (
-                <div className="field">
-                  <label>Причина</label>
-                  <input value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="Коммерческая тайна / entitlement" />
+              <p className="muted">
+                {canSkipScheme
+                  ? 'Можно заполнить схему или не раскрывать её — потребуется подтверждение.'
+                  : 'На Free схема обязательна: техника и хотя бы один продукт или материал.'}
+              </p>
+              {!skipScheme && (
+                <>
+                  <div className="field">
+                    <label>Техника</label>
+                    <input value={technique} onChange={(e) => setTechnique(e.target.value)} placeholder="Балаяж / тонирование" />
+                  </div>
+                  <div className="field">
+                    <label>Формула</label>
+                    <input value={formula} onChange={(e) => setFormula(e.target.value)} placeholder="7.1 + 6% 1:1.5" />
+                  </div>
+                  <div className="field">
+                    <label>Продукт / материал</label>
+                    <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Majirel 7.1" />
+                  </div>
+                  <div className="row">
+                    <div className="field" style={{ flex: 1 }}>
+                      <label>Количество</label>
+                      <input value={productQty} onChange={(e) => setProductQty(e.target.value)} placeholder="30" />
+                    </div>
+                    <div className="field" style={{ flex: 1 }}>
+                      <label>Пропорция</label>
+                      <input value={proportion} onChange={(e) => setProportion(e.target.value)} placeholder="1:1.5" />
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Заметки</label>
+                    <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+                  </div>
+                </>
+              )}
+              {canSkipScheme && (
+                <label className="field-check">
+                  <input
+                    type="checkbox"
+                    checked={skipScheme}
+                    onChange={(e) => {
+                      setSkipScheme(e.target.checked)
+                      setSkipConfirmed(false)
+                    }}
+                  />
+                  <span>Не раскрывать схему</span>
+                </label>
+              )}
+              {skipScheme && canSkipScheme && (
+                <div className="card stack-sm">
+                  <p>Схема не будет сохранена в карточке визита. Это нельзя отменить после завершения.</p>
+                  <div className="field">
+                    <label>Причина</label>
+                    <input value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="Коммерческая тайна" />
+                  </div>
+                  <label className="field-check">
+                    <input type="checkbox" checked={skipConfirmed} onChange={(e) => setSkipConfirmed(e.target.checked)} />
+                    <span>Подтверждаю, что схема не раскрывается</span>
+                  </label>
                 </div>
               )}
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={act.isPending || (skipScheme && skipReason.trim().length < 2)}
+                disabled={act.isPending || (skipScheme && (!skipConfirmed || skipReason.trim().length < 2))}
                 onClick={() =>
                   act.mutate({
                     path: `/v1/appointments/${a.id}/complete`,

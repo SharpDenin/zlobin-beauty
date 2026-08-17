@@ -23,6 +23,8 @@ type Article = {
   author_org_id?: string | null
   product_id?: string | null
   product_ids?: string[]
+  view_count?: number
+  favorite?: boolean
   published?: boolean
   created_at: string
 }
@@ -136,7 +138,7 @@ export function KnowledgeListPage() {
   })
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: (published: boolean) => {
       const content = JSON.stringify(draft.doc)
       const product_ids = draft.productIds
         .split(/[\s,;]+/)
@@ -152,7 +154,7 @@ export function KnowledgeListPage() {
         reading_time_minutes: estimateReadingMinutes(draft.doc),
         author_name: user?.display_name ?? '',
         organization_id: supplierOrgId,
-        published: draft.published,
+        published,
         product_ids,
       }
       if (draft.id) {
@@ -228,6 +230,7 @@ export function KnowledgeListPage() {
   const chips = [
     { id: 'fav', label: 'Избранное' },
     { id: 'new', label: 'Новое' },
+    { id: 'popular', label: 'Популярное' },
     { id: 'Колористика', label: 'Для окрашивания' },
     { id: 'Уход', label: 'Уход' },
     { id: 'Стайлинг', label: 'Техника' },
@@ -245,6 +248,10 @@ export function KnowledgeListPage() {
       setChip('new')
       return
     }
+    if (id === 'popular') {
+      setChip('popular')
+      return
+    }
     setCategory(id)
     setChip(id)
     setSubmitted((s) => ({ ...s, category: id }))
@@ -255,6 +262,9 @@ export function KnowledgeListPage() {
     if (chip === 'new') {
       const cut = Date.now() - 14 * 86400000
       list = list.filter((a) => new Date(a.created_at).getTime() >= cut)
+    }
+    if (chip === 'popular') {
+      list = [...list].sort((a, b) => (b.view_count ?? 0) - (a.view_count ?? 0))
     }
     return list
   }, [items, chip])
@@ -321,7 +331,7 @@ export function KnowledgeListPage() {
                 <button className="btn btn-secondary btn-compact" type="button" onClick={() => {
                   setCategory(''); setBrand(''); setSearch(''); setFavoritesOnly(false); setChip('')
                   setSubmitted({ category: '', brand: '', q: '', favorites: false })
-                }}>Очистить всё</button>
+                }}>Очистить фильтры</button>
               </div>
             )}
             <button className="btn btn-primary" type="submit">Найти</button>
@@ -390,20 +400,31 @@ export function KnowledgeListPage() {
               checked={draft.published}
               onChange={(e) => setDraft((d) => ({ ...d, published: e.target.checked }))}
             />
-            <span>Опубликовать сразу</span>
+            <span>Сразу опубликовать</span>
           </label>
           <div className="row">
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={save.isPending || !canSave}
+              onClick={() => save.mutate(false)}
+            >
+              Сохранить черновик
+            </button>
             <button
               className="btn btn-primary"
               type="button"
               disabled={save.isPending || !canSave}
-              onClick={() => save.mutate()}
+              onClick={() => save.mutate(true)}
             >
-              {save.isPending ? 'Сохраняем…' : draft.id ? 'Обновить статью' : 'Сохранить статью'}
+              {save.isPending ? 'Сохраняем…' : 'Опубликовать'}
             </button>
             {draft.id && (
-              <button className="btn btn-secondary" type="button" onClick={() => setDraft(emptyDraft())}>
-                Отменить редактирование
+              <Link className="btn btn-secondary" to={`/knowledge/${draft.id}`}>Предпросмотр</Link>
+            )}
+            {draft.id && (
+              <button className="btn btn-ghost" type="button" onClick={() => setDraft(emptyDraft())}>
+                Отменить
               </button>
             )}
           </div>

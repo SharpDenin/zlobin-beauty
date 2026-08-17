@@ -280,6 +280,20 @@ FROM appointments WHERE `+col+`=$1 ORDER BY starts_at DESC LIMIT 100`, userID)
 	return scanAppointments(rows)
 }
 
+func (s *Store) MasterAppointmentOverlaps(ctx context.Context, masterUserID uuid.UUID, excludeID uuid.UUID, starts, ends time.Time) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+  SELECT 1 FROM appointments
+  WHERE master_user_id=$1
+    AND id <> $2
+    AND status IN ('pending_confirmation', 'confirmed', 'in_progress')
+    AND starts_at < $4
+    AND ends_at > $3
+)`, masterUserID, excludeID, starts, ends).Scan(&exists)
+	return exists, err
+}
+
 func scanAppointment(row pgx.Row) (*domain.Appointment, error) {
 	var a domain.Appointment
 	if err := row.Scan(

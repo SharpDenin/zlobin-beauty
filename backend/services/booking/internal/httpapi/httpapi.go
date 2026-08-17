@@ -37,6 +37,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
 	mux.Handle("POST /v1/appointments", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
+	mux.Handle("GET /v1/calendar/appointments", auth(http.HandlerFunc(a.calendarAppointments)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
@@ -326,6 +327,35 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 		role = "client"
 	}
 	items, err := a.svc.ListMine(r.Context(), claims.UserID, role)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, appointmentDTO(item))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("from must be RFC3339"))
+		return
+	}
+	to, err := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err != nil || !to.After(from) {
+		httpx.WriteError(w, r, a.log, apperr.Validation("to must be RFC3339 and after from"))
+		return
+	}
+	items, err := a.svc.ListOrgCalendar(r.Context(), claims.UserID, orgID, from, to)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

@@ -127,6 +127,14 @@ GROUP BY 1 ORDER BY 3 DESC LIMIT 8`, orgID, from, to)
 		})
 	}
 
+	var deliveries int64
+	if err := s.pool.QueryRow(ctx, `
+SELECT COUNT(*) FROM client_orders
+WHERE supplier_org_id=$1 AND created_at >= $2 AND created_at < $3 AND status NOT IN ('cancelled','draft')`,
+		orgID, from, to).Scan(&deliveries); err != nil {
+		return nil, err
+	}
+
 	return map[string]any{
 		"from": from, "to": to,
 		"revenue_today_minor": revenueToday,
@@ -139,6 +147,7 @@ GROUP BY 1 ORDER BY 3 DESC LIMIT 8`, orgID, from, to)
 		"average_order_value_minor": aov,
 		"unpaid_orders": unpaid,
 		"outstanding_payments": unpaid,
+		"deliveries_count": deliveries,
 		"popular_products": popular,
 		"sales_dynamics": dynamics,
 		"orders_dynamics": dynamics,

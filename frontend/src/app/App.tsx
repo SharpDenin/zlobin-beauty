@@ -86,6 +86,10 @@ export function App() {
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/subscription" element={<SubscriptionPage />} />
                 <Route path="/shop" element={<ShopPage />} />
+                <Route path="/shop/cart" element={<ShopPage />} />
+                <Route path="/shop/checkout" element={<ShopPage />} />
+                <Route path="/shop/orders" element={<ShopPage />} />
+                <Route path="/shop/:id" element={<ShopPage />} />
                 <Route path="/rep" element={<RepPage />} />
                 <Route path="/rep/map" element={<RepPage />} />
                 <Route path="/rep/finance" element={<RepPage />} />

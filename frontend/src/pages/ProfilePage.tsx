@@ -121,6 +121,9 @@ function SubscriptionHints() {
   return (
     <section className="stack-sm">
       <h2>Подписка</h2>
+      {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
+        <p><strong>Premium активирован бесплатно на 3 месяца</strong></p>
+      )}
       <p>{plan}{trial ? ` · ${trial}` : ''}</p>
       <p className="muted">Новым пользователям — 3 месяца Premium. После trial без оплаты включается Free.</p>
       <label className="field-check">

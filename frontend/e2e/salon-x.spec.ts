@@ -67,8 +67,8 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     const article = page.locator('a[href*="/knowledge/"]').first()
     await expect(article).toBeVisible({ timeout: 15_000 })
     await article.click()
-    await expect(page.getByRole('button', { name: /избранное/i })).toBeVisible({ timeout: 10_000 })
-    await page.getByRole('button', { name: /избранное/i }).click()
+    await expect(page.getByRole('button', { name: /избранн/i })).toBeVisible({ timeout: 10_000 })
+    await page.getByRole('button', { name: /избранн/i }).click()
   })
 
   test('representative route and tasks', async ({ page }, info) => {
@@ -131,8 +131,10 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
-    await expect(page.getByRole('heading', { name: 'Новый блок', exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('button', { name: 'Добавить блок', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /календарь/i })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: '+ Событие' }).click()
+    await expect(page.getByRole('heading', { name: 'Новое событие', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Добавить в календарь' })).toBeVisible()
 
     const client = await apiLogin('client1@demo.local')
     const master = await apiLogin('master1@demo.local')
@@ -156,7 +158,9 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'client1@demo.local')
     await page.goto('/shop')
     await expect(page.getByRole('heading', { name: 'Магазин' })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('button', { name: 'Каталог' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Каталог' })).toBeVisible()
+    await expect(page.getByRole('link', { name: /Корзина/ })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Мои заказы' })).toBeVisible()
   })
 
   test('master dashboard and calendar modes', async ({ page }, info) => {
@@ -175,6 +179,8 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'master1@demo.local')
     await page.goto('/profile/subscription')
     await expect(page.getByRole('heading', { name: 'Подписка' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Free и Premium' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'TRIAL', exact: true })).toBeVisible()
   })
 
   test('seed accounts exist when E2E_REQUIRE_SEED', async () => {

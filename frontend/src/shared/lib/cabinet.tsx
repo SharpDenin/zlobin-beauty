@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   hasMasterAccess,
@@ -185,7 +185,11 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
       { to: '/appointments', label: 'Записи' },
       { to: '/profile', label: 'Профиль' },
     ]
-    return { primary, secondary: [], side: primary }
+    const secondary: NavLink[] = [
+      { to: '/shop/orders', label: 'Мои заказы' },
+      { to: '/shop/cart', label: 'Корзина' },
+    ]
+    return { primary, secondary, side: [...primary, ...secondary] }
   }
 
   const primary: NavLink[] = [
@@ -230,11 +234,11 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
   const kind = resolveCabinetKind(user, masterQ.data?.master?.work_type)
   const nav = navForCabinet(kind)
   const orgItems = orgs.data?.items ?? []
+  const [selectedOrgId, setSelectedOrgId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(BRANCH_KEY) : null))
 
   const selectedOrg = useMemo(() => {
-    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(BRANCH_KEY) : null
-    return orgItems.find((o) => o.organization.id === stored) ?? orgItems[0] ?? null
-  }, [orgItems])
+    return orgItems.find((o) => o.organization.id === selectedOrgId) ?? orgItems[0] ?? null
+  }, [orgItems, selectedOrgId])
 
   const value: CabinetState = {
     kind,
@@ -245,6 +249,7 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
     selectedOrg,
     setSelectedOrgId: (id) => {
       localStorage.setItem(BRANCH_KEY, id)
+      setSelectedOrgId(id)
       window.dispatchEvent(new Event('sx-org-change'))
     },
     can: (feature) => canFeature(kind, feature),

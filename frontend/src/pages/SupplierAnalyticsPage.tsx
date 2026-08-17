@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { useSupplierOrg } from '@/shared/lib/commerce'
+import { fetchPickupBranches, useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 
 type Analytics = {
@@ -17,6 +17,7 @@ type Analytics = {
   average_order_value_minor?: number
   unpaid_orders?: number
   outstanding_payments?: number
+  deliveries_count?: number
   popular_products?: Array<{ product_id: string; name: string; qty: number; revenue_minor: number }>
   sales_dynamics?: Array<{ period: string; orders: number; revenue_minor: number }>
   top_salons?: Array<{ branch_id: string; orders: number; revenue_minor: number }>
@@ -39,15 +40,31 @@ export function SupplierAnalyticsPage() {
     },
     enabled: Boolean(accessToken && supplierOrgId),
   })
+  const reps = useQuery({
+    queryKey: ['supplier-reps', supplierOrgId],
+    queryFn: () => apiRequest<{ items: Array<{ user_id?: string; display_name?: string; city?: string }> }>(`/v1/organizations/${supplierOrgId}/representatives`, { token: accessToken }),
+    enabled: Boolean(accessToken && supplierOrgId),
+  })
+  const salons = useQuery({
+    queryKey: ['pickup-branches-analytics'],
+    queryFn: () => fetchPickupBranches(accessToken),
+    enabled: Boolean(accessToken),
+  })
+  const salonNames = useMemo(() => Object.fromEntries((salons.data ?? []).map((b) => [b.id, b.name])), [salons.data])
+  const repNames = useMemo(() => Object.fromEntries((reps.data?.items ?? []).map((r) => [r.user_id ?? '', r.display_name || r.city || 'Представитель'])), [reps.data])
 
   if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
   if (!supplierOrgId) return <main className="page"><div className="empty-state"><h2>Нет организации</h2></div></main>
 
   const a = q.data
+  const chartMoney = (v: number) => formatMoney(v)
   return (
     <main className="page stack">
-      <h1>Аналитика</h1>
-      <p className="muted">{supplierOrg?.organization.name} · по оплаченным заказам, не по цене каталога</p>
+      <div className="stack-sm">
+        <p className="eyebrow">Поставщик</p>
+        <h1>Аналитика</h1>
+        <p className="muted">{supplierOrg?.organization.name} · выручка считается по оплаченным заказам</p>
+      </div>
       <div className="chip-row">
         {[['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц'], ['quarter', 'Квартал'], ['custom', 'Период']].map(([id, label]) => (
           <button key={id} type="button" className={`chip ${period === id ? 'active' : ''}`} onClick={() => setPeriod(id)}>{label}</button>
@@ -60,69 +77,84 @@ export function SupplierAnalyticsPage() {
         </div>
       )}
       {q.isLoading && <div className="state-box">Считаем агрегаты…</div>}
-      <div className="cards-grid">
-        <article className="card stack-sm"><p className="muted">Выручка сегодня</p><strong>{formatMoney(a?.revenue_today_minor ?? 0)}</strong></article>
-        <article className="card stack-sm"><p className="muted">Выручка месяц</p><strong>{formatMoney(a?.revenue_month_minor ?? 0)}</strong></article>
-        <article className="card stack-sm"><p className="muted">Выручка квартал</p><strong>{formatMoney(a?.revenue_quarter_minor ?? 0)}</strong></article>
-        <article className="card stack-sm"><p className="muted">Заказы сегодня / месяц</p><strong>{a?.orders_today ?? 0} / {a?.orders_month ?? 0}</strong></article>
-        <article className="card stack-sm"><p className="muted">Средний чек</p><strong>{formatMoney(a?.average_order_value_minor ?? 0)}</strong></article>
-        <article className="card stack-sm"><p className="muted">К оплате</p><strong>{a?.outstanding_payments ?? a?.unpaid_orders ?? 0}</strong></article>
+      <div className="kpi-grid">
+        <article className="card stack-sm"><p className="muted">Revenue</p><strong>{formatMoney(a?.revenue_minor ?? a?.revenue_month_minor ?? 0)}</strong><p className="muted">за выбранный период</p></article>
+        <article className="card stack-sm"><p className="muted">Orders</p><strong>{a?.orders_count ?? a?.orders_month ?? 0}</strong><p className="muted">сегодня {a?.orders_today ?? 0}</p></article>
+        <article className="card stack-sm"><p className="muted">Average order</p><strong>{formatMoney(a?.average_order_value_minor ?? 0)}</strong></article>
+        <article className="card stack-sm"><p className="muted">Outstanding</p><strong>{a?.outstanding_payments ?? a?.unpaid_orders ?? 0}</strong><p className="muted">незакрытых оплат</p></article>
+        <article className="card stack-sm"><p className="muted">Deliveries</p><strong>{a?.deliveries_count ?? 0}</strong><p className="muted">доставок клиентам</p></article>
       </div>
       <section className="card stack">
-        <h2>Динамика продаж</h2>
-        <div style={{ height: 260 }}>
-          <ResponsiveContainer>
+        <h2>Revenue Dynamics</h2>
+        <div className="dashboard-chart">
+          <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={a?.sales_dynamics ?? []}>
-              <CartesianGrid strokeDasharray="3 3" />
+              <defs><linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2f6f78" stopOpacity={0.32}/><stop offset="100%" stopColor="#2f6f78" stopOpacity={0.02}/></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="period" />
-              <YAxis />
-              <Tooltip />
-              <Area dataKey="revenue_minor" stroke="#2f5d50" fill="#d7ebe3" name="Выручка" />
+              <YAxis tickFormatter={(v) => String(Math.round(Number(v) / 100))} />
+              <Tooltip formatter={(v) => chartMoney(Number(v))} />
+              <Area type="monotone" dataKey="revenue_minor" stroke="#2f6f78" fill="url(#revFill)" name="Выручка" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </section>
       <section className="card stack">
-        <h2>Заказы</h2>
-        <div style={{ height: 220 }}>
-          <ResponsiveContainer>
+        <h2>Orders Dynamics</h2>
+        <div className="dashboard-chart">
+          <ResponsiveContainer width="100%" height="100%">
             <BarChart data={a?.sales_dynamics ?? []}>
-              <CartesianGrid strokeDasharray="3 3" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="period" />
-              <YAxis />
+              <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="orders" fill="#c4a574" name="Заказы" />
+              <Bar dataKey="orders" fill="#c4a574" name="Заказы" radius={6} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </section>
       <section className="card stack">
-        <h2>Популярные товары</h2>
+        <h2>Popular Products</h2>
         {(a?.popular_products ?? []).length === 0 && <p className="muted">Пока нет продаж</p>}
-        <div className="list">
-          {(a?.popular_products ?? []).map((p) => (
-            <article key={p.product_id} className="list-item row between">
-              <span>{p.name}</span>
-              <span>{formatMoney(p.revenue_minor)}</span>
-            </article>
-          ))}
-        </div>
+        {(a?.popular_products ?? []).length > 0 && (
+          <div className="dashboard-chart">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={a?.popular_products ?? []} layout="vertical" margin={{ left: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" />
+                <YAxis type="category" dataKey="name" width={140} />
+                <Tooltip formatter={(v) => chartMoney(Number(v))} />
+                <Bar dataKey="revenue_minor" name="Продажи" fill="#8f6a55" radius={6} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </section>
       <section className="card stack">
-        <h2>Топ салонов</h2>
-        {(a?.top_salons ?? []).map((s) => (
-          <article key={s.branch_id} className="list-item row between">
-            <span>Филиал {s.branch_id.slice(0, 8)}</span>
-            <span>{formatMoney(s.revenue_minor)} · {s.orders}</span>
+        <h2>Sales by Product</h2>
+        {(a?.popular_products ?? []).map((p) => (
+          <article key={p.product_id} className="list-item row between">
+            <div><strong>{p.name}</strong><p className="muted">{p.qty} шт.</p></div>
+            <span>{formatMoney(p.revenue_minor)}</span>
           </article>
         ))}
       </section>
       <section className="card stack">
-        <h2>Представители</h2>
+        <h2>Representatives Performance</h2>
+        {(a?.representatives ?? []).length === 0 && <p className="muted">Нет данных по представителям</p>}
         {(a?.representatives ?? []).map((r) => (
           <article key={r.user_id} className="list-item row between">
-            <span>{r.user_id.slice(0, 8)}</span>
-            <span>собрано {formatMoney(r.collected_minor)} / ожидание {formatMoney(r.remaining_minor)}</span>
+            <div><strong>{repNames[r.user_id] || 'Представитель'}</strong><p className="muted">{r.orders} заказов</p></div>
+            <span>собрано {formatMoney(r.collected_minor)} · ожидание {formatMoney(r.remaining_minor)}</span>
+          </article>
+        ))}
+      </section>
+      <section className="card stack">
+        <h2>Салоны</h2>
+        {(a?.top_salons ?? []).map((s) => (
+          <article key={s.branch_id} className="list-item row between">
+            <span>{salonNames[s.branch_id] || 'Салон'}</span>
+            <span>{formatMoney(s.revenue_minor)} · {s.orders}</span>
           </article>
         ))}
       </section>

@@ -42,7 +42,10 @@ export function RegisterPage() {
                 as_master: values.role === 'master',
                 as_supplier: values.role === 'supplier',
               })
-              if (values.role === 'master') navigate('/master')
+              if (values.role === 'master' || values.role === 'supplier') {
+                sessionStorage.setItem('sx.welcome_trial', '1')
+              }
+              if (values.role === 'master') navigate('/')
               else if (values.role === 'supplier') navigate('/supplier')
               else navigate('/')
             } catch (e) {

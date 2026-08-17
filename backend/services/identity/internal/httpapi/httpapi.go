@@ -233,7 +233,26 @@ func (a *API) getSubscription(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, snap)
+	dto := map[string]any{
+		"plan": snap.Plan, "status": snap.Status, "effective_plan": snap.EffectivePlan,
+		"features": snap.Features, "dev_controls": a.svc.AllowDevBilling(),
+	}
+	if snap.TrialStartedAt != nil {
+		dto["trial_started_at"] = *snap.TrialStartedAt
+	}
+	if snap.TrialEndsAt != nil {
+		dto["trial_ends_at"] = *snap.TrialEndsAt
+	}
+	if snap.StartedAt != nil {
+		dto["started_at"] = *snap.StartedAt
+	}
+	if snap.PaidUntil != nil {
+		dto["paid_until"] = *snap.PaidUntil
+	}
+	if snap.CancelledAt != nil {
+		dto["cancelled_at"] = *snap.CancelledAt
+	}
+	httpx.JSON(w, http.StatusOK, dto)
 }
 
 func (a *API) devSubscription(w http.ResponseWriter, r *http.Request) {

@@ -131,6 +131,22 @@ export function wallTimeInTimezoneToUtcIso(
   return new Date(guess).toISOString()
 }
 
+/** Interpret a JS Date's *wall clock* (year/month/day/hour/minute) in `iana`, not the browser zone. */
+export function dateWallToIso(d: Date, iana: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const wall = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return datetimeLocalToIso(wall, iana)
+}
+
+/** Format an ISO instant as datetime-local wall clock in `iana`. */
+export function isoToDatetimeLocal(iso: string, iana: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const parts = getTzParts(date, iana.trim() || 'UTC')
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}`
+}
+
 function getTzParts(date: Date, tz: string) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,

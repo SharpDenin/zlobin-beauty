@@ -221,4 +221,157 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(bl.blocked).toBe(true)
     expect((bl.no_show_count ?? 0)).toBeGreaterThanOrEqual(2)
   })
+
+  test('dashboard PUT/GET round-trip persists layout and colors', async () => {
+    const master = await apiLogin('master1@demo.local')
+    const widgets = [
+      { id: 'alerts', enabled: true, positions: { lg: { x: 0, y: 0, w: 12, h: 5 } } },
+      { id: 'calendar', enabled: true, positions: { lg: { x: 0, y: 5, w: 12, h: 18 } } },
+      { id: 'today', enabled: true, positions: { lg: { x: 0, y: 23, w: 3, h: 4 } } },
+      { id: 'pending', enabled: true, positions: { lg: { x: 3, y: 23, w: 3, h: 4 } } },
+      { id: 'clients_today', enabled: true, positions: { lg: { x: 6, y: 23, w: 3, h: 4 } } },
+      { id: 'upcoming', enabled: true, positions: { lg: { x: 0, y: 27, w: 6, h: 8 } } },
+      { id: 'analytics', enabled: true, positions: { lg: { x: 6, y: 27, w: 6, h: 8 } } },
+      { id: 'messages', enabled: false, positions: { lg: { x: 9, y: 23, w: 3, h: 4 } } },
+      { id: 'calendar_colors', colors: { personal: '#aa5533' } },
+    ]
+    const put = await fetch(`${api}/v1/me/dashboard`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ widgets }),
+    })
+    expect(put.ok, `PUT dashboard ${put.status} ${await put.text()}`).toBeTruthy()
+    const get = await fetch(`${api}/v1/me/dashboard`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(get.ok).toBeTruthy()
+    const body = await get.json() as { widgets: Array<{ id: string; enabled?: boolean; colors?: Record<string, string> }> }
+    expect(body.widgets.find((w) => w.id === 'messages')?.enabled).toBe(false)
+    expect(body.widgets.find((w) => w.id === 'calendar_colors')?.colors?.personal).toBe('#aa5533')
+  })
+
+  test('owner and admin can load org calendar; client cannot', async () => {
+    const master = await apiLogin('master1@demo.local')
+    const admin = await apiLogin('admin1@demo.local')
+    const client = await apiLogin('client1@demo.local')
+    const orgsRes = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(orgsRes.ok).toBeTruthy()
+    const orgs = await orgsRes.json() as { items: Array<{ organization: { id: string } }> }
+    const orgID = orgs.items[0]?.organization.id
+    expect(orgID).toBeTruthy()
+    const from = new Date(Date.now() - 7 * 86400000).toISOString()
+    const to = new Date(Date.now() + 14 * 86400000).toISOString()
+    const qs = `organization_id=${orgID}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    const adminCal = await fetch(`${api}/v1/calendar/appointments?${qs}`, { headers: { Authorization: `Bearer ${admin.access_token}` } })
+    expect(adminCal.status, await adminCal.text()).toBe(200)
+    const masterCal = await fetch(`${api}/v1/calendar/appointments?${qs}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(masterCal.status).toBe(200)
+    const clientCal = await fetch(`${api}/v1/calendar/appointments?${qs}`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    expect(clientCal.status).toBe(403)
+  })
+
+  test('planner block occupies time and cannot overlap', async () => {
+    const master = await apiLogin('master1@demo.local')
+    const start = new Date(Date.UTC(2026, 11, 15, 4, 0, 0))
+    const end = new Date(Date.UTC(2026, 11, 15, 5, 0, 0))
+    const payload = {
+      title: 'E2E lunch occupancy',
+      category: 'break',
+      starts_at: start.toISOString(),
+      ends_at: end.toISOString(),
+      timezone: 'Asia/Krasnoyarsk',
+    }
+    const create = await fetch(`${api}/v1/planner/blocks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const created = await create.json() as { id?: string }
+    expect(create.status, JSON.stringify(created)).toBeLessThan(300)
+    expect(created.id).toBeTruthy()
+    const overlap = await fetch(`${api}/v1/planner/blocks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, title: 'E2E overlap', category: 'personal' }),
+    })
+    expect(overlap.status).toBe(409)
+    const del = await fetch(`${api}/v1/planner/blocks/${created.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(del.status).toBe(204)
+  })
+
+  test('salon admin lands on operational dashboard and can open staff', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'admin1@demo.local')
+    await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('link', { name: 'Найти мастера' })).toHaveCount(0)
+    await page.goto('/staff')
+    await expect(page.getByRole('heading', { name: /Команда/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('только мастерам')).toHaveCount(0)
+  })
+
+  test('dashboard widget toggle survives reload', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'master1@demo.local')
+    await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Настроить' }).click()
+    const messages = page.locator('.dashboard-setting-row').filter({ hasText: 'Сообщения' }).locator('input[type="checkbox"]')
+    await expect(messages).toBeVisible()
+    if (await messages.isChecked()) await messages.uncheck()
+    await page.getByRole('button', { name: 'Готово' }).click()
+    await page.reload()
+    await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.widget-drag-handle', { hasText: 'Сообщения' })).toHaveCount(0)
+  })
+
+  test('calendar planner block is clickable and editable', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const master = await apiLogin('master1@demo.local')
+    const from = new Date(Date.UTC(2026, 7, 17)).toISOString()
+    const to = new Date(Date.UTC(2026, 8, 1)).toISOString()
+    const listed = await fetch(`${api}/v1/planner/blocks?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    const listedBody = await listed.json() as { items?: Array<{ id: string; title: string }> }
+    let block = listedBody.items?.find((b) => b.title === 'E2E блок планера')
+    if (!block) {
+      const start = new Date(Date.UTC(2026, 7, 19, 3, 30, 0))
+      const end = new Date(Date.UTC(2026, 7, 19, 4, 30, 0))
+      const create = await fetch(`${api}/v1/planner/blocks`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'E2E блок планера',
+          category: 'task',
+          starts_at: start.toISOString(),
+          ends_at: end.toISOString(),
+          timezone: 'Asia/Krasnoyarsk',
+        }),
+      })
+      const created = await create.json() as { id?: string }
+      expect(create.status, JSON.stringify(created)).toBeLessThan(300)
+      block = { id: created.id!, title: 'E2E блок планера' }
+    }
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/calendar')
+    await expect(page.getByRole('button', { name: 'Неделя' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Список' }).click()
+    const row = page.locator('.fc-list-event').filter({ hasText: 'E2E блок планера' }).first()
+    await expect(row).toBeVisible({ timeout: 15_000 })
+    await row.scrollIntoViewIfNeeded()
+    await row.click({ force: true })
+    await expect(page.getByRole('heading', { name: 'Событие планера' })).toBeVisible({ timeout: 10_000 })
+    await page.getByRole('button', { name: 'Удалить событие' }).click()
+    await expect(page.getByText('Событие удалено')).toBeVisible()
+  })
+
+  test('chain calendar branch switcher is present', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'chain1@demo.local')
+    await page.goto('/calendar')
+    await expect(page.getByTestId('calendar-branch-switcher')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('option', { name: 'Новосибирск' })).toBeAttached()
+    await page.getByTestId('calendar-branch-switcher').selectOption({ label: 'Новосибирск' })
+    await expect(page.getByText(/Asia\/Novosibirsk/)).toBeVisible()
+  })
 })

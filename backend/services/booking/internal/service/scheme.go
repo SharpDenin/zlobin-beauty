@@ -110,7 +110,7 @@ func (s *Service) GetVisitScheme(ctx context.Context, appointmentID, actor uuid.
 	return item, nil
 }
 
-func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title, category, timezone, color string, starts, ends time.Time, orgID *uuid.UUID) (*store.PlannerBlock, error) {
+func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title, category, timezone, color string, starts, ends time.Time, orgID *uuid.UUID, ownerUserID *uuid.UUID) (*store.PlannerBlock, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return nil, apperr.Validation("title is required")
@@ -124,12 +124,25 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return nil, apperr.Validation("invalid timezone")
 	}
-	if err := s.validatePlannerInterval(ctx, actor, uuid.Nil, starts, ends, timezone); err != nil {
+	owner := actor
+	if ownerUserID != nil && *ownerUserID != uuid.Nil && *ownerUserID != actor {
+		if orgID == nil {
+			return nil, apperr.Validation("organization_id is required to create a block for staff")
+		}
+		if err := s.requireMembership(ctx, *orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+		if err := s.requireMembership(ctx, *orgID, *ownerUserID, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+		owner = *ownerUserID
+	}
+	if err := s.validatePlannerInterval(ctx, owner, uuid.Nil, starts, ends, timezone); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
 	b := store.PlannerBlock{
-		ID: ids.New(), OwnerUserID: actor, OrganizationID: orgID, Title: title,
+		ID: ids.New(), OwnerUserID: owner, OrganizationID: orgID, Title: title,
 		Category: strings.TrimSpace(category), StartsAt: starts.UTC(), EndsAt: ends.UTC(),
 		Timezone: timezone, Color: colorOrDefault(color), CreatedAt: now, UpdatedAt: now,
 	}
@@ -139,18 +152,40 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 	return &b, nil
 }
 
-func (s *Service) ListPlannerBlocks(ctx context.Context, actor uuid.UUID, from, to time.Time) ([]store.PlannerBlock, error) {
+func (s *Service) ListPlannerBlocks(ctx context.Context, actor uuid.UUID, from, to time.Time, orgID *uuid.UUID) ([]store.PlannerBlock, error) {
 	if to.Before(from) {
 		return nil, apperr.Validation("invalid range")
 	}
-	items, err := s.store.ListPlannerBlocks(ctx, actor, from, to)
+	var items []store.PlannerBlock
+	var err error
+	if orgID != nil {
+		if err := s.requireMembership(ctx, *orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+		items, err = s.store.ListPlannerBlocksForOrg(ctx, *orgID, actor, from, to)
+	} else {
+		items, err = s.store.ListPlannerBlocks(ctx, actor, from, to)
+	}
 	if err != nil {
 		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []store.PlannerBlock{}
 	}
 	return items, nil
 }
 
-func (s *Service) MovePlannerBlock(ctx context.Context, actor, id uuid.UUID, starts, ends time.Time) (*store.PlannerBlock, error) {
+func (s *Service) canEditPlannerBlock(ctx context.Context, actor uuid.UUID, b *store.PlannerBlock) error {
+	if b.OwnerUserID == actor {
+		return nil
+	}
+	if b.OrganizationID != nil {
+		return s.requireMembership(ctx, *b.OrganizationID, actor, "owner", "admin")
+	}
+	return apperr.Forbidden("access denied")
+}
+
+func (s *Service) UpdatePlannerBlock(ctx context.Context, actor, id uuid.UUID, title, category, color string, starts, ends time.Time) (*store.PlannerBlock, error) {
 	if !ends.After(starts) {
 		return nil, apperr.Validation("ends_at must be after starts_at")
 	}
@@ -158,24 +193,44 @@ func (s *Service) MovePlannerBlock(ctx context.Context, actor, id uuid.UUID, sta
 	if err != nil {
 		return nil, apperr.NotFound("block not found")
 	}
-	if b.OwnerUserID != actor {
-		return nil, apperr.Forbidden("access denied")
+	if err := s.canEditPlannerBlock(ctx, actor, b); err != nil {
+		return nil, err
 	}
-	if err := s.validatePlannerInterval(ctx, actor, id, starts, ends, b.Timezone); err != nil {
+	if strings.TrimSpace(title) != "" {
+		b.Title = strings.TrimSpace(title)
+	}
+	if strings.TrimSpace(category) != "" {
+		b.Category = strings.TrimSpace(category)
+	}
+	if strings.TrimSpace(color) != "" {
+		b.Color = colorOrDefault(color)
+	}
+	if err := s.validatePlannerInterval(ctx, b.OwnerUserID, id, starts, ends, b.Timezone); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
-	if err := s.store.UpdatePlannerBlockTimes(ctx, id, starts.UTC(), ends.UTC(), now); err != nil {
-		return nil, apperr.Internal(err)
-	}
 	b.StartsAt = starts.UTC()
 	b.EndsAt = ends.UTC()
 	b.UpdatedAt = now
+	if err := s.store.UpdatePlannerBlock(ctx, *b); err != nil {
+		return nil, apperr.Internal(err)
+	}
 	return b, nil
 }
 
+func (s *Service) MovePlannerBlock(ctx context.Context, actor, id uuid.UUID, starts, ends time.Time) (*store.PlannerBlock, error) {
+	return s.UpdatePlannerBlock(ctx, actor, id, "", "", "", starts, ends)
+}
+
 func (s *Service) DeletePlannerBlock(ctx context.Context, actor, id uuid.UUID) error {
-	if err := s.store.DeletePlannerBlock(ctx, id, actor); err != nil {
+	b, err := s.store.GetPlannerBlock(ctx, id)
+	if err != nil {
+		return apperr.NotFound("block not found")
+	}
+	if err := s.canEditPlannerBlock(ctx, actor, b); err != nil {
+		return err
+	}
+	if err := s.store.DeletePlannerBlock(ctx, id); err != nil {
 		return apperr.Internal(err)
 	}
 	return nil

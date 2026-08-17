@@ -526,15 +526,6 @@ func (s *Service) LookupByEmail(ctx context.Context, email string) (*domain.User
 	return user, nil
 }
 
-func defaultWidgets() []byte {
-	return []byte(`[
-	  {"id":"alerts","type":"important_messages","x":0,"y":0,"w":12,"h":2},
-	  {"id":"calendar","type":"calendar","x":0,"y":2,"w":8,"h":6},
-	  {"id":"upcoming","type":"upcoming","x":8,"y":2,"w":4,"h":3},
-	  {"id":"today","type":"today","x":8,"y":5,"w":4,"h":3}
-	]`)
-}
-
 func (s *Service) GetDashboard(ctx context.Context, userID uuid.UUID) ([]byte, error) {
 	d, err := s.store.GetDashboard(ctx, userID)
 	if err != nil {
@@ -547,28 +538,8 @@ func (s *Service) GetDashboard(ctx context.Context, userID uuid.UUID) ([]byte, e
 }
 
 func (s *Service) SaveDashboard(ctx context.Context, userID uuid.UUID, widgets []byte) error {
-	if !json.Valid(widgets) {
-		return apperr.Validation("widgets must be valid JSON")
-	}
-	var parsed []map[string]any
-	if err := json.Unmarshal(widgets, &parsed); err != nil {
-		return apperr.Validation("widgets must be an array")
-	}
-	allowed := map[string]struct{}{
-		"calendar": {}, "upcoming": {}, "today": {}, "important_messages": {},
-		"tasks": {}, "clients_today": {}, "orders": {},
-	}
-	allowedSize := map[string]struct{}{"2x2": {}, "4x2": {}, "4x3": {}, "8x3": {}, "8x6": {}, "12x2": {}, "12x4": {}}
-	for _, w := range parsed {
-		typ, _ := w["type"].(string)
-		if _, ok := allowed[typ]; !ok {
-			return apperr.Validation("unsupported widget type")
-		}
-		if size, ok := w["size"].(string); ok && size != "" {
-			if _, ok := allowedSize[size]; !ok {
-				return apperr.Validation("unsupported widget size")
-			}
-		}
+	if err := ValidateDashboardWidgets(widgets); err != nil {
+		return err
 	}
 	if err := s.store.UpsertDashboard(ctx, userID, widgets, s.now().UTC()); err != nil {
 		return apperr.Internal(err)

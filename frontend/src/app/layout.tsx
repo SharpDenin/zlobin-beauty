@@ -1,6 +1,6 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, type ReactNode } from 'react'
-import { hasMasterAccess, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet, type NavLink } from '@/shared/lib/cabinet'
 import { workTypeLabel } from '@/shared/lib/status'
 
@@ -28,10 +28,10 @@ export function RequireAdmin() {
 export function RequireMaster() {
   const { user, loading } = useAuth()
   if (loading) return <div className="state-box page">Загрузка…</div>
-  if (!hasMasterAccess(user)) {
+  if (!hasMasterAccess(user) && !hasSalonAdmin(user)) {
     return (
       <main className="page">
-        <div className="state-box error">Этот раздел доступен только мастерам и владельцам салона</div>
+        <div className="state-box error">Этот раздел доступен мастерам, администраторам и владельцам салона</div>
       </main>
     )
   }

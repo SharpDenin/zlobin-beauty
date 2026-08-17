@@ -31,6 +31,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
+	mux.Handle("GET /v1/calendar/working-hours", auth(http.HandlerFunc(a.calendarHours)))
+	mux.Handle("GET /v1/calendar/schedule-exceptions", auth(http.HandlerFunc(a.calendarExceptions)))
 	mux.Handle("PUT /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.putScheduleExceptions)))
 	mux.Handle("GET /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.getScheduleExceptions)))
 	mux.Handle("DELETE /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.deleteScheduleException)))
@@ -131,11 +133,94 @@ func (a *API) getHours(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	writeHours(w, hours)
+}
+
+func (a *API) calendarHours(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	masterID := claims.UserID
+	if v := r.URL.Query().Get("master_user_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+			return
+		}
+		masterID = id
+	}
+	var orgID uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = id
+	}
+	hours, err := a.svc.CalendarWorkingHours(r.Context(), claims.UserID, orgID, masterID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	writeHours(w, hours)
+}
+
+func writeHours(w http.ResponseWriter, hours []domain.WorkingHours) {
 	out := make([]map[string]any, 0, len(hours))
 	for _, h := range hours {
 		out = append(out, map[string]any{
 			"weekday": h.Weekday, "start_minute": h.StartMinute, "end_minute": h.EndMinute,
 		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) calendarExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	masterID := claims.UserID
+	if v := r.URL.Query().Get("master_user_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+			return
+		}
+		masterID = id
+	}
+	var orgID uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = id
+	}
+	now := time.Now().UTC()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 60)
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid from (YYYY-MM-DD)"))
+			return
+		}
+		from = t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid to (YYYY-MM-DD)"))
+			return
+		}
+		to = t
+	}
+	items, err := a.svc.CalendarScheduleExceptions(r.Context(), claims.UserID, orgID, masterID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -326,7 +411,28 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "client"
 	}
-	items, err := a.svc.ListMine(r.Context(), claims.UserID, role)
+	var fromPtr, toPtr *time.Time
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("from must be RFC3339"))
+			return
+		}
+		fromPtr = &t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("to must be RFC3339"))
+			return
+		}
+		toPtr = &t
+	}
+	if (fromPtr == nil) != (toPtr == nil) {
+		httpx.WriteError(w, r, a.log, apperr.Validation("from and to must be provided together"))
+		return
+	}
+	items, err := a.svc.ListMine(r.Context(), claims.UserID, role, fromPtr, toPtr)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -769,7 +875,7 @@ func plannerDTO(b store.PlannerBlock) map[string]any {
 		org = b.OrganizationID.String()
 	}
 	return map[string]any{
-		"id": b.ID.String(), "title": b.Title, "category": b.Category,
+		"id": b.ID.String(), "owner_user_id": b.OwnerUserID.String(), "title": b.Title, "category": b.Category,
 		"starts_at": b.StartsAt, "ends_at": b.EndsAt, "timezone": b.Timezone, "color": b.Color,
 		"organization_id": org,
 	}
@@ -784,7 +890,16 @@ func (a *API) listPlannerBlocks(w http.ResponseWriter, r *http.Request) {
 		from = now.Add(-24 * time.Hour)
 		to = now.Add(14 * 24 * time.Hour)
 	}
-	items, err := a.svc.ListPlannerBlocks(r.Context(), claims.UserID, from, to)
+	var orgID *uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &id
+	}
+	items, err := a.svc.ListPlannerBlocks(r.Context(), claims.UserID, from, to, orgID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -806,6 +921,7 @@ func (a *API) createPlannerBlock(w http.ResponseWriter, r *http.Request) {
 		Timezone       string `json:"timezone"`
 		Color          string `json:"color"`
 		OrganizationID string `json:"organization_id"`
+		OwnerUserID    string `json:"owner_user_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -826,7 +942,16 @@ func (a *API) createPlannerBlock(w http.ResponseWriter, r *http.Request) {
 		}
 		orgID = &id
 	}
-	item, err := a.svc.CreatePlannerBlock(r.Context(), claims.UserID, req.Title, req.Category, req.Timezone, req.Color, starts, ends, orgID)
+	var ownerID *uuid.UUID
+	if req.OwnerUserID != "" {
+		id, err := uuid.Parse(req.OwnerUserID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid owner_user_id"))
+			return
+		}
+		ownerID = &id
+	}
+	item, err := a.svc.CreatePlannerBlock(r.Context(), claims.UserID, req.Title, req.Category, req.Timezone, req.Color, starts, ends, orgID, ownerID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -842,6 +967,9 @@ func (a *API) movePlannerBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		Title    string `json:"title"`
+		Category string `json:"category"`
+		Color    string `json:"color"`
 		StartsAt string `json:"starts_at"`
 		EndsAt   string `json:"ends_at"`
 	}
@@ -855,7 +983,7 @@ func (a *API) movePlannerBlock(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("starts_at and ends_at must be RFC3339"))
 		return
 	}
-	item, err := a.svc.MovePlannerBlock(r.Context(), claims.UserID, id, starts, ends)
+	item, err := a.svc.UpdatePlannerBlock(r.Context(), claims.UserID, id, req.Title, req.Category, req.Color, starts, ends)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

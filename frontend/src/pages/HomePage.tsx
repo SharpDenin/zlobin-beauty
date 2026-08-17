@@ -1,6 +1,6 @@
 import { Link, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { hasMasterAccess, hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
 import { formatMoney } from '@/shared/lib/money'
@@ -105,7 +105,7 @@ function SupplierHomeRedirect() {
 
 export function HomePage() {
   const { user } = useAuth()
-  if (hasMasterAccess(user)) return <DashboardPage />
+  if (hasMasterAccess(user) || hasSalonAdmin(user)) return <DashboardPage />
   if (hasSupplierAccess(user)) return <SupplierHomeRedirect />
   if (hasSupplierRepAccess(user)) return <Navigate to="/rep" replace />
   return <ClientHome />

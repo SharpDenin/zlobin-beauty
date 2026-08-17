@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { datetimeLocalToIso, wallTimeInTimezoneToUtcIso } from './time'
+import { datetimeLocalToIso, dateWallToIso, wallTimeInTimezoneToUtcIso } from './time'
 
 describe('datetimeLocalToIso interprets salon timezone', () => {
   it('converts Krasnoyarsk wall time without browser TZ', () => {
@@ -11,5 +11,11 @@ describe('datetimeLocalToIso interprets salon timezone', () => {
   it('converts Moscow wall time', () => {
     const iso = wallTimeInTimezoneToUtcIso(2026, 1, 15, 12, 0, 0, 'Europe/Moscow')
     expect(iso).toBe('2026-01-15T09:00:00.000Z')
+  })
+
+  it('dateWallToIso uses the Date wall clock in the salon zone', () => {
+    const wall = new Date(2026, 7, 20, 14, 0, 0)
+    expect(dateWallToIso(wall, 'Asia/Krasnoyarsk')).toBe('2026-08-20T07:00:00.000Z')
+    expect(dateWallToIso(wall, 'UTC')).toBe('2026-08-20T14:00:00.000Z')
   })
 })

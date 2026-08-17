@@ -124,6 +124,28 @@ ORDER BY starts_at`, owner, from, to)
 	return out, rows.Err()
 }
 
+func (s *Store) ListPlannerBlocksForOrg(ctx context.Context, orgID, viewer uuid.UUID, from, to time.Time) ([]PlannerBlock, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, owner_user_id, organization_id, title, category, starts_at, ends_at, timezone, color, created_at, updated_at
+FROM planner_blocks
+WHERE starts_at < $3 AND ends_at > $2
+  AND (organization_id=$1 OR owner_user_id=$4)
+ORDER BY starts_at`, orgID, from, to, viewer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PlannerBlock
+	for rows.Next() {
+		var b PlannerBlock
+		if err := rows.Scan(&b.ID, &b.OwnerUserID, &b.OrganizationID, &b.Title, &b.Category, &b.StartsAt, &b.EndsAt, &b.Timezone, &b.Color, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) PlannerBlockOverlaps(ctx context.Context, owner uuid.UUID, excludeID uuid.UUID, starts, ends time.Time) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
@@ -157,12 +179,20 @@ FROM planner_blocks WHERE id=$1`, id).Scan(
 	return &b, nil
 }
 
+func (s *Store) UpdatePlannerBlock(ctx context.Context, b PlannerBlock) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE planner_blocks
+SET title=$2, category=$3, starts_at=$4, ends_at=$5, color=$6, updated_at=$7
+WHERE id=$1`, b.ID, b.Title, b.Category, b.StartsAt, b.EndsAt, b.Color, b.UpdatedAt)
+	return err
+}
+
 func (s *Store) UpdatePlannerBlockTimes(ctx context.Context, id uuid.UUID, starts, ends time.Time, now time.Time) error {
 	_, err := s.pool.Exec(ctx, `UPDATE planner_blocks SET starts_at=$2, ends_at=$3, updated_at=$4 WHERE id=$1`, id, starts, ends, now)
 	return err
 }
 
-func (s *Store) DeletePlannerBlock(ctx context.Context, id, owner uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM planner_blocks WHERE id=$1 AND owner_user_id=$2`, id, owner)
+func (s *Store) DeletePlannerBlock(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM planner_blocks WHERE id=$1`, id)
 	return err
 }

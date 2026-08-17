@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Responsive, useContainerWidth } from 'react-grid-layout'
-import type { Layout, LayoutItem, ResponsiveLayouts } from 'react-grid-layout'
+import type { Layout } from 'react-grid-layout'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import 'react-grid-layout/css/styles.css'
 import { apiRequest, ApiError } from '@/shared/api/client'
@@ -12,6 +12,8 @@ import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { CalendarPage } from '@/pages/CalendarPage'
+import { LIBRARY, makeLayouts, normalizeLayout, type Breakpoint, type WidgetId, type WidgetLayout } from '@/pages/dashboard-layout'
+import type { SupplierOrder } from '@/shared/lib/commerce'
 
 type Appointment = {
   id: string
@@ -27,86 +29,34 @@ type Notification = {
   id: string
   title: string
   body: string
+  entity_type?: string
+  entity_id?: string | null
   read_at: string | null
   created_at: string
 }
 
-type WidgetId =
-  | 'alerts'
-  | 'calendar'
-  | 'today'
-  | 'upcoming'
-  | 'pending'
-  | 'messages'
-  | 'tasks'
-  | 'clients_today'
-  | 'orders'
-  | 'deliveries'
-  | 'analytics'
+type PlannerTask = { id: string; title: string; starts_at: string; category: string }
 
-type Breakpoint = 'lg' | 'md' | 'sm' | 'xs'
-type WidgetPosition = Pick<LayoutItem, 'x' | 'y' | 'w' | 'h'>
-type WidgetLayout = {
-  id: WidgetId
-  enabled: boolean
-  positions: Partial<Record<Breakpoint, WidgetPosition>>
+type SalonReport = {
+  current: {
+    turnover_minor: number
+    completed_count: number
+    master_load_percent?: number | null
+    repeat_visit_percent?: number | null
+  }
 }
 
-type WidgetDefinition = {
-  id: WidgetId
-  title: string
-  defaultPosition: WidgetPosition
-  minW: number
-  minH: number
+function notificationHref(n: Notification) {
+  if (n.entity_type === 'appointment' && n.entity_id) return `/appointments/${n.entity_id}`
+  return '/notifications'
 }
 
-const LIBRARY: WidgetDefinition[] = [
-  { id: 'alerts', title: 'Важное', defaultPosition: { x: 0, y: 0, w: 12, h: 5 }, minW: 6, minH: 3 },
-  { id: 'calendar', title: 'Календарь', defaultPosition: { x: 0, y: 5, w: 12, h: 18 }, minW: 8, minH: 10 },
-  { id: 'today', title: 'Сегодня', defaultPosition: { x: 0, y: 23, w: 3, h: 4 }, minW: 2, minH: 3 },
-  { id: 'pending', title: 'Ожидают подтверждения', defaultPosition: { x: 3, y: 23, w: 3, h: 4 }, minW: 2, minH: 3 },
-  { id: 'clients_today', title: 'Клиенты сегодня', defaultPosition: { x: 6, y: 23, w: 3, h: 4 }, minW: 2, minH: 3 },
-  { id: 'messages', title: 'Сообщения', defaultPosition: { x: 9, y: 23, w: 3, h: 4 }, minW: 2, minH: 3 },
-  { id: 'upcoming', title: 'Ближайшие записи', defaultPosition: { x: 0, y: 27, w: 6, h: 8 }, minW: 4, minH: 5 },
-  { id: 'analytics', title: 'Моя статистика', defaultPosition: { x: 6, y: 27, w: 6, h: 8 }, minW: 4, minH: 5 },
-  { id: 'tasks', title: 'Задачи', defaultPosition: { x: 0, y: 35, w: 4, h: 5 }, minW: 3, minH: 4 },
-  { id: 'orders', title: 'Заказы', defaultPosition: { x: 4, y: 35, w: 4, h: 5 }, minW: 3, minH: 4 },
-  { id: 'deliveries', title: 'Доставки', defaultPosition: { x: 8, y: 35, w: 4, h: 5 }, minW: 3, minH: 4 },
-]
-
-const DEFAULT_IDS: WidgetId[] = ['alerts', 'calendar', 'today', 'pending', 'clients_today', 'upcoming', 'analytics']
-
-function normalizeLayout(raw: unknown): WidgetLayout[] {
-  const items = Array.isArray(raw) ? raw : []
-  const parsed: WidgetLayout[] = []
-  for (const item of items) {
-    if (!item || typeof item !== 'object') continue
-    const rec = item as Record<string, unknown>
-    const id = (rec.id === 'important_messages' ? 'alerts' : rec.id) as WidgetId
-    const def = LIBRARY.find((w) => w.id === id)
-    if (!def) continue
-    const positions = rec.positions && typeof rec.positions === 'object'
-      ? rec.positions as Partial<Record<Breakpoint, WidgetPosition>>
-      : { lg: legacyPosition(rec, def) }
-    parsed.push({ id, enabled: rec.enabled !== false, positions })
-  }
-  for (const id of DEFAULT_IDS) {
-    if (!parsed.some((w) => w.id === id)) {
-      const def = LIBRARY.find((w) => w.id === id)!
-      parsed.push({ id, enabled: true, positions: { lg: def.defaultPosition } })
-    }
-  }
-  return parsed
-}
-
-function legacyPosition(rec: Record<string, unknown>, def: WidgetDefinition): WidgetPosition {
-  const sizes: Record<string, Pick<WidgetPosition, 'w' | 'h'>> = {
-    small: { w: 3, h: 4 },
-    medium: { w: 6, h: 6 },
-    large: { w: 8, h: 9 },
-    full: { w: 12, h: def.id === 'calendar' ? 18 : 6 },
-  }
-  return { ...def.defaultPosition, ...(sizes[String(rec.size)] ?? {}) }
+function periodStartIso(period: 'today' | 'week' | 'month') {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  if (period === 'week') start.setDate(start.getDate() - 6)
+  if (period === 'month') start.setDate(start.getDate() - 29)
+  return start.toISOString()
 }
 
 function availableWidgets(cabinet: ReturnType<typeof useCabinet>) {
@@ -115,27 +65,6 @@ function availableWidgets(cabinet: ReturnType<typeof useCabinet>) {
     if (w.id === 'deliveries') return cabinet.can('cosmetics') || cabinet.kind === 'salon_owner' || cabinet.kind === 'chain_owner'
     return true
   })
-}
-
-function makeLayouts(widgets: WidgetLayout[]): ResponsiveLayouts<Breakpoint> {
-  const lg: Layout = widgets.filter((w) => w.enabled).map((w) => {
-    const def = LIBRARY.find((d) => d.id === w.id)!
-    return { i: w.id, ...(w.positions.lg ?? def.defaultPosition), minW: def.minW, minH: def.minH }
-  })
-  const compact = (cols: number): Layout => widgets.filter((w) => w.enabled).map((w, index) => {
-    const def = LIBRARY.find((d) => d.id === w.id)!
-    const saved = w.positions[cols === 8 ? 'md' : cols === 4 ? 'sm' : 'xs']
-    return {
-      i: w.id,
-      x: saved?.x ?? 0,
-      y: saved?.y ?? index * 5,
-      w: saved?.w ?? cols,
-      h: saved?.h ?? (w.id === 'calendar' ? 16 : Math.max(def.minH, 4)),
-      minW: Math.min(def.minW, cols),
-      minH: def.minH,
-    }
-  })
-  return { lg, md: compact(8), sm: compact(4), xs: compact(1) }
 }
 
 export function DashboardPage() {
@@ -174,15 +103,51 @@ export function DashboardPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['me-dashboard'] }),
   })
 
+  const ownerMode = ['salon_owner', 'chain_owner', 'salon_admin'].includes(cabinet.kind)
+  const orgID = cabinet.selectedOrg?.organization.id
+  const rangeFrom = new Date()
+  rangeFrom.setDate(rangeFrom.getDate() - 30)
+  const rangeTo = new Date()
+  rangeTo.setDate(rangeTo.getDate() + 14)
+  const fromISO = rangeFrom.toISOString()
+  const toISO = rangeTo.toISOString()
+
   const appointments = useQuery({
-    queryKey: ['home-appointments', 'master'],
-    queryFn: () => apiRequest<{ items: Appointment[] }>('/v1/appointments/mine?role=master', { token: accessToken }),
-    enabled: Boolean(accessToken),
+    queryKey: ['home-appointments', ownerMode, orgID, fromISO, toISO],
+    queryFn: () => ownerMode && orgID
+      ? apiRequest<{ items: Appointment[] }>(`/v1/calendar/appointments?organization_id=${orgID}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`, { token: accessToken })
+      : apiRequest<{ items: Appointment[] }>(`/v1/appointments/mine?role=master&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`, { token: accessToken }),
+    enabled: Boolean(accessToken && (!ownerMode || orgID)),
   })
   const notes = useQuery({
     queryKey: ['notifications'],
     queryFn: () => apiRequest<{ items: Notification[] }>('/v1/notifications', { token: accessToken }),
     enabled: Boolean(accessToken),
+  })
+  const markRead = useMutation({
+    mutationFn: (id: string) => apiRequest(`/v1/notifications/${id}/read`, { method: 'POST', token: accessToken }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  })
+  const tasks = useQuery({
+    queryKey: ['dashboard-tasks', fromISO, toISO, ownerMode ? orgID : ''],
+    queryFn: () => apiRequest<{ items: PlannerTask[] }>(
+      `/v1/planner/blocks?from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}${ownerMode && orgID ? `&organization_id=${orgID}` : ''}`,
+      { token: accessToken },
+    ),
+    enabled: Boolean(accessToken && (!ownerMode || orgID)),
+  })
+  const orders = useQuery({
+    queryKey: ['dashboard-orders', orgID],
+    queryFn: () => apiRequest<{ items: SupplierOrder[] }>(`/v1/commerce/supplier-orders?organization_id=${orgID}`, { token: accessToken }),
+    enabled: Boolean(accessToken && orgID && (cabinet.can('cosmetics') || cabinet.kind === 'salon_owner' || cabinet.kind === 'chain_owner')),
+  })
+  const report = useQuery({
+    queryKey: ['dashboard-salon-report', orgID, period],
+    queryFn: () => apiRequest<SalonReport>(
+      `/v1/reports/salon?organization_id=${orgID}&from=${encodeURIComponent(periodStartIso(period))}&to=${encodeURIComponent(new Date().toISOString())}`,
+      { token: accessToken },
+    ),
+    enabled: Boolean(accessToken && orgID && cabinet.can('reports')),
   })
 
   const items = appointments.data?.items ?? []
@@ -301,7 +266,18 @@ export function DashboardPage() {
                       <div className="important-grid">
                         {pending.map((a) => <Link key={a.id} to={`/appointments/${a.id}`} className="important-item warning"><span>Требует ответа</span><strong>{a.service_name}</strong><small>{new Date(a.starts_at).toLocaleString('ru-RU')}</small></Link>)}
                         {cancellations.map((a) => <Link key={a.id} to={`/appointments/${a.id}`} className="important-item danger"><span>Отмена</span><strong>{a.service_name}</strong><small>{new Date(a.starts_at).toLocaleString('ru-RU')}</small></Link>)}
-                        {unread.map((n) => <article key={n.id} className="important-item"><span>Сообщение</span><strong>{n.title}</strong><small>{n.body}</small></article>)}
+                        {unread.map((n) => (
+                          <Link key={n.id} to={notificationHref(n)} className="important-item">
+                            <span>Сообщение</span>
+                            <strong>{n.title}</strong>
+                            <small>{n.body}</small>
+                            {!n.read_at && (
+                              <button className="btn btn-secondary btn-compact" type="button" onClick={(e) => { e.preventDefault(); markRead.mutate(n.id) }}>
+                                Прочитано
+                              </button>
+                            )}
+                          </Link>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -330,10 +306,10 @@ export function DashboardPage() {
                         <div className="chip-row compact">{(['today', 'week', 'month'] as const).map((p) => <button key={p} className={`chip ${period === p ? 'active' : ''}`} type="button" onClick={() => setPeriod(p)}>{p === 'today' ? 'Сегодня' : p === 'week' ? 'Неделя' : 'Месяц'}</button>)}</div>
                       </div>
                       <div className="analytics-kpis">
-                        <div><span>Записи</span><strong>{periodItems.length}</strong></div>
+                        <div><span>Записи</span><strong>{cabinet.can('reports') ? (report.data?.current.completed_count ?? periodItems.length) : periodItems.length}</strong></div>
                         <div><span>Клиенты</span><strong>{uniqueClients || periodItems.length}</strong></div>
-                        <div><span>Загрузка</span><strong>{load}%</strong></div>
-                        <div><span>Выручка</span><strong>{formatMoney(completed.reduce((sum, a) => sum + a.price_minor, 0))}</strong></div>
+                        <div><span>Загрузка</span><strong>{cabinet.can('reports') && report.data?.current.master_load_percent != null ? `${Math.round(report.data.current.master_load_percent)}%` : `${load}%`}</strong></div>
+                        <div><span>Выручка</span><strong>{cabinet.can('reports') ? formatMoney(report.data?.current.turnover_minor ?? 0) : formatMoney(completed.reduce((sum, a) => sum + a.price_minor, 0))}</strong></div>
                       </div>
                       <div className="dashboard-chart">
                         <ResponsiveContainer width="100%" height="100%">
@@ -344,9 +320,34 @@ export function DashboardPage() {
                       {cabinet.can('reports') && <Link to="/reports">Подробная аналитика →</Link>}
                     </div>
                   )}
-                  {w.id === 'tasks' && <EmptyWidget title="Задачи" text="Просроченных задач нет" />}
-                  {w.id === 'orders' && <EmptyWidget title="Заказы" text="Открыть заказы и расходные материалы" to="/cosmetics/orders" />}
-                  {w.id === 'deliveries' && <EmptyWidget title="Доставки" text="Активных доставок на сегодня нет" />}
+                  {w.id === 'tasks' && (
+                    <div className="stack">
+                      <div className="row between"><h2>Задачи</h2><Link to="/calendar">Календарь</Link></div>
+                      {(tasks.data?.items ?? []).filter((b) => b.category === 'task').length === 0 && <EmptyWidget title="Задачи" text="Просроченных задач нет" />}
+                      {(tasks.data?.items ?? []).filter((b) => b.category === 'task').slice(0, 5).map((b) => (
+                        <Link key={b.id} to="/calendar" className="appointment-row">
+                          <time>{new Date(b.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>
+                          <div><strong>{b.title}</strong></div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                  {w.id === 'orders' && (
+                    <MetricTile
+                      label="Заказы"
+                      value={(orders.data?.items ?? []).filter((o) => !['delivered', 'cancelled'].includes(o.status)).length}
+                      caption="открытых"
+                      to="/cosmetics/orders"
+                    />
+                  )}
+                  {w.id === 'deliveries' && (
+                    <MetricTile
+                      label="Доставки"
+                      value={(orders.data?.items ?? []).filter((o) => ['in_transit', 'ready_for_dispatch', 'preparing'].includes(o.status)).length}
+                      caption="в пути / сборке"
+                      to="/cosmetics/orders"
+                    />
+                  )}
                 </div>
               </section>
             ))}

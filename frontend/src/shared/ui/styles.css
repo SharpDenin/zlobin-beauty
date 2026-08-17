@@ -1303,8 +1303,22 @@ p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
   box-shadow: 0 3px 10px rgba(31,42,40,.12);
   cursor: pointer;
   overflow: hidden;
+  pointer-events: auto !important;
+  z-index: 2;
 }
-.calendar-event-card { display: grid; gap: 2px; padding: 5px 6px; line-height: 1.15; min-width: 0; }
+.calendar-wrap .fc-list-event,
+.calendar-wrap .fc-list-event-title,
+.calendar-wrap .fc-list-table td {
+  pointer-events: auto !important;
+  cursor: pointer;
+}
+.calendar-event-card { display: grid; gap: 2px; padding: 5px 6px; line-height: 1.15; min-width: 0; pointer-events: none; }
+.calendar-wrap .fc-event.is-terminal {
+  opacity: .48;
+  filter: grayscale(.35);
+  cursor: default;
+  box-shadow: none;
+}
 .calendar-event-card strong { font-size: 12px; white-space: normal; }
 .calendar-event-time { font-size: 10px; font-weight: 800; opacity: .9; }
 .calendar-event-meta { display: flex; flex-wrap: wrap; gap: 3px 7px; font-size: 10px; opacity: .9; }

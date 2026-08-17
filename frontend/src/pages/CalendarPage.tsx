@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import FullCalendar from '@fullcalendar/react'
@@ -6,16 +6,17 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import listPlugin from '@fullcalendar/list'
 import interactionPlugin from '@fullcalendar/interaction'
+import luxonPlugin from '@fullcalendar/luxon3'
 import ruLocale from '@fullcalendar/core/locales/ru'
 import type { DatesSetArg, EventClickArg, EventContentArg, EventDropArg, EventInput } from '@fullcalendar/core'
 import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { useBuyerOrg } from '@/shared/lib/commerce'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { statusLabel } from '@/shared/lib/status'
-import { datetimeLocalToIso } from '@/shared/lib/time'
+import { datetimeLocalToIso, isoToDatetimeLocal } from '@/shared/lib/time'
 import { Hint } from '@/shared/ui/Hint'
+import { canDragAppointment, isTerminalStatus, minutesToTime, staffRoleLabel } from '@/pages/calendar-helpers'
 
 type Appointment = {
   id: string
@@ -38,7 +39,12 @@ type PlannerBlock = {
   ends_at: string
   category: string
   color?: string
+  owner_user_id?: string
 }
+
+type StaffMember = { id: string; user_id: string; role: string; status: string }
+type HoursItem = { weekday: number; start_minute: number; end_minute: number }
+type ExceptionItem = { id: string; day: string; is_day_off: boolean; start_minute?: number | null; end_minute?: number | null; note?: string }
 
 type Category = { id: string; label: string; color: string; icon: string; system?: boolean }
 type CalendarSelection = {
@@ -46,11 +52,13 @@ type CalendarSelection = {
   kind: 'appointment' | 'block'
   title: string
   category: string
+  categoryId?: string
   status?: string
   start: Date | null
   end: Date | null
   location?: string
   master?: string
+  color?: string
 }
 
 const MASTER_CATEGORIES: Category[] = [
@@ -109,15 +117,14 @@ function initialRange() {
 
 export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
   const { accessToken, user } = useAuth()
-  const { buyerOrg } = useBuyerOrg()
   const cabinet = useCabinet()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const calendarRef = useRef<FullCalendar | null>(null)
-  const salonTimezone = buyerOrg?.branches[0]?.timezone || 'Europe/Moscow'
   const basePalette = categoriesFor(cabinet.kind)
   const ownerMode = ['salon_owner', 'chain_owner', 'salon_admin'].includes(cabinet.kind)
-  const orgID = cabinet.selectedOrg?.organization.id ?? buyerOrg?.organization.id
+  const orgID = cabinet.selectedOrg?.organization.id
+  const salonBranches = cabinet.selectedOrg?.branches ?? []
   const [range, setRange] = useState(initialRange)
   const [currentView, setCurrentView] = useState(() => (typeof window !== 'undefined' && window.innerWidth <= 600 ? 'timeGridDay' : 'timeGridWeek'))
   const [hidden, setHidden] = useState<string[]>([])
@@ -132,6 +139,15 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
   const [blockCat, setBlockCat] = useState(basePalette.find((c) => !c.system)?.id ?? 'personal')
   const [blockStart, setBlockStart] = useState('')
   const [blockEnd, setBlockEnd] = useState('')
+  const [blockColor, setBlockColor] = useState('')
+
+  const selectedBranch = salonBranches.find((b) => b.id === branchFilter) ?? salonBranches[0]
+  const salonTimezone = selectedBranch?.timezone || 'Europe/Moscow'
+
+  useEffect(() => {
+    setMasterFilter('')
+    setBranchFilter('')
+  }, [orgID])
 
   const dashboard = useQuery({
     queryKey: ['me-dashboard'],
@@ -164,23 +180,62 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
         `/v1/calendar/appointments?organization_id=${orgID}&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
         { token: accessToken },
       )
-      : apiRequest<{ items: Appointment[] }>('/v1/appointments/mine?role=master', { token: accessToken }),
+      : apiRequest<{ items: Appointment[] }>(
+        `/v1/appointments/mine?role=master&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+        { token: accessToken },
+      ),
     enabled: Boolean(accessToken && (!ownerMode || orgID)) && cabinet.kind !== 'supplier_rep',
   })
 
   const blocks = useQuery({
-    queryKey: ['planner-blocks', range.from, range.to],
+    queryKey: ['planner-blocks', range.from, range.to, ownerMode ? orgID : ''],
     queryFn: () => apiRequest<{ items: PlannerBlock[] }>(
-      `/v1/planner/blocks?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+      `/v1/planner/blocks?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}${ownerMode && orgID ? `&organization_id=${orgID}` : ''}`,
+      { token: accessToken },
+    ),
+    enabled: Boolean(accessToken && (!ownerMode || orgID)),
+  })
+
+  const staff = useQuery({
+    queryKey: ['calendar-staff', orgID],
+    queryFn: () => apiRequest<{ items: StaffMember[] }>(`/v1/organizations/${orgID}/staff`, { token: accessToken }),
+    enabled: Boolean(accessToken && ownerMode && orgID),
+  })
+
+  const hoursMaster = masterFilter || user?.id || ''
+  const hours = useQuery({
+    queryKey: ['calendar-hours', orgID, hoursMaster],
+    queryFn: () => apiRequest<{ items: HoursItem[] }>(
+      ownerMode && hoursMaster && hoursMaster !== user?.id
+        ? `/v1/calendar/working-hours?organization_id=${orgID}&master_user_id=${hoursMaster}`
+        : '/v1/me/working-hours',
       { token: accessToken },
     ),
     enabled: Boolean(accessToken),
   })
+  const exceptions = useQuery({
+    queryKey: ['calendar-exceptions', orgID, hoursMaster, range.from],
+    queryFn: () => {
+      const fromDay = range.from.slice(0, 10)
+      const toDay = range.to.slice(0, 10)
+      const qs = ownerMode && hoursMaster && hoursMaster !== user?.id
+        ? `/v1/calendar/schedule-exceptions?organization_id=${orgID}&master_user_id=${hoursMaster}&from=${fromDay}&to=${toDay}`
+        : `/v1/me/schedule-exceptions?from=${fromDay}&to=${toDay}`
+      return apiRequest<{ items: ExceptionItem[] }>(qs, { token: accessToken })
+    },
+    enabled: Boolean(accessToken),
+  })
 
-  const masterIDs = useMemo(
-    () => [...new Set((appointments.data?.items ?? []).map((a) => a.master_user_id))].sort(),
-    [appointments.data],
+  const staffMasters = useMemo(
+    () => (staff.data?.items ?? []).filter((m) => m.status === 'active' && (m.role === 'master' || m.role === 'owner')),
+    [staff.data],
   )
+  const masterIDs = useMemo(() => {
+    const fromAppts = (appointments.data?.items ?? []).map((a) => a.master_user_id)
+    const fromStaff = staffMasters.map((m) => m.user_id)
+    return [...new Set([...fromStaff, ...fromAppts].filter(Boolean))].sort()
+  }, [appointments.data, staffMasters])
+
   const masters = useQuery({
     queryKey: ['calendar-master-names', masterIDs.join(',')],
     queryFn: async () => {
@@ -189,7 +244,8 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
           const res = await apiRequest<{ master: { display_name: string } }>(`/v1/masters/${id}`)
           return [id, res.master.display_name] as const
         } catch {
-          return [id, `Мастер ${id.slice(0, 6)}`] as const
+          const member = staffMasters.find((m) => m.user_id === id)
+          return [id, staffRoleLabel(member?.role)] as const
         }
       }))
       return Object.fromEntries(entries) as Record<string, string>
@@ -201,13 +257,35 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
     return palette.find((c) => c.id === id) ?? { id, label: id, color: '#66747a', icon: '•' }
   }
 
+  const businessHours = useMemo(() => {
+    const items = hours.data?.items ?? []
+    if (items.length === 0) return { daysOfWeek: [1, 2, 3, 4, 5, 6, 0], startTime: '08:00', endTime: '22:00' }
+    return items.map((h) => ({
+      daysOfWeek: [h.weekday],
+      startTime: minutesToTime(h.start_minute),
+      endTime: minutesToTime(h.end_minute),
+    }))
+  }, [hours.data])
+
+  const slotMinTime = useMemo(() => {
+    const items = hours.data?.items ?? []
+    if (items.length === 0) return '08:00:00'
+    return minutesToTime(Math.min(...items.map((h) => h.start_minute)))
+  }, [hours.data])
+  const slotMaxTime = useMemo(() => {
+    const items = hours.data?.items ?? []
+    if (items.length === 0) return '22:00:00'
+    return minutesToTime(Math.max(...items.map((h) => h.end_minute)))
+  }, [hours.data])
+
   const events: EventInput[] = useMemo(() => {
     const out: EventInput[] = []
     for (const a of appointments.data?.items ?? []) {
       if (hidden.includes('client') || (masterFilter && a.master_user_id !== masterFilter) || (branchFilter && a.branch_id !== branchFilter)) continue
       const cat = category('client')
-      const masterName = masters.data?.[a.master_user_id]
-      const canMove = !ownerMode && a.master_user_id === user?.id && a.booking_mode !== 'fixed_window'
+      const masterName = masters.data?.[a.master_user_id] ?? staffRoleLabel('master')
+      const terminal = isTerminalStatus(a.status)
+      const canMove = canDragAppointment(a.status, a.booking_mode)
       out.push({
         id: `appt:${a.id}`,
         title: a.service_name,
@@ -217,6 +295,7 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
         borderColor: cat.color,
         editable: canMove,
         durationEditable: false,
+        classNames: terminal ? ['is-terminal'] : [],
         extendedProps: {
           kind: 'appointment',
           category: 'client',
@@ -233,6 +312,7 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
     for (const b of blocks.data?.items ?? []) {
       const cat = category(b.category || 'personal')
       if (hidden.includes(cat.id)) continue
+      if (masterFilter && b.owner_user_id && b.owner_user_id !== masterFilter) continue
       out.push({
         id: `block:${b.id}`,
         title: b.title,
@@ -242,13 +322,27 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
         borderColor: b.color || cat.color,
         editable: true,
         durationEditable: true,
-        extendedProps: { kind: 'block', category: cat.id, categoryLabel: cat.label, icon: cat.icon },
+        classNames: ['is-planner-block'],
+        extendedProps: { kind: 'block', category: cat.id, categoryLabel: cat.label, icon: cat.icon, color: b.color || cat.color },
       })
+    }
+    for (const ex of exceptions.data?.items ?? []) {
+      if (ex.is_day_off) {
+        out.push({
+          id: `off:${ex.id}`,
+          title: ex.note || 'Выходной',
+          start: ex.day,
+          allDay: true,
+          display: 'background',
+          backgroundColor: '#f3e6e6',
+          editable: false,
+        })
+      }
     }
     return out
   // category reads the memoized palette and is intentionally resolved for each event.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appointments.data, blocks.data, hidden, masterFilter, branchFilter, masters.data, ownerMode, palette, user?.id])
+  }, [appointments.data, blocks.data, exceptions.data, hidden, masterFilter, branchFilter, masters.data, palette])
 
   const createBlock = useMutation({
     mutationFn: () => apiRequest('/v1/planner/blocks', {
@@ -259,8 +353,9 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
         starts_at: datetimeLocalToIso(blockStart, salonTimezone),
         ends_at: datetimeLocalToIso(blockEnd, salonTimezone),
         timezone: salonTimezone,
-        color: category(blockCat).color,
+        color: blockColor || category(blockCat).color,
         organization_id: orgID,
+        owner_user_id: ownerMode && masterFilter ? masterFilter : undefined,
       },
     }),
     onSuccess: async () => {
@@ -270,6 +365,29 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
     },
     onError: (e) => setError(calendarError(e, 'Не удалось создать событие')),
+  })
+
+  const saveBlock = useMutation({
+    mutationFn: () => {
+      if (!selected || selected.kind !== 'block') throw new Error('no block')
+      return apiRequest(`/v1/planner/blocks/${selected.id.slice(6)}`, {
+        method: 'PATCH',
+        token: accessToken,
+        body: {
+          title: blockTitle.trim() || selected.title,
+          category: blockCat,
+          color: blockColor || category(blockCat).color,
+          starts_at: datetimeLocalToIso(blockStart, salonTimezone),
+          ends_at: datetimeLocalToIso(blockEnd, salonTimezone),
+        },
+      })
+    },
+    onSuccess: async () => {
+      setSelected(null)
+      setOk('Событие обновлено')
+      await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
+    },
+    onError: (e) => setError(calendarError(e, 'Не удалось сохранить событие')),
   })
 
   const removeBlock = useMutation({
@@ -284,18 +402,20 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
   async function persistMove(id: string, start: Date | null, end: Date | null, resized: boolean) {
     if (!start || !end) return false
     try {
+      const startsAt = start.toISOString()
+      const endsAt = end.toISOString()
       if (id.startsWith('block:')) {
         await apiRequest(`/v1/planner/blocks/${id.slice(6)}`, {
           method: 'PATCH',
           token: accessToken,
-          body: { starts_at: start.toISOString(), ends_at: end.toISOString() },
+          body: { starts_at: startsAt, ends_at: endsAt },
         })
         await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
         setOk(resized ? 'Длительность обновлена' : 'Событие перенесено')
       } else if (id.startsWith('appt:')) {
         await apiRequest(`/v1/appointments/${id.slice(5)}/reschedule`, {
           token: accessToken,
-          body: { starts_at: start.toISOString() },
+          body: { starts_at: startsAt },
         })
         await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
         setOk('Запись перенесена')
@@ -322,18 +442,29 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
   }
 
   function onEventClick(info: EventClickArg) {
+    if (info.event.display === 'background') return
     const p = info.event.extendedProps
-    setSelected({
+    const sel: CalendarSelection = {
       id: info.event.id,
       kind: p.kind,
       title: info.event.title,
       category: p.categoryLabel,
+      categoryId: p.category,
       status: p.statusLabel,
       start: info.event.start,
       end: info.event.end,
       location: p.location,
       master: p.master,
-    })
+      color: p.color,
+    }
+    setSelected(sel)
+    if (sel.kind === 'block') {
+      setBlockTitle(sel.title)
+      setBlockCat(sel.categoryId || 'personal')
+      setBlockColor(sel.color || category(sel.categoryId || 'personal').color)
+      setBlockStart(sel.start ? isoToDatetimeLocal(sel.start.toISOString(), salonTimezone) : '')
+      setBlockEnd(sel.end ? isoToDatetimeLocal(sel.end.toISOString(), salonTimezone) : '')
+    }
   }
 
   function onDatesSet(info: DatesSetArg) {
@@ -342,7 +473,6 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
     setRange((current) => current.from === next.from && current.to === next.to ? current : next)
   }
 
-  const salonBranches = cabinet.selectedOrg?.branches ?? buyerOrg?.branches ?? []
   const body = (
     <div className="stack calendar-shell">
       {!embedded && (
@@ -351,8 +481,8 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
             <p className="eyebrow">Расписание</p>
             <h1>{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
             <p className="muted">
-              Переносите события мышкой или касанием — при конфликте изменение отменится.
-              <Hint id="cal-dnd" title="Работа с расписанием">Личные события можно переносить и растягивать. Длительность записи задаёт услуга.</Hint>
+              Часовой пояс: {salonTimezone}. Переносите события мышкой — при конфликте изменение отменится.
+              <Hint id="cal-dnd" title="Работа с расписанием">Личные события можно переносить и растягивать. Длительность записи задаёт услуга. Завершённые и отменённые записи только для просмотра.</Hint>
             </p>
           </div>
           <div className="row">
@@ -371,13 +501,13 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
             <label>Мастер</label>
             <select value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
               <option value="">Все мастера</option>
-              {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id] ?? `Мастер ${id.slice(0, 6)}`}</option>)}
+              {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id] ?? 'Мастер'}</option>)}
             </select>
           </div>
           {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) && (
             <div className="field">
               <label>Филиал</label>
-              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
+              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} data-testid="calendar-branch-switcher">
                 <option value="">Все филиалы</option>
                 {salonBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
@@ -431,17 +561,25 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
 
       <div className="calendar-wrap">
         <FullCalendar
+          key={`${salonTimezone}-${orgID ?? 'self'}`}
           ref={calendarRef}
-          plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+          plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin, luxonPlugin]}
           initialView={typeof window !== 'undefined' && window.innerWidth <= 600 ? 'timeGridDay' : 'timeGridWeek'}
           headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
           locale={ruLocale}
+          timeZone={salonTimezone}
           height="auto"
           editable
           eventDurationEditable
           eventStartEditable
-          slotMinTime="08:00:00"
-          slotMaxTime="22:00:00"
+          eventAllow={(_span, moving) => {
+            if (!moving) return true
+            if (String(moving.id).startsWith('appt:')) return canDragAppointment(String(moving.extendedProps.status ?? ''))
+            return true
+          }}
+          slotMinTime={slotMinTime}
+          slotMaxTime={slotMaxTime}
+          businessHours={businessHours}
           allDaySlot={false}
           nowIndicator
           stickyHeaderDates
@@ -465,11 +603,13 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
             <div className="row between"><div><p className="eyebrow">Календарь</p><h2>Новое событие</h2></div><button className="btn btn-secondary btn-compact" type="button" onClick={() => setEditorOpen(false)}>Закрыть</button></div>
             <div className="field"><label>Название</label><input value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} autoFocus /></div>
             <div className="field"><label>Категория</label><select value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
+            <div className="field"><label>Цвет</label><input type="color" value={blockColor || category(blockCat).color} onChange={(e) => setBlockColor(e.target.value)} /></div>
             <div className="field"><label>Начало</label><input type="datetime-local" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} /></div>
             <div className="field"><label>Конец</label><input type="datetime-local" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} /></div>
             <button className="btn btn-primary" type="button" disabled={createBlock.isPending || !blockStart || !blockEnd} onClick={() => createBlock.mutate()}>
               {createBlock.isPending ? 'Сохраняем…' : 'Добавить в календарь'}
             </button>
+            {error && <div className="state-box error">{error}</div>}
           </div>
         </div>
       )}
@@ -478,13 +618,29 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
         <div className="more-drawer calendar-detail-drawer" role="dialog" aria-modal="true" onClick={() => setSelected(null)}>
           <div className="more-panel stack" onClick={(e) => e.stopPropagation()}>
             <div className="row between"><p className="eyebrow">{selected.category}</p><button className="btn btn-secondary btn-compact" type="button" onClick={() => setSelected(null)}>Закрыть</button></div>
-            <h2>{selected.title}</h2>
-            <div className="calendar-detail-time">{selected.start?.toLocaleString('ru-RU')} — {selected.end?.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
-            {selected.status && <span className="badge">{selected.status}</span>}
-            {selected.master && <p><strong>Мастер:</strong> {selected.master}</p>}
-            {selected.location && <p><strong>Место:</strong> {selected.location}</p>}
-            {selected.kind === 'appointment' && <button className="btn btn-primary" type="button" onClick={() => navigate(`/appointments/${selected.id.slice(5)}`)}>Открыть запись</button>}
-            {selected.kind === 'block' && <button className="btn btn-danger" type="button" disabled={removeBlock.isPending} onClick={() => removeBlock.mutate(selected.id.slice(6))}>Удалить событие</button>}
+            {selected.kind === 'appointment' ? (
+              <>
+                <h2>{selected.title}</h2>
+                <div className="calendar-detail-time">{selected.start?.toLocaleString('ru-RU')} — {selected.end?.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
+                {selected.status && <span className="badge">{selected.status}</span>}
+                {selected.master && <p><strong>Мастер:</strong> {selected.master}</p>}
+                {selected.location && <p><strong>Место:</strong> {selected.location}</p>}
+                <button className="btn btn-primary" type="button" onClick={() => navigate(`/appointments/${selected.id.slice(5)}`)}>Открыть запись</button>
+              </>
+            ) : (
+              <>
+                <h2>Событие планера</h2>
+                <div className="field"><label>Название</label><input value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} /></div>
+                <div className="field"><label>Категория</label><select value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
+                <div className="field"><label>Цвет</label><input type="color" value={blockColor || category(blockCat).color} onChange={(e) => setBlockColor(e.target.value)} /></div>
+                <div className="field"><label>Начало</label><input type="datetime-local" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} /></div>
+                <div className="field"><label>Конец</label><input type="datetime-local" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} /></div>
+                <button className="btn btn-primary" type="button" disabled={saveBlock.isPending || !blockStart || !blockEnd} onClick={() => saveBlock.mutate()}>
+                  {saveBlock.isPending ? 'Сохраняем…' : 'Сохранить изменения'}
+                </button>
+                <button className="btn btn-danger" type="button" disabled={removeBlock.isPending} onClick={() => removeBlock.mutate(selected.id.slice(6))}>Удалить событие</button>
+              </>
+            )}
           </div>
         </div>
       )}

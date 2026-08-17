@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -17,10 +18,12 @@ type API struct {
 	svc           *service.Service
 	log           *slog.Logger
 	internalToken string
+	allowDev      bool
 }
 
 func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
-	return &API{svc: svc, log: log, internalToken: internalToken}
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	return &API{svc: svc, log: log, internalToken: internalToken, allowDev: env != "production"}
 }
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
@@ -50,6 +53,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/internal/stock/consume-appointment", internal(http.HandlerFunc(a.consumeAppointment)))
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
 	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
+	mux.Handle("POST /v1/commerce/dev/backdate", auth(http.HandlerFunc(a.devBackdate)))
 	mux.Handle("POST /v1/commerce/supplier-orders", auth(http.HandlerFunc(a.createSupplierOrder)))
 	mux.Handle("GET /v1/commerce/supplier-orders", auth(http.HandlerFunc(a.listSupplierOrders)))
 	mux.Handle("GET /v1/commerce/supplier-orders/{id}", auth(http.HandlerFunc(a.getSupplierOrder)))
@@ -426,6 +430,7 @@ func (a *API) listStock(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"location_id": v.LocationID.String(), "product_id": v.ProductID.String(),
 			"qty_on_hand": v.QtyOnHand, "qty_reserved": v.QtyReserved, "available": v.QtyOnHand - v.QtyReserved,
+			"qty_incoming": v.QtyIncoming,
 			"product_name": v.ProductName, "brand": v.ProductBrand, "sku": v.ProductSKU,
 			"min_stock": v.MinStock, "price_minor": v.PriceMinor, "currency": v.Currency,
 			"status": v.Status, "updated_at": v.UpdatedAt,
@@ -830,6 +835,38 @@ func parseAnalyticsRange(r *http.Request) (time.Time, time.Time) {
 		to = now
 	}
 	return from, to
+}
+
+func (a *API) devBackdate(w http.ResponseWriter, r *http.Request) {
+	if !a.allowDev {
+		httpx.WriteError(w, r, a.log, apperr.Forbidden("dev endpoint disabled"))
+		return
+	}
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Kind      string `json:"kind"`
+		OrderID   string `json:"order_id"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	id, err := uuid.Parse(req.OrderID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid order_id"))
+		return
+	}
+	at, err := time.Parse(time.RFC3339, req.CreatedAt)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid created_at"))
+		return
+	}
+	if err := a.svc.DevBackdate(r.Context(), claims.UserID, req.Kind, id, at.UTC()); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- supplier orders ---

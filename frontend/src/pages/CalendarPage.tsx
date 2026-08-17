@@ -115,13 +115,14 @@ function initialRange() {
   return { from: start.toISOString(), to: end.toISOString() }
 }
 
-export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
+export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: boolean; overlayRepId?: string }) {
   const { accessToken, user } = useAuth()
   const cabinet = useCabinet()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const calendarRef = useRef<FullCalendar | null>(null)
-  const basePalette = categoriesFor(cabinet.kind)
+  const isRepPlanner = cabinet.kind === 'supplier_rep' || Boolean(overlayRepId)
+  const basePalette = isRepPlanner ? REP_CATEGORIES : categoriesFor(cabinet.kind)
   const ownerMode = ['salon_owner', 'chain_owner', 'salon_admin'].includes(cabinet.kind)
   const orgID = cabinet.selectedOrg?.organization.id
   const salonBranches = cabinet.selectedOrg?.branches ?? []
@@ -194,6 +195,17 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
       { token: accessToken },
     ),
     enabled: Boolean(accessToken && (!ownerMode || orgID)),
+  })
+  const fieldTasks = useQuery({
+    queryKey: ['planner-field-tasks', orgID, overlayRepId],
+    queryFn: () => {
+      const qs = overlayRepId ? `representative_id=${overlayRepId}` : ''
+      return apiRequest<{ items: Array<{ id: string; title: string; due_at?: string; planner_category?: string; kind?: string; status: string }> }>(
+        `/v1/organizations/${orgID}/tasks${qs ? `?${qs}` : ''}`,
+        { token: accessToken },
+      )
+    },
+    enabled: Boolean(accessToken && orgID && (cabinet.kind === 'supplier_rep' || cabinet.kind === 'supplier' || Boolean(overlayRepId))),
   })
 
   const staff = useQuery({
@@ -326,6 +338,23 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
         extendedProps: { kind: 'block', category: cat.id, categoryLabel: cat.label, icon: cat.icon, color: b.color || cat.color },
       })
     }
+    for (const t of fieldTasks.data?.items ?? []) {
+      if (!t.due_at) continue
+      const catId = t.planner_category || (t.kind === 'salon_visit' || t.kind === 'commercial_visit' ? 'salon_visit' : t.kind === 'delivery_support' ? 'delivery' : 'task')
+      const cat = category(catId)
+      if (hidden.includes(cat.id)) continue
+      const start = new Date(t.due_at)
+      out.push({
+        id: `task:${t.id}`,
+        title: t.title,
+        start: start.toISOString(),
+        end: new Date(start.getTime() + 45 * 60 * 1000).toISOString(),
+        backgroundColor: cat.color,
+        borderColor: cat.color,
+        editable: false,
+        extendedProps: { kind: 'block', category: cat.id, categoryLabel: cat.label, icon: cat.icon, status: t.status, statusLabel: t.status },
+      })
+    }
     for (const ex of exceptions.data?.items ?? []) {
       if (ex.is_day_off) {
         out.push({
@@ -342,7 +371,7 @@ export function CalendarPage({ embedded = false }: { embedded?: boolean }) {
     return out
   // category reads the memoized palette and is intentionally resolved for each event.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appointments.data, blocks.data, exceptions.data, hidden, masterFilter, branchFilter, masters.data, palette])
+  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, hidden, masterFilter, branchFilter, masters.data, palette])
 
   const createBlock = useMutation({
     mutationFn: () => apiRequest('/v1/planner/blocks', {

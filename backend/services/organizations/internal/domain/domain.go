@@ -56,6 +56,8 @@ type SupplierRepresentative struct {
 	City           string
 	Territory      string
 	Active         bool
+	DisplayName    string
+	Email          string
 	SalonBranchIDs []uuid.UUID
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -68,6 +70,8 @@ type RepresentativeTask struct {
 	BranchID         *uuid.UUID
 	Title            string
 	Description      string
+	Kind             string
+	ExpectedResult   string
 	DueAt            *time.Time
 	Priority         string
 	Status           string
@@ -75,6 +79,14 @@ type RepresentativeTask struct {
 	CreatedBy        uuid.UUID
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+type RepTaskStats struct {
+	RepresentativeID uuid.UUID
+	TasksToday       int64
+	TasksDone        int64
+	TasksOverdue     int64
+	OpenTasks        int64
 }
 
 type FieldRoute struct {

@@ -91,7 +91,7 @@ func (s *Service) ContactPolicy(ctx context.Context, orgID uuid.UUID) (bool, err
 	return org.MastersSeeClientContacts, nil
 }
 
-func (s *Service) CreateRepresentative(ctx context.Context, actor, orgID, userID uuid.UUID, city, territory string, salonIDs []uuid.UUID) (*domain.SupplierRepresentative, error) {
+func (s *Service) CreateRepresentative(ctx context.Context, actor, orgID, userID uuid.UUID, city, territory, displayName, email string, salonIDs []uuid.UUID) (*domain.SupplierRepresentative, error) {
 	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
 		return nil, err
 	}
@@ -113,11 +113,18 @@ func (s *Service) CreateRepresentative(ctx context.Context, actor, orgID, userID
 	}
 	rep := domain.SupplierRepresentative{
 		ID: ids.New(), OrganizationID: orgID, UserID: userID, City: city, Territory: strings.TrimSpace(territory),
+		DisplayName: strings.TrimSpace(displayName), Email: strings.ToLower(strings.TrimSpace(email)),
 		Active: true, SalonBranchIDs: salonIDs, CreatedAt: now, UpdatedAt: now,
 	}
 	if existing != nil {
 		rep.ID = existing.ID
 		rep.CreatedAt = existing.CreatedAt
+		if rep.DisplayName == "" {
+			rep.DisplayName = existing.DisplayName
+		}
+		if rep.Email == "" {
+			rep.Email = existing.Email
+		}
 	}
 	if err := s.store.UpsertMembership(ctx, domain.Membership{
 		ID: ids.New(), OrganizationID: orgID, UserID: userID, Role: "rep", Status: "active", CreatedAt: now,
@@ -174,7 +181,27 @@ func (s *Service) MyRepresentative(ctx context.Context, actor uuid.UUID) (*domai
 	return rep, nil
 }
 
-func (s *Service) CreateTask(ctx context.Context, actor, orgID, repID uuid.UUID, title, description string, branchID *uuid.UUID, dueAt *time.Time, priority string) (*domain.RepresentativeTask, error) {
+func NormalizeTaskKind(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "salon_visit", "delivery_support", "payment_collection", "commercial_visit", "other":
+		return strings.TrimSpace(kind)
+	default:
+		return "other"
+	}
+}
+
+func PlannerCategoryForKind(kind string) string {
+	switch NormalizeTaskKind(kind) {
+	case "salon_visit", "commercial_visit":
+		return "salon_visit"
+	case "delivery_support":
+		return "delivery"
+	default:
+		return "task"
+	}
+}
+
+func (s *Service) CreateTask(ctx context.Context, actor, orgID, repID uuid.UUID, title, description, kind, expectedResult string, branchID *uuid.UUID, dueAt *time.Time, priority string) (*domain.RepresentativeTask, error) {
 	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
 		return nil, err
 	}
@@ -201,7 +228,8 @@ func (s *Service) CreateTask(ctx context.Context, actor, orgID, repID uuid.UUID,
 	now := s.now().UTC()
 	t := domain.RepresentativeTask{
 		ID: ids.New(), OrganizationID: orgID, RepresentativeID: repID, BranchID: branchID,
-		Title: title, Description: strings.TrimSpace(description), DueAt: dueAt, Priority: priority,
+		Title: title, Description: strings.TrimSpace(description), Kind: NormalizeTaskKind(kind),
+		ExpectedResult: strings.TrimSpace(expectedResult), DueAt: dueAt, Priority: priority,
 		Status: "open", CreatedBy: actor, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateTask(ctx, t); err != nil {
@@ -354,6 +382,46 @@ func (s *Service) ListRoutes(ctx context.Context, actor, orgID uuid.UUID, repID 
 		items = []domain.FieldRoute{}
 	}
 	return items, nil
+}
+
+func (s *Service) ListRepTaskStats(ctx context.Context, actor, orgID uuid.UUID) ([]domain.RepTaskStats, error) {
+	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListRepTaskStats(ctx, orgID, s.now().UTC())
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.RepTaskStats{}
+	}
+	return items, nil
+}
+
+func (s *Service) UpdateStopStatus(ctx context.Context, actor, orgID, stopID uuid.UUID, status string) (*domain.FieldRouteStop, error) {
+	st, rt, err := s.store.GetStopWithRoute(ctx, stopID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if st == nil || rt == nil || rt.OrganizationID != orgID {
+		return nil, apperr.NotFound("stop not found")
+	}
+	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
+		own, _ := s.store.GetRepresentativeByUser(ctx, orgID, actor)
+		if own == nil || own.ID != rt.RepresentativeID {
+			return nil, err
+		}
+	}
+	switch strings.TrimSpace(status) {
+	case "pending", "en_route", "arrived", "done", "skipped", "failed":
+	default:
+		return nil, apperr.Validation("invalid stop status")
+	}
+	if err := s.store.UpdateStopStatus(ctx, stopID, status); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	st.Status = status
+	return st, nil
 }
 
 func (s *Service) PickupNearest(ctx context.Context, city string, lat, lng *float64) ([]map[string]any, error) {

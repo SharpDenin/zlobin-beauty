@@ -21,6 +21,7 @@ type StockItem = {
   product_name: string
   available: number
   qty_reserved?: number
+  qty_incoming?: number
   status: string
   min_stock: number
   price_minor: number
@@ -530,21 +531,23 @@ export function WarehousePage() {
                   <strong>{s.product_name}</strong>
                   <p className="muted">{s.brand}</p>
                   <span className={`badge ${s.status === 'out' || s.status === 'critical' ? 'badge-danger' : s.status === 'low' ? 'badge-warning' : 'badge-success'}`}>{simple}</span>
-                  <p>доступно {s.available}{supplierMode || !repMode ? ` · резерв ${s.qty_reserved ?? 0}` : ''}</p>
+                  {!repMode && (
+                    <p>доступно {s.available}{supplierMode ? ` · резерв ${s.qty_reserved ?? 0}` : ''}{supplierMode && s.qty_incoming ? ` · в пути ${s.qty_incoming}` : ''}</p>
+                  )}
                 </article>
               )
             })}
         </div>
       </section>
 
-      {(supplierMode || repMode) && (
+      {supplierMode && (
         <section className="card stack">
           <h2>Движения</h2>
           {(movements.data?.items ?? []).length === 0 && <p className="muted">Пока нет движений</p>}
           <div className="list">
             {(movements.data?.items ?? []).map((m) => (
               <article key={m.id} className="list-item">
-                <strong>{m.kind}</strong>
+                <strong>{m.kind === 'receipt' ? 'Приход' : m.kind === 'reserve' ? 'Резерв' : m.kind}</strong>
                 <p>{m.qty} · {m.reason || 'без комментария'} · {new Date(m.created_at).toLocaleString('ru-RU')}</p>
               </article>
             ))}

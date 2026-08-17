@@ -464,6 +464,10 @@ func (s *Service) ListStock(ctx context.Context, actor, locationID uuid.UUID) ([
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	incoming, _ := s.store.IncomingByProduct(ctx, loc.OrganizationID)
+	for i := range items {
+		items[i].QtyIncoming = incoming[items[i].ProductID]
+	}
 	if items == nil {
 		items = []domain.StockBalanceView{}
 	}

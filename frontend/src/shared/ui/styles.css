@@ -1552,3 +1552,27 @@ p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
   .shop-line .shop-qty, .shop-line strong, .shop-line .btn { grid-column: 1 / -1; }
 }
 
+.kpi-grid-mobile { display: none; }
+.kpi-desktop-only { display: grid; }
+.avatar-chip {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--color-primary-soft); color: var(--color-primary); font-weight: 700;
+  flex-shrink: 0;
+}
+.map-compact .leaflet-container,
+.map-wrap.map-compact { height: 380px; max-height: 42vh; }
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.data-table th, .data-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--color-border); }
+.data-table th { color: var(--color-text-muted); font-weight: 600; }
+@media (max-width: 700px) {
+  .kpi-grid-desktop { display: none; }
+  .kpi-grid-mobile { display: grid; }
+  .kpi-desktop-only { display: none; }
+  .map-compact .leaflet-container,
+  .map-wrap.map-compact { height: 220px; max-height: 220px; }
+  .data-table { min-width: 520px; }
+}
+
+

@@ -1,11 +1,13 @@
 # UI_ACCEPTANCE.md — Salon-X
 
-Дата проверки: **2026-08-17**.  
-Стек: `docker compose down -v && docker compose up -d --build` + `docker compose --profile seed run --rm --build seed`.  
+Дата проверки: **2026-08-18** (Phase 2).  
+Стек: текущий docker compose (frontend+organizations rebuilt) + ранее прогнанный seed.  
 UI: `http://localhost:5173`. API: `http://localhost:8090`.  
 Пароль всех seed-аккаунтов: `Password123!`.
 
-Playwright P0 (`frontend/e2e/salon-x.spec.ts`): **39 passed**, viewport-skips only. Не skip из‑за отсутствия данных/логина.
+Playwright `frontend/e2e/salon-x.spec.ts`:
+- Phase 2: **passed** на 390 / 430 / 768 / 1366 / 1920 (monitoring — один раз на 390). Без skip из‑за данных/логина.
+- P0 phone-390: 22 passed; chain switcher locator поправлен под два филиала «Новосибирск».
 
 Критерий `Implemented`: экран открывается под указанной ролью, без UUID в основном сценарии, назначение кабинета понятно. `Partial` — экран есть, но UX/покрытие неполное.
 
@@ -19,13 +21,14 @@ Playwright P0 (`frontend/e2e/salon-x.spec.ts`): **39 passed**, viewport-skips on
 | Salon owner staff | Salon owner `master1` | `/staff` | Команда, invite по email, политика контактов | Yes | 390 | Toggle «Показывать контактные данные клиентов мастерам» |
 | Chain owner | `chain1@demo.local` | `/` + sidenav | Сеть, switcher филиала | Partial | not this run | Switcher в sidenav (localStorage). Нет отдельного экрана сети |
 | Salon admin | `admin1@demo.local` | `/` | Операционный кабинет без owner-финансов | Partial | not this run | Nav без косметики/услуг owner; staff доступен |
-| Supplier dashboard | `supplier1@demo.local` | `/supplier` | KPI кабинета поставщика | Partial | 390/1920 | Карточки оборота; полные графики на `/supplier/analytics` |
-| Supplier analytics | Supplier | `/supplier/analytics` | KPI + charts + период | Yes | 390, 1920 | day/week/month/quarter + custom range. Источник Order+Payment |
-| Supplier warehouse | Supplier / Rep | `/warehouse` | Остатки, фото, статус, search, движения | Yes | 390, 1920 | Rep: «Достаточный / Низкий / Нет в наличии». Supplier: available+reserved |
-| Supplier team | Supplier | `/supplier/team` | Карточки представителей, задача/визит | Partial | not this run | Назначение по email, задача с салоном/датой/priority. KPI из analytics если есть user_id match |
-| Representative dashboard | `rep1@demo.local` | `/rep` | Задачи, доставки, к получению | Yes | 390 | После логина редирект на `/rep` |
-| Representative route/map | Rep | `/rep/map` | Карта OSM/Leaflet, stops, optimize | Yes | 390 | `.leaflet-container` в e2e. Provider haversine adapter |
-| Representative finance | Rep | `/rep/finance` | К получению сегодня / месяц | Yes | not this run | Order+Payment, не Product.price |
+| Supplier dashboard | `supplier1@demo.local` | `/supplier` | Рабочий KPI dashboard после login | Yes | 390, 430, 768, 1366, 1920 | 8 KPI; на ≤700 только сегодня/заказы/оплата/доставки. Не каталог товаров |
+| Supplier analytics | Supplier | `/supplier/analytics` | Период + Recharts | Yes | 390, 430, 768, 1366, 1920 | Сегодня/неделя/месяц/квартал/произвольный. Area/bar/pie, reps bar+table. Order+Payment |
+| Supplier warehouse | Supplier / Rep | `/warehouse` | Остатки, фото, статус | Yes | 390 (e2e) | Rep: статусы без qty. Supplier: доступно · резерв · в пути + движения |
+| Supplier team | Supplier | `/supplier/team` | Карточки представителей + мониторинг + задача | Yes | 390, 430, 768, 1366, 1920 | Имя/город/KPI, не UUID. Салон searchable. Типы задач. Detail `/supplier/team/:id` |
+| Representative dashboard | `rep1@demo.local` | `/rep` | События, KPI, календарь, маршрут | Yes | 390, 430, 768, 1366, 1920 | Login → `/rep`. Planner Phase 1 (категории доставка/визит/задача/личное) |
+| Representative route/map | Rep | `/rep/map` | Leaflet + polyline + stops | Yes | 390, 430, 768, 1366, 1920 | Карта ≤220px на 390. Side/list: салон, окно, к получению. «Рекомендованный маршрут» (haversine) |
+| Representative finance | Rep | `/rep/finance` | День таблица + месяц chart | Yes | 390, 430, 768, 1366, 1920 | Payment model. Итого на день / получено за месяц |
+| Representative analytics | Rep | `/rep/analytics` | Доставки, деньги, товары, задачи | Yes | 390, 430, 768, 1366, 1920 | Recharts, не div-графики |
 | Knowledge hub | Master | `/knowledge` | Поиск, chips, секции, карточки | Partial | 390 | Фильтры+избранное e2e. Не полноценный editorial hub на всех данных |
 | Knowledge editor | Supplier | `/knowledge` | TipTap, inline media, товары чекбоксами | Yes | not this run | Не JSON textarea |
 | Subscription | Master | `/profile/subscription` | Trial/plan, сравнение, DEV controls | Yes | 390 | DEV-кнопки только `import.meta.env.DEV`. Docker production build их не показывает |
@@ -46,7 +49,7 @@ Playwright P0 (`frontend/e2e/salon-x.spec.ts`): **39 passed**, viewport-skips on
 | `admin1@demo.local` | Salon administrator |
 | `expired1@demo.local` | Expired trial → Free |
 | `supplier1@demo.local` / `supplier2@demo.local` | Supplier |
-| `rep1@demo.local` / `rep2@demo.local` | Supplier representative |
+| `rep1@demo.local` / `rep2@demo.local` | Supplier representative (Елена / Павел) |
 
 ## Known UI gaps (not DONE)
 
@@ -57,3 +60,5 @@ Playwright P0 (`frontend/e2e/salon-x.spec.ts`): **39 passed**, viewport-skips on
 - Recurring propose/accept есть в UI, отдельного e2e нет.
 - Contact privacy: toggle проверен, скрытие phone/email на карточке — не отдельный browser e2e в этом прогоне.
 - No-show: blacklist API для `client3` = blocked; UI «запись заблокирована» не гонялся как полный booking e2e.
+- Маршрут: эвристика haversine, в UI явно «рекомендованный маршрут», не оптимальный.
+- Полный `docker compose down -v` + reseed не гонялся в этом прогоне; seed идемпотентен для задач представителей.

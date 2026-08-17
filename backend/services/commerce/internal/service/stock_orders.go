@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,4 +97,35 @@ func (s *Service) RepAnalytics(ctx context.Context, actor, orgID uuid.UUID, from
 		return nil, err
 	}
 	return s.store.RepAnalytics(ctx, orgID, actor, from, to)
+}
+
+func (s *Service) DevBackdate(ctx context.Context, actor uuid.UUID, kind string, orderID uuid.UUID, at time.Time) error {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "supplier", "supplier_order":
+		o, err := s.store.GetOrder(ctx, orderID)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		if o == nil {
+			return apperr.NotFound("order not found")
+		}
+		if err := s.requireMembership(ctx, o.SupplierOrgID, actor, "owner", "admin"); err != nil {
+			return err
+		}
+		return s.store.BackdateSupplierOrder(ctx, orderID, at)
+	case "client", "client_order":
+		o, err := s.store.GetClientOrder(ctx, orderID)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		if o == nil {
+			return apperr.NotFound("order not found")
+		}
+		if err := s.requireMembership(ctx, o.SupplierOrgID, actor, "owner", "admin"); err != nil {
+			return err
+		}
+		return s.store.BackdateClientOrder(ctx, orderID, at)
+	default:
+		return apperr.Validation("kind must be supplier or client")
+	}
 }

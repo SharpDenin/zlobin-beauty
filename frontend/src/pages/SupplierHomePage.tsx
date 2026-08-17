@@ -6,11 +6,25 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 
-type Dashboard = {
-  turnover_minor: number
-  orders_count: number
-  products_count: number
-  critical_stock_count: number
+type Analytics = {
+  revenue_today_minor?: number
+  revenue_month_minor?: number
+  revenue_quarter_minor?: number
+  orders_today?: number
+  orders_month?: number
+  average_order_value_minor?: number
+  unpaid_orders?: number
+  unpaid_minor?: number
+  deliveries_today?: number
+  deliveries_count?: number
+}
+
+type Rep = {
+  id: string
+  display_name?: string
+  city?: string
+  tasks_overdue?: number
+  open_tasks?: number
 }
 
 export function SupplierHomePage() {
@@ -23,16 +37,14 @@ export function SupplierHomePage() {
   const [createPhone, setCreatePhone] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
 
-  const dash = useQuery({
-    queryKey: ['supplier-dashboard', supplierOrgId],
-    queryFn: () => {
-      const to = new Date()
-      const from = new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000)
-      return apiRequest<Dashboard>(
-        `/v1/commerce/supplier/dashboard?organization_id=${supplierOrgId}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
-        { token: accessToken },
-      )
-    },
+  const analytics = useQuery({
+    queryKey: ['supplier-analytics', supplierOrgId, 'home'],
+    queryFn: () => apiRequest<Analytics>(`/v1/commerce/supplier/analytics?organization_id=${supplierOrgId}&period=month`, { token: accessToken }),
+    enabled: Boolean(accessToken && supplierOrgId),
+  })
+  const reps = useQuery({
+    queryKey: ['supplier-reps', supplierOrgId],
+    queryFn: () => apiRequest<{ items: Rep[] }>(`/v1/organizations/${supplierOrgId}/representatives`, { token: accessToken }),
     enabled: Boolean(accessToken && supplierOrgId),
   })
   const sub = useQuery({
@@ -40,26 +52,6 @@ export function SupplierHomePage() {
     queryFn: () =>
       apiRequest<{ status: string; trial_ends_at?: string }>('/v1/me/subscription', { token: accessToken }),
     enabled: Boolean(accessToken),
-  })
-
-  const orders = useQuery({
-    queryKey: ['commerce-supplier-orders', 'supplier', supplierOrgId, 'home'],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; status: string }> }>(
-        `/v1/commerce/supplier-orders?organization_id=${supplierOrgId}&role=supplier`,
-        { token: accessToken },
-      ),
-    enabled: Boolean(accessToken && supplierOrgId),
-  })
-
-  const products = useQuery({
-    queryKey: ['commerce-products', supplierOrgId, 'home'],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; published: boolean; for_sale?: boolean }> }>(
-        `/v1/commerce/products?organization_id=${supplierOrgId}`,
-        { token: accessToken },
-      ),
-    enabled: Boolean(accessToken && supplierOrgId),
   })
 
   const createSupplier = useMutation({
@@ -133,18 +125,32 @@ export function SupplierHomePage() {
     )
   }
 
+  const a = analytics.data
+  const overdue = (reps.data?.items ?? []).filter((r) => (r.tasks_overdue ?? 0) > 0)
+  const kpis = [
+    { label: 'Выручка сегодня', value: formatMoney(a?.revenue_today_minor ?? 0) },
+    { label: 'Выручка за месяц', value: formatMoney(a?.revenue_month_minor ?? 0) },
+    { label: 'Выручка за квартал', value: formatMoney(a?.revenue_quarter_minor ?? 0) },
+    { label: 'Заказы сегодня', value: String(a?.orders_today ?? 0) },
+    { label: 'Заказы за месяц', value: String(a?.orders_month ?? 0) },
+    { label: 'Средний чек', value: formatMoney(a?.average_order_value_minor ?? 0) },
+    { label: 'Ожидает оплаты', value: `${a?.unpaid_orders ?? 0} · ${formatMoney(a?.unpaid_minor ?? 0)}` },
+    { label: 'Доставок сегодня', value: String(a?.deliveries_today ?? 0) },
+  ]
+
   return (
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Salon-X</div>
+          <p className="eyebrow">Поставщик</p>
           <h1>{supplierOrg?.organization.name || user?.display_name}</h1>
-          <p>Новые заказы салонов и каталог товаров.</p>
+          <p>Состояние бизнеса прямо сейчас: заказы, оплаты и полевая команда.</p>
           {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
             <p><strong>Premium активирован бесплатно на 3 месяца</strong> · до {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}</p>
           )}
           <div className="row">
-            <Link className="btn btn-primary" to="/supplier/products/new">Новый товар</Link>
+            <Link className="btn btn-primary" to="/supplier/analytics">Аналитика</Link>
+            <Link className="btn btn-secondary" to="/supplier/team">Представители</Link>
             <Link className="btn btn-secondary" to="/supplier/orders">Заказы</Link>
           </div>
         </div>
@@ -154,31 +160,50 @@ export function SupplierHomePage() {
         <p className="muted">Активная организация: {supplierOrg?.organization.name}</p>
       )}
 
+      <div className="kpi-grid">
+        {kpis.map((k, i) => (
+          <article key={k.label} className={`card stack-sm ${[0, 3, 6, 7].includes(i) ? '' : 'kpi-desktop-only'}`}>
+            <span className="muted">{k.label}</span>
+            <strong>{k.value}</strong>
+          </article>
+        ))}
+      </div>
+
+      {overdue.length > 0 && (
+        <section className="card stack">
+          <h2>Нужно внимание</h2>
+          {overdue.map((r) => (
+            <article key={r.id} className="list-item row between">
+              <div>
+                <strong>{r.display_name || r.city || 'Представитель'}</strong>
+                <p className="muted">{r.tasks_overdue} просроченных задач</p>
+              </div>
+              <Link to={`/supplier/team/${r.id}`}>Открыть</Link>
+            </article>
+          ))}
+        </section>
+      )}
+
       <div className="tile-grid">
         <Link className="dashboard-tile" to="/supplier/orders">
-          <span className="muted">Новые заказы</span>
-          <strong>
-            {(orders.data?.items ?? []).filter((o) => o.status === 'new' || o.status === 'submitted').length}
-          </strong>
-          <span className="muted">ждут обработки</span>
+          <span className="muted">Заказы</span>
+          <strong>{a?.orders_today ?? 0}</strong>
+          <span className="muted">сегодня</span>
         </Link>
-        <Link className="dashboard-tile" to="/supplier/products">
-          <span className="muted">В продаже</span>
-          <strong>
-            {(products.data?.items ?? []).filter((p) => p.published && p.for_sale !== false).length
-              || dash.data?.products_count
-              || 0}
-          </strong>
-          <span className="muted">товаров</span>
+        <Link className="dashboard-tile" to="/supplier/team">
+          <span className="muted">Команда</span>
+          <strong>{reps.data?.items.length ?? 0}</strong>
+          <span className="muted">представителей</span>
         </Link>
-        <div className="dashboard-tile">
-          <span className="muted">Оборот за неделю</span>
-          <strong>{dash.data ? formatMoney(dash.data.turnover_minor) : '—'}</strong>
-        </div>
-        <div className="dashboard-tile">
-          <span className="muted">Критические остатки</span>
-          <strong>{dash.data?.critical_stock_count ?? '—'}</strong>
-        </div>
+        <Link className="dashboard-tile" to="/warehouse">
+          <span className="muted">Склад</span>
+          <strong>Остатки</strong>
+          <span className="muted">доступно · резерв · в пути</span>
+        </Link>
+        <Link className="dashboard-tile" to="/supplier/analytics">
+          <span className="muted">Выручка месяца</span>
+          <strong>{formatMoney(a?.revenue_month_minor ?? 0)}</strong>
+        </Link>
       </div>
     </main>
   )

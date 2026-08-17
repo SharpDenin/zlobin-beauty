@@ -266,6 +266,12 @@ func main() {
 		log.Printf("ok client marketplace order")
 	}
 
+	if err := seedPhase2History(client, base, master1, supplier1, client1, m1Org, m1Branch, products1, rep1, rep2); err != nil {
+		log.Printf("warn phase2 history: %v", err)
+	} else {
+		log.Printf("ok phase2 analytics history")
+	}
+
 	if err := seedRepRoute(client, base, supplier1, sup1Org, m1Branch, users["rep1@demo.local"]); err != nil {
 		log.Printf("warn rep route: %v", err)
 	} else {
@@ -832,33 +838,319 @@ func seedRepresentatives(c *http.Client, base string, supplier authUser, orgID, 
 	if orgID == "" || rep1.ID == "" {
 		return fmt.Errorf("missing supplier or rep")
 	}
-	var created struct {
-		ID string `json:"id"`
+	createRep := func(user authUser, city, territory, name, email string, salons []string) (string, error) {
+		var created struct {
+			ID string `json:"id"`
+		}
+		status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/representatives", supplier.Token, map[string]any{
+			"user_id": user.ID, "city": city, "territory": territory,
+			"display_name": name, "email": email, "salon_branch_ids": salons,
+		}, &created)
+		if err != nil {
+			return "", err
+		}
+		if status >= 300 {
+			return "", fmt.Errorf("create rep %s status %d", email, status)
+		}
+		return created.ID, nil
 	}
-	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/representatives", supplier.Token, map[string]any{
-		"user_id": rep1.ID, "city": "Красноярск", "territory": "Красноярск",
-		"salon_branch_ids": []string{salonBranchID},
-	}, &created)
+	rep1ID, err := createRep(rep1, "Красноярск", "Красноярск", "Представитель Елена", "rep1@demo.local", []string{salonBranchID})
 	if err != nil {
 		return err
 	}
-	if status >= 300 {
-		return fmt.Errorf("create rep1 status %d", status)
+	rep2ID, err := createRep(rep2, "Москва", "Москва", "Представитель Павел", "rep2@demo.local", nil)
+	if err != nil {
+		log.Printf("warn create rep2: %v", err)
 	}
-	repID := created.ID
-	if rep2.ID != "" {
-		_, _ = doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/representatives", supplier.Token, map[string]any{
-			"user_id": rep2.ID, "city": "Москва", "territory": "Москва",
-		}, &created)
-	}
-	if repID != "" {
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 11, 30, 0, 0, time.UTC)
+	createTask := func(repID, title, kind, priority string, due time.Time, desc, expected string) {
+		if repID == "" {
+			return
+		}
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/tasks", supplier.Token, map[string]any{
 			"representative_id": repID,
-			"title":             "Визит в салон Анны",
-			"description":       "Показать новинки L'Oreal и снять заказ.",
+			"title":             title,
+			"kind":              kind,
+			"description":       desc,
+			"expected_result":   expected,
 			"branch_id":         salonBranchID,
-			"priority":          "high",
+			"priority":          priority,
+			"due_at":            due.Format(time.RFC3339),
 		}, nil)
+		cat := "task"
+		switch kind {
+		case "salon_visit", "commercial_visit":
+			cat = "salon_visit"
+		case "delivery_support":
+			cat = "delivery"
+		}
+		token := rep1.Token
+		if repID == rep2ID {
+			token = rep2.Token
+		}
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/planner/blocks", token, map[string]any{
+			"title": title, "category": cat,
+			"starts_at": due.Format(time.RFC3339), "ends_at": due.Add(45 * time.Minute).Format(time.RFC3339),
+			"timezone": "Asia/Krasnoyarsk",
+		}, nil)
+	}
+	var listed struct {
+		Items []struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/organizations/"+orgID+"/representatives", supplier.Token, nil, &listed)
+	for _, it := range listed.Items {
+		switch strings.ToLower(it.Email) {
+		case "rep1@demo.local":
+			rep1ID = it.ID
+		case "rep2@demo.local":
+			rep2ID = it.ID
+		}
+	}
+	var existingTasks struct {
+		Items []struct {
+			Title            string `json:"title"`
+			RepresentativeID string `json:"representative_id"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/organizations/"+orgID+"/tasks", supplier.Token, nil, &existingTasks)
+	hasTask := func(repID, title string) bool {
+		for _, t := range existingTasks.Items {
+			if t.RepresentativeID == repID && t.Title == title {
+				return true
+			}
+		}
+		return false
+	}
+	ensureTask := func(repID, title, kind, priority string, due time.Time, desc, expected string) {
+		if hasTask(repID, title) {
+			return
+		}
+		createTask(repID, title, kind, priority, due, desc, expected)
+	}
+	ensureTask(rep1ID, "Визит в салон Анны", "salon_visit", "high", today, "Показать новинки L'Oreal и снять заказ.", "Заявка на пополнение")
+	ensureTask(rep1ID, "Сопровождение доставки", "delivery_support", "normal", today.Add(3*time.Hour), "Передать заказ и принять оплату.", "")
+	if rep2ID != "" {
+		ensureTask(rep2ID, "Просроченный коммерческий визит", "commercial_visit", "urgent", today.Add(-48*time.Hour), "Не состоялся вчера — закрыть или перенести.", "Договорённость о заказе")
+		ensureTask(rep2ID, "Сбор оплаты", "payment_collection", "high", today.Add(5*time.Hour), "Инкассация по неоплаченным поставкам.", "")
+	}
+	return nil
+}
+
+func seedPhase2History(c *http.Client, base string, master, supplier, clientUser authUser, buyerOrgID, destBranchID string, productIDs []string, rep1, rep2 authUser) error {
+	if len(productIDs) < 3 || buyerOrgID == "" {
+		return fmt.Errorf("missing phase2 deps")
+	}
+	var mine struct {
+		Items []struct {
+			Organization struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			} `json:"organization"`
+		} `json:"items"`
+	}
+	_, err := doJSON(c, http.MethodGet, base+"/v1/organizations/mine", supplier.Token, nil, &mine)
+	if err != nil {
+		return err
+	}
+	var supplierOrgID string
+	for _, it := range mine.Items {
+		if it.Organization.Type == "supplier" {
+			supplierOrgID = it.Organization.ID
+			break
+		}
+	}
+	if supplierOrgID == "" {
+		return fmt.Errorf("supplier org not found")
+	}
+	locID, err := ensureLocation(c, base, master, buyerOrgID, "Основной склад", "salon")
+	if err != nil {
+		return err
+	}
+	var existing struct {
+		Items []struct {
+			Comment string `json:"comment"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/supplier-orders?organization_id="+buyerOrgID, master.Token, nil, &existing)
+	haveHistory := false
+	for _, o := range existing.Items {
+		if strings.Contains(o.Comment, "[seed-history]") {
+			haveHistory = true
+			break
+		}
+	}
+	createPaid := func(comment string, p0, p1 int, qty0, qty1 float64) (string, error) {
+		var created struct{ ID string `json:"id"` }
+		status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders", master.Token, map[string]any{
+			"buyer_org_id": buyerOrgID, "supplier_org_id": supplierOrgID, "location_id": locID,
+			"destination_branch_id": destBranchID, "payment_method": "bank_transfer", "comment": comment,
+			"items": []map[string]any{
+				{"product_id": productIDs[p0%len(productIDs)], "qty": qty0},
+				{"product_id": productIDs[p1%len(productIDs)], "qty": qty1},
+			},
+		}, &created)
+		if err != nil || status >= 300 {
+			return "", fmt.Errorf("create history order status %d %v", status, err)
+		}
+		est := time.Now().UTC().AddDate(0, 0, 2)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/transition", supplier.Token, map[string]any{"status": "confirmed"}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/transition", supplier.Token, map[string]any{"status": "picking", "estimated_delivery_at": est}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/transition", supplier.Token, map[string]any{"status": "ready_for_dispatch"}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/mark-paid", supplier.Token, map[string]any{}, nil)
+		return created.ID, nil
+	}
+	if !haveHistory {
+		for i := 0; i < 10; i++ {
+			daysAgo := 7 + i*6
+			if daysAgo > 80 {
+				daysAgo = 80 - i
+			}
+			id, err := createPaid(fmt.Sprintf("[seed-history] заказ %d", i+1), i%3, (i+1)%3, float64(1+i%3), float64(1+i%2))
+			if err != nil {
+				log.Printf("warn history order %d: %v", i, err)
+				continue
+			}
+			at := time.Now().UTC().AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+			st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/dev/backdate", supplier.Token, map[string]any{
+				"kind": "supplier", "order_id": id, "created_at": at,
+			}, nil)
+			if st >= 300 {
+				log.Printf("warn backdate supplier order %s status=%d", id, st)
+			}
+		}
+		// one unpaid current order for outstanding chart
+		_, _ = createPaid("[seed-history-unpaid] ожидает оплату", 0, 3, 2, 1)
+		// last createPaid marks paid — make a raw unpaid instead
+		var unpaid struct{ ID string `json:"id"` }
+		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders", master.Token, map[string]any{
+			"buyer_org_id": buyerOrgID, "supplier_org_id": supplierOrgID, "location_id": locID,
+			"destination_branch_id": destBranchID, "payment_method": "invoice", "comment": "[seed-history] unpaid",
+			"items": []map[string]any{{"product_id": productIDs[0], "qty": 3}},
+		}, &unpaid)
+		if st < 300 && unpaid.ID != "" {
+			_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+unpaid.ID+"/transition", supplier.Token, map[string]any{"status": "confirmed"}, nil)
+		}
+	}
+
+	var shopExisting struct {
+		Items []struct {
+			ID               string `json:"id"`
+			DeliveryComment  string `json:"delivery_comment"`
+			Status           string `json:"status"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/shop/supplier/orders?organization_id="+supplierOrgID, supplier.Token, nil, &shopExisting)
+	haveRepFlow := false
+	for _, o := range shopExisting.Items {
+		if strings.Contains(o.DeliveryComment, "[seed-rep]") {
+			haveRepFlow = true
+			break
+		}
+	}
+	if haveRepFlow {
+		return nil
+	}
+
+	pushShop := func(comment, address string, productIdx int, qty float64) (string, error) {
+		st, err := doJSON(c, http.MethodPut, base+"/v1/commerce/shop/cart/items", clientUser.Token, map[string]any{
+			"product_id": productIDs[productIdx%len(productIDs)], "qty": qty,
+		}, nil)
+		if err != nil || st >= 300 {
+			return "", fmt.Errorf("cart %d %v", st, err)
+		}
+		var created struct{ ID string `json:"id"` }
+		st, err = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/checkout", clientUser.Token, map[string]any{
+			"delivery_address": address, "delivery_comment": comment,
+			"payment_method": "cash_on_delivery", "pickup_branch_id": destBranchID,
+		}, &created)
+		if err != nil || st >= 300 || created.ID == "" {
+			return "", fmt.Errorf("checkout %d %v", st, err)
+		}
+		return created.ID, nil
+	}
+	advance := func(id, status, repID string) {
+		body := map[string]any{"status": status}
+		if repID != "" {
+			body["rep_user_id"] = repID
+		}
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/supplier/orders/"+id+"/transition", supplier.Token, body, nil)
+	}
+	complete := func(id string, amount int64, paid bool, token string) {
+		var order struct {
+			Items []struct {
+				ProductID string  `json:"product_id"`
+				Qty       float64 `json:"qty"`
+			} `json:"items"`
+		}
+		_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/shop/orders/"+id, clientUser.Token, nil, &order)
+		items := make([]map[string]any, 0, len(order.Items))
+		for _, it := range order.Items {
+			items = append(items, map[string]any{"product_id": it.ProductID, "qty_delivered": it.Qty})
+		}
+		if len(items) == 0 {
+			items = []map[string]any{{"product_id": productIDs[0], "qty_delivered": 1}}
+		}
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/rep/deliveries/"+id+"/complete", token, map[string]any{
+			"items": items, "note": "seed", "amount_collected_minor": amount, "payment_received": paid,
+		}, nil)
+	}
+
+	addresses := []string{
+		"Салон Анны, ул. Ленина, 50",
+		"Салон на Мира, 10",
+		"Студия Ольги, пр. Мира, 88",
+	}
+	// Rep1: several deliveries today + completed history
+	for i := 0; i < 3; i++ {
+		id, err := pushShop("[seed-rep] today "+fmt.Sprint(i+1), addresses[i%len(addresses)], i%3, float64(1+i))
+		if err != nil {
+			log.Printf("warn shop today %d: %v", i, err)
+			continue
+		}
+		advance(id, "confirmed", "")
+		advance(id, "picking", "")
+		advance(id, "in_delivery", rep1.ID)
+	}
+	for i := 0; i < 6; i++ {
+		id, err := pushShop("[seed-rep] hist "+fmt.Sprint(i+1), addresses[i%len(addresses)], i%3, 1)
+		if err != nil {
+			log.Printf("warn shop hist %d: %v", i, err)
+			continue
+		}
+		advance(id, "confirmed", "")
+		advance(id, "picking", "")
+		advance(id, "in_delivery", rep1.ID)
+		complete(id, 89000, true, rep1.Token)
+		at := time.Now().UTC().AddDate(0, 0, -(4 + i*5)).Format(time.RFC3339)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/dev/backdate", supplier.Token, map[string]any{
+			"kind": "client", "order_id": id, "created_at": at,
+		}, nil)
+	}
+	if rep2.ID != "" {
+		id, err := pushShop("[seed-rep] pavel overdue", "Салон Москвы, Тверская, 7", 2, 2)
+		if err == nil {
+			advance(id, "confirmed", "")
+			advance(id, "picking", "")
+			advance(id, "in_delivery", rep2.ID)
+		}
+		for i := 0; i < 3; i++ {
+			id, err := pushShop("[seed-rep] pavel hist "+fmt.Sprint(i+1), "Салон Москвы, Арбат, 12", i, 1)
+			if err != nil {
+				continue
+			}
+			advance(id, "confirmed", "")
+			advance(id, "picking", "")
+			advance(id, "in_delivery", rep2.ID)
+			complete(id, 42000, i > 0, rep2.Token)
+			at := time.Now().UTC().AddDate(0, 0, -(10 + i*8)).Format(time.RFC3339)
+			_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/dev/backdate", supplier.Token, map[string]any{
+				"kind": "client", "order_id": id, "created_at": at,
+			}, nil)
+		}
 	}
 	return nil
 }
@@ -1710,14 +2002,25 @@ func seedRepRoute(c *http.Client, base string, supplier authUser, orgID, branchI
 		return fmt.Errorf("rep profile missing")
 	}
 	lat, lng := cityLat("Красноярск"), cityLng("Красноярск")
+	now := time.Now().UTC()
+	win := func(h, m, durMin int) (string, string) {
+		start := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, time.UTC)
+		return start.Format(time.RFC3339), start.Add(time.Duration(durMin) * time.Minute).Format(time.RFC3339)
+	}
+	w0s, w0e := win(10, 0, 40)
+	w1s, w1e := win(11, 30, 40)
+	w2s, w2e := win(13, 0, 40)
+	w3s, w3e := win(15, 0, 30)
 	st, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/routes/recommend", supplier.Token, map[string]any{
 		"representative_id": me.ID,
 		"date":              time.Now().UTC().Format("2006-01-02"),
 		"origin_lat":        lat,
 		"origin_lng":        lng,
 		"stops": []map[string]any{
-			{"kind": "salon_visit", "branch_id": branchID, "latitude": lat, "longitude": lng, "priority": "high", "expected_duration_min": 25},
-			{"kind": "delivery", "latitude": lat + 0.012, "longitude": lng + 0.018, "priority": "normal", "expected_duration_min": 20},
+			{"kind": "salon_visit", "branch_id": branchID, "latitude": lat, "longitude": lng, "priority": "high", "expected_duration_min": 25, "window_start": w0s, "window_end": w0e, "deadline_at": w0e},
+			{"kind": "delivery", "latitude": lat + 0.012, "longitude": lng + 0.018, "priority": "normal", "expected_duration_min": 20, "window_start": w1s, "window_end": w1e, "deadline_at": w1e},
+			{"kind": "delivery", "latitude": lat + 0.021, "longitude": lng - 0.01, "priority": "high", "expected_duration_min": 20, "window_start": w2s, "window_end": w2e, "deadline_at": w2e},
+			{"kind": "work_task", "latitude": lat - 0.008, "longitude": lng + 0.007, "priority": "normal", "expected_duration_min": 15, "window_start": w3s, "window_end": w3e, "deadline_at": w3e},
 		},
 	}, nil)
 	if err != nil {

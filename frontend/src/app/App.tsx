@@ -34,6 +34,7 @@ import { KnowledgeListPage } from '@/pages/KnowledgeListPage'
 import { KnowledgeArticlePage } from '@/pages/KnowledgeArticlePage'
 import { SupplierAnalyticsPage } from '@/pages/SupplierAnalyticsPage'
 import { SupplierTeamPage } from '@/pages/SupplierTeamPage'
+import { SupplierRepDetailPage } from '@/pages/SupplierRepDetailPage'
 import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
@@ -122,6 +123,7 @@ export function App() {
                   <Route path="/supplier/orders" element={<SupplierOrdersPage />} />
                   <Route path="/supplier/analytics" element={<SupplierAnalyticsPage />} />
                   <Route path="/supplier/team" element={<SupplierTeamPage />} />
+                  <Route path="/supplier/team/:id" element={<SupplierRepDetailPage />} />
                   <Route path="/supplier/recurring" element={<RecurringPage />} />
                 </Route>
               </Route>

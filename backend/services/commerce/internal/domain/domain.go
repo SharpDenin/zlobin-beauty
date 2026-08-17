@@ -151,6 +151,7 @@ type StockBalanceView struct {
 	Currency     string
 	Status       string
 	PhotoMediaID *uuid.UUID
+	QtyIncoming  float64
 }
 
 type StockMovement struct {

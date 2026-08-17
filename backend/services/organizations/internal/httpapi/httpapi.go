@@ -45,6 +45,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/tasks/{id}/status", auth(http.HandlerFunc(a.taskStatus)))
 	mux.Handle("GET /v1/organizations/{orgID}/routes", auth(http.HandlerFunc(a.listRoutes)))
 	mux.Handle("POST /v1/organizations/{orgID}/routes/recommend", auth(http.HandlerFunc(a.recommendRoute)))
+	mux.Handle("POST /v1/organizations/{orgID}/routes/stops/{id}/status", auth(http.HandlerFunc(a.stopStatus)))
 	mux.Handle("GET /v1/branches/{branchID}/readiness", auth(http.HandlerFunc(a.branchReadiness)))
 	mux.Handle("PATCH /v1/branches/{branchID}", auth(http.HandlerFunc(a.updateBranch)))
 	mux.Handle("POST /v1/branches/{branchID}/photos", auth(http.HandlerFunc(a.addBranchPhoto)))
@@ -672,13 +673,10 @@ func parseUUIDList(raw []string) []uuid.UUID {
 }
 
 func repDTO(r domain.SupplierRepresentative) map[string]any {
-	salons := make([]string, 0, len(r.SalonBranchIDs))
-	for _, id := range r.SalonBranchIDs {
-		salons = append(salons, id.String())
-	}
 	return map[string]any{
-		"id": r.ID.String(), "organization_id": r.OrganizationID.String(), "user_id": r.UserID.String(),
-		"city": r.City, "territory": r.Territory, "active": r.Active, "salon_branch_ids": salons,
+		"id": r.ID.String(), "user_id": r.UserID.String(),
+		"city": r.City, "territory": r.Territory, "active": r.Active,
+		"display_name": r.DisplayName, "email": r.Email,
 		"created_at": r.CreatedAt,
 	}
 }
@@ -696,8 +694,25 @@ func (a *API) listReps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
+	stats, _ := a.svc.ListRepTaskStats(r.Context(), claims.UserID, orgID)
+	byRep := map[string]domain.RepTaskStats{}
+	for _, st := range stats {
+		byRep[st.RepresentativeID.String()] = st
+	}
 	for _, it := range items {
-		out = append(out, repDTO(it))
+		row := repDTO(it)
+		if st, ok := byRep[it.ID.String()]; ok {
+			row["tasks_today"] = st.TasksToday
+			row["tasks_done"] = st.TasksDone
+			row["tasks_overdue"] = st.TasksOverdue
+			row["open_tasks"] = st.OpenTasks
+		} else {
+			row["tasks_today"] = 0
+			row["tasks_done"] = 0
+			row["tasks_overdue"] = 0
+			row["open_tasks"] = 0
+		}
+		out = append(out, row)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -713,6 +728,8 @@ func (a *API) createRep(w http.ResponseWriter, r *http.Request) {
 		UserID         string   `json:"user_id"`
 		City           string   `json:"city"`
 		Territory      string   `json:"territory"`
+		DisplayName    string   `json:"display_name"`
+		Email          string   `json:"email"`
 		SalonBranchIDs []string `json:"salon_branch_ids"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -724,7 +741,7 @@ func (a *API) createRep(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_id"))
 		return
 	}
-	rep, err := a.svc.CreateRepresentative(r.Context(), claims.UserID, orgID, uid, req.City, req.Territory, parseUUIDList(req.SalonBranchIDs))
+	rep, err := a.svc.CreateRepresentative(r.Context(), claims.UserID, orgID, uid, req.City, req.Territory, req.DisplayName, req.Email, parseUUIDList(req.SalonBranchIDs))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -768,6 +785,7 @@ func taskDTO(t domain.RepresentativeTask) map[string]any {
 	}
 	return map[string]any{
 		"id": t.ID.String(), "title": t.Title, "description": t.Description, "priority": t.Priority,
+		"kind": t.Kind, "expected_result": t.ExpectedResult, "planner_category": service.PlannerCategoryForKind(t.Kind),
 		"status": t.Status, "result_comment": t.ResultComment, "branch_id": bid, "due_at": due,
 		"representative_id": t.RepresentativeID.String(),
 	}
@@ -812,6 +830,8 @@ func (a *API) createTask(w http.ResponseWriter, r *http.Request) {
 		RepresentativeID string     `json:"representative_id"`
 		Title            string     `json:"title"`
 		Description      string     `json:"description"`
+		Kind             string     `json:"kind"`
+		ExpectedResult   string     `json:"expected_result"`
 		BranchID         *string    `json:"branch_id"`
 		DueAt            *time.Time `json:"due_at"`
 		Priority         string     `json:"priority"`
@@ -834,7 +854,7 @@ func (a *API) createTask(w http.ResponseWriter, r *http.Request) {
 		}
 		branchID = &id
 	}
-	t, err := a.svc.CreateTask(r.Context(), claims.UserID, orgID, repID, req.Title, req.Description, branchID, req.DueAt, req.Priority)
+	t, err := a.svc.CreateTask(r.Context(), claims.UserID, orgID, repID, req.Title, req.Description, req.Kind, req.ExpectedResult, branchID, req.DueAt, req.Priority)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -865,6 +885,16 @@ func (a *API) taskStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, taskDTO(*t))
 }
 
+func stopPublicDTO(st domain.FieldRouteStop) map[string]any {
+	return map[string]any{
+		"id": st.ID.String(), "kind": st.Kind, "priority": st.Priority,
+		"latitude": st.Latitude, "longitude": st.Longitude,
+		"expected_duration_min": st.ExpectedDurationMin, "status": st.Status, "sort_order": st.SortOrder,
+		"km_from_prev": st.KmFromPrev, "eta_at": st.ETAAt, "deadline_at": st.DeadlineAt,
+		"window_start": st.WindowStart, "window_end": st.WindowEnd,
+	}
+}
+
 func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	orgID, err := uuid.Parse(r.PathValue("orgID"))
@@ -881,23 +911,15 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 	for _, rt := range items {
 		stops := make([]map[string]any, 0, len(rt.Stops))
 		for _, st := range rt.Stops {
-			var branchID, deliveryID, taskID any
+			row := stopPublicDTO(st)
 			if st.BranchID != nil {
-				branchID = st.BranchID.String()
+				if b, err := a.svc.GetBranch(r.Context(), *st.BranchID); err == nil && b != nil {
+					row["salon_name"] = b.Name
+					row["address_line"] = b.AddressLine
+					row["city"] = b.City
+				}
 			}
-			if st.DeliveryID != nil {
-				deliveryID = st.DeliveryID.String()
-			}
-			if st.TaskID != nil {
-				taskID = st.TaskID.String()
-			}
-			stops = append(stops, map[string]any{
-				"id": st.ID.String(), "kind": st.Kind, "branch_id": branchID, "delivery_id": deliveryID, "task_id": taskID,
-				"latitude": st.Latitude, "longitude": st.Longitude, "priority": st.Priority,
-				"expected_duration_min": st.ExpectedDurationMin, "status": st.Status, "sort_order": st.SortOrder,
-				"km_from_prev": st.KmFromPrev, "eta_at": st.ETAAt, "deadline_at": st.DeadlineAt,
-				"window_start": st.WindowStart, "window_end": st.WindowEnd,
-			})
+			stops = append(stops, row)
 		}
 		out = append(out, map[string]any{
 			"id": rt.ID.String(), "planned_date": rt.PlannedDate, "status": rt.Status,
@@ -921,12 +943,15 @@ func (a *API) recommendRoute(w http.ResponseWriter, r *http.Request) {
 		OriginLat        float64 `json:"origin_lat"`
 		OriginLng        float64 `json:"origin_lng"`
 		Stops            []struct {
-			Kind     string   `json:"kind"`
-			BranchID *string  `json:"branch_id"`
-			Lat      *float64 `json:"latitude"`
-			Lng      *float64 `json:"longitude"`
-			Priority string   `json:"priority"`
-			Duration int      `json:"expected_duration_min"`
+			Kind       string     `json:"kind"`
+			BranchID   *string    `json:"branch_id"`
+			Lat        *float64   `json:"latitude"`
+			Lng        *float64   `json:"longitude"`
+			Priority   string     `json:"priority"`
+			Duration   int        `json:"expected_duration_min"`
+			WindowStart *time.Time `json:"window_start"`
+			WindowEnd   *time.Time `json:"window_end"`
+			DeadlineAt  *time.Time `json:"deadline_at"`
 		} `json:"stops"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -944,7 +969,10 @@ func (a *API) recommendRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	stops := make([]domain.FieldRouteStop, 0, len(req.Stops))
 	for _, st := range req.Stops {
-		item := domain.FieldRouteStop{Kind: st.Kind, Latitude: st.Lat, Longitude: st.Lng, Priority: st.Priority, ExpectedDurationMin: st.Duration, Status: "pending"}
+		item := domain.FieldRouteStop{
+			Kind: st.Kind, Latitude: st.Lat, Longitude: st.Lng, Priority: st.Priority, ExpectedDurationMin: st.Duration,
+			Status: "pending", WindowStart: st.WindowStart, WindowEnd: st.WindowEnd, DeadlineAt: st.DeadlineAt,
+		}
 		if st.BranchID != nil {
 			id, err := uuid.Parse(*st.BranchID)
 			if err == nil {
@@ -968,4 +996,27 @@ func (a *API) recommendRoute(w http.ResponseWriter, r *http.Request) {
 		"id": rt.ID.String(), "status": rt.Status, "total_km": rt.TotalKm, "total_minutes": rt.TotalMinutes,
 		"provider": rt.Provider, "label": "Рекомендованный маршрут", "stops": rt.Stops,
 	})
+}
+
+func (a *API) stopStatus(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	stopID, err2 := uuid.Parse(r.PathValue("id"))
+	if err != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	st, err := a.svc.UpdateStopStatus(r.Context(), claims.UserID, orgID, stopID, req.Status)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"id": st.ID.String(), "status": st.Status, "kind": st.Kind})
 }

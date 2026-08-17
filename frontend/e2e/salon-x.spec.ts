@@ -370,8 +370,94 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'chain1@demo.local')
     await page.goto('/calendar')
     await expect(page.getByTestId('calendar-branch-switcher')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('option', { name: 'Новосибирск' })).toBeAttached()
+    await expect(page.getByTestId('calendar-branch-switcher').getByRole('option', { name: 'Новосибирск' }).first()).toBeAttached()
     await page.getByTestId('calendar-branch-switcher').selectOption({ label: 'Новосибирск' })
     await expect(page.getByText(/Asia\/Novosibirsk/)).toBeVisible()
+  })
+
+  test('phase2 supplier dashboard analytics team and assign task', async ({ page }, info) => {
+    test.skip(!['phone-390', 'phone-430', 'tablet-768', 'laptop-1366', 'desktop-1920'].includes(info.project.name), 'phase2 viewports')
+    await loginUI(page, 'supplier1@demo.local')
+    await expect(page).toHaveURL(/\/supplier/, { timeout: 20_000 })
+    await expect(page.getByText('Выручка сегодня').first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Ожидает оплаты').first()).toBeVisible()
+    await test.info().attach(`supplier-dashboard-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    await page.goto('/supplier/analytics')
+    await expect(page.getByRole('heading', { name: 'Аналитика' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Неделя' }).click()
+    await expect(page.getByText('Динамика выручки')).toBeVisible()
+    await expect(page.locator('.recharts-surface').first()).toBeVisible({ timeout: 15_000 })
+    if (info.project.name === 'laptop-1366') {
+      await test.info().attach('supplier-analytics-desktop', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    }
+
+    await page.goto('/supplier/team')
+    await expect(page.getByRole('heading', { name: 'Представители' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/Елена/).first()).toBeVisible()
+    await expect(page.getByText(/Павел/).first()).toBeVisible()
+    await test.info().attach(`supplier-team-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    const elena = page.locator('.kb-card').filter({ hasText: 'Елена' }).first()
+    await elena.getByRole('button', { name: 'Создать задачу' }).click()
+    const taskTitle = `E2E визит ${info.project.name}-${Date.now()}`
+    await elena.getByLabel('Название').fill(taskTitle)
+    await elena.getByLabel('Тип').selectOption('salon_visit')
+    await elena.getByRole('button', { name: 'Создать задачу' }).last().click()
+    await expect(page.getByText('Задача назначена')).toBeVisible({ timeout: 15_000 })
+    await elena.getByRole('link', { name: 'Открыть' }).click()
+    await expect(page.getByRole('heading', { name: /Елена/ })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Задачи' }).click()
+    await expect(page.getByText(taskTitle).first()).toBeVisible({ timeout: 15_000 })
+    if (info.project.name === 'phone-390') {
+      await page.goto('/warehouse')
+      await expect(page.getByRole('heading', { name: 'Склад' })).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText(/доступно|резерв|в пути/).first()).toBeVisible()
+    }
+  })
+
+  test('phase2 representative dashboard map finance analytics', async ({ page }, info) => {
+    test.skip(!['phone-390', 'phone-430', 'tablet-768', 'laptop-1366', 'desktop-1920'].includes(info.project.name), 'phase2 viewports')
+    await loginUI(page, 'rep1@demo.local')
+    await expect(page).toHaveURL(/\/rep/, { timeout: 20_000 })
+    await expect(page.getByRole('heading', { name: 'Кабинет представителя' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Задач сегодня')).toBeVisible()
+    await expect(page.getByText('К получению сегодня')).toBeVisible()
+    await test.info().attach(`rep-dashboard-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    await expect(page.locator('.fc, .calendar-wrap').first()).toBeVisible({ timeout: 15_000 })
+
+    await page.goto('/rep/map')
+    await expect(page.getByRole('heading', { name: 'Карта маршрута' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.leaflet-container')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.leaflet-overlay-pane svg, .leaflet-pane svg, path.leaflet-interactive').first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('ol.list li, .list-item').first()).toBeVisible()
+    await test.info().attach(`rep-map-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    await page.goto('/rep/finance')
+    await expect(page.getByText('Итого на день')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Получено за месяц')).toBeVisible()
+    await test.info().attach(`rep-finance-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    await page.goto('/rep/analytics')
+    await expect(page.getByText('Доставки по дням')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.recharts-surface').first()).toBeVisible()
+    await test.info().attach(`rep-analytics-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    if (info.project.name === 'phone-390') {
+      await page.goto('/warehouse')
+      await expect(page.getByRole('heading', { name: 'Склад' })).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.product-card .badge, .badge').filter({ hasText: /Достаточный запас|Низкий запас|Нет в наличии/ }).first()).toBeVisible({ timeout: 15_000 })
+    }
+  })
+
+  test('phase2 supplier monitoring sees both representatives', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/supplier/team')
+    await expect(page.getByRole('heading', { name: 'Мониторинг' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/Елена/).first()).toBeVisible()
+    await expect(page.getByText(/Павел/).first()).toBeVisible()
+    await expect(page.getByText(/просроч/i).first()).toBeVisible()
+    await expect(page.getByText(/доставок/i).first()).toBeVisible()
+    await expect(page.getByText(/собрано/i).first()).toBeVisible()
   })
 })

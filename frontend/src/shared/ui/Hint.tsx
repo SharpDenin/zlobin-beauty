@@ -29,7 +29,7 @@ export function Hint({ id, title, children }: Props) {
   if ((prefs.data?.dismissed ?? []).includes(id)) return null
 
   return (
-    <span className="hint-wrap">
+    <span className="hint-wrap" data-testid={`hint-${id}`}>
       <button className="hint-btn" type="button" aria-label={title} onClick={() => setOpen((v) => !v)}>
         ?
       </button>

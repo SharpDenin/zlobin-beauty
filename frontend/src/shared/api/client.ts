@@ -143,6 +143,8 @@ function humanizeError(message: unknown, status: number): string {
       'occurrence overlaps': 'Окно пересекается с другим сеансом',
       'occurrence is full': 'Мест на этот сеанс больше нет',
       'occurrence is not bookable': 'Этот сеанс недоступен для записи',
+      'client is blacklisted': 'Запись к этому мастеру сейчас недоступна.',
+      'existing appointments would fall outside': 'Есть записи вне новых рабочих часов. Сначала перенесите или отмените их.',
       unauthorized: 'Требуется вход в аккаунт',
       forbidden: 'Недостаточно прав',
     }

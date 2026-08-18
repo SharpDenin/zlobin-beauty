@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, homePathForUser, useAuth } from '@/features/auth/AuthProvider'
-import { AppShell, RequireAdmin, RequireAuth, RequireMaster, RequireSupplier } from '@/app/layout'
+import { AppShell, RequireAdmin, RequireAuth, RequireCabinetFeature, RequireMaster, RequireSupplier } from '@/app/layout'
 import { CabinetProvider } from '@/shared/lib/cabinet'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
@@ -40,6 +40,7 @@ import { SupplierTeamPage } from '@/pages/SupplierTeamPage'
 import { SupplierRepDetailPage } from '@/pages/SupplierRepDetailPage'
 import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
+import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
@@ -122,8 +123,15 @@ export function App() {
                   <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
                   <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
                   <Route path="/pickup-orders" element={<SalonPickupPage />} />
-                  <Route path="/staff" element={<StaffPage />} />
-                  <Route path="/reports" element={<SalonReportsPage />} />
+                  <Route element={<RequireCabinetFeature feature="staff" />}>
+                    <Route path="/staff" element={<StaffPage />} />
+                  </Route>
+                  <Route element={<RequireCabinetFeature feature="reports" />}>
+                    <Route path="/reports" element={<SalonReportsPage />} />
+                  </Route>
+                  <Route element={<RequireCabinetFeature feature="salon_settings" />}>
+                    <Route path="/salon/settings" element={<SalonSettingsPage />} />
+                  </Route>
                 </Route>
                 <Route element={<RequireSupplier />}>
                   <Route path="/supplier" element={<SupplierHomePage />} />

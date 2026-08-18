@@ -66,7 +66,7 @@ func (s *Service) DisableStaff(ctx context.Context, orgID, actor, userID uuid.UU
 }
 
 func (s *Service) SetContactPolicy(ctx context.Context, orgID, actor uuid.UUID, see bool) (*domain.Organization, error) {
-	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
+	if err := s.requireOwner(ctx, orgID, actor); err != nil {
 		return nil, err
 	}
 	org, err := s.GetOrg(ctx, orgID)

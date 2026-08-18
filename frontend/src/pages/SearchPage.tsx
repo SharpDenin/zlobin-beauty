@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { Hint } from '@/shared/ui/Hint'
 
 type Master = {
   id: string
@@ -77,7 +78,7 @@ export function SearchPage() {
 
   return (
     <main className="page stack">
-      <h1>Поиск мастеров</h1>
+      <h1>Поиск мастеров <Hint id="client-booking" title="Запись">Найдите мастера по городу и услуге, затем выберите время на карточке.</Hint></h1>
       <form
         className="card search-form"
         onSubmit={(e) => {

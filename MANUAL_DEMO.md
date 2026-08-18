@@ -9,69 +9,55 @@ curl -fsS http://127.0.0.1:8090/healthz
 docker compose --profile seed run --rm --build seed
 ```
 
-UI: `http://localhost:5173` (или публичный URL из README_DEPLOY).
-Пароль demo: **`Password123!`**
+UI: `http://localhost:5173`. Пароль: **`Password123!`**. Viewports: **390 / 768 / 1366+**.
 
-Проверьте viewports: **390 / 768 / 1366+**.
-
----
-
-## 1. Клиент (2 мин)
-
-`client1@demo.local` — поиск (Красноярск), запись к Анне; fixed_window МК с `мест: N` (capacity > 1).
-
-## 2. База знаний (Phase 5, 3 мин)
-
-`master1@demo.local` → **База знаний**: большая строка поиска, chips (Избранное / Колористика), **Фильтры** (поставщик, бренд, товар), карточка → статья с фото/видео → избранное → связанный товар → «Материалы и инструкции».
-
-`supplier1@demo.local` → **Создать материал**: обложка, searchable товары, TipTap, вставка фото/видео в курсор через dropzone, черновик → предпросмотр → публикация.
-
-## 3. Склад, заказы, Delivery SoT (3 мин)
-
-Поставщик → **Товары** / **Склад** / **Аналитика**.
-**Заказы**: коммерческие статусы до `ready_for_dispatch`; физика только через Delivery (preparing → in_transit → arrived → delivered). Legacy order `in_transit`/`delivered` из UI не переводятся.
-
-## 4. Представитель (3 мин)
-
-`supplier1` → **Представители**.  
-`rep1@demo.local` → задачи (Готово), **Построить рекомендованный маршрут**, доставки.
-
-## 5. Владелец и администратор салона (2 мин)
-
-`master1` → **Команда**: политика контактов, приглашение сотрудника по email, отключение.
-**Календарь**: событие планера создать / открыть / изменить название и цвет / удалить. Переключение филиала у сети меняет часовой пояс и записи.
-`admin1@demo.local` попадает на операционный dashboard («Сегодня»), а не в клиентский поиск.
-
-## 6. Регулярные поставки / подписка / pickup (3 мин)
-
-`master1` → `/cosmetics/recurring` — заявка.
-`supplier1` → `/supplier/recurring` — approve.
-Профиль: subscription / trial.
-Checkout косметики: филиал получения выбирается из списка салонов, без ручного ввода идентификаторов.
-
-## 7. Subscription + Scheme (Phase 4, 3–4 мин)
-
-**Trial:** `master1@demo.local` → Профиль → **Подписка** → Premium Trial, дата окончания, остаток дней.
-
-**Free:** `master4@demo.local` → запись in_progress (Phase4) → **Завершить** → шаблон окрашивания, обязательные поля → complete → карточка клиента показывает схему.
-
-**Premium skip:** `premium1@demo.local` → in_progress → «Не раскрывать схему» → confirm → complete → в истории «Схема не раскрыта мастером».
-
-**Expired trial:** `expired1@demo.local` → **Подписка** → «Trial истёк · Free»; skip недоступен.
-
-## 8. Client Shop / Commerce (Phase 3, 5 мин)
-
-`client1@demo.local` → **Магазин** → товар → **Корзина** → **Оформить** → самовывоз (рекомендованный салон) → оплата → сводка (несколько поставщиков — один checkout) → **Готово** → **Мои заказы** → детали + timeline.
-
-Multi-supplier: добавьте товар S1-* и S2-* — после checkout два заказа CL-*.
-
-## 9. Pickup chain (заранее seeded, 2 мин)
-
-`client2@demo.local` → **Мои заказы** — статусы processing / in delivery / ready for pickup / received.
-
-Живой cross-role (acceptance test, не обязательно на сцене):
-`supplier1` → **Заказы клиентов** → confirm → delivery → `rep1` → complete → `master1` → **Выдача заказов** → принять → выдать.
+Не создавать сущности на встрече — seed уже содержит нужные состояния.
 
 ---
 
-После демо: `FINAL_REPORT.md` → **PHASE 5 BLOCKERS: NONE**.
+## 1. Master Dashboard + Calendar (3 мин)
+
+`master1@demo.local` — **Сегодня**: виджеты, DnD, календарь. **Календарь**: День/Неделя/Список, личное событие, категории.
+
+## 2. Client Booking (2 мин)
+
+`client1@demo.local` — поиск Красноярск → Анна → слот. Auto-confirm: запись сразу confirmed.  
+`client2` без auto-confirm — pending (если показывать контраст).
+
+## 3. Client Shop (2 мин)
+
+`client1` → **Магазин** → товар → корзина → самовывоз (имя филиала, не UUID) → заказ.
+
+## 4. Supplier Dashboard / Analytics (2 мин)
+
+`supplier1@demo.local` → Главная KPI, **Товары**, **Склад**, **Аналитика**.
+
+## 5. Representative Map (2 мин)
+
+`rep1@demo.local` → **Маршрут** → карта Leaflet, рекомендованный маршрут, **Деньги**.
+
+## 6. Knowledge Hub (2 мин)
+
+`master1` → База знаний: поиск, chips, статья. Коротко: `supplier1` редактор.
+
+## 7. Subscription + Scheme (2 мин)
+
+`master1` → Профиль → Подписка (trial).  
+Не обязательно на сцене: `master4` scheme required / `premium1` skip (уже в acceptance).
+
+## 8. Owner Staff / Privacy (2 мин)
+
+`master1` → **Команда** → Расписание сотрудника. **Настройки** → контакты мастерам OFF.  
+`employee1@demo.local` → Клиенты → карточка без телефона. Owner ON — контакты возвращаются.
+
+## 9. Blacklist / Recurring (кратко, 2 мин)
+
+Blacklist: `client3@demo.local` не записывается к Анне, записывается к Ивану (`master2`). Карточка у Анны — разблокировать.  
+Recurring: `master1` `/cosmetics/recurring` (есть weekly seed) или показать every N weeks из acceptance.
+
+`chain1@demo.local` — переключатель филиала (Красноярск / Новосибирск).  
+`admin1@demo.local` — операционный «Сегодня», без настроек владельца.
+
+---
+
+После закрытия Phase 6: `REQUIREMENTS_ACCEPTANCE.md`. Финальный server deploy — только после **PHASE 6 BLOCKERS: NONE**.

@@ -23,18 +23,42 @@ type CreateRecurringInput struct {
 	BuyerOrgID       uuid.UUID
 	PickupBranchID   uuid.UUID
 	Frequency        string
+	IntervalWeeks    int
 	PreferredWeekday *int
 	WindowStart      *int
 	WindowEnd        *int
 	StartDate        time.Time
+	EndDate          *time.Time
 	HorizonDays      int
 	Items            []RecurringItemIn
 }
 
+func normalizeFrequency(freq string, interval int) (string, int, error) {
+	freq = strings.ToLower(strings.TrimSpace(freq))
+	if interval <= 0 {
+		interval = 1
+	}
+	switch freq {
+	case "weekly":
+		return "weekly", 1, nil
+	case "biweekly":
+		return "every_n_weeks", 2, nil
+	case "every_n_weeks":
+		if interval < 1 || interval > 12 {
+			return "", 0, apperr.Validation("interval_weeks must be 1-12")
+		}
+		return "every_n_weeks", interval, nil
+	case "monthly":
+		return "monthly", interval, nil
+	default:
+		return "", 0, apperr.Validation("frequency must be weekly, every_n_weeks or monthly")
+	}
+}
+
 func (s *Service) CreateRecurring(ctx context.Context, actor uuid.UUID, in CreateRecurringInput) (*store.RecurringAgreement, error) {
-	freq := strings.ToLower(strings.TrimSpace(in.Frequency))
-	if freq != "weekly" && freq != "biweekly" && freq != "monthly" {
-		return nil, apperr.Validation("frequency must be weekly, biweekly or monthly")
+	freq, interval, err := normalizeFrequency(in.Frequency, in.IntervalWeeks)
+	if err != nil {
+		return nil, err
 	}
 	if in.SupplierOrgID == uuid.Nil || in.BuyerOrgID == uuid.Nil || in.PickupBranchID == uuid.Nil {
 		return nil, apperr.Validation("supplier, buyer and pickup branch are required")
@@ -55,9 +79,9 @@ func (s *Service) CreateRecurring(ctx context.Context, actor uuid.UUID, in Creat
 	now := s.now().UTC()
 	a := store.RecurringAgreement{
 		ID: ids.New(), SupplierOrgID: in.SupplierOrgID, BuyerOrgID: in.BuyerOrgID,
-		PickupBranchID: in.PickupBranchID, Frequency: freq, PreferredWeekday: in.PreferredWeekday,
+		PickupBranchID: in.PickupBranchID, Frequency: freq, IntervalWeeks: interval, PreferredWeekday: in.PreferredWeekday,
 		WindowStartMinute: in.WindowStart, WindowEndMinute: in.WindowEnd,
-		StartDate: in.StartDate.UTC(), Status: "pending", HorizonDays: horizon,
+		StartDate: in.StartDate.UTC(), EndDate: in.EndDate, Status: "pending", HorizonDays: horizon,
 		CreatedBy: actor, CreatedAt: now, UpdatedAt: now,
 	}
 	for _, it := range in.Items {
@@ -127,10 +151,17 @@ func (s *Service) DecideRecurring(ctx context.Context, actor, id uuid.UUID, appr
 }
 
 type RecurringProposal struct {
-	Frequency string   `json:"frequency,omitempty"`
-	StartDate string   `json:"start_date,omitempty"`
-	Qty       *float64 `json:"qty,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
+	Origin           string   `json:"origin,omitempty"`
+	PreviousStatus   string   `json:"previous_status,omitempty"`
+	Frequency        string   `json:"frequency,omitempty"`
+	IntervalWeeks    *int     `json:"interval_weeks,omitempty"`
+	StartDate        string   `json:"start_date,omitempty"`
+	EndDate          *string  `json:"end_date,omitempty"`
+	PreferredWeekday *int     `json:"preferred_weekday,omitempty"`
+	WindowStart      *int     `json:"window_start_minute,omitempty"`
+	WindowEnd        *int     `json:"window_end_minute,omitempty"`
+	Qty              *float64 `json:"qty,omitempty"`
+	Reason           string   `json:"reason,omitempty"`
 }
 
 func (s *Service) ProposeRecurring(ctx context.Context, actor, id uuid.UUID, p RecurringProposal) (*store.RecurringAgreement, error) {
@@ -141,8 +172,29 @@ func (s *Service) ProposeRecurring(ctx context.Context, actor, id uuid.UUID, p R
 	if a == nil {
 		return nil, apperr.NotFound("agreement not found")
 	}
-	if err := s.requireMembership(ctx, a.SupplierOrgID, actor, "owner", "admin"); err != nil {
-		return nil, err
+	origin := strings.ToLower(strings.TrimSpace(p.Origin))
+	if origin == "buyer" {
+		if err := s.requireMembership(ctx, a.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+		if a.Status != "active" && a.Status != "paused" {
+			return nil, apperr.Validation("only active or paused agreements can be revised")
+		}
+	} else {
+		origin = "supplier"
+		if err := s.requireMembership(ctx, a.SupplierOrgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+	}
+	p.Origin = origin
+	p.PreviousStatus = a.Status
+	if p.Frequency != "" {
+		freq, interval, err := normalizeFrequency(p.Frequency, ptrInt(p.IntervalWeeks))
+		if err != nil {
+			return nil, err
+		}
+		p.Frequency = freq
+		p.IntervalWeeks = &interval
 	}
 	raw, err := json.Marshal(p)
 	if err != nil {
@@ -158,6 +210,13 @@ func (s *Service) ProposeRecurring(ctx context.Context, actor, id uuid.UUID, p R
 	return a, nil
 }
 
+func ptrInt(v *int) int {
+	if v == nil {
+		return 1
+	}
+	return *v
+}
+
 func (s *Service) RespondRecurringProposal(ctx context.Context, actor, id uuid.UUID, accept bool) (*store.RecurringAgreement, error) {
 	a, err := s.store.GetRecurring(ctx, id)
 	if err != nil {
@@ -166,29 +225,42 @@ func (s *Service) RespondRecurringProposal(ctx context.Context, actor, id uuid.U
 	if a == nil {
 		return nil, apperr.NotFound("agreement not found")
 	}
-	if err := s.requireMembership(ctx, a.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
-		return nil, err
-	}
-	now := s.now().UTC()
-	if !accept {
-		if err := s.store.UpdateRecurringProposal(ctx, id, "pending", []byte("{}"), now); err != nil {
-			return nil, apperr.Internal(err)
-		}
-		a.Status = "pending"
-		a.ProposedChange = []byte("{}")
-		return a, nil
-	}
 	var p RecurringProposal
 	if len(a.ProposedChange) > 0 {
 		_ = json.Unmarshal(a.ProposedChange, &p)
 	}
-	var start *time.Time
+	if strings.EqualFold(p.Origin, "buyer") {
+		if err := s.requireMembership(ctx, a.SupplierOrgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+	} else if err := s.requireMembership(ctx, a.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	if !accept {
+		restore := strings.TrimSpace(p.PreviousStatus)
+		if restore == "" || restore == "pending_reconfirm" {
+			restore = "pending"
+		}
+		if err := s.store.UpdateRecurringProposal(ctx, id, restore, []byte("{}"), now); err != nil {
+			return nil, apperr.Internal(err)
+		}
+		a.Status = restore
+		a.ProposedChange = []byte("{}")
+		return a, nil
+	}
+	apply := store.RecurringApply{Frequency: p.Frequency, IntervalWeeks: p.IntervalWeeks, Qty: p.Qty, Weekday: p.PreferredWeekday, WindowStart: p.WindowStart, WindowEnd: p.WindowEnd}
 	if p.StartDate != "" {
 		if t, err := time.Parse("2006-01-02", p.StartDate); err == nil {
-			start = &t
+			apply.Start = &t
 		}
 	}
-	if err := s.store.ApplyRecurringProposal(ctx, id, p.Frequency, start, p.Qty, now); err != nil {
+	if p.EndDate != nil && *p.EndDate != "" {
+		if t, err := time.Parse("2006-01-02", *p.EndDate); err == nil {
+			apply.End = &t
+		}
+	}
+	if err := s.store.ApplyRecurringProposal(ctx, id, apply, now); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	updated, err := s.store.GetRecurring(ctx, id)
@@ -240,7 +312,10 @@ func (s *Service) generateRecurringHorizon(ctx context.Context, a *store.Recurri
 		return apperr.Validation("buyer warehouse location is required")
 	}
 	until := s.now().UTC().AddDate(0, 0, a.HorizonDays)
-	dates := recurringDates(a.StartDate, a.Frequency, a.PreferredWeekday, until)
+	if a.EndDate != nil && a.EndDate.Before(until) {
+		until = *a.EndDate
+	}
+	dates := recurringDates(a.StartDate, a.Frequency, a.IntervalWeeks, a.PreferredWeekday, until)
 	for _, day := range dates {
 		if day.Before(s.now().UTC().Add(-24 * time.Hour)) {
 			continue
@@ -277,6 +352,9 @@ func (s *Service) generateRecurringHorizon(ctx context.Context, a *store.Recurri
 			continue
 		}
 		desired := day
+		if a.WindowStartMinute != nil {
+			desired = day.Add(time.Duration(*a.WindowStartMinute) * time.Minute)
+		}
 		order, _, err := s.CreateSupplierOrder(ctx, a.CreatedBy, CreateOrderInput{
 			BuyerOrgID: a.BuyerOrgID, SupplierOrgID: a.SupplierOrgID, LocationID: locs[0].ID,
 			DestinationBranchID: a.PickupBranchID, PaymentMethod: "invoice",
@@ -284,7 +362,8 @@ func (s *Service) generateRecurringHorizon(ctx context.Context, a *store.Recurri
 			Comment:        "Регулярная поставка", DesiredAt: &desired, Items: items,
 		})
 		if err != nil {
-			return err
+			_ = s.store.InsertRecurringException(ctx, ids.New(), a.ID, "product_unavailable", err.Error(), nil, s.now().UTC())
+			continue
 		}
 		if err := s.store.InsertGeneratedOccurrence(ctx, a.ID, day, order.ID, s.now().UTC()); err != nil {
 			return apperr.Internal(err)
@@ -293,7 +372,7 @@ func (s *Service) generateRecurringHorizon(ctx context.Context, a *store.Recurri
 	return nil
 }
 
-func recurringDates(start time.Time, freq string, weekday *int, until time.Time) []time.Time {
+func recurringDates(start time.Time, freq string, intervalWeeks int, weekday *int, until time.Time) []time.Time {
 	d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 	if weekday != nil {
 		want := time.Weekday(*weekday)
@@ -301,16 +380,26 @@ func recurringDates(start time.Time, freq string, weekday *int, until time.Time)
 			d = d.AddDate(0, 0, 1)
 		}
 	}
+	stepDays := 7
+	switch freq {
+	case "biweekly":
+		stepDays = 14
+	case "every_n_weeks":
+		n := intervalWeeks
+		if n < 1 {
+			n = 1
+		}
+		stepDays = 7 * n
+	case "monthly":
+		stepDays = 0
+	}
 	var out []time.Time
 	for !d.After(until) {
 		out = append(out, d)
-		switch freq {
-		case "biweekly":
-			d = d.AddDate(0, 0, 14)
-		case "monthly":
+		if freq == "monthly" {
 			d = d.AddDate(0, 1, 0)
-		default:
-			d = d.AddDate(0, 0, 7)
+		} else {
+			d = d.AddDate(0, 0, stepDays)
 		}
 		if len(out) > 20 {
 			break

@@ -9,6 +9,7 @@ type ClientRow = {
   display_name: string
   phone: string | null
   email: string | null
+  contacts_hidden?: boolean
   segment: string
   visit_count: number
   last_visit_at: string | null
@@ -81,7 +82,7 @@ export function ClientsPage() {
             <p className="muted">
               Визитов: {c.visit_count}
               {c.last_visit_at ? ` · последний ${new Date(c.last_visit_at).toLocaleDateString('ru-RU')}` : ''}
-              {c.phone ? ` · ${c.phone}` : ''}
+              {c.contacts_hidden ? ' · контакты скрыты' : c.phone ? ` · ${c.phone}` : ''}
             </p>
             <Link className="btn btn-secondary btn-compact" to={`/clients/${c.id}`}>Карточка</Link>
           </article>

@@ -1,10 +1,11 @@
 # UI_ACCEPTANCE.md — Salon-X
 
-Дата проверки: **2026-08-18** (Phase 5).  
+Дата проверки: **2026-08-18** (Phase 6).  
 Стек: docker compose + seed. UI: `http://localhost:5173`. API: `http://localhost:8090`.  
 Пароль seed: `Password123!`.
 
 Playwright `frontend/e2e/salon-x.spec.ts`:
+- Phase 6: contact privacy browser flow; blacklist locality+unblock; recurring every-N-weeks propose/accept/pause/revise/cancel; role cabinets; chain branch switcher; hints dismiss; auto-confirm + blacklist priority.
 - Phase 5: Knowledge Hub search/filters/favorite/article/product reverse; supplier draft→preview→publish; API ownership + filter combo.
 - Phase 4: free scheme complete, premium skip, expired subscription, registration trial.
 - Phase 3: checkout e2e, multi-supplier API, cross-role pickup API, price-change UI, idempotency group.
@@ -64,9 +65,14 @@ _Previous Phase 2 rows retained below._
 | Master dashboard | Master owner `master1` | `/` | Важное сверху, календарь, виджеты | Yes | 390, 1920 warehouse-related | Заголовок «Сегодня, …». Настройка виджетов: вкл/выкл и размер, не drag-grid |
 | Master calendar | Master | `/calendar` | Day/Week/Month/List, блоки, DnD | Yes | 390 | FullCalendar. Resize записей откатывается; личные блоки можно растягивать |
 | Master services | Master | `/services` | Прайс и услуги | Yes | not this run | Отдельный кабинет услуг, не owner-staff |
-| Salon owner staff | Salon owner `master1` | `/staff` | Команда, invite по email, политика контактов | Yes | 390 | Toggle «Показывать контактные данные клиентов мастерам» |
-| Chain owner | `chain1@demo.local` | `/` + sidenav | Сеть, switcher филиала | Partial | not this run | Switcher в sidenav (localStorage). Нет отдельного экрана сети |
-| Salon admin | `admin1@demo.local` | `/` | Операционный кабинет без owner-финансов | Partial | not this run | Nav без косметики/услуг owner; staff доступен |
+| Salon owner staff | Salon owner `master1` | `/staff` | Команда, invite, расписание сотрудника | Yes | 390, 1366 | Drawer «Расписание», не чужой кабинет |
+| Salon settings / privacy | Owner | `/salon/settings` | Toggle контактов мастерам | Yes | 390, 1366 | Org-level policy; employee не видит phone/email |
+| Chain owner | `chain1@demo.local` | `/` + calendar + staff | Server-side branches, KPI филиала | Yes | 390, 1366 | `chain-branch-switcher`; access по membership |
+| Salon admin | `admin1@demo.local` | `/` | Операционный кабинет без owner-финансов | Yes | 390 | Нет Настройки/Аналитика/Подписка салона |
+| Employee master | `employee1@demo.local` | `/` | Кабинет мастера салона + privacy | Yes | 390 | Нет Staff/Settings |
+| Recurring supplies | Buyer / Supplier | `/cosmetics/recurring`, `/supplier/recurring` | N weeks, diff, pause, reconfirm | Yes | 390, 1366 | Было → Предложено |
+| Client card blacklist | Master | `/clients/:id` | no-show count, unblock | Yes | 390, 1366 | POST unblock |
+| Hints | New user | major screens | dismiss + global OFF | Yes | 390 | employee1 ON; premium1 OFF |
 | Supplier dashboard | `supplier1@demo.local` | `/supplier` | Рабочий KPI dashboard после login | Yes | 390, 430, 768, 1366, 1920 | 8 KPI; на ≤700 только сегодня/заказы/оплата/доставки. Не каталог товаров |
 | Supplier analytics | Supplier | `/supplier/analytics` | Период + Recharts | Yes | 390, 430, 768, 1366, 1920 | Сегодня/неделя/месяц/квартал/произвольный. Area/bar/pie, reps bar+table. Order+Payment |
 | Supplier warehouse | Supplier / Rep | `/warehouse` | Остатки, фото, статус | Yes | 390 (e2e) | Rep: статусы без qty. Supplier: доступно · резерв · в пути + движения |

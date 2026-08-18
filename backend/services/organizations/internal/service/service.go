@@ -220,6 +220,17 @@ func (s *Service) HasActiveMembership(ctx context.Context, orgID, userID uuid.UU
 	return ok, nil
 }
 
+func (s *Service) requireOwner(ctx context.Context, orgID, actorID uuid.UUID) error {
+	ok, err := s.store.HasMembership(ctx, orgID, actorID, "owner")
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !ok {
+		return apperr.Forbidden("not allowed")
+	}
+	return nil
+}
+
 func (s *Service) requireOwnerAdmin(ctx context.Context, orgID, actorID uuid.UUID) error {
 	ok, err := s.store.HasMembership(ctx, orgID, actorID, "owner", "admin")
 	if err != nil {

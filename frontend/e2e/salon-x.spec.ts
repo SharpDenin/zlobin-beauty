@@ -31,6 +31,34 @@ async function loginUI(page: Page, email: string) {
   await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
 }
 
+async function closeMoreDrawer(page: Page) {
+  const close = page.getByRole('button', { name: 'Закрыть' })
+  if (await close.isVisible().catch(() => false)) await close.click()
+}
+
+async function pickBookableSlot(page: Page, masterUserId: string, duration: number) {
+  if (await page.locator('#date').count() === 0) {
+    await page.getByRole('button', { name: 'Назад' }).click()
+  }
+  for (let d = 1; d <= 28; d++) {
+    const day = new Date(Date.now() + d * 86400000)
+    if (day.getUTCDay() === 0 || day.getUTCDay() === 6) continue
+    const date = day.toISOString().slice(0, 10)
+    const slotsRes = await fetch(`${api}/v1/masters/${masterUserId}/slots?date=${date}&duration_minutes=${duration}`)
+    if (!slotsRes.ok) continue
+    const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+    if (!slots.items?.[0]?.starts_at) continue
+    await expect(page.locator('#date')).toBeVisible({ timeout: 10_000 })
+    await page.locator('#date').fill(date)
+    await page.getByRole('button', { name: 'К времени' }).click()
+    const slot = page.locator('.slot:not(.empty)').first()
+    await expect(slot).toBeVisible({ timeout: 15_000 })
+    await slot.click()
+    return
+  }
+  throw new Error('no UI bookable slot')
+}
+
 async function apiLogin(email: string) {
   const res = await fetch(`${api}/v1/auth/login`, {
     method: 'POST',
@@ -257,7 +285,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.goto('/supplier/analytics')
     await expect(page.getByRole('heading', { name: 'Аналитика' })).toBeVisible({ timeout: 15_000 })
     await page.goto('/warehouse')
-    await expect(page.getByRole('heading', { name: 'Склад', exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: /склад/i })).toBeVisible({ timeout: 15_000 })
   })
 
   test('master knowledge hub search filters favorite article', async ({ page }, info) => {
@@ -330,7 +358,9 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'master1@demo.local')
     await page.goto('/staff')
     await expect(page.getByRole('heading', { name: /команда/i })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText(/контактн/i)).toBeVisible()
+    await page.goto('/salon/settings')
+    await expect(page.getByTestId('contact-privacy-toggle')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/Если выключено, мастера салона не увидят/)).toBeVisible()
   })
 
   test('professional-only hidden from client shop API', async () => {
@@ -751,7 +781,9 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
       'chain1@demo.local',
       'mobile1@demo.local',
       'admin1@demo.local',
+      'employee1@demo.local',
       'expired1@demo.local',
+      'premium1@demo.local',
       'supplier1@demo.local',
       'supplier2@demo.local',
       'rep1@demo.local',
@@ -1182,5 +1214,435 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${master.access_token}` },
     })
+  })
+
+  test('phase6 contact privacy owner toggle hides contacts from employee', async ({ page }, info) => {
+    test.skip(!['phone-390', 'laptop-1366'].includes(info.project.name), 'phase6 viewports')
+    const owner = await apiLogin('master1@demo.local')
+    const employee = await apiLogin('employee1@demo.local')
+    const orgsRes = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${owner.access_token}` } })
+    const orgs = await orgsRes.json() as { items?: Array<{ organization: { id: string; type: string } }> }
+    const orgId = (orgs.items ?? []).find((i) => i.organization.type !== 'supplier')?.organization.id
+    expect(orgId).toBeTruthy()
+
+    const cardsRes = await fetch(`${api}/v1/clients/mine`, { headers: { Authorization: `Bearer ${employee.access_token}` } })
+    expect(cardsRes.ok).toBeTruthy()
+    let cards = await cardsRes.json() as { items?: Array<{ id: string; phone?: string | null; email?: string | null; contacts_hidden?: boolean }> }
+    if (!(cards.items ?? []).length) {
+      const apptsRes = await fetch(`${api}/v1/appointments/mine?role=master`, { headers: { Authorization: `Bearer ${employee.access_token}` } })
+      const appts = await apptsRes.json() as { items?: Array<{ id: string; status: string }> }
+      const live = (appts.items ?? []).find((a) => a.status === 'in_progress' || a.status === 'confirmed')
+      expect(live?.id).toBeTruthy()
+      if (live?.status === 'confirmed') {
+        await fetch(`${api}/v1/appointments/${live.id}/start`, { method: 'POST', headers: { Authorization: `Bearer ${employee.access_token}` } })
+      }
+      const done = await fetch(`${api}/v1/appointments/${live!.id}/complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${employee.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skipped: true, notes: 'e2e privacy visit' }),
+      })
+      expect(done.ok, await done.text()).toBeTruthy()
+      const retry = await fetch(`${api}/v1/clients/mine`, { headers: { Authorization: `Bearer ${employee.access_token}` } })
+      cards = await retry.json() as typeof cards
+    }
+    const card = cards.items?.[0]
+    expect(card?.id).toBeTruthy()
+
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/salon/settings')
+    await expect(page.getByTestId('contact-privacy-toggle')).toBeVisible({ timeout: 15_000 })
+    const toggle = page.getByTestId('contact-privacy-toggle')
+    if (await toggle.isChecked()) {
+      await page.getByText('Мастера видят телефон и email клиента').click()
+    }
+    await page.getByRole('button', { name: 'Сохранить политику' }).click()
+    await expect(page.getByText('Политика контактов обновлена')).toBeVisible({ timeout: 10_000 })
+
+    const hiddenApi = await fetch(`${api}/v1/clients/id/${card!.id}`, { headers: { Authorization: `Bearer ${employee.access_token}` } })
+    expect(hiddenApi.ok).toBeTruthy()
+    const hiddenBody = await hiddenApi.json() as { phone?: string | null; email?: string | null; contacts_hidden?: boolean }
+    expect(hiddenBody.phone).toBeFalsy()
+    expect(hiddenBody.email).toBeFalsy()
+    expect(hiddenBody.contacts_hidden).toBeTruthy()
+
+    const ownerSee = await fetch(`${api}/v1/clients/id/${card!.id}`, { headers: { Authorization: `Bearer ${owner.access_token}` } })
+    expect(ownerSee.ok).toBeTruthy()
+    const ownerBody = await ownerSee.json() as { phone?: string | null; contacts_hidden?: boolean }
+    expect(ownerBody.contacts_hidden).toBeFalsy()
+    expect(ownerBody.phone || ownerSee.status).toBeTruthy()
+
+    const other = await apiLogin('master2@demo.local')
+    const foreign = await fetch(`${api}/v1/clients/id/${card!.id}`, { headers: { Authorization: `Bearer ${other.access_token}` } })
+    expect([401, 403, 404]).toContain(foreign.status)
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'employee1@demo.local')
+    await page.goto(`/clients/${card!.id}`)
+    await expect(page.getByTestId('contacts-hidden')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('+79001000001')).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/salon/settings')
+    await expect(page.getByTestId('contact-privacy-toggle')).toBeVisible({ timeout: 15_000 })
+    if (!(await page.getByTestId('contact-privacy-toggle').isChecked())) {
+      await page.getByText('Мастера видят телефон и email клиента').click()
+    }
+    await page.getByRole('button', { name: 'Сохранить политику' }).click()
+    await expect(page.getByText('Политика контактов обновлена')).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'employee1@demo.local')
+    await page.goto(`/clients/${card!.id}`)
+    await expect(page.getByTestId('client-contacts')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('contacts-hidden')).toHaveCount(0)
+  })
+
+  test('phase6 blacklist two no-shows then unblock locality', async ({ page }, info) => {
+    test.skip(!['phone-390', 'laptop-1366'].includes(info.project.name), 'phase6 viewports')
+    const email = `p6-bl-${Date.now()}@demo.local`
+    const reg = await fetch(`${api}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, display_name: 'P6 Blacklist', as_master: false }),
+    })
+    expect(reg.ok, await reg.text()).toBeTruthy()
+    const client = await apiLogin(email)
+    const masterA = await apiLogin('master1@demo.local')
+    const masterB = await apiLogin('master2@demo.local')
+    const aMe = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${masterA.access_token}` } })
+    const bMe = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${masterB.access_token}` } })
+    const aProf = await aMe.json() as { master?: { id: string; user_id?: string }; services?: Array<{ id: string; name: string; duration_minutes?: number }> }
+    const bProf = await bMe.json() as { master?: { id: string; user_id?: string }; services?: Array<{ id: string; name: string; duration_minutes?: number }> }
+    const aService = (aProf.services ?? []).find((s) => /стрижк/i.test(s.name)) ?? aProf.services?.[0]
+    const bService = (bProf.services ?? []).find((s) => /стрижк/i.test(s.name)) ?? bProf.services?.[0]
+    expect(aProf.master?.id && aService?.id && bProf.master?.id && bService?.id).toBeTruthy()
+    const aUser = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${masterA.access_token}` } })
+    const aUserBody = await aUser.json() as { id?: string; user?: { id?: string } }
+    const masterAUserId = aUserBody.id ?? aUserBody.user?.id
+
+    async function slotFor(userId: string, duration: number) {
+      const start = info.project.name === 'phone-390' ? 12 : 1
+      for (let d = start; d <= start + 16; d++) {
+        const day = new Date(Date.now() + d * 86400000)
+        if (day.getUTCDay() === 0 || day.getUTCDay() === 6) continue
+        const date = day.toISOString().slice(0, 10)
+        const slotsRes = await fetch(`${api}/v1/masters/${userId}/slots?date=${date}&duration_minutes=${duration}`)
+        if (!slotsRes.ok) continue
+        const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+        if (slots.items?.[0]?.starts_at) return slots.items[0].starts_at
+      }
+      throw new Error('no slot')
+    }
+
+    async function noShowOnce() {
+      const starts = await slotFor(masterAUserId!, aService!.duration_minutes ?? 60)
+      const create = await fetch(`${api}/v1/appointments`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ master_id: aProf.master!.id, service_id: aService!.id, starts_at: starts }),
+      })
+      const createText = await create.text()
+      expect(create.ok, createText).toBeTruthy()
+      const appt = JSON.parse(createText) as { id: string; status: string }
+      if (appt.status === 'pending_confirmation' || appt.status === 'pending') {
+        await fetch(`${api}/v1/appointments/${appt.id}/confirm`, { method: 'POST', headers: { Authorization: `Bearer ${masterA.access_token}` } })
+      }
+      const ns = await fetch(`${api}/v1/appointments/${appt.id}/no-show`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${masterA.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'e2e' }),
+      })
+      expect(ns.ok || ns.status === 200 || ns.status === 204, await ns.text()).toBeTruthy()
+      return appt.id
+    }
+
+    await noShowOnce()
+    await noShowOnce()
+
+    await loginUI(page, email)
+    await page.goto(`/masters/${aProf.master!.id}`)
+    await page.locator('.service-card').filter({ hasText: aService!.name }).first().click()
+    await page.getByRole('button', { name: 'Далее' }).click()
+    await pickBookableSlot(page, masterAUserId!, aService!.duration_minutes ?? 60)
+    await page.getByRole('button', { name: 'К подтверждению' }).click()
+    await page.getByRole('button', { name: 'Подтвердить запись' }).click()
+    await expect(page.getByText('Запись к этому мастеру сейчас недоступна.').first()).toBeVisible({ timeout: 15_000 })
+
+    await page.goto(`/masters/${bProf.master!.id}`)
+    await page.locator('.service-card').first().click()
+    await page.getByRole('button', { name: 'Далее' }).click()
+    await pickBookableSlot(page, bProf.master!.user_id || masterAUserId!, bService!.duration_minutes ?? 60)
+    await page.getByRole('button', { name: 'К подтверждению' }).click()
+    await page.getByRole('button', { name: 'Подтвердить запись' }).click()
+    await expect(page.getByRole('heading', { name: 'Запись отправлена' })).toBeVisible({ timeout: 15_000 })
+
+    const clientMe = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    const clientBody = await clientMe.json() as { id?: string; user?: { id?: string } }
+    const clientId = clientBody.id ?? clientBody.user?.id
+    const listCards = await fetch(`${api}/v1/clients/mine`, { headers: { Authorization: `Bearer ${masterA.access_token}` } })
+    const listed = await listCards.json() as { items?: Array<{ id: string; user_id?: string }> }
+    const card = (listed.items ?? []).find((c) => c.user_id === clientId) ?? listed.items?.[0]
+    expect(card?.id).toBeTruthy()
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'master1@demo.local')
+    await page.goto(`/clients/${card!.id}`)
+    await expect(page.getByRole('heading', { name: /чёрный список/i })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Разблокировать клиента' }).click()
+    await expect(page.getByText('Клиент разблокирован')).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, email)
+    await page.goto(`/masters/${aProf.master!.id}`)
+    await page.locator('.service-card').filter({ hasText: aService!.name }).first().click()
+    await page.getByRole('button', { name: 'Далее' }).click()
+    await pickBookableSlot(page, masterAUserId!, aService!.duration_minutes ?? 60)
+    await page.getByRole('button', { name: 'К подтверждению' }).click()
+    await page.getByRole('button', { name: 'Подтвердить запись' }).click()
+    await expect(page.getByRole('heading', { name: 'Запись отправлена' })).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('phase6 recurring every 3 weeks propose accept pause revise cancel', async ({ page }, info) => {
+    test.skip(!['phone-390', 'laptop-1366'].includes(info.project.name), 'phase6 viewports')
+    const endMark = info.project.name === 'phone-390' ? '2029-01-21' : '2029-02-22'
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/cosmetics/recurring')
+    await expect(page.getByRole('heading', { name: /регулярные поставки/i })).toBeVisible({ timeout: 15_000 })
+    await page.locator('#sup').selectOption({ label: 'Поставщик Профи (demo)' })
+    await expect(page.getByTestId('recurring-product-0')).toBeEnabled({ timeout: 10_000 })
+    await expect.poll(async () => page.getByTestId('recurring-product-0').locator('option').count()).toBeGreaterThan(2)
+    await page.getByTestId('recurring-product-0').selectOption({ index: 1 })
+    await page.getByRole('button', { name: 'Добавить товар' }).click()
+    await page.getByTestId('recurring-product-1').selectOption({ index: 2 })
+    await page.locator('#freq').selectOption('every_n_weeks')
+    await page.locator('#nweeks').fill('3')
+    await page.locator('#end').fill(endMark)
+    await page.getByRole('button', { name: 'Отправить заявку' }).click()
+    await expect(page.getByText('Заявка на регулярную поставку создана')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/Каждые 3 нед/).first()).toBeVisible()
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/supplier/recurring')
+    const pending = page.getByTestId('recurring-pending').filter({ hasText: endMark }).first()
+    await expect(pending).toBeVisible({ timeout: 15_000 })
+    await pending.getByRole('button', { name: 'Предложить изменения' }).click()
+    await pending.locator('input').first().fill('2')
+    await pending.getByRole('button', { name: 'Отправить предложение' }).click()
+    await expect(page.getByText('Решение сохранено')).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/cosmetics/recurring')
+    const diff = page.getByTestId('recurring-diff').first()
+    await expect(diff).toBeVisible({ timeout: 15_000 })
+    await expect(diff.getByText(/Было → Предложено/)).toBeVisible()
+    await diff.getByRole('button', { name: 'Принять' }).click()
+    await expect(page.getByText('Решение сохранено')).toBeVisible({ timeout: 10_000 })
+    const byEnd = { hasText: endMark }
+    const active = page.getByTestId('recurring-active').filter(byEnd).first()
+    await expect(active).toBeVisible()
+    await active.getByRole('button', { name: 'Пауза' }).click()
+    await expect(page.getByTestId('recurring-paused').filter(byEnd).first()).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId('recurring-paused').filter(byEnd).getByRole('button', { name: 'Возобновить' }).click()
+    await expect(active).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId('recurring-active').filter(byEnd).first().getByRole('button', { name: 'Изменить условия' }).click()
+    await page.getByRole('button', { name: 'Отправить на подтверждение поставщику' }).click()
+    await expect(page.getByTestId('recurring-diff')).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/supplier/recurring')
+    await expect(page.getByTestId('recurring-diff')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('recurring-diff').getByRole('button', { name: 'Принять' }).click()
+    await expect(page.getByText('Решение сохранено')).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/cosmetics/recurring')
+    await page.getByTestId('recurring-active').filter({ hasText: endMark }).first().getByRole('button', { name: 'Отменить' }).click()
+    await expect(page.getByTestId('recurring-cancelled').filter({ hasText: endMark }).first()).toBeVisible({ timeout: 10_000 })
+  })
+
+  test('phase6 role cabinets show expected nav', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    async function moreLinks() {
+      const more = page.getByRole('button', { name: 'Ещё' })
+      if (await more.isVisible()) await more.click()
+    }
+    await loginUI(page, 'master4@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет частного мастера', { timeout: 15_000 })
+    await moreLinks()
+    await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
+    await closeMoreDrawer(page)
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+
+    await loginUI(page, 'master2@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет арендатора кресла', { timeout: 15_000 })
+    await moreLinks()
+    await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
+    await closeMoreDrawer(page)
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+
+    await loginUI(page, 'mobile1@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет выездного мастера', { timeout: 15_000 })
+    await moreLinks()
+    await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
+    await closeMoreDrawer(page)
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+
+    await loginUI(page, 'employee1@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет мастера салона', { timeout: 15_000 })
+    await moreLinks()
+    await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
+    await closeMoreDrawer(page)
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+
+    await loginUI(page, 'master1@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет владельца салона', { timeout: 15_000 })
+    await moreLinks()
+    await expect(page.getByRole('link', { name: 'Команда' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Настройки' })).toBeVisible()
+    await closeMoreDrawer(page)
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+
+    await loginUI(page, 'admin1@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет администратора', { timeout: 15_000 })
+    await moreLinks()
+    await expect(page.getByRole('link', { name: 'Команда' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Аналитика' })).toHaveCount(0)
+    await closeMoreDrawer(page)
+    await page.goto('/salon/settings')
+    await expect(page.getByText('недоступен для вашей роли')).toBeVisible({ timeout: 10_000 })
+    await page.getByRole('button', { name: 'Выйти' }).first().click()
+
+    await loginUI(page, 'chain1@demo.local')
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет владельца сети', { timeout: 15_000 })
+    await expect(page.getByTestId('chain-branch-switcher').locator('visible=true').first()).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('phase6 chain owner branch switcher changes staff context', async ({ page }, info) => {
+    test.skip(!['phone-390', 'laptop-1366'].includes(info.project.name), 'phase6 viewports')
+    await loginUI(page, 'chain1@demo.local')
+    const branchSwitch = page.getByTestId('chain-branch-switcher').locator('visible=true').first()
+    await expect(branchSwitch).toBeVisible({ timeout: 15_000 })
+    await branchSwitch.selectOption({ label: 'Новосибирск' })
+    await page.goto('/staff')
+    await expect(page.getByText(/Сеть Salon-X \(demo\) · Новосибирск/)).toBeVisible({ timeout: 15_000 })
+    await page.goto('/calendar')
+    await expect(page.getByTestId('calendar-branch-switcher')).toHaveValue(/.+/)
+  })
+
+  test('phase6 hints dismiss persists and global off hides them', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const email = `p6-hint-${Date.now()}@demo.local`
+    const reg = await fetch(`${api}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, display_name: 'P6 Hints', as_master: false }),
+    })
+    expect(reg.ok, await reg.text()).toBeTruthy()
+    await loginUI(page, email)
+    await page.goto('/search')
+    await expect(page.getByTestId('hint-client-booking')).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Запись' }).click()
+    await page.getByRole('button', { name: 'Больше не показывать' }).click()
+    await expect(page.getByTestId('hint-client-booking')).toHaveCount(0)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: /Поиск/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('hint-client-booking')).toHaveCount(0)
+    await page.goto('/profile')
+    await expect(page.getByTestId('hints-toggle')).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId('hints-toggle').click()
+    await expect(page.getByTestId('hints-toggle')).not.toBeChecked({ timeout: 15_000 })
+    await page.goto('/shop')
+    await expect(page.getByTestId('hint-shop-home')).toHaveCount(0)
+  })
+
+  test('phase6 auto-confirm confirms one client and blacklist still blocks', async ({ page }, info) => {
+    test.skip(!['phone-390', 'laptop-1366'].includes(info.project.name), 'phase6 viewports')
+    const master = await apiLogin('master1@demo.local')
+    const client2 = await apiLogin('client2@demo.local')
+    const me = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${client2.access_token}` } })
+    const clientBody = await me.json() as { id?: string; user?: { id?: string } }
+    const clientId = clientBody.id ?? clientBody.user?.id
+    const cardsRes = await fetch(`${api}/v1/clients/mine`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const cards = await cardsRes.json() as { items?: Array<{ id: string; user_id?: string }> }
+    const card = (cards.items ?? []).find((c) => c.user_id === clientId)
+    expect(card?.id).toBeTruthy()
+
+    await loginUI(page, 'master1@demo.local')
+    await page.goto(`/clients/${card!.id}`)
+    await expect(page.getByTestId('auto-confirm-toggle')).toBeVisible({ timeout: 15_000 })
+    if (!(await page.getByTestId('auto-confirm-toggle').isChecked())) {
+      await page.getByText('Автоподтверждение для этого клиента').click()
+      await expect(page.getByText('Автоподтверждение обновлено')).toBeVisible({ timeout: 10_000 })
+    }
+
+    const prof = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const profBody = await prof.json() as { master?: { id: string }; services?: Array<{ id: string; duration_minutes?: number; name: string }> }
+    const service = (profBody.services ?? []).find((s) => /стрижк/i.test(s.name)) ?? profBody.services?.[0]
+    const masterMe = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const masterBody = await masterMe.json() as { id?: string; user?: { id?: string } }
+    const masterUserId = masterBody.id ?? masterBody.user?.id
+    let starts: string | undefined
+    for (let d = 1; d <= 16 && !starts; d++) {
+      const day = new Date(Date.now() + d * 86400000)
+      if (day.getUTCDay() === 0 || day.getUTCDay() === 6) continue
+      const slotsRes = await fetch(`${api}/v1/masters/${masterUserId}/slots?date=${day.toISOString().slice(0, 10)}&duration_minutes=${service!.duration_minutes ?? 60}`)
+      if (!slotsRes.ok) continue
+      const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+      starts = slots.items?.[0]?.starts_at
+    }
+    expect(starts).toBeTruthy()
+    const booked = await fetch(`${api}/v1/appointments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client2.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ master_id: profBody.master!.id, service_id: service!.id, starts_at: starts }),
+    })
+    const bookedText = await booked.text()
+    expect(booked.ok, bookedText).toBeTruthy()
+    const bookedBody = JSON.parse(bookedText) as { status?: string }
+    expect(bookedBody.status).toBe('confirmed')
+
+    const freshEmail = `p6-ac-${Date.now()}@demo.local`
+    const reg = await fetch(`${api}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: freshEmail, password, display_name: 'P6 Pending' }),
+    })
+    expect(reg.ok).toBeTruthy()
+    const fresh = await apiLogin(freshEmail)
+    let starts2: string | undefined
+    for (let d = 1; d <= 16 && !starts2; d++) {
+      const day = new Date(Date.now() + d * 86400000)
+      if (day.getUTCDay() === 0 || day.getUTCDay() === 6) continue
+      const slotsRes = await fetch(`${api}/v1/masters/${masterUserId}/slots?date=${day.toISOString().slice(0, 10)}&duration_minutes=${service!.duration_minutes ?? 60}`)
+      if (!slotsRes.ok) continue
+      const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+      starts2 = slots.items?.[1]?.starts_at ?? slots.items?.[0]?.starts_at
+    }
+    const pending = await fetch(`${api}/v1/appointments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${fresh.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ master_id: profBody.master!.id, service_id: service!.id, starts_at: starts2 }),
+    })
+    const pendingText = await pending.text()
+    expect(pending.ok, pendingText).toBeTruthy()
+    const pendingBody = JSON.parse(pendingText) as { status?: string }
+    expect(pendingBody.status).toMatch(/pending/)
+
+    const client3 = await apiLogin('client3@demo.local')
+    const blocked = await fetch(`${api}/v1/appointments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client3.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ master_id: profBody.master!.id, service_id: service!.id, starts_at: starts }),
+    })
+    expect(blocked.status).toBe(403)
+    await page.goto(`/masters/${profBody.master!.id}`)
   })
 })

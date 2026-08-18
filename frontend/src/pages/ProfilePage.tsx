@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useCabinet } from '@/shared/lib/cabinet'
 
 const profileSchema = z.object({
   display_name: z.string().min(2, 'Минимум 2 символа'),
@@ -53,6 +54,9 @@ export function ProfilePage() {
     },
   })
 
+  const cabinet = useCabinet()
+  const showSubscription = cabinet.kind !== 'salon_admin' && cabinet.kind !== 'client'
+
   return (
     <main className="page stack">
       <h1>Профиль</h1>
@@ -81,7 +85,7 @@ export function ProfilePage() {
         <SubscriptionHints />
         <div className="row">
           <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
-          <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>
+          {showSubscription && <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>}
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
           <button className="btn btn-danger" type="button" onClick={() => void logout()}>Выйти</button>
         </div>
@@ -106,6 +110,7 @@ function SubscriptionHints() {
     queryFn: () => apiRequest<{ hints_enabled: boolean }>('/v1/me/hints', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
+  const qc = useQueryClient()
   const toggleHints = useMutation({
     mutationFn: () =>
       apiRequest('/v1/me/hints', {
@@ -113,6 +118,7 @@ function SubscriptionHints() {
         token: accessToken,
         body: { hints_enabled: !(hints.data?.hints_enabled ?? true) },
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me-hints'] }),
   })
   const plan = sub.data?.effective_plan === 'premium' ? 'Premium' : 'Free'
   const trial = sub.data?.status === 'trial' && sub.data.trial_ends_at
@@ -129,10 +135,11 @@ function SubscriptionHints() {
       <label className="field-check">
         <input
           type="checkbox"
+          data-testid="hints-toggle"
           checked={hints.data?.hints_enabled !== false}
           onChange={() => toggleHints.mutate()}
         />
-        <span>Показывать подсказки новичкам</span>
+        <span>Подсказки интерфейса</span>
       </label>
     </section>
   )

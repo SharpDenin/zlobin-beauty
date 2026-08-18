@@ -263,10 +263,64 @@ func (s *Service) SetWorkingHours(ctx context.Context, masterUserID uuid.UUID, i
 			ID: ids.New(), MasterUserID: masterUserID, Weekday: in.Weekday, StartMinute: in.StartMinute, EndMinute: in.EndMinute,
 		})
 	}
+	if err := s.rejectHoursIfAppointmentsOutside(ctx, masterUserID, inputs); err != nil {
+		return nil, err
+	}
 	if err := s.store.ReplaceWorkingHours(ctx, masterUserID, hours); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	return hours, nil
+}
+
+func (s *Service) SetStaffWorkingHours(ctx context.Context, actor, orgID, masterUserID uuid.UUID, inputs []HoursInput) ([]domain.WorkingHours, error) {
+	if masterUserID == uuid.Nil {
+		return nil, apperr.Validation("master_user_id is required")
+	}
+	if actor != masterUserID {
+		if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+		if err := s.requireMembership(ctx, orgID, masterUserID, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+	}
+	return s.SetWorkingHours(ctx, masterUserID, inputs)
+}
+
+func (s *Service) rejectHoursIfAppointmentsOutside(ctx context.Context, masterUserID uuid.UUID, inputs []HoursInput) error {
+	from := s.now().UTC()
+	to := from.AddDate(0, 0, 60)
+	items, err := s.store.ListAppointmentsInRange(ctx, masterUserID, from, to)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	byWeekday := map[int]HoursInput{}
+	for _, in := range inputs {
+		byWeekday[in.Weekday] = in
+	}
+	for _, a := range items {
+		tz := a.LocationTimezone
+		if tz == "" {
+			tz = "Europe/Moscow"
+		}
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			loc = time.UTC
+		}
+		local := a.StartsAt.In(loc)
+		wd := int(local.Weekday())
+		startMin := local.Hour()*60 + local.Minute()
+		endLocal := a.EndsAt.In(loc)
+		endMin := endLocal.Hour()*60 + endLocal.Minute()
+		if endLocal.Day() != local.Day() || endMin <= startMin {
+			endMin = 24 * 60
+		}
+		hours, ok := byWeekday[wd]
+		if !ok || startMin < hours.StartMinute || endMin > hours.EndMinute {
+			return apperr.Conflict("existing appointments would fall outside the new schedule")
+		}
+	}
+	return nil
 }
 
 func (s *Service) GetWorkingHours(ctx context.Context, masterUserID uuid.UUID) ([]domain.WorkingHours, error) {
@@ -324,6 +378,18 @@ func (s *Service) ListScheduleExceptions(ctx context.Context, masterUserID uuid.
 		items = []domain.ScheduleException{}
 	}
 	return items, nil
+}
+
+func (s *Service) UpsertStaffScheduleExceptions(ctx context.Context, actor, orgID, masterUserID uuid.UUID, inputs []ScheduleExceptionInput) ([]domain.ScheduleException, error) {
+	if actor != masterUserID {
+		if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+		if err := s.requireMembership(ctx, orgID, masterUserID, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+	}
+	return s.UpsertScheduleExceptions(ctx, masterUserID, inputs)
 }
 
 func (s *Service) UpsertScheduleExceptions(ctx context.Context, masterUserID uuid.UUID, inputs []ScheduleExceptionInput) ([]domain.ScheduleException, error) {
@@ -770,6 +836,7 @@ func (s *Service) NoShow(ctx context.Context, appointmentID, actorUserID uuid.UU
 		return nil, err
 	}
 	s.afterNoShow(ctx, a, actorUserID)
+	s.createVisitRecord(ctx, a)
 	return a, nil
 }
 
@@ -949,13 +1016,43 @@ func (s *Service) createVisitRecord(ctx context.Context, a *domain.Appointment) 
 	if s.clientsURL == "" || s.internalToken == "" {
 		return
 	}
-	payload, _ := json.Marshal(map[string]any{
+	display := "Клиент"
+	payload := map[string]any{
 		"appointment_id": a.ID.String(), "organization_id": a.OrganizationID.String(),
 		"master_user_id": a.MasterUserID.String(), "client_user_id": a.ClientUserID.String(),
 		"service_name": a.ServiceName, "price_minor": a.PriceMinor, "currency": a.Currency,
-		"started_at": a.StartsAt, "completed_at": a.EndsAt, "display_name": "Клиент",
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.clientsURL+"/v1/internal/visits/from-appointment", strings.NewReader(string(payload)))
+		"started_at": a.StartsAt, "completed_at": a.EndsAt, "display_name": display,
+	}
+	if s.identityURL != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/users/"+a.ClientUserID.String(), nil)
+		if err == nil {
+			req.Header.Set("X-Internal-Token", s.internalToken)
+			if resp, err := s.httpClient.Do(req); err == nil {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+				_ = resp.Body.Close()
+				if resp.StatusCode < 300 {
+					var u struct {
+						DisplayName string  `json:"display_name"`
+						Phone       *string `json:"phone"`
+						Email       *string `json:"email"`
+					}
+					if json.Unmarshal(body, &u) == nil {
+						if strings.TrimSpace(u.DisplayName) != "" {
+							payload["display_name"] = u.DisplayName
+						}
+						if u.Phone != nil && strings.TrimSpace(*u.Phone) != "" {
+							payload["phone"] = *u.Phone
+						}
+						if u.Email != nil && strings.TrimSpace(*u.Email) != "" {
+							payload["email"] = *u.Email
+						}
+					}
+				}
+			}
+		}
+	}
+	raw, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.clientsURL+"/v1/internal/visits/from-appointment", strings.NewReader(string(raw)))
 	if err != nil {
 		return
 	}

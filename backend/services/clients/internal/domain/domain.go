@@ -17,6 +17,7 @@ type ClientCard struct {
 	Preferences    string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	ContactsHidden bool
 }
 
 // ClientCardListItem is a card with visit aggregates for master CRM segments.

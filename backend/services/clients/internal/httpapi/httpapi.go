@@ -59,6 +59,8 @@ func (a *API) fromAppointment(w http.ResponseWriter, r *http.Request) {
 		StartedAt      time.Time `json:"started_at"`
 		CompletedAt    time.Time `json:"completed_at"`
 		DisplayName    string    `json:"display_name"`
+		Phone          *string   `json:"phone"`
+		Email          *string   `json:"email"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -76,6 +78,7 @@ func (a *API) fromAppointment(w http.ResponseWriter, r *http.Request) {
 		AppointmentID: apptID, OrganizationID: orgID, MasterUserID: masterID, ClientUserID: clientID,
 		ServiceName: req.ServiceName, PriceMinor: req.PriceMinor, Currency: req.Currency,
 		StartedAt: req.StartedAt, CompletedAt: req.CompletedAt, DisplayName: req.DisplayName,
+		Phone: req.Phone, Email: req.Email,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -276,6 +279,7 @@ func cardDTO(c domain.ClientCard) map[string]any {
 	return map[string]any{
 		"id": c.ID.String(), "organization_id": c.OrganizationID.String(), "user_id": c.UserID.String(),
 		"display_name": c.DisplayName, "phone": c.Phone, "email": c.Email, "preferences": c.Preferences,
+		"contacts_hidden": c.ContactsHidden,
 	}
 }
 

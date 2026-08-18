@@ -1,7 +1,7 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, type ReactNode } from 'react'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
-import { useCabinet, type NavLink } from '@/shared/lib/cabinet'
+import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { workTypeLabel } from '@/shared/lib/status'
 
 export function RequireAuth() {
@@ -45,6 +45,19 @@ export function RequireSupplier() {
     return (
       <main className="page">
         <div className="state-box error">Этот раздел доступен только поставщикам</div>
+      </main>
+    )
+  }
+  return <Outlet />
+}
+
+export function RequireCabinetFeature({ feature }: { feature: CabinetFeature }) {
+  const cabinet = useCabinet()
+  if (!cabinet.ready) return <div className="state-box page">Загрузка…</div>
+  if (!cabinet.can(feature)) {
+    return (
+      <main className="page">
+        <div className="state-box error">Этот раздел недоступен для вашей роли</div>
       </main>
     )
   }
@@ -141,13 +154,27 @@ export function AppShell() {
         {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
         {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
           <label className="field" style={{ marginTop: 12 }}>
-            <span className="muted">Филиал / салон</span>
+            <span className="muted">Салон</span>
             <select
               value={cabinet.selectedOrg?.organization.id ?? ''}
               onChange={(e) => cabinet.setSelectedOrgId(e.target.value)}
             >
               {orgOptions.map((o) => (
                 <option key={o.organization.id} value={o.organization.id}>{o.organization.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+          <label className="field" style={{ marginTop: 12 }}>
+            <span className="muted">Филиал</span>
+            <select
+              data-testid="chain-branch-switcher"
+              value={cabinet.selectedBranch?.id ?? ''}
+              onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
+            >
+              {(cabinet.selectedOrg?.branches ?? []).map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
           </label>
@@ -167,6 +194,19 @@ export function AppShell() {
             <div className="muted topbar-cabinet">{cabinet.label}</div>
           </div>
           <div className="row">
+            {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+              <select
+                className="topbar-branch"
+                data-testid="chain-branch-switcher"
+                aria-label="Филиал"
+                value={cabinet.selectedBranch?.id ?? ''}
+                onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
+              >
+                {(cabinet.selectedOrg?.branches ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            )}
             <span className="muted topbar-name">{user?.display_name}</span>
             <button className="btn btn-secondary btn-compact" type="button" onClick={() => void logout()}>
               Выйти

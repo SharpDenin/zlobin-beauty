@@ -12,6 +12,7 @@ import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
 import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { useToast } from '@/shared/ui/Toast'
+import { Hint } from '@/shared/ui/Hint'
 
 type Service = {
   id: string
@@ -276,7 +277,7 @@ export function ServicesPage() {
     <main className="page stack">
       <div className="row between">
         <div className="stack-sm">
-          <h1>Услуги</h1>
+          <h1>Услуги <Hint id="service-duration" title="Длительность">Длительность услуги задаёт слоты в календаре. Клиент видит её на записи.</Hint></h1>
           <p className="muted">Прайс и длительность для записи клиентов</p>
         </div>
         <button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>

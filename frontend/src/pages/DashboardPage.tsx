@@ -23,6 +23,7 @@ type Appointment = {
   ends_at?: string
   price_minor: number
   client_user_id?: string
+  branch_id?: string
 }
 
 type Notification = {
@@ -150,7 +151,10 @@ export function DashboardPage() {
     enabled: Boolean(accessToken && orgID && cabinet.can('reports')),
   })
 
-  const items = appointments.data?.items ?? []
+  const items = (appointments.data?.items ?? []).filter((a) => {
+    if (cabinet.kind !== 'chain_owner' || !cabinet.selectedBranch?.id) return true
+    return !a.branch_id || a.branch_id === cabinet.selectedBranch.id
+  })
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
   const endOfToday = new Date(startOfToday)
@@ -227,9 +231,26 @@ export function DashboardPage() {
           <p className="eyebrow">{cabinet.label}</p>
           <h1>Сегодня, {user?.display_name}</h1>
           <p className="muted">
+            {cabinet.kind === 'chain_owner' && cabinet.selectedBranch
+              ? `${cabinet.selectedOrg?.organization.name ?? 'Сеть'} · ${cabinet.selectedBranch.name}. `
+              : ''}
             Важное и расписание на одном экране.
             <Hint id="dash-layout" title="Ваш рабочий стол">Перетаскивайте карточки за заголовок и меняйте их размер за угол. Раскладка сохраняется автоматически.</Hint>
           </p>
+          {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+            <label className="field" style={{ maxWidth: 280 }}>
+              <span className="muted">Филиал</span>
+              <select
+                aria-label="Филиал"
+                value={cabinet.selectedBranch?.id ?? ''}
+                onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
+              >
+                {(cabinet.selectedOrg?.branches ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <button className="btn btn-secondary" type="button" onClick={() => setLibraryOpen(true)}>Настроить</button>
       </div>

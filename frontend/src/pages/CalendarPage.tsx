@@ -147,8 +147,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   useEffect(() => {
     setMasterFilter('')
-    setBranchFilter('')
-  }, [orgID])
+    setBranchFilter(cabinet.selectedBranch?.id ?? '')
+  }, [orgID, cabinet.selectedBranch?.id])
 
   const dashboard = useQuery({
     queryKey: ['me-dashboard'],
@@ -536,7 +536,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) && (
             <div className="field">
               <label>Филиал</label>
-              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} data-testid="calendar-branch-switcher">
+              <select
+                value={branchFilter}
+                onChange={(e) => {
+                  setBranchFilter(e.target.value)
+                  if (e.target.value) cabinet.setSelectedBranchId(e.target.value)
+                }}
+                data-testid="calendar-branch-switcher"
+              >
                 <option value="">Все филиалы</option>
                 {salonBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>

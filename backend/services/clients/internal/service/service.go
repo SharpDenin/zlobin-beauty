@@ -51,6 +51,8 @@ type FromAppointmentInput struct {
 	StartedAt      time.Time
 	CompletedAt    time.Time
 	DisplayName    string
+	Phone          *string
+	Email          *string
 }
 
 func (s *Service) FromAppointment(ctx context.Context, in FromAppointmentInput) (*domain.ClientCard, error) {
@@ -75,7 +77,7 @@ func (s *Service) FromAppointment(ctx context.Context, in FromAppointmentInput) 
 	now := s.now().UTC()
 	card := domain.ClientCard{
 		ID: ids.New(), OrganizationID: in.OrganizationID, UserID: in.ClientUserID,
-		DisplayName: display, Preferences: "", CreatedAt: now, UpdatedAt: now,
+		DisplayName: display, Phone: in.Phone, Email: in.Email, Preferences: "", CreatedAt: now, UpdatedAt: now,
 	}
 	visit := domain.Visit{
 		ID: ids.New(), AppointmentID: in.AppointmentID, OrganizationID: in.OrganizationID,
@@ -91,6 +93,9 @@ func (s *Service) FromAppointment(ctx context.Context, in FromAppointmentInput) 
 
 func (s *Service) ensureAccess(ctx context.Context, card *domain.ClientCard, actor uuid.UUID) error {
 	if card.UserID == actor {
+		return nil
+	}
+	if s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin") {
 		return nil
 	}
 	ok, err := s.store.MasterHasVisitOnCard(ctx, card.ID, actor)
@@ -342,6 +347,7 @@ func (s *Service) ApplyContactPolicy(ctx context.Context, actor uuid.UUID, roles
 	}
 	card.Phone = nil
 	card.Email = nil
+	card.ContactsHidden = true
 }
 
 func (s *Service) membershipHas(ctx context.Context, orgID, userID uuid.UUID, roles ...string) bool {

@@ -30,10 +30,12 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
+	mux.Handle("PUT /v1/calendar/working-hours", auth(http.HandlerFunc(a.setStaffHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
 	mux.Handle("GET /v1/calendar/working-hours", auth(http.HandlerFunc(a.calendarHours)))
 	mux.Handle("GET /v1/calendar/schedule-exceptions", auth(http.HandlerFunc(a.calendarExceptions)))
 	mux.Handle("PUT /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.putScheduleExceptions)))
+	mux.Handle("PUT /v1/calendar/schedule-exceptions", auth(http.HandlerFunc(a.putStaffExceptions)))
 	mux.Handle("GET /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.getScheduleExceptions)))
 	mux.Handle("DELETE /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.deleteScheduleException)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
@@ -125,6 +127,33 @@ func (a *API) setHours(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) setStaffHours(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	masterID, err := uuid.Parse(r.URL.Query().Get("master_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("master_user_id is required"))
+		return
+	}
+	var req struct {
+		Items []service.HoursInput `json:"items"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	hours, err := a.svc.SetStaffWorkingHours(r.Context(), claims.UserID, orgID, masterID, req.Items)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	writeHours(w, hours)
 }
 
 func (a *API) getHours(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +280,37 @@ func (a *API) putScheduleExceptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := a.svc.UpsertScheduleExceptions(r.Context(), claims.UserID, req.Items)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) putStaffExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	masterID, err := uuid.Parse(r.URL.Query().Get("master_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("master_user_id is required"))
+		return
+	}
+	var req struct {
+		Items []service.ScheduleExceptionInput `json:"items"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	items, err := a.svc.UpsertStaffScheduleExceptions(r.Context(), claims.UserID, orgID, masterID, req.Items)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

@@ -30,14 +30,15 @@ func main() {
 	}
 
 	accounts := []accountSpec{
-		{Email: "client1@demo.local", Name: "Клиент Один", Role: "client", City: "Красноярск"},
-		{Email: "client2@demo.local", Name: "Клиент Два", Role: "client"},
-		{Email: "client3@demo.local", Name: "Клиент Три", Role: "client", City: "Москва"},
+		{Email: "client1@demo.local", Name: "Клиент Один", Role: "client", City: "Красноярск", Phone: "+79001000001"},
+		{Email: "client2@demo.local", Name: "Клиент Два", Role: "client", Phone: "+79001000002"},
+		{Email: "client3@demo.local", Name: "Клиент Три", Role: "client", City: "Москва", Phone: "+79001000003"},
 		{Email: "master1@demo.local", Name: "Мастер Анна", Role: "master"},
 		{Email: "master2@demo.local", Name: "Мастер Иван", Role: "master"},
 		{Email: "master3@demo.local", Name: "Мастер Ольга", Role: "master"},
 		{Email: "master4@demo.local", Name: "Мастер Дмитрий", Role: "master"},
 		{Email: "admin1@demo.local", Name: "Админ Салона", Role: "salon_admin"},
+		{Email: "employee1@demo.local", Name: "Мастер Сотрудник", Role: "master", City: "Красноярск", Phone: "+79001110001"},
 		{Email: "supplier1@demo.local", Name: "Поставщик Профи", Role: "supplier"},
 		{Email: "supplier2@demo.local", Name: "Поставщик БьютиЛайн", Role: "supplier"},
 		{Email: "rep1@demo.local", Name: "Представитель Елена", Role: "supplier_rep", City: "Красноярск"},
@@ -266,6 +267,15 @@ func main() {
 		log.Printf("ok salon administrator membership")
 	}
 
+	employee1 := users["employee1@demo.local"]
+	if employee1.ID != "" {
+		if err := seedSalonEmployee(client, base, master1, employee1, client1, m1Org, m1Branch); err != nil {
+			log.Printf("warn salon employee: %v", err)
+		} else {
+			log.Printf("ok salon employee of Anna")
+		}
+	}
+
 	chain := users["chain1@demo.local"]
 	if chain.ID != "" {
 		if err := seedChainOwner(client, base, chain); err != nil {
@@ -297,6 +307,9 @@ func main() {
 		log.Printf("warn subscriptions: %v", err)
 	} else {
 		log.Printf("ok subscription variants")
+	}
+	if err := seedHintPrefs(client, base, users); err != nil {
+		log.Printf("warn hints: %v", err)
 	}
 
 	client2 := users["client2@demo.local"]
@@ -354,8 +367,9 @@ func main() {
 	log.Printf("chain1@demo.local  work_type=chain_owner (2 branches)")
 	log.Printf("mobile1@demo.local work_type=mobile_master")
 	log.Printf("admin1@demo.local  salon_admin of Anna salon")
+	log.Printf("employee1@demo.local employee of Anna salon (no own org)")
 	log.Printf("expired1@demo.local expired trial → FREE")
-	log.Printf("premium1@demo.local paid Premium")
+	log.Printf("premium1@demo.local paid Premium (hints OFF)")
 	log.Printf("client2@demo.local one no-show; client3@demo.local blacklisted at master1")
 	log.Printf("supplier1@demo.local org=%s", truncate(sup1Org, 36))
 	log.Printf("supplier2@demo.local org=%s", truncate(sup2Org, 36))
@@ -368,6 +382,7 @@ type accountSpec struct {
 	Name  string
 	Role  string
 	City  string // optional; applied via PATCH /v1/auth/me (register has no city field)
+	Phone string
 }
 
 type authUser struct {
@@ -463,6 +478,9 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 
 	reg := map[string]any{
 		"email": a.Email, "password": password, "display_name": a.Name,
+	}
+	if a.Phone != "" {
+		reg["phone"] = a.Phone
 	}
 	switch a.Role {
 	case "master":
@@ -2071,6 +2089,103 @@ func seedAdminMembership(c *http.Client, base string, owner, admin authUser, org
 	}
 	if status >= 300 {
 		return fmt.Errorf("invite admin status %d", status)
+	}
+	return nil
+}
+
+func seedSalonEmployee(c *http.Client, base string, owner, employee, client authUser, orgID, branchID string) error {
+	if employee.ID == "" || orgID == "" {
+		return fmt.Errorf("missing employee or org")
+	}
+	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/staff", owner.Token, map[string]any{
+		"user_id": employee.ID, "role": "master",
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if status >= 300 && status != 409 {
+		return fmt.Errorf("invite employee status %d", status)
+	}
+	profileID, err := upsertMaster(c, base, employee, orgID, branchID, masterSeed{
+		Display: "Елена Сотрудник", Bio: "Мастер салона Анны, без собственного салона.",
+		Specs: []string{"уход"}, Experience: 3, Education: "Salon Academy",
+		City: "Красноярск", WorkType: "employee",
+	}, false)
+	if err != nil {
+		return err
+	}
+	services, err := ensureServices(c, base, employee, orgID, []serviceSpec{
+		{Name: "Уход сотрудника", Category: "уход", Description: "Уход мастера-сотрудника салона.", Duration: 60, Price: 250000},
+	})
+	if err != nil {
+		return err
+	}
+	hours := make([]map[string]any, 0, 5)
+	for wd := 1; wd <= 5; wd++ {
+		hours = append(hours, map[string]any{"weekday": wd, "start_minute": 10 * 60, "end_minute": 19 * 60})
+	}
+	if st, err := doJSON(c, http.MethodPut, base+"/v1/me/working-hours", employee.Token, map[string]any{"items": hours}, nil); err != nil {
+		return err
+	} else if st >= 300 {
+		return fmt.Errorf("employee hours status %d", st)
+	}
+	if published, err := upsertMaster(c, base, employee, orgID, branchID, masterSeed{
+		Display: "Елена Сотрудник", Bio: "Мастер салона Анны, без собственного салона.",
+		Specs: []string{"уход"}, Experience: 3, Education: "Salon Academy",
+		City: "Красноярск", WorkType: "employee",
+	}, true); err == nil && published != "" {
+		profileID = published
+	}
+	if len(services) == 0 || client.ID == "" {
+		return nil
+	}
+	starts, err := findSlot(c, base, employee.ID, 60)
+	if err != nil {
+		return err
+	}
+	var appt struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
+		"master_id": profileID, "service_id": services[0], "starts_at": starts,
+	}, &appt)
+	if err != nil {
+		return err
+	}
+	if st >= 300 || appt.ID == "" {
+		return fmt.Errorf("employee visit appt status %d", st)
+	}
+	if appt.Status == "pending_confirmation" || appt.Status == "pending" || appt.Status == "" {
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/confirm", employee.Token, map[string]any{}, &appt)
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/start", employee.Token, map[string]any{}, &appt)
+	stComplete, err := doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/complete", employee.Token, map[string]any{
+		"skipped": true,
+		"notes":   "Визит сотрудника салона",
+	}, &appt)
+	if err != nil {
+		return err
+	}
+	if stComplete >= 300 {
+		return fmt.Errorf("employee complete status %d", stComplete)
+	}
+	return nil
+}
+
+func seedHintPrefs(c *http.Client, base string, users map[string]authUser) error {
+	u := users["premium1@demo.local"]
+	if u.Token == "" {
+		return nil
+	}
+	st, err := doJSON(c, http.MethodPatch, base+"/v1/me/hints", u.Token, map[string]any{
+		"hints_enabled": false,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if st >= 300 {
+		return fmt.Errorf("hints patch status %d", st)
 	}
 	return nil
 }

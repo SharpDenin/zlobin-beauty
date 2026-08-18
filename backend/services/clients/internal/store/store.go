@@ -31,7 +31,11 @@ func (s *Store) UpsertCardAndVisit(ctx context.Context, card domain.ClientCard, 
 	if err := tx.QueryRow(ctx, `
 INSERT INTO client_cards(id, organization_id, user_id, display_name, phone, email, preferences, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT (organization_id, user_id) DO UPDATE SET updated_at=EXCLUDED.updated_at
+ON CONFLICT (organization_id, user_id) DO UPDATE SET
+  display_name = CASE WHEN EXCLUDED.display_name <> '' AND EXCLUDED.display_name <> 'Клиент' THEN EXCLUDED.display_name ELSE client_cards.display_name END,
+  phone = COALESCE(EXCLUDED.phone, client_cards.phone),
+  email = COALESCE(EXCLUDED.email, client_cards.email),
+  updated_at = EXCLUDED.updated_at
 RETURNING id, organization_id, user_id, display_name, phone, email, preferences, created_at, updated_at`,
 		card.ID, card.OrganizationID, card.UserID, card.DisplayName, card.Phone, card.Email, card.Preferences, card.CreatedAt, card.UpdatedAt,
 	).Scan(&outCard.ID, &outCard.OrganizationID, &outCard.UserID, &outCard.DisplayName, &outCard.Phone, &outCard.Email, &outCard.Preferences, &outCard.CreatedAt, &outCard.UpdatedAt); err != nil {

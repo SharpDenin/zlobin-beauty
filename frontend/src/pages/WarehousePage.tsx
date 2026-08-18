@@ -9,6 +9,7 @@ import { hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/aut
 import { fetchSuppliers } from '@/shared/lib/commerce'
 import { statusLabel } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Hint } from '@/shared/ui/Hint'
 
 type OrgItem = {
   organization: { id: string; name: string }
@@ -349,6 +350,7 @@ export function WarehousePage() {
     <main className="page stack">
       <div className="row between">
         <h1>Склад</h1>
+        <Hint id="supplier-warehouse" title="Остатки">Остатки, резерв и статусы товаров. Представитель видит доступность для визитов.</Hint>
         {(supplierMode || repMode) && <Link className="btn btn-secondary" to={supplierMode ? '/supplier' : '/rep'}>Панель</Link>}
       </div>
       <p className="muted">{repMode ? 'Состояние запаса для визитов и доставок.' : 'Остатки, резерв и движения по складу.'}</p>

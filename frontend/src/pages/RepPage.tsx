@@ -353,7 +353,7 @@ export function RepPage() {
       {section === 'finance' && (
         <>
           <section className="card stack">
-            <h2>Сегодня</h2>
+            <h2>Сегодня <Hint id="rep-finance" title="Инкассация">Отметьте оплату по заказу. Суммы дня и месяца считаются отдельно.</Hint></h2>
             <div className="table-wrap">
               <table className="data-table">
                 <thead>

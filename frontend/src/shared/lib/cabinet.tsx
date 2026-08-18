@@ -42,7 +42,10 @@ type CabinetState = {
   master?: MasterProfile | null
   orgs: OrgItem[]
   selectedOrg: OrgItem | null
+  selectedBranch: OrgItem['branches'][number] | null
   setSelectedOrgId: (id: string) => void
+  setSelectedBranchId: (id: string) => void
+  ready: boolean
   can: (feature: CabinetFeature) => boolean
   primary: NavLink[]
   secondary: NavLink[]
@@ -63,10 +66,12 @@ export type CabinetFeature =
   | 'services'
   | 'location'
   | 'pickup_orders'
+  | 'salon_settings'
 
 const CabinetContext = createContext<CabinetState | null>(null)
 
-const BRANCH_KEY = 'sx.selectedOrg'
+const ORG_KEY = 'sx.selectedOrg'
+const BRANCH_KEY = 'sx.selectedBranch'
 
 export function resolveCabinetKind(user: User | null | undefined, workType?: string): CabinetKind {
   if (!user) return 'client'
@@ -123,7 +128,9 @@ function canFeature(kind: CabinetKind, feature: CabinetFeature) {
     case 'cosmetics':
       return kind !== 'client' && kind !== 'supplier' && kind !== 'supplier_rep' && kind !== 'salon_admin'
     case 'knowledge':
-      return kind !== 'client'
+      return kind !== 'client' && kind !== 'salon_admin'
+    case 'salon_settings':
+      return ownerLike
     case 'shop':
       return kind === 'client'
     case 'warehouse':
@@ -210,6 +217,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   if (canFeature(kind, 'staff')) secondary.push({ to: '/staff', label: 'Команда' })
   if (canFeature(kind, 'pickup_orders')) secondary.push({ to: '/pickup-orders', label: 'Выдача заказов' })
   if (canFeature(kind, 'reports')) secondary.push({ to: '/reports', label: 'Аналитика' })
+  if (canFeature(kind, 'salon_settings')) secondary.push({ to: '/salon/settings', label: 'Настройки' })
   if (kind === 'chain_owner' || kind === 'salon_owner' || kind === 'chair_master' || kind === 'mobile_master') {
     secondary.push({ to: '/master', label: 'Салон' })
   } else {
@@ -239,11 +247,20 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
   const kind = resolveCabinetKind(user, masterQ.data?.master?.work_type)
   const nav = navForCabinet(kind)
   const orgItems = orgs.data?.items ?? []
-  const [selectedOrgId, setSelectedOrgId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(BRANCH_KEY) : null))
+  const [selectedOrgId, setSelectedOrgId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(ORG_KEY) : null))
+  const [selectedBranchId, setSelectedBranchId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(BRANCH_KEY) : null))
 
   const selectedOrg = useMemo(() => {
     return orgItems.find((o) => o.organization.id === selectedOrgId) ?? orgItems[0] ?? null
   }, [orgItems, selectedOrgId])
+
+  const selectedBranch = useMemo(() => {
+    const branches = selectedOrg?.branches ?? []
+    return branches.find((b) => b.id === selectedBranchId) ?? branches[0] ?? null
+  }, [selectedOrg, selectedBranchId])
+
+  const needsMaster = Boolean(accessToken && (hasMasterAccess(user) || hasSalonAdmin(user)))
+  const ready = !needsMaster || masterQ.isFetched
 
   const value: CabinetState = {
     kind,
@@ -252,11 +269,18 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
     master: masterQ.data?.master ?? null,
     orgs: orgItems,
     selectedOrg,
+    selectedBranch,
     setSelectedOrgId: (id) => {
-      localStorage.setItem(BRANCH_KEY, id)
+      localStorage.setItem(ORG_KEY, id)
       setSelectedOrgId(id)
       window.dispatchEvent(new Event('sx-org-change'))
     },
+    setSelectedBranchId: (id) => {
+      localStorage.setItem(BRANCH_KEY, id)
+      setSelectedBranchId(id)
+      window.dispatchEvent(new Event('sx-org-change'))
+    },
+    ready,
     can: (feature) => canFeature(kind, feature),
     primary: nav.primary,
     secondary: nav.secondary,
@@ -276,7 +300,10 @@ export function useCabinet() {
       master: null,
       orgs: [],
       selectedOrg: null,
+      selectedBranch: null,
       setSelectedOrgId: () => undefined,
+      setSelectedBranchId: () => undefined,
+      ready: true,
       can: () => false,
       primary: navForCabinet('client').primary,
       secondary: [] as NavLink[],

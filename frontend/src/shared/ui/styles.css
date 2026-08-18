@@ -98,6 +98,11 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   top: 0;
   z-index: 20;
 }
+.topbar-branch {
+  max-width: 11rem;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
 .topbar-name {
   display: none;
   max-width: 12ch;

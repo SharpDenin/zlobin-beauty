@@ -5,6 +5,7 @@ import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { fetchPickupBranches, useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
+import { Hint } from '@/shared/ui/Hint'
 
 type Rep = {
   id: string
@@ -145,7 +146,7 @@ export function SupplierTeamPage() {
     <main className="page stack">
       <div className="stack-sm">
         <p className="eyebrow">Поставщик</p>
-        <h1>Представители</h1>
+        <h1>Представители <Hint id="supplier-reps" title="Команда">Карточки представителей и задачи. Мониторинг — по человеку, не по UUID.</Hint></h1>
         <p className="muted">Загрузка, просрочки, доставки и деньги по каждому сотруднику.</p>
       </div>
       {error && <div className="state-box error">{error}</div>}

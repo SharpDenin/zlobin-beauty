@@ -87,7 +87,8 @@ export function SalonReportsPage() {
   const range = useMemo(() => periodISO(days), [days])
   const salonOrgs = cabinet.orgs.filter((o) => o.organization.type !== 'supplier')
   const orgId = cabinet.selectedOrg?.organization.id ?? salonOrgs[0]?.organization.id
-  const isChain = cabinet.kind === 'chain_owner' && salonOrgs.length > 1
+  const branches = cabinet.selectedOrg?.branches ?? []
+  const isChain = cabinet.kind === 'chain_owner' && branches.length > 1
 
   const report = useQuery({
     queryKey: ['salon-report', orgId, range.from, range.to],
@@ -100,18 +101,29 @@ export function SalonReportsPage() {
   })
 
   const network = useQuery({
-    queryKey: ['salon-report-network', salonOrgs.map((o) => o.organization.id).join(','), range.from, range.to],
+    queryKey: ['salon-report-branches', orgId, branches.map((b) => b.id).join(','), range.from, range.to],
     queryFn: async () => {
-      const rows = await Promise.all(salonOrgs.map(async (org) => {
-        const data = await apiRequest<SalonReport>(
-          `/v1/reports/salon?organization_id=${org.organization.id}&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
-          { token: accessToken },
-        )
-        return { name: org.organization.name, report: data }
-      }))
-      return rows
+      const data = await apiRequest<{ items: Array<{ branch_id?: string; status: string; price_minor?: number; master_user_id?: string }> }>(
+        `/v1/calendar/appointments?organization_id=${orgId}&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+        { token: accessToken },
+      )
+      return branches.map((b) => {
+        const items = (data.items ?? []).filter((a) => a.branch_id === b.id)
+        const completed = items.filter((a) => a.status === 'completed')
+        const masters = new Set(items.map((a) => a.master_user_id).filter(Boolean))
+        return {
+          name: b.name,
+          report: {
+            current: {
+              turnover_minor: completed.reduce((s, a) => s + (a.price_minor ?? 0), 0),
+              completed_count: completed.length,
+              master_load_percent: masters.size * 10,
+            },
+          },
+        }
+      })
     },
-    enabled: Boolean(accessToken && isChain),
+    enabled: Boolean(accessToken && isChain && orgId),
   })
 
   const masterIDs = (report.data?.masters ?? []).map((m) => m.master_user_id)

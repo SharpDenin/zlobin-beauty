@@ -45,7 +45,24 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 func (a *API) InternalRoutes(mux *http.ServeMux, internalToken string) {
 	internal := httpx.InternalAuth(internalToken)
 	mux.Handle("GET /v1/internal/entitlements/{userID}", internal(http.HandlerFunc(a.internalEntitlements)))
+	mux.Handle("GET /v1/internal/users/{userID}", internal(http.HandlerFunc(a.internalUser)))
 	mux.Handle("POST /v1/internal/users/grant-role", internal(http.HandlerFunc(a.grantRole)))
+}
+
+func (a *API) internalUser(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	user, err := a.svc.Me(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"id": user.ID.String(), "email": user.Email, "phone": user.Phone, "display_name": user.DisplayName,
+	})
 }
 
 type registerReq struct {

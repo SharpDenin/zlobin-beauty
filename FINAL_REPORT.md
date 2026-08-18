@@ -364,22 +364,22 @@ Dashboard, calendar, rep, shop (точечно).
 Structured service scheme: required free, optional premium/trial, full flow.
 
 ### Status
-PARTIAL
+**DONE**
 
 ### Implemented
-При complete appointment — структурированные поля (не свободный textarea). Premium/trial может skip с причиной. Backend entitlement.
+Category templates (coloring, haircut, care, generic) in DB `scheme_templates` with version. Template-driven form on complete; validation backend-side. Free must fill; Premium/Trial can skip with audit. Atomic complete+scheme transaction. Client card shows scheme summary or «Схема не раскрыта мастером».
 
 ### UI
-`/appointments/:id`.
+`/appointments/:id` — `ServiceSchemeForm`; client card visit history.
 
 ### Backend
-scheme get/save, plan check.
+`GET /v1/appointments/{id}/scheme-template`, `CompleteWithScheme`, entitlement via identity internal API.
 
 ### Test
-Код. Нет e2e complete→scheme в этом прогоне.
+e2e phase4 free complete + premium skip (390, 1366). Seed: in_progress + completed scheme/skipped.
 
 ### Known limitations
-Не все service categories имеют уникальные поля. Full FREE-flow не прогнан браузером на clean stack в этой итерации.
+Scheme immutable after complete (no edit UI). Not all service categories have unique templates beyond the four seeded.
 
 ---
 
@@ -486,22 +486,22 @@ e2e API: buyer видит seeded agreements.
 Subscription: Free, Premium, 3 months trial, complete product flow, no real acquiring.
 
 ### Status
-PARTIAL
+**DONE**
 
 ### Implemented
-Новые master/supplier — trial. Страница план/срок/дни, Free vs Premium. Seed: free (master4), trial (master1), premium (supplier1), expired (expired1). DEV setter только в Vite DEV.
+Free/Premium plans; 3 calendar-month trial for professional roles only (master/supplier/supplier_rep/salon_admin); clients get Free without trial. `ResolveEffectivePlan` + `CanSkipServiceScheme`. Subscription page with trial banner, expired UX, upgrade modal (no acquiring). DEV billing controls when `ALLOW_DEV_BILLING`. Seed: master1 trial, master4 free, premium1 paid, expired1 expired trial.
 
 ### UI
-`/profile/subscription`, блок в профиле.
+`/profile/subscription`, compact trial hint on dashboard.
 
 ### Backend
-`GET /v1/me/subscription`, entitlements, `ALLOW_DEV_BILLING`.
+`GET /v1/me/subscription`, `POST /v1/me/subscription/dev`, internal entitlements. Trial granted once per user (no re-grant on login/onboarding).
 
 ### Test
-e2e snapshot + страница «Подписка».
+e2e: subscription page, expired1 free, registration trial API (+3 months). Backend entitlement unit tests.
 
 ### Known limitations
-Нет эквайринга. Docker frontend — production build, DEV-кнопок нет (ожидаемо). Expired trial → Free проверен seed’ом, не отдельным UI e2e.
+No real payment acquiring. Trial expiry notifications — UI warning only (7-day threshold on subscription page), no push/email campaign.
 
 ---
 
@@ -562,3 +562,34 @@ AI, mentorship, courses, coworking, новые маркетплейсы.
 
 ### Success bar (Phase 3)
 All items in user checklist verified via code + automated acceptance where noted.
+
+---
+
+## Phase 4 — Subscription + Structured Service Scheme (2026-08-18)
+
+### Status
+**DONE** — PHASE 4 BLOCKERS: NONE
+
+### Backend
+- Subscription: role-gated 3-month trial; `startFreeSubscription` for clients; trial-once invariant; `ResolveEffectivePlan`, `CanSkipServiceScheme`.
+- Scheme templates migration `010_scheme_templates.sql` (coloring, haircut, care, generic).
+- `CompleteWithScheme` atomic transaction; skip audit in `booking_audit_events`.
+- APIs: `GET /v1/appointments/{id}/scheme-template`, enhanced scheme GET with template version.
+
+### UI
+- Template-driven `ServiceSchemeForm` on appointment complete.
+- Subscription page: trial/expired banners, comparison table, upgrade modal, dev controls (demo).
+- Client card: structured scheme summary or withheld message.
+
+### Seed
+- `premium1@demo.local` paid Premium master; `expired1` full master profile.
+- Phase4 in_progress appointments (free/trial/premium/expired) + completed scheme + skipped scheme.
+
+### Tests
+- Backend: `entitlement_test.go`, `scheme_template_test.go`.
+- E2E `phase4`: free scheme complete (390+1366), premium skip, expired subscription, registration trial API.
+
+### Limitations
+- No real acquiring; DEV billing in demo only.
+- Scheme not editable after complete.
+- Subscription lifecycle notifications minimal (UI-only trial warning).

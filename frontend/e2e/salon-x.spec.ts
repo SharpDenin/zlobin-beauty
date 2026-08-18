@@ -80,6 +80,74 @@ async function salonPickupBranchId(masterToken: string) {
   return branch!.id
 }
 
+async function masterInProgressAppointment(token: string, masterUserId: string) {
+  const res = await fetch(`${api}/v1/appointments/mine?role=master`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(res.ok).toBeTruthy()
+  const data = await res.json() as { items?: Array<{ id: string; status: string; master_user_id: string; service_name?: string }> }
+  return (data.items ?? []).find((a) => a.status === 'in_progress' && a.master_user_id === masterUserId)
+}
+
+async function ensurePhase4InProgress(masterEmail: string, clientEmail: string, serviceNameContains: string) {
+  const master = await apiLogin(masterEmail)
+  const client = await apiLogin(clientEmail)
+  const me = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+  const body = await me.json() as { id?: string; user?: { id?: string } }
+  const masterId = body.id ?? body.user?.id
+  expect(masterId).toBeTruthy()
+  const existing = await masterInProgressAppointment(master.access_token, masterId!)
+  if (existing) return { master, masterId: masterId!, appt: existing }
+
+  const profile = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+  expect(profile.ok).toBeTruthy()
+  const prof = await profile.json() as {
+    master?: { id: string }
+    services?: Array<{ id: string; name: string; duration_minutes?: number }>
+  }
+  const profileId = prof.master?.id
+  expect(profileId).toBeTruthy()
+  const service = (prof.services ?? []).find((s) => s.name.toLowerCase().includes(serviceNameContains.toLowerCase()))
+  expect(service?.id).toBeTruthy()
+
+  let slotStarts: string | undefined
+  for (let d = 1; d <= 14 && !slotStarts; d++) {
+    const day = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10)
+    const slotsRes = await fetch(`${api}/v1/masters/${masterId}/slots?date=${day}&duration_minutes=${service!.duration_minutes ?? 120}`)
+    if (!slotsRes.ok) continue
+    const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+    slotStarts = slots.items?.[0]?.starts_at
+  }
+  expect(slotStarts).toBeTruthy()
+
+  const create = await fetch(`${api}/v1/appointments`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ master_id: profileId, service_id: service!.id, starts_at: slotStarts }),
+  })
+  if (!create.ok) {
+    const errBody = await create.text()
+    throw new Error(`create appointment failed ${create.status}: ${errBody}`)
+  }
+  const appt = await create.json() as { id: string; status: string }
+  if (appt.status === 'pending_confirmation' || appt.status === 'pending') {
+    await fetch(`${api}/v1/appointments/${appt.id}/confirm`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+  }
+  await fetch(`${api}/v1/appointments/${appt.id}/start`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+  const started = await masterInProgressAppointment(master.access_token, masterId!)
+  expect(started?.id).toBeTruthy()
+  return { master, masterId: masterId!, appt: started! }
+}
+
+async function fillColoringScheme(page: Page) {
+  await expect(page.getByTestId('service-scheme-form')).toBeVisible({ timeout: 15_000 })
+  await page.locator('#scheme-technique').fill('Балаяж E2E')
+  await page.locator('#scheme-dye').fill('Majirel 7.1')
+  await page.locator('#scheme-proportions').fill('1:1.5')
+  await page.locator('#scheme-oxidizer').fill('6%')
+  await page.locator('#scheme-product').fill('Majirel 7.1')
+}
+
 test.describe('Salon-X P0 flows (seeded stack)', () => {
   test.beforeEach(async () => {
     await requireApi()
@@ -809,5 +877,82 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.getByText(/просроч/i).first()).toBeVisible()
     await expect(page.getByText(/доставок/i).first()).toBeVisible()
     await expect(page.getByText(/собрано/i).first()).toBeVisible()
+  })
+
+  test('phase4 free master must fill scheme to complete', async ({ page }, info) => {
+    test.skip(!['phone-390', 'laptop-1366'].includes(info.project.name), 'phase4 viewports')
+    const { appt } = await ensurePhase4InProgress('master4@demo.local', 'client2@demo.local', 'Phase4')
+
+    await loginUI(page, 'master4@demo.local')
+    await page.goto(`/appointments/${appt.id}`)
+    await expect(page.getByTestId('complete-appointment')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('complete-appointment').click()
+    await expect(page.getByText(/field required|Заполните|обязательн/i).first()).toBeVisible({ timeout: 10_000 })
+    await fillColoringScheme(page)
+    await page.getByTestId('complete-appointment').click()
+    await expect(page.locator('.badge').filter({ hasText: /заверш/i })).toBeVisible({ timeout: 20_000 })
+    await test.info().attach(`phase4-free-scheme-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+  })
+
+  test('phase4 premium master can skip scheme', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const { appt } = await ensurePhase4InProgress('premium1@demo.local', 'client1@demo.local', 'Phase4 Premium')
+
+    await loginUI(page, 'premium1@demo.local')
+    await page.goto(`/appointments/${appt.id}`)
+    await page.getByLabel('Не раскрывать схему').check()
+    await expect(page.getByTestId('scheme-skip-confirm')).toBeVisible()
+    await page.getByText('Подтверждаю, что схема не раскрывается').click()
+    await page.getByTestId('complete-appointment').click()
+    await expect(page.locator('.badge').filter({ hasText: /заверш/i })).toBeVisible({ timeout: 20_000 })
+  })
+
+  test('phase4 expired trial subscription shows free', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'expired1@demo.local')
+    await page.goto('/profile/subscription')
+    await expect(page.getByTestId('subscription-expired-banner')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Trial истёк · Free', exact: true })).toBeVisible()
+    const sub = await fetch(`${api}/v1/me/subscription`, {
+      headers: { Authorization: `Bearer ${(await apiLogin('expired1@demo.local')).access_token}` },
+    })
+    const snap = await sub.json() as { effective_plan?: string; features?: string[] }
+    expect(snap.effective_plan).toBe('free')
+    expect(snap.features ?? []).not.toContain('skip_service_scheme')
+  })
+
+  test('phase4 registration grants calendar trial', async () => {
+    const email = `phase4-trial-${Date.now()}@demo.local`
+    const reg = await fetch(`${api}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        password,
+        display_name: 'Phase4 Trial Master',
+        as_master: true,
+      }),
+    })
+    expect(reg.ok).toBeTruthy()
+    const auth = await reg.json() as { access_token: string }
+    const sub = await fetch(`${api}/v1/me/subscription`, {
+      headers: { Authorization: `Bearer ${auth.access_token}` },
+    })
+    expect(sub.ok).toBeTruthy()
+    const snap = await sub.json() as {
+      status?: string
+      effective_plan?: string
+      trial_started_at?: string
+      trial_ends_at?: string
+    }
+    expect(snap.status).toBe('trial')
+    expect(snap.effective_plan).toBe('premium')
+    expect(snap.trial_started_at).toBeTruthy()
+    expect(snap.trial_ends_at).toBeTruthy()
+    const start = new Date(snap.trial_started_at!)
+    const end = new Date(snap.trial_ends_at!)
+    const wantEnd = new Date(start)
+    wantEnd.setMonth(wantEnd.getMonth() + 3)
+    expect(Math.abs(end.getTime() - wantEnd.getTime())).toBeLessThan(86400000)
   })
 })

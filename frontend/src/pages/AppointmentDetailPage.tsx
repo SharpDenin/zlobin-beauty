@@ -12,6 +12,7 @@ import { datetimeLocalToIso } from '@/shared/lib/time'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
+import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/ServiceSchemeForm'
 
 type Appointment = {
   id: string
@@ -47,13 +48,12 @@ export function AppointmentDetailPage() {
   const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
   const [afterDraft, setAfterDraft] = useState<string | null>(null)
   const [technique, setTechnique] = useState('')
-  const [formula, setFormula] = useState('')
+  const [schemeFields, setSchemeFields] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState('')
   const [productName, setProductName] = useState('')
   const [productQty, setProductQty] = useState('')
   const [proportion, setProportion] = useState('')
   const [skipScheme, setSkipScheme] = useState(false)
-  const [skipReason, setSkipReason] = useState('')
   const [skipConfirmed, setSkipConfirmed] = useState(false)
 
   const query = useQuery({
@@ -202,34 +202,23 @@ export function AppointmentDetailPage() {
                   : 'На Free схема обязательна: техника и хотя бы один продукт или материал.'}
               </p>
               {!skipScheme && (
-                <>
-                  <div className="field">
-                    <label>Техника</label>
-                    <input value={technique} onChange={(e) => setTechnique(e.target.value)} placeholder="Балаяж / тонирование" />
-                  </div>
-                  <div className="field">
-                    <label>Формула</label>
-                    <input value={formula} onChange={(e) => setFormula(e.target.value)} placeholder="7.1 + 6% 1:1.5" />
-                  </div>
-                  <div className="field">
-                    <label>Продукт / материал</label>
-                    <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Majirel 7.1" />
-                  </div>
-                  <div className="row">
-                    <div className="field" style={{ flex: 1 }}>
-                      <label>Количество</label>
-                      <input value={productQty} onChange={(e) => setProductQty(e.target.value)} placeholder="30" />
-                    </div>
-                    <div className="field" style={{ flex: 1 }}>
-                      <label>Пропорция</label>
-                      <input value={proportion} onChange={(e) => setProportion(e.target.value)} placeholder="1:1.5" />
-                    </div>
-                  </div>
-                  <div className="field">
-                    <label>Заметки</label>
-                    <input value={notes} onChange={(e) => setNotes(e.target.value)} />
-                  </div>
-                </>
+                <ServiceSchemeForm
+                  appointmentId={a.id}
+                  accessToken={accessToken}
+                  disabled={act.isPending}
+                  fieldValues={schemeFields}
+                  onFieldChange={(key, value) => setSchemeFields((prev) => ({ ...prev, [key]: value }))}
+                  technique={technique}
+                  onTechniqueChange={setTechnique}
+                  notes={notes}
+                  onNotesChange={setNotes}
+                  productName={productName}
+                  onProductNameChange={setProductName}
+                  productQty={productQty}
+                  onProductQtyChange={setProductQty}
+                  proportion={proportion}
+                  onProportionChange={setProportion}
+                />
               )}
               {canSkipScheme && (
                 <label className="field-check">
@@ -245,12 +234,8 @@ export function AppointmentDetailPage() {
                 </label>
               )}
               {skipScheme && canSkipScheme && (
-                <div className="card stack-sm">
-                  <p>Схема не будет сохранена в карточке визита. Это нельзя отменить после завершения.</p>
-                  <div className="field">
-                    <label>Причина</label>
-                    <input value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="Коммерческая тайна" />
-                  </div>
+                <div className="card stack-sm" data-testid="scheme-skip-confirm">
+                  <p>Схема не будет сохранена. Эта возможность доступна в Premium.</p>
                   <label className="field-check">
                     <input type="checkbox" checked={skipConfirmed} onChange={(e) => setSkipConfirmed(e.target.checked)} />
                     <span>Подтверждаю, что схема не раскрывается</span>
@@ -260,15 +245,16 @@ export function AppointmentDetailPage() {
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={act.isPending || (skipScheme && (!skipConfirmed || skipReason.trim().length < 2))}
+                data-testid="complete-appointment"
+                disabled={act.isPending || (skipScheme && !skipConfirmed)}
                 onClick={() =>
                   act.mutate({
                     path: `/v1/appointments/${a.id}/complete`,
                     body: {
                       skipped: skipScheme,
                       technique,
-                      notes: skipScheme ? skipReason : notes,
-                      category_fields: { formula },
+                      notes,
+                      category_fields: buildCategoryFields(undefined, schemeFields, technique),
                       components: productName ? [{ name: productName, qty: productQty, proportion, unit: 'г' }] : [],
                     },
                   })

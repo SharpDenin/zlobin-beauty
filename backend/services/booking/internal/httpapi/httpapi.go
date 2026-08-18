@@ -49,6 +49,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
 	mux.Handle("GET /v1/appointments/{id}/scheme", auth(http.HandlerFunc(a.getScheme)))
+	mux.Handle("GET /v1/appointments/{id}/scheme-template", auth(http.HandlerFunc(a.getSchemeTemplate)))
 	mux.Handle("GET /v1/planner/blocks", auth(http.HandlerFunc(a.listPlannerBlocks)))
 	mux.Handle("POST /v1/planner/blocks", auth(http.HandlerFunc(a.createPlannerBlock)))
 	mux.Handle("PATCH /v1/planner/blocks/{id}", auth(http.HandlerFunc(a.movePlannerBlock)))
@@ -717,6 +718,29 @@ func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
 		"appointment_id": item.AppointmentID.String(), "exists": true,
 		"technique": item.Technique, "notes": item.Notes, "skipped": item.Skipped,
 		"category_fields": item.CategoryFields, "components": comps,
+		"template_id": item.TemplateID, "template_version": item.TemplateVersion,
+	})
+}
+
+func (a *API) getSchemeTemplate(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	tmpl, err := a.svc.GetSchemeTemplateForAppointment(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if tmpl == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"exists": false})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"exists": true, "id": tmpl.ID, "category_key": tmpl.CategoryKey,
+		"version": tmpl.Version, "name": tmpl.Name, "fields": tmpl.Fields,
 	})
 }
 

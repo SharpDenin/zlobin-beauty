@@ -30,29 +30,124 @@ func (s *Service) WithIdentity(identityURL string) *Service {
 	return s
 }
 
-func (s *Service) canSkipScheme(ctx context.Context, userID uuid.UUID) bool {
+func (s *Service) entitlementSnapshot(ctx context.Context, userID uuid.UUID) (entitlement.Snapshot, error) {
 	if s.identityURL == "" || s.internalToken == "" {
-		return false
+		return entitlement.Snapshot{EffectivePlan: entitlement.PlanFree}, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/entitlements/"+userID.String(), nil)
 	if err != nil {
-		return false
+		return entitlement.Snapshot{}, err
 	}
 	req.Header.Set("X-Internal-Token", s.internalToken)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return false
+		return entitlement.Snapshot{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode >= 300 {
-		return false
+		return entitlement.Snapshot{}, fmt.Errorf("identity entitlements status %d: %s", resp.StatusCode, string(body))
 	}
 	var snap entitlement.Snapshot
 	if err := json.Unmarshal(body, &snap); err != nil {
+		return entitlement.Snapshot{}, err
+	}
+	return snap, nil
+}
+
+func (s *Service) canSkipScheme(ctx context.Context, userID uuid.UUID) bool {
+	snap, err := s.entitlementSnapshot(ctx, userID)
+	if err != nil {
 		return false
 	}
-	return snap.Has(entitlement.FeatureSkipServiceScheme)
+	return entitlement.CanSkipServiceScheme(snap)
+}
+
+func (s *Service) GetSchemeTemplateForAppointment(ctx context.Context, appointmentID, actor uuid.UUID) (*domain.SchemeTemplate, error) {
+	a, err := s.Get(ctx, appointmentID, actor)
+	if err != nil {
+		return nil, err
+	}
+	category := domain.ResolveSchemeCategory(a.ServiceName)
+	tmpl, err := s.store.GetActiveSchemeTemplate(ctx, category)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if tmpl == nil {
+		tmpl, err = s.store.GetActiveSchemeTemplate(ctx, domain.SchemeCategoryGeneric)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+	}
+	return tmpl, nil
+}
+
+func parseCategoryFields(raw json.RawMessage) map[string]string {
+	out := map[string]string{}
+	if len(raw) == 0 {
+		return out
+	}
+	var anyMap map[string]any
+	if err := json.Unmarshal(raw, &anyMap); err != nil {
+		return out
+	}
+	for k, v := range anyMap {
+		out[k] = strings.TrimSpace(fmt.Sprint(v))
+	}
+	return out
+}
+
+func validateSchemeAgainstTemplate(tmpl *domain.SchemeTemplate, scheme *VisitSchemeInput) error {
+	if scheme.Skipped {
+		return nil
+	}
+	if tmpl == nil {
+		tech := strings.TrimSpace(scheme.Technique)
+		hasComp := false
+		for _, c := range scheme.Components {
+			if strings.TrimSpace(c.Name) != "" {
+				hasComp = true
+				break
+			}
+		}
+		if tech == "" && !hasComp {
+			return apperr.Validation("fill technique or at least one product/material")
+		}
+		return nil
+	}
+	fields := parseCategoryFields(scheme.CategoryFields)
+	for _, f := range tmpl.Fields {
+		if !f.Required {
+			continue
+		}
+		val := strings.TrimSpace(fields[f.Key])
+		if f.Key == "technique" && val == "" {
+			val = strings.TrimSpace(scheme.Technique)
+		}
+		if val == "" {
+			return apperr.Validation("field required: " + f.Label)
+		}
+	}
+	hasProduct := false
+	for _, c := range scheme.Components {
+		if strings.TrimSpace(c.Name) != "" {
+			hasProduct = true
+			break
+		}
+	}
+	if categoryNeedsProduct(tmpl.CategoryKey) && !hasProduct && strings.TrimSpace(fields["product"]) == "" && strings.TrimSpace(fields["dye"]) == "" {
+		return apperr.Validation("add at least one product or material")
+	}
+	return nil
+}
+
+func categoryNeedsProduct(category string) bool {
+	switch category {
+	case domain.SchemeCategoryColoring, domain.SchemeCategoryCare:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID uuid.UUID, scheme *VisitSchemeInput) (*domain.Appointment, error) {
@@ -63,25 +158,36 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 		if !s.canSkipScheme(ctx, actorUserID) {
 			return nil, apperr.Forbidden("service scheme is required on the current plan")
 		}
-	} else {
-		tech := strings.TrimSpace(scheme.Technique)
-		hasComp := false
-		for _, c := range scheme.Components {
-			if strings.TrimSpace(c.Name) != "" {
-				hasComp = true
-				break
-			}
-		}
-		if tech == "" && !hasComp {
-			return nil, apperr.Validation("fill technique or at least one product/material")
-		}
 	}
 
-	a, err := s.Complete(ctx, appointmentID, actorUserID)
+	a, err := s.store.GetAppointment(ctx, appointmentID)
 	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if a == nil {
+		return nil, apperr.NotFound("appointment not found")
+	}
+	if a.MasterUserID != actorUserID {
+		return nil, apperr.Forbidden("only assigned master can complete")
+	}
+	if err := domain.Transition(a.Status, domain.StatusCompleted); err != nil {
 		return nil, err
 	}
+
+	category := domain.ResolveSchemeCategory(a.ServiceName)
+	tmpl, err := s.store.GetActiveSchemeTemplate(ctx, category)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if tmpl == nil {
+		tmpl, _ = s.store.GetActiveSchemeTemplate(ctx, domain.SchemeCategoryGeneric)
+	}
+	if err := validateSchemeAgainstTemplate(tmpl, scheme); err != nil {
+		return nil, err
+	}
+
 	now := s.now().UTC()
+	fromStatus := a.Status
 	comps := make([]store.SchemeComponent, 0, len(scheme.Components))
 	for _, c := range scheme.Components {
 		if strings.TrimSpace(c.Name) == "" {
@@ -89,13 +195,31 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 		}
 		comps = append(comps, c)
 	}
-	if err := s.store.UpsertServiceScheme(ctx, store.ServiceScheme{
+	stored := store.ServiceScheme{
 		AppointmentID: a.ID, Technique: strings.TrimSpace(scheme.Technique), Notes: strings.TrimSpace(scheme.Notes),
 		CategoryFields: scheme.CategoryFields, Skipped: scheme.Skipped, CreatedBy: actorUserID, Components: comps,
-	}, now); err != nil {
+	}
+	if tmpl != nil {
+		id, parseErr := uuid.Parse(tmpl.ID)
+		if parseErr == nil {
+			stored.TemplateID = &id
+			stored.TemplateVersion = tmpl.Version
+		}
+	}
+	auditMeta := fmt.Sprintf(`{"skipped":%v,"entitlement":"skip_service_scheme"}`, scheme.Skipped)
+	if err := s.store.CompleteWithScheme(ctx, appointmentID, fromStatus, actorUserID, stored, auditMeta, now); err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
 		return nil, apperr.Internal(err)
 	}
-	_ = s.store.AddBookingAudit(ctx, actorUserID, "scheme.saved", "appointment", a.ID, fmt.Sprintf(`{"skipped":%v}`, scheme.Skipped), now)
+
+	a.Status = domain.StatusCompleted
+	a.UpdatedAt = now
+	s.notifyStatus(ctx, a, domain.StatusCompleted)
+	s.notifyVisitCompleted(ctx, a)
+	s.createVisitRecord(ctx, a)
+	s.consumeStockForAppointment(ctx, a, actorUserID)
 	return a, nil
 }
 

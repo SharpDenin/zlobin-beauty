@@ -135,7 +135,11 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 	if err := s.store.CreateUser(ctx, user); err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if err := s.startPremiumTrial(ctx, user.ID, now); err != nil {
+	if domain.HasAnyRole(user.Roles, domain.RoleMaster, domain.RoleSupplier, domain.RoleSupplierRep, domain.RoleSalonAdmin) {
+		if err := s.startPremiumTrial(ctx, user.ID, now); err != nil {
+			return nil, apperr.Internal(err)
+		}
+	} else if err := s.startFreeSubscription(ctx, user.ID, now); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	_ = s.security(ctx, &user.ID, "user.registered", map[string]any{})
@@ -373,10 +377,32 @@ func (s *Service) security(ctx context.Context, userID *uuid.UUID, eventType str
 }
 
 func (s *Service) startPremiumTrial(ctx context.Context, userID uuid.UUID, now time.Time) error {
+	existing, err := s.store.GetSubscription(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
 	plan, status, start, end := entitlement.TrialForNewUser(now)
 	sub := domain.Subscription{
 		UserID: userID, Plan: plan, Status: status,
 		TrialStartedAt: &start, TrialEndsAt: &end, StartedAt: &start,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	return s.store.UpsertSubscription(ctx, sub)
+}
+
+func (s *Service) startFreeSubscription(ctx context.Context, userID uuid.UUID, now time.Time) error {
+	existing, err := s.store.GetSubscription(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	sub := domain.Subscription{
+		UserID: userID, Plan: entitlement.PlanFree, Status: entitlement.StatusExpired,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	return s.store.UpsertSubscription(ctx, sub)
@@ -389,7 +415,18 @@ func (s *Service) SubscriptionFor(ctx context.Context, userID uuid.UUID) (entitl
 	}
 	now := s.now().UTC()
 	if sub == nil {
-		if err := s.startPremiumTrial(ctx, userID, now); err != nil {
+		user, err := s.store.GetUserByID(ctx, userID)
+		if err != nil {
+			return entitlement.Snapshot{}, apperr.Internal(err)
+		}
+		if user == nil {
+			return entitlement.Snapshot{}, apperr.NotFound("user not found")
+		}
+		if domain.HasAnyRole(user.Roles, domain.RoleMaster, domain.RoleSupplier, domain.RoleSupplierRep, domain.RoleSalonAdmin) {
+			if err := s.startPremiumTrial(ctx, userID, now); err != nil {
+				return entitlement.Snapshot{}, apperr.Internal(err)
+			}
+		} else if err := s.startFreeSubscription(ctx, userID, now); err != nil {
 			return entitlement.Snapshot{}, apperr.Internal(err)
 		}
 		sub, err = s.store.GetSubscription(ctx, userID)
@@ -397,7 +434,7 @@ func (s *Service) SubscriptionFor(ctx context.Context, userID uuid.UUID) (entitl
 			return entitlement.Snapshot{}, apperr.Internal(err)
 		}
 	}
-	snap := entitlement.Evaluate(sub.Plan, sub.Status, sub.TrialEndsAt, sub.PaidUntil, now)
+	snap := entitlement.ResolveEffectivePlan(sub.Plan, sub.Status, sub.TrialEndsAt, sub.PaidUntil, now)
 	snap.TrialStartedAt = sub.TrialStartedAt
 	snap.TrialEndsAt = sub.TrialEndsAt
 	snap.StartedAt = sub.StartedAt

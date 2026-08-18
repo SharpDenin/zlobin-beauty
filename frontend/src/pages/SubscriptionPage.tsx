@@ -29,6 +29,7 @@ export function SubscriptionPage() {
   const { accessToken } = useAuth()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
   const sub = useQuery({
     queryKey: ['me-subscription'],
     queryFn: () => apiRequest<Snapshot>('/v1/me/subscription', { token: accessToken }),
@@ -53,6 +54,7 @@ export function SubscriptionPage() {
   const expired = s?.status === 'expired'
   const planTitle = isPremium ? (isTrial ? 'Premium Trial' : 'Premium') : expired ? 'Trial истёк · Free' : 'Free'
   const ends = s?.trial_ends_at ? new Date(s.trial_ends_at).toLocaleDateString('ru-RU') : null
+  const trialEndingSoon = isTrial && trialDays != null && trialDays <= 7
 
   return (
     <main className="page stack subscription-page">
@@ -65,10 +67,19 @@ export function SubscriptionPage() {
       {error && <div className="state-box error">{error}</div>}
 
       {isTrial && ends && (
-        <section className="card stack-sm trial-banner">
+        <section className="card stack-sm trial-banner" data-testid="subscription-trial-banner">
           <p className="eyebrow">Trial</p>
           <h2>Premium активирован бесплатно на 3 месяца</h2>
-          <p>До {ends} · осталось {trialDays} дн.</p>
+          <p>Пробный Premium до {ends} · осталось {trialDays} дн.</p>
+          {trialEndingSoon && <p className="muted">Premium Trial закончится через {trialDays} дн.</p>}
+        </section>
+      )}
+
+      {expired && !isPremium && (
+        <section className="card stack-sm" data-testid="subscription-expired-banner">
+          <p className="eyebrow">Trial завершён</p>
+          <h2>Пробный Premium завершён</h2>
+          <p>Сейчас используется Free. Схема услуги обязательна при завершении приёма.</p>
         </section>
       )}
 
@@ -83,8 +94,23 @@ export function SubscriptionPage() {
         {!isPremium && (
           <p className="muted">На Free схема услуги обязательна при завершении приёма.</p>
         )}
+        {!isPremium && (
+          <button className="btn btn-primary" type="button" onClick={() => setUpgradeOpen(true)}>
+            Перейти на Premium
+          </button>
+        )}
         <Link className="btn btn-secondary" to="/profile">К профилю</Link>
       </section>
+
+      {upgradeOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
+          <section className="card stack">
+            <h2 id="upgrade-title">Premium</h2>
+            <p>Онлайн-оплата будет подключена позже. Сейчас можно пользоваться trial или demo-переключателем в dev-окружении.</p>
+            <button className="btn btn-primary" type="button" onClick={() => setUpgradeOpen(false)}>Понятно</button>
+          </section>
+        </div>
+      )}
 
       <section className="card stack">
         <h2>Free и Premium</h2>

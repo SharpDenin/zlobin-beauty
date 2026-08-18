@@ -55,3 +55,17 @@ func TestTrialForNewUser(t *testing.T) {
 		t.Fatalf("trial end %s want %s", end, want)
 	}
 }
+
+func TestCanSkipServiceScheme(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	end := now.Add(24 * time.Hour)
+	snap := ResolveEffectivePlan(PlanPremium, StatusTrial, &end, nil, now)
+	if !CanSkipServiceScheme(snap) {
+		t.Fatal("trial should skip scheme")
+	}
+	expired := now.Add(-time.Hour)
+	freeSnap := ResolveEffectivePlan(PlanPremium, StatusTrial, &expired, nil, now)
+	if CanSkipServiceScheme(freeSnap) {
+		t.Fatal("expired trial must not skip")
+	}
+}

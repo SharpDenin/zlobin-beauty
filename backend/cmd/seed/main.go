@@ -45,6 +45,7 @@ func main() {
 		{Email: "chain1@demo.local", Name: "Сеть Владелец", Role: "master"},
 		{Email: "mobile1@demo.local", Name: "Выездной Мастер", Role: "master", City: "Красноярск"},
 		{Email: "expired1@demo.local", Name: "Мастер Trial Expired", Role: "master"},
+		{Email: "premium1@demo.local", Name: "Мастер Premium", Role: "master"},
 	}
 	users := map[string]authUser{}
 	for _, a := range accounts {
@@ -65,6 +66,7 @@ func main() {
 	master2 := users["master2@demo.local"]
 	master3 := users["master3@demo.local"]
 	master4 := users["master4@demo.local"]
+	var m4Profile string
 	supplier1 := users["supplier1@demo.local"]
 	supplier2 := users["supplier2@demo.local"]
 	client1 := users["client1@demo.local"]
@@ -124,7 +126,7 @@ func main() {
 	}
 	log.Printf("ok master3 city=Москва tz=Europe/Moscow work_type=employee")
 
-	_, _, _, _, err = seedMaster(client, base, master4, masterSeed{
+	_, _, m4Profile, _, err = seedMaster(client, base, master4, masterSeed{
 		OrgName: "Кабинет Дмитрия (demo)", BranchName: "Красноярск север",
 		City: "Красноярск", Address: "ул. Мира, 12", Phone: "+79001234567", Timezone: "Asia/Krasnoyarsk",
 		Display: "Дмитрий Бровист", Bio: "Независимый мастер бровей и ресниц в Красноярске.",
@@ -132,6 +134,7 @@ func main() {
 		WorkType: "independent",
 		Services: []serviceSpec{
 			{Name: "Коррекция бровей", Category: "брови", Description: "Форма бровей под тип лица.", Duration: 40, Price: 180000},
+			{Name: "Окрашивание (Phase4)", Category: "колористика", Description: "Демо Phase4: обязательная схема на Free.", Duration: 120, Price: 450000},
 			{Name: "Окрашивание бровей", Category: "брови", Description: "Стойкое окрашивание с подбором оттенка.", Duration: 50, Price: 200000},
 			{Name: "Ламинирование ресниц", Category: "ресницы", Description: "Ламинирование и питание ресниц.", Duration: 70, Price: 320000},
 		},
@@ -140,6 +143,39 @@ func main() {
 		fatal("master4: %v", err)
 	}
 	log.Printf("ok master4 city=Красноярск tz=Asia/Krasnoyarsk work_type=independent")
+
+	premium1 := users["premium1@demo.local"]
+	expired1 := users["expired1@demo.local"]
+	p1Org, _, p1Profile, p1Service, err := seedMaster(client, base, premium1, masterSeed{
+		OrgName: "Premium Studio (demo)", BranchName: "Красноярск центр",
+		City: "Красноярск", Address: "пр. Мира, 88", Phone: "+79007776655", Timezone: "Asia/Krasnoyarsk",
+		Display: "Premium Demo Master", Bio: "Paid Premium master for Phase4 acceptance.",
+		Specs: []string{"колористика"}, Experience: 10, Education: "Premium Academy",
+		WorkType: "independent",
+		Services: []serviceSpec{
+			{Name: "Окрашивание (Phase4 Premium)", Category: "колористика", Description: "Premium skip-scheme demo.", Duration: 120, Price: 550000},
+		},
+	})
+	if err != nil {
+		log.Printf("warn premium1 master: %v", err)
+	} else {
+		log.Printf("ok premium1 org=%s profile=%s service=%s", p1Org, p1Profile, p1Service)
+	}
+	_, _, e1Profile, e1Service, err := seedMaster(client, base, expired1, masterSeed{
+		OrgName: "Expired Trial (demo)", BranchName: "Красноярск юг",
+		City: "Красноярск", Address: "ул. Вавилова, 3", Phone: "+79006665544", Timezone: "Asia/Krasnoyarsk",
+		Display: "Expired Trial Master", Bio: "Expired trial → Free for Phase4.",
+		Specs: []string{"колористика"}, Experience: 4, Education: "Demo School",
+		WorkType: "independent",
+		Services: []serviceSpec{
+			{Name: "Окрашивание (Phase4 Expired)", Category: "колористика", Description: "Expired trial must fill scheme.", Duration: 120, Price: 400000},
+		},
+	})
+	if err != nil {
+		log.Printf("warn expired1 master: %v", err)
+	} else {
+		log.Printf("ok expired1 profile=%s service=%s", e1Profile, e1Service)
+	}
 
 	sup1Org, products1, err := seedSupplier(client, base, supplier1, supplierSeed{
 		OrgName:      "Поставщик Профи (demo)",
@@ -189,7 +225,12 @@ func main() {
 		log.Printf("ok knowledge articles (supplier-authored)")
 	}
 
-	apptID, err := seedAppointments(client, base, client1, master1, m1Profile, m1Service)
+	apptID, err := seedAppointments(client, base, client1, master1, m1Profile, func() string {
+		if id, err := lookupMasterServiceByName(client, base, master1, "Окрашивание"); err == nil {
+		 return id
+		}
+		return m1Service
+	}())
 	if err != nil {
 		log.Printf("warn appointments: %v", err)
 	} else if apptID != "" {
@@ -278,6 +319,12 @@ func main() {
 		log.Printf("ok phase2 analytics history")
 	}
 
+	if err := seedPhase4Appointments(client, base, users, master1, m1Profile, m1Service, master4, m4Profile, premium1, p1Profile, p1Service, expired1, e1Profile, e1Service); err != nil {
+		log.Printf("warn phase4 appointments: %v", err)
+	} else {
+		log.Printf("ok phase4 subscription + scheme appointments")
+	}
+
 	if err := seedRepRoute(client, base, supplier1, sup1Org, m1Branch, users["rep1@demo.local"]); err != nil {
 		log.Printf("warn rep route: %v", err)
 	} else {
@@ -298,6 +345,7 @@ func main() {
 	log.Printf("mobile1@demo.local work_type=mobile_master")
 	log.Printf("admin1@demo.local  salon_admin of Anna salon")
 	log.Printf("expired1@demo.local expired trial → FREE")
+	log.Printf("premium1@demo.local paid Premium")
 	log.Printf("client2@demo.local one no-show; client3@demo.local blacklisted at master1")
 	log.Printf("supplier1@demo.local org=%s", truncate(sup1Org, 36))
 	log.Printf("supplier2@demo.local org=%s", truncate(sup2Org, 36))
@@ -1469,6 +1517,9 @@ func seedAppointments(c *http.Client, base string, client, master authUser, mast
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/start", master.Token, map[string]any{}, &appt)
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/complete", master.Token, map[string]any{
 			"technique": "Демо seed окрашивание",
+			"category_fields": map[string]any{
+				"technique": "Демо seed окрашивание", "dye": "Majirel 7.1", "proportions": "1:1.5", "oxidizer": "6%",
+			},
 			"components": []map[string]any{
 				{"name": "Majirel 7.1", "brand": "L'Oreal", "qty": "30", "unit": "г", "proportion": "1:1.5"},
 			},
@@ -1919,6 +1970,9 @@ func seedSubscriptions(c *http.Client, base string, users map[string]authUser) e
 		"paid_until": time.Now().UTC().AddDate(0, 6, 0).Format(time.RFC3339),
 	})
 	set("master1@demo.local", "premium", "trial", nil)
+	set("premium1@demo.local", "premium", "active", map[string]any{
+		"paid_until": time.Now().UTC().AddDate(0, 6, 0).Format(time.RFC3339),
+	})
 	return nil
 }
 
@@ -2223,6 +2277,131 @@ func seedRepRoute(c *http.Client, base string, supplier authUser, orgID, branchI
 	}
 	if st >= 300 {
 		return fmt.Errorf("recommend route status %d", st)
+	}
+	return nil
+}
+
+func lookupMasterServiceByName(c *http.Client, base string, user authUser, contains string) (string, error) {
+	var me struct {
+		Services []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"services"`
+	}
+	if _, err := doJSON(c, http.MethodGet, base+"/v1/me/master", user.Token, nil, &me); err != nil {
+		return "", err
+	}
+	needle := strings.ToLower(contains)
+	for _, s := range me.Services {
+		if strings.Contains(strings.ToLower(s.Name), needle) {
+			return s.ID, nil
+		}
+	}
+	return "", fmt.Errorf("service matching %q not found", contains)
+}
+
+func seedBookInProgress(c *http.Client, base string, client, master authUser, profileID, serviceID string, durationMin int) (string, error) {
+	if profileID == "" || serviceID == "" {
+		return "", fmt.Errorf("missing profile/service")
+	}
+	starts, err := findSlot(c, base, master.ID, durationMin)
+	if err != nil {
+		return "", err
+	}
+	var appt struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
+		"master_id": profileID, "service_id": serviceID, "starts_at": starts,
+	}, &appt)
+	if err != nil {
+		return "", err
+	}
+	if st >= 300 || appt.ID == "" {
+		return "", fmt.Errorf("create appointment status %d", st)
+	}
+	if appt.Status == "pending_confirmation" || appt.Status == "pending" || appt.Status == "" {
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/confirm", master.Token, map[string]any{}, &appt)
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/start", master.Token, map[string]any{}, &appt)
+	return appt.ID, nil
+}
+
+func seedCompleteAppointment(c *http.Client, base string, client, master authUser, profileID, serviceID string, durationMin int, body map[string]any) (string, error) {
+	id, err := seedBookInProgress(c, base, client, master, profileID, serviceID, durationMin)
+	if err != nil {
+		return "", err
+	}
+	_, err = doJSON(c, http.MethodPost, base+"/v1/appointments/"+id+"/complete", master.Token, body, nil)
+	return id, err
+}
+
+func seedPhase4Appointments(
+	c *http.Client, base string, users map[string]authUser,
+	master1 authUser, m1Profile, m1Service string,
+	master4 authUser, m4Profile string,
+	premium1 authUser, p1Profile, p1Service string,
+	expired1 authUser, e1Profile, e1Service string,
+) error {
+	client2 := users["client2@demo.local"]
+	client1 := users["client1@demo.local"]
+
+	m1Color, err := lookupMasterServiceByName(c, base, master1, "Окрашивание")
+	if err != nil {
+		m1Color = m1Service
+	}
+	m4Color, err := lookupMasterServiceByName(c, base, master4, "Phase4")
+	if err != nil {
+		return err
+	}
+
+	if id, err := seedBookInProgress(c, base, client2, master4, m4Profile, m4Color, 120); err != nil {
+		return fmt.Errorf("free in_progress: %w", err)
+	} else {
+		log.Printf("ok phase4 free in_progress appt=%s master4", id)
+	}
+	if id, err := seedBookInProgress(c, base, client1, master1, m1Profile, m1Color, 180); err != nil {
+		log.Printf("warn trial in_progress: %v", err)
+	} else {
+		log.Printf("ok phase4 trial in_progress appt=%s master1", id)
+	}
+	if p1Profile != "" && p1Service != "" {
+		if id, err := seedBookInProgress(c, base, client1, premium1, p1Profile, p1Service, 120); err != nil {
+			log.Printf("warn premium in_progress: %v", err)
+		} else {
+			log.Printf("ok phase4 premium in_progress appt=%s premium1", id)
+		}
+	}
+	if e1Profile != "" && e1Service != "" {
+		if id, err := seedBookInProgress(c, base, client1, expired1, e1Profile, e1Service, 120); err != nil {
+			log.Printf("warn expired in_progress: %v", err)
+		} else {
+			log.Printf("ok phase4 expired in_progress appt=%s expired1", id)
+		}
+	}
+
+	if id, err := seedCompleteAppointment(c, base, client1, master4, m4Profile, m4Color, 120, map[string]any{
+		"technique": "Seed Phase4 Free",
+		"category_fields": map[string]any{
+			"technique": "Seed Phase4 Free", "dye": "Majirel 7.1", "proportions": "1:1.5", "oxidizer": "6%",
+		},
+		"components": []map[string]any{{"name": "Majirel 7.1", "qty": "30", "unit": "г", "proportion": "1:1.5"}},
+		"notes": "Phase4 completed scheme",
+	}); err != nil {
+		log.Printf("warn completed scheme: %v", err)
+	} else {
+		log.Printf("ok phase4 completed scheme appt=%s", id)
+	}
+
+	if p1Profile != "" && p1Service != "" {
+		if id, err := seedCompleteAppointment(c, base, client1, premium1, p1Profile, p1Service, 120, map[string]any{
+			"skipped": true,
+		}); err != nil {
+			log.Printf("warn completed skipped: %v", err)
+		} else {
+			log.Printf("ok phase4 completed skipped appt=%s premium1", id)
+		}
 	}
 	return nil
 }

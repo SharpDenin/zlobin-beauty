@@ -7,6 +7,7 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
+import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 
 type ClientCard = {
   id: string
@@ -241,6 +242,7 @@ export function ClientCardPage() {
                 <span>{formatMoney(v.price_minor)}</span>
               </div>
               <p className="muted">{new Date(v.completed_at).toLocaleString('ru-RU')}</p>
+              <VisitSchemeSummary appointmentId={v.appointment_id} accessToken={accessToken} />
             </article>
           ))}
         </div>

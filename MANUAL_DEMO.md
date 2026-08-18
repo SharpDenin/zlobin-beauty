@@ -49,6 +49,16 @@ UI: `http://localhost:5173` (или публичный URL из README_DEPLOY).
 Профиль: subscription / trial.
 Checkout косметики: филиал получения выбирается из списка салонов, без ручного ввода идентификаторов.
 
+## 7. Subscription + Scheme (Phase 4, 3–4 мин)
+
+**Trial:** `master1@demo.local` → Профиль → **Подписка** → Premium Trial, дата окончания, остаток дней.
+
+**Free:** `master4@demo.local` → запись in_progress (Phase4) → **Завершить** → шаблон окрашивания, обязательные поля → complete → карточка клиента показывает схему.
+
+**Premium skip:** `premium1@demo.local` → in_progress → «Не раскрывать схему» → confirm → complete → в истории «Схема не раскрыта мастером».
+
+**Expired trial:** `expired1@demo.local` → **Подписка** → «Trial истёк · Free»; skip недоступен.
+
 ## 8. Client Shop / Commerce (Phase 3, 5 мин)
 
 `client1@demo.local` → **Магазин** → товар → **Корзина** → **Оформить** → самовывоз (рекомендованный салон) → оплата → сводка (несколько поставщиков — один checkout) → **Готово** → **Мои заказы** → детали + timeline.
@@ -64,4 +74,4 @@ Multi-supplier: добавьте товар S1-* и S2-* — после checkout
 
 ---
 
-После демо: `FINAL_REPORT.md` → **PHASE 3 BLOCKERS: NONE**.
+После демо: `FINAL_REPORT.md` → **PHASE 4 BLOCKERS: NONE**.

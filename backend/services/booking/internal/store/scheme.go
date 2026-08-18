@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
@@ -21,13 +22,15 @@ type SchemeComponent struct {
 }
 
 type ServiceScheme struct {
-	AppointmentID  uuid.UUID
-	Technique      string
-	Notes          string
-	CategoryFields json.RawMessage
-	Skipped        bool
-	CreatedBy      uuid.UUID
-	Components     []SchemeComponent
+	AppointmentID   uuid.UUID
+	Technique       string
+	Notes           string
+	CategoryFields  json.RawMessage
+	Skipped         bool
+	CreatedBy       uuid.UUID
+	TemplateID      *uuid.UUID
+	TemplateVersion int
+	Components      []SchemeComponent
 }
 
 func (s *Store) UpsertServiceScheme(ctx context.Context, in ServiceScheme, now time.Time) error {
@@ -36,12 +39,13 @@ func (s *Store) UpsertServiceScheme(ctx context.Context, in ServiceScheme, now t
 		fields = []byte("{}")
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, created_by, created_at, updated_at)
-VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$7)
+INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, created_by, template_id, template_version, created_at, updated_at)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$9)
 ON CONFLICT (appointment_id) DO UPDATE SET
   technique=EXCLUDED.technique, notes=EXCLUDED.notes, category_fields=EXCLUDED.category_fields,
-  skipped=EXCLUDED.skipped, updated_at=EXCLUDED.updated_at`,
-		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.CreatedBy, now)
+  skipped=EXCLUDED.skipped, template_id=EXCLUDED.template_id, template_version=EXCLUDED.template_version,
+  updated_at=EXCLUDED.updated_at`,
+		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.CreatedBy, in.TemplateID, in.TemplateVersion, now)
 	if err != nil {
 		return err
 	}
@@ -63,9 +67,9 @@ func (s *Store) GetServiceScheme(ctx context.Context, appointmentID uuid.UUID) (
 	var out ServiceScheme
 	out.AppointmentID = appointmentID
 	err := s.pool.QueryRow(ctx, `
-SELECT technique, notes, category_fields, skipped, created_by
+SELECT technique, notes, category_fields, skipped, created_by, template_id, template_version
 FROM appointment_service_schemes WHERE appointment_id=$1`, appointmentID).Scan(
-		&out.Technique, &out.Notes, &out.CategoryFields, &out.Skipped, &out.CreatedBy)
+		&out.Technique, &out.Notes, &out.CategoryFields, &out.Skipped, &out.CreatedBy, &out.TemplateID, &out.TemplateVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -195,4 +199,68 @@ func (s *Store) UpdatePlannerBlockTimes(ctx context.Context, id uuid.UUID, start
 func (s *Store) DeletePlannerBlock(ctx context.Context, id uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM planner_blocks WHERE id=$1`, id)
 	return err
+}
+
+func (s *Store) upsertServiceSchemeTx(ctx context.Context, tx pgx.Tx, in ServiceScheme, now time.Time) error {
+	fields := in.CategoryFields
+	if len(fields) == 0 {
+		fields = []byte("{}")
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, created_by, template_id, template_version, created_at, updated_at)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$9)
+ON CONFLICT (appointment_id) DO UPDATE SET
+  technique=EXCLUDED.technique, notes=EXCLUDED.notes, category_fields=EXCLUDED.category_fields,
+  skipped=EXCLUDED.skipped, template_id=EXCLUDED.template_id, template_version=EXCLUDED.template_version,
+  updated_at=EXCLUDED.updated_at`,
+		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.CreatedBy, in.TemplateID, in.TemplateVersion, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM appointment_scheme_components WHERE appointment_id=$1`, in.AppointmentID); err != nil {
+		return err
+	}
+	for i, c := range in.Components {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO appointment_scheme_components(id, appointment_id, name, brand, qty, unit, proportion, notes, sort_order)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			ids.New(), in.AppointmentID, c.Name, c.Brand, c.Qty, c.Unit, c.Proportion, c.Notes, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CompleteWithScheme atomically transitions appointment to completed and persists the scheme.
+func (s *Store) CompleteWithScheme(ctx context.Context, appointmentID uuid.UUID, fromStatus string, actor uuid.UUID, scheme ServiceScheme, auditMeta string, now time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+UPDATE appointments SET status='completed', updated_at=$4
+WHERE id=$1 AND status=$2 AND master_user_id=$3`, appointmentID, fromStatus, actor, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.Conflict("appointment status changed concurrently")
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)
+VALUES ($1,$2,$3,'completed',$4,'',$5)`, ids.New(), appointmentID, fromStatus, actor, now); err != nil {
+		return err
+	}
+	if err := s.upsertServiceSchemeTx(ctx, tx, scheme, now); err != nil {
+		return err
+	}
+	if auditMeta != "" {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO booking_audit_events(id, actor_user_id, action, entity_type, entity_id, meta, created_at)
+VALUES ($1,$2,$3,'appointment',$4,$5::jsonb,$6)`,
+			ids.New(), actor, "scheme.saved", appointmentID, auditMeta, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

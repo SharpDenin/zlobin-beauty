@@ -42,6 +42,28 @@ func (s Snapshot) IsPremium() bool {
 	return s.EffectivePlan == PlanPremium
 }
 
+func CanSkipServiceScheme(snap Snapshot) bool {
+	return snap.Has(FeatureSkipServiceScheme)
+}
+
+// ResolveEffectivePlan is the single entry point for subscription-derived access.
+func ResolveEffectivePlan(plan, status string, trialEnds, paidUntil *time.Time, now time.Time) Snapshot {
+	return Evaluate(plan, status, trialEnds, paidUntil, now)
+}
+
+// IsProfessionalSubscriber returns true when the user role set includes a billable professional role.
+func IsProfessionalSubscriber(roles []string) bool {
+	pro := map[string]struct{}{
+		"master": {}, "supplier": {}, "supplier_rep": {}, "salon_admin": {}, "salon_owner": {},
+	}
+	for _, r := range roles {
+		if _, ok := pro[r]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func Evaluate(plan, status string, trialEnds, paidUntil *time.Time, now time.Time) Snapshot {
 	snap := Snapshot{Plan: plan, Status: status, EffectivePlan: PlanFree}
 	if plan == "" {
@@ -60,7 +82,7 @@ func Evaluate(plan, status string, trialEnds, paidUntil *time.Time, now time.Tim
 	}
 	if premium {
 		snap.EffectivePlan = PlanPremium
-		snap.Features = []string{FeatureSkipServiceScheme, FeatureAdvancedAnalytics}
+		snap.Features = []string{FeatureSkipServiceScheme}
 	} else {
 		snap.EffectivePlan = PlanFree
 		snap.Features = []string{}

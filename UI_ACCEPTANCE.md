@@ -1,15 +1,22 @@
 # UI_ACCEPTANCE.md — Salon-X
 
-Дата проверки: **2026-08-18** (Phase 3).  
+Дата проверки: **2026-08-18** (Phase 4).  
 Стек: docker compose + seed. UI: `http://localhost:5173`. API: `http://localhost:8090`.  
 Пароль seed: `Password123!`.
 
 Playwright `frontend/e2e/salon-x.spec.ts`:
+- Phase 4: free scheme complete, premium skip, expired subscription, registration trial.
 - Phase 3: checkout e2e, multi-supplier API, cross-role pickup API, price-change UI, idempotency group.
 - Phase 1–2 regression: phone-390 + laptop-1366.
 
 | Screen | Role | Route | Purpose | Implemented | Responsive | Notes |
 |---|---|---|---|---|---|---|
+| Subscription trial | Master | `/profile/subscription` | Premium Trial banner, days left | Yes | 390, 1366 | master1 |
+| Subscription free | Master | `/profile/subscription` | Free + expired trial UX | Yes | 390, 1366 | expired1 |
+| Subscription premium | Master | `/profile/subscription` | Paid Premium state | Yes | 390 | premium1 |
+| Scheme editor | Master | `/appointments/:id` | Template fields, validation | Yes | 390, 1366 | coloring template |
+| Scheme skip | Master | `/appointments/:id` | Premium skip confirm | Yes | 390 | premium1 |
+| Client card scheme | Master | `/clients/id/:id` | Summary / withheld | Yes | 390, 1366 | VisitSchemeSummary |
 | Client shop | Client | `/shop` | Каталог ≥12 товаров, фото, PROFESSIONAL_ONLY скрыт | Yes | 390, 1366 | Не UUID |
 | Product detail | Client | `/shop/:id` | Галерея, add to cart | Yes | 390, 1366 | |
 | Cart | Client | `/shop/cart` | Persistence, multi-supplier info | Yes | 390, 1366 | Auto-split at checkout |

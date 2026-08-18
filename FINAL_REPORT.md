@@ -15,7 +15,7 @@ UI: **Salon-X** (`http://localhost:5173`). Пароль demo: `Password123!`.
 | Requirement | DB | Backend | UI | UX | Permissions | Seed | Tests | Status |
 |---|---|---|---|---|---|---|---|---|
 | 1 Name Salon-X | — | — | Y | Y | — | — | visual | **DONE** |
-| 2 Knowledge Base | Y | Y | Y | Partial | Y | Y | e2e filter/fav | **PARTIAL** |
+| 2 Knowledge Base | Y | Y | Y | Y | Y | Y | e2e hub+editor+API | **DONE** |
 | 3 Knowledge favorites | Y | Y | Y | Y | Y | Y | e2e | **DONE** |
 | 4 Article ↔ product/category | Y | Y | Y | Partial | Y | Y | code+seed | **PARTIAL** |
 | 5 Supplier warehouse | Y | Y | Y | Partial | Y | Y | e2e | **PARTIAL** |
@@ -67,22 +67,22 @@ DONE
 Knowledge Base: product/category links, multi filters, dropdown, quick chips, ranking, recommendations, favorites, rich inline photo/video, production UX.
 
 ### Status
-PARTIAL
+DONE (Phase 5)
 
 ### Implemented
-Список с поиском, категорией, брендом, chips (Избранное / Новое / окрашивание / уход / техника / продукция), секции «Рекомендованное», карточки с cover, TipTap editor с inline media, связь с товарами чекбоксами у поставщика.
+Knowledge Hub: search (title/body/brand/product), facet chips, searchable multi-select filters, URL state, recommended/favorites/new sections, visual cards, editorial article, related products, reverse product→knowledge, supplier CMS with cursor media insert, draft/preview/publish/unpublish/archive, own-product attach.
 
 ### UI
-`/knowledge`, `/knowledge/:id` — master/supplier.
+`/knowledge`, `/knowledge/:id`, `/knowledge/new`, `/knowledge/:id/edit`.
 
 ### Backend
-`GET/POST /v1/knowledge`, favorites, `content_format=doc_json`.
+Combined filters, pagination, FTS+ILIKE+trgm indexes, deterministic ranking, commerce ownership check, facets.
 
 ### Test
-e2e: master → База знаний → chip «Для окрашивания» → статья → избранное.
+e2e master hub + supplier editor; API ownership, draft hidden, favorites, filter combination unit test; XSS URL sanitizer.
 
 ### Known limitations
-Нет searchable multi-select «поставщик / конкретный товар». Ranking упрощённый (порядок API + «новое» за 14 дней). Editorial hub ещё не на уровне профессиональной библиотеки.
+Search is PostgreSQL ILIKE + simple FTS, not Elasticsearch. Ranking is deterministic (product/category/brand/title/views/recency), not ML. Client knowledge access is not expanded.
 
 ---
 
@@ -532,7 +532,7 @@ AI, mentorship, courses, coworking, новые маркетплейсы.
 
 1. Browser e2e: no-show booking block + unblock; contact privacy hide phone; scheme complete FREE vs Premium.
 2. Dashboard drag-grid; calendar conflict e2e; chain context на сервере.
-3. Knowledge combobox-фильтры и editorial polish.
+3. Knowledge Hub закрыт в Phase 5.
 4. Recurring custom interval + propose e2e.
 5. Representative GPS/provider и supplier drill-down performance.
 6. Responsive ручной проход calendar/map/analytics на 430/768/1366 (e2e UI сценарии сейчас в основном 390).
@@ -593,3 +593,66 @@ All items in user checklist verified via code + automated acceptance where noted
 - No real acquiring; DEV billing in demo only.
 - Scheme not editable after complete.
 - Subscription lifecycle notifications minimal (UI-only trial warning).
+
+---
+
+## Phase 5 — Knowledge Hub (2026-08-18)
+
+### Status
+**DONE** — PHASE 5 BLOCKERS: NONE
+
+### Backend
+- List contract `{ items, total, limit, offset }`; combined filters `q`, `supplier`, `brand`, `category`, `product_id`, `product_category_id`, `favorites`, `sort`, pagination.
+- Facets `GET /v1/knowledge/facets`.
+- Search: ILIKE on title/brand/category/content + `plainto_tsquery`; GIN FTS + pg_trgm indexes (`012_knowledge_search_trgm.sql`).
+- Ranking: deterministic `KnowledgeRankScore` (exact product, category, brand, title, ln views, recency). No ML.
+- Ownership: `ensureOwnProducts` via commerce `GET /v1/internal/products/{id}` — supplier attaches only own products.
+- Draft/unpublish/archive: master sees published only; owner can preview.
+- Auto reading time from document text.
+
+### Filters / ranking
+AND combination of all selected filters on the server. UI does not filter the full dataset locally. Recommended section uses `sort=recommended`.
+
+### Editorial UI
+- Knowledge Home: hero search, facet chips, filter panel, active chips + reset, empty state, sections Recommended / Favorites / New / All, visual-first cards, favorite without navigating.
+- Article: readable max-width, cover, supplier link (filter), media, related products, related articles by product.
+
+### Editor
+- Routes `/knowledge/new` and `/knowledge/:id/edit`.
+- Sections: Основное / Связи / Материал / Публикация.
+- Searchable product multi-select (own catalog), product category relations, brand from catalog.
+- TipTap H1–H3, lists, quote, tip/warning callouts, MediaDropzone insert at cursor, cover dropzone.
+- Draft / in-editor preview / publish / unpublish / archive.
+
+### Product relations
+- Article → products and product categories.
+- Product detail (shop + cosmetics) «Материалы и инструкции».
+- Supplier product edit lists linked articles.
+
+### Security
+- Supplier B cannot update Supplier A article.
+- Drafts hidden from Master (404).
+- Foreign product attach forbidden when commerce is up.
+- Renderer sanitizes `javascript:` / `data:` hrefs and media src.
+
+### Seed
+- 15+ realistic articles across two suppliers and several brands/categories.
+- Mix: one product, many products, category-only, brand, image/video/tip/warning.
+- One supplier draft; master1 favorites (Majirel / колористика / уход).
+- Default product categories migration for catalog relations.
+
+### Tests
+- `knowledge_filter_test.go` combination contract.
+- Frontend `richSanitize.test.ts` XSS URLs + node order.
+- E2E: hub 390+1366, supplier editor 1366, API ownership/favorites/filters.
+- Phase 1–4 regression suite unchanged.
+
+### Screenshots
+Attached in Playwright report: Knowledge Home, filtered state, Article Detail (390/1366), Supplier Editor, Preview.
+
+### Limitations
+- No AI / embeddings / comments / paid knowledge.
+- View count still increments on article GET (staleTime 60s reduces React double-count).
+- Editor is usable on tablet/mobile but designed for desktop.
+- Search is PostgreSQL, not a dedicated search engine.
+

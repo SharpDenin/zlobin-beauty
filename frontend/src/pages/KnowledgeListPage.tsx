@@ -1,506 +1,438 @@
-import { Link } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { JSONContent } from '@tiptap/react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { hasMasterAccess, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
-import { useSupplierOrg } from '@/shared/lib/commerce'
+import { KnowledgeCard } from '@/features/knowledge/KnowledgeCard'
+import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
+import {
+  emptyFilters,
+  filtersActive,
+  filtersFromSearch,
+  filtersToSearch,
+  knowledgeApiQuery,
+  type KnowledgeArticle,
+  type KnowledgeFacet,
+  type KnowledgeFilters,
+  type KnowledgeListResponse,
+} from '@/features/knowledge/types'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
-import { emptyDoc, estimateReadingMinutes, docHasText, RichDocEditor } from '@/shared/ui/RichDocEditor'
-import { MediaDropzone } from '@/shared/ui/MediaDropzone'
-import { MediaImage } from '@/shared/ui/MediaImage'
 
-type Article = {
-  id: string
-  title: string
-  category: string
-  content?: string
-  content_format?: string
-  cover_media_id?: string | null
-  reading_time_minutes?: number
-  brand?: string
-  author_name: string
-  author_org_id?: string | null
-  product_id?: string | null
-  product_ids?: string[]
-  view_count?: number
-  favorite?: boolean
-  published?: boolean
-  created_at: string
+type Facets = {
+  categories: KnowledgeFacet[]
+  brands: KnowledgeFacet[]
+  suppliers: KnowledgeFacet[]
 }
 
-type SupplierProduct = {
-  id: string
-  brand?: string
-  name: string
-}
+type ProductOpt = { id: string; name: string; brand?: string }
+type CategoryOpt = { id: string; name: string }
 
-type Draft = {
-  id?: string
-  title: string
-  category: string
-  brand: string
-  doc: JSONContent
-  coverMediaId: string | null
-  published: boolean
-  productIds: string
-}
-
-const emptyDraft = (): Draft => ({
-  title: '',
-  category: '',
-  brand: '',
-  doc: emptyDoc(),
-  coverMediaId: null,
-  published: true,
-  productIds: '',
-})
-
-function parseDoc(content?: string, format?: string): JSONContent {
-  if ((format || 'plain') === 'doc_json' && content) {
-    try {
-      const parsed = JSON.parse(content) as JSONContent
-      if (parsed?.type === 'doc') return parsed
-    } catch {
-      /* fall through */
-    }
-  }
-  if (!content?.trim()) return emptyDoc()
-  return {
-    type: 'doc',
-    content: content.split(/\n+/).map((line) => ({
-      type: 'paragraph',
-      content: line ? [{ type: 'text', text: line }] : [],
-    })),
-  }
-}
-
-async function fetchMyKnowledge(token: string | null): Promise<Article[] | null> {
-  try {
-    const res = await apiRequest<{ items: Article[] }>('/v1/me/knowledge', { token })
-    return res.items ?? []
-  } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 501)) return null
-    throw e
-  }
-}
+const PAGE_SIZE = 12
 
 export function KnowledgeListPage() {
   const { accessToken, user } = useAuth()
   const isSupplier = hasSupplierAccess(user) && !hasMasterAccess(user)
-  const { supplierOrgId } = useSupplierOrg()
+  if (isSupplier) return <SupplierKnowledgeHome />
+  return <KnowledgeHub token={accessToken} />
+}
+
+function KnowledgeHub({ token }: { token: string | null }) {
   const qc = useQueryClient()
-  const [category, setCategory] = useState('')
-  const [brand, setBrand] = useState('')
-  const [search, setSearch] = useState('')
-  const [favoritesOnly, setFavoritesOnly] = useState(false)
-  const [chip, setChip] = useState('')
-  const [submitted, setSubmitted] = useState({ category: '', brand: '', q: '', favorites: false })
-  const [error, setError] = useState<string | null>(null)
-  const [ok, setOk] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Draft>(emptyDraft)
+  const [params, setParams] = useSearchParams()
+  const filters = useMemo(() => filtersFromSearch(params), [params])
+  const [search, setSearch] = useState(filters.q)
+  const [drawer, setDrawer] = useState(false)
+  const [productOpts, setProductOpts] = useState<ProductOpt[]>([])
+  const [productQ, setProductQ] = useState('')
+  const browseHome = !filtersActive(filters)
 
-  const published = useQuery({
-    queryKey: ['knowledge', submitted],
-    queryFn: () => {
-      const p = new URLSearchParams()
-      if (submitted.category) p.set('category', submitted.category)
-      if (submitted.brand) p.set('brand', submitted.brand)
-      if (submitted.q) p.set('q', submitted.q)
-      if (submitted.favorites) p.set('favorites', '1')
-      const qs = p.toString() ? `?${p.toString()}` : ''
-      return apiRequest<{ items: Article[] }>(`/v1/knowledge${qs}`, { token: accessToken })
-    },
-    enabled: Boolean(accessToken) && !isSupplier,
-  })
+  useEffect(() => { setSearch(filters.q) }, [filters.q])
 
-  const mine = useQuery({
-    queryKey: ['knowledge-mine', supplierOrgId],
-    queryFn: async () => {
-      const own = await fetchMyKnowledge(accessToken)
-      if (own) return own
-      const all = await apiRequest<{ items: Article[] }>('/v1/knowledge?include_unpublished=1', { token: accessToken }).catch(async () => {
-        return apiRequest<{ items: Article[] }>('/v1/knowledge', { token: accessToken })
-      })
-      return (all.items ?? []).filter((a) => !supplierOrgId || a.author_org_id === supplierOrgId)
-    },
-    enabled: Boolean(accessToken && isSupplier),
-  })
-
-  const supplierProducts = useQuery({
-    queryKey: ['knowledge-supplier-products', supplierOrgId],
-    queryFn: () =>
-      apiRequest<{ items: SupplierProduct[] }>(
-        `/v1/commerce/products?organization_id=${encodeURIComponent(supplierOrgId ?? '')}`,
-        { token: accessToken },
-      ),
-    enabled: Boolean(accessToken && isSupplier && supplierOrgId),
-  })
-
-  const save = useMutation({
-    mutationFn: (published: boolean) => {
-      const content = JSON.stringify(draft.doc)
-      const product_ids = draft.productIds
-        .split(/[\s,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-      const body = {
-        title: draft.title.trim(),
-        category: draft.category.trim(),
-        brand: draft.brand.trim(),
-        content,
-        content_format: 'doc_json',
-        cover_media_id: draft.coverMediaId,
-        reading_time_minutes: estimateReadingMinutes(draft.doc),
-        author_name: user?.display_name ?? '',
-        organization_id: supplierOrgId,
-        published,
-        product_ids,
-      }
-      if (draft.id) {
-        return apiRequest(`/v1/knowledge/${draft.id}`, {
-          method: 'PUT',
-          token: accessToken,
-          body,
-        })
-      }
-      return apiRequest('/v1/knowledge', {
-        token: accessToken,
-        body,
-      })
-    },
-    onSuccess: async () => {
-      setOk(draft.id ? 'Статья обновлена' : 'Статья сохранена')
-      setError(null)
-      setDraft(emptyDraft())
-      await qc.invalidateQueries({ queryKey: ['knowledge-mine'] })
-    },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
-  })
-
-  const togglePublish = useMutation({
-    mutationFn: (input: { article: Article; published: boolean }) =>
-      apiRequest(`/v1/knowledge/${input.article.id}`, {
-        method: 'PUT',
-        token: accessToken,
-        body: {
-          title: input.article.title,
-          category: input.article.category,
-          content: input.article.content ?? '',
-          content_format: input.article.content_format || 'plain',
-          cover_media_id: input.article.cover_media_id ?? null,
-          reading_time_minutes: input.article.reading_time_minutes ?? 0,
-          brand: input.article.brand ?? '',
-          author_name: input.article.author_name,
-          organization_id: supplierOrgId,
-          published: input.published,
-          product_ids: input.article.product_ids ?? (input.article.product_id ? [input.article.product_id] : []),
-        },
-      }),
-    onSuccess: async () => {
-      setOk('Статус публикации обновлён')
-      setError(null)
-      await qc.invalidateQueries({ queryKey: ['knowledge-mine'] })
-    },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить публикацию'),
-  })
-
-  const items = useMemo(
-    () => (isSupplier ? (mine.data ?? []) : (published.data?.items ?? [])),
-    [isSupplier, mine.data, published.data],
-  )
-
-  function startEdit(a: Article) {
-    setDraft({
-      id: a.id,
-      title: a.title,
-      category: a.category,
-      brand: a.brand ?? '',
-      doc: parseDoc(a.content, a.content_format),
-      coverMediaId: a.cover_media_id ?? null,
-      published: a.published !== false,
-      productIds: (a.product_ids ?? (a.product_id ? [a.product_id] : [])).join(', '),
-    })
-    setOk(null)
-    setError(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+  function setFilters(next: KnowledgeFilters) {
+    setParams(filtersToSearch(next), { replace: false })
+  }
+  function patch(partial: Partial<KnowledgeFilters>) {
+    setFilters({ ...filters, ...partial })
   }
 
-  const canSave = draft.title.trim().length >= 2 && docHasText(draft.doc)
-  const chips = [
-    { id: 'fav', label: 'Избранное' },
-    { id: 'new', label: 'Новое' },
-    { id: 'popular', label: 'Популярное' },
-    { id: 'Колористика', label: 'Для окрашивания' },
-    { id: 'Уход', label: 'Уход' },
-    { id: 'Стайлинг', label: 'Техника' },
-    { id: 'Продукция', label: 'Продукция' },
+  const facets = useQuery({
+    queryKey: ['knowledge-facets'],
+    queryFn: () => apiRequest<Facets>('/v1/knowledge/facets', { token }),
+    enabled: Boolean(token),
+  })
+
+  const productCategories = useQuery({
+    queryKey: ['kb-product-categories'],
+    queryFn: () => apiRequest<{ items: CategoryOpt[] }>('/v1/commerce/product-categories', { token }),
+    enabled: Boolean(token),
+  })
+
+  const productSearch = useQuery({
+    queryKey: ['kb-product-search', productQ],
+    queryFn: () =>
+      apiRequest<{ items: ProductOpt[] }>(
+        `/v1/commerce/shop/products?q=${encodeURIComponent(productQ)}&limit=20`,
+        { token },
+      ),
+    enabled: Boolean(token && (productQ.trim().length >= 2 || filters.product_id.length > 0)),
+  })
+
+  useEffect(() => {
+    const items = productSearch.data?.items ?? []
+    if (!items.length) return
+    setProductOpts((prev) => {
+      const map = new Map(prev.map((p) => [p.id, p]))
+      for (const p of items) map.set(p.id, p)
+      return [...map.values()]
+    })
+  }, [productSearch.data])
+
+  const list = useQuery({
+    queryKey: ['knowledge', filters, 0],
+    queryFn: () =>
+      apiRequest<KnowledgeListResponse>(`/v1/knowledge${knowledgeApiQuery(filters, { limit: PAGE_SIZE, offset: 0 })}`, { token }),
+    enabled: Boolean(token),
+  })
+
+  const recommended = useQuery({
+    queryKey: ['knowledge-recommended'],
+    queryFn: () =>
+      apiRequest<KnowledgeListResponse>('/v1/knowledge?sort=recommended&limit=6', { token }),
+    enabled: Boolean(token && browseHome),
+  })
+  const favoritesSec = useQuery({
+    queryKey: ['knowledge-fav-sec'],
+    queryFn: () =>
+      apiRequest<KnowledgeListResponse>('/v1/knowledge?favorites=1&limit=6', { token }),
+    enabled: Boolean(token && browseHome),
+  })
+  const newest = useQuery({
+    queryKey: ['knowledge-new-sec'],
+    queryFn: () =>
+      apiRequest<KnowledgeListResponse>('/v1/knowledge?sort=new&limit=6', { token }),
+    enabled: Boolean(token && browseHome),
+  })
+
+  const [extra, setExtra] = useState<KnowledgeArticle[]>([])
+  const [offset, setOffset] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setExtra([])
+    setOffset(PAGE_SIZE)
+  }, [filters])
+
+  const fav = useMutation({
+    mutationFn: async (a: KnowledgeArticle) => {
+      if (a.favorite) {
+        await apiRequest(`/v1/knowledge/${a.id}/favorite`, { method: 'DELETE', token })
+        return { ...a, favorite: false }
+      }
+      return apiRequest<KnowledgeArticle>(`/v1/knowledge/${a.id}/favorite`, { method: 'POST', token })
+    },
+    onMutate: async (a) => {
+      await qc.cancelQueries({ queryKey: ['knowledge'] })
+      const patchFav = (art: KnowledgeArticle) => (art.id === a.id ? { ...art, favorite: !art.favorite } : art)
+      qc.setQueriesData({ queryKey: ['knowledge'] }, (old: unknown) => {
+        if (!old || typeof old !== 'object' || !('items' in old)) return old
+        const data = old as KnowledgeListResponse
+        return { ...data, items: data.items.map(patchFav) }
+      })
+    },
+    onError: () => { void qc.invalidateQueries({ queryKey: ['knowledge'] }) },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['knowledge'] })
+      void qc.invalidateQueries({ queryKey: ['knowledge-fav-sec'] })
+    },
+  })
+
+  const items = [...(list.data?.items ?? []), ...extra]
+  const total = list.data?.total ?? 0
+  const hasMore = items.length < total
+
+  const cats = facets.data?.categories ?? []
+  const brands = facets.data?.brands ?? []
+  const suppliers = facets.data?.suppliers ?? []
+  const productCats = productCategories.data?.items ?? []
+
+  const activeChips: Array<{ key: string; label: string; clear: () => void }> = []
+  if (filters.q) activeChips.push({ key: 'q', label: `«${filters.q}»`, clear: () => patch({ q: '' }) })
+  if (filters.favorites) activeChips.push({ key: 'fav', label: 'Избранное', clear: () => patch({ favorites: false }) })
+  if (filters.sort === 'new') activeChips.push({ key: 'new', label: 'Новое', clear: () => patch({ sort: '' }) })
+  if (filters.sort === 'recommended') activeChips.push({ key: 'rec', label: 'Рекомендовано', clear: () => patch({ sort: '' }) })
+  for (const c of filters.category) {
+    activeChips.push({ key: `c-${c}`, label: c, clear: () => patch({ category: filters.category.filter((x) => x !== c) }) })
+  }
+  for (const b of filters.brand) {
+    activeChips.push({ key: `b-${b}`, label: b, clear: () => patch({ brand: filters.brand.filter((x) => x !== b) }) })
+  }
+  for (const s of filters.supplier) {
+    const label = suppliers.find((x) => x.value === s)?.label ?? 'Поставщик'
+    activeChips.push({ key: `s-${s}`, label, clear: () => patch({ supplier: filters.supplier.filter((x) => x !== s) }) })
+  }
+  for (const p of filters.product_id) {
+    const opt = productOpts.find((x) => x.id === p)
+    activeChips.push({ key: `p-${p}`, label: opt ? [opt.brand, opt.name].filter(Boolean).join(' · ') : 'Товар', clear: () => patch({ product_id: filters.product_id.filter((x) => x !== p) }) })
+  }
+  for (const c of filters.product_category_id) {
+    const name = productCats.find((x) => x.id === c)?.name ?? 'Категория'
+    activeChips.push({ key: `pc-${c}`, label: name, clear: () => patch({ product_category_id: filters.product_category_id.filter((x) => x !== c) }) })
+  }
+
+  async function loadMore() {
+    const res = await apiRequest<KnowledgeListResponse>(
+      `/v1/knowledge${knowledgeApiQuery(filters, { limit: PAGE_SIZE, offset })}`,
+      { token },
+    )
+    setExtra((prev) => [...prev, ...(res.items ?? [])])
+    setOffset((n) => n + PAGE_SIZE)
+  }
+
+  const quickChips: Array<{ id: string; label: string; active: boolean; onClick: () => void }> = [
+    { id: 'fav', label: 'Избранное', active: filters.favorites, onClick: () => patch({ favorites: !filters.favorites, sort: '' }) },
+    { id: 'new', label: 'Новое', active: filters.sort === 'new', onClick: () => patch({ sort: filters.sort === 'new' ? '' : 'new', favorites: false }) },
+    { id: 'rec', label: 'Рекомендовано', active: filters.sort === 'recommended', onClick: () => patch({ sort: filters.sort === 'recommended' ? '' : 'recommended', favorites: false }) },
+    ...cats.map((c) => ({
+      id: `cat-${c.value}`,
+      label: c.label,
+      active: filters.category.includes(c.value),
+      onClick: () => {
+        const next = filters.category.includes(c.value)
+          ? filters.category.filter((x) => x !== c.value)
+          : [...filters.category, c.value]
+        patch({ category: next })
+      },
+    })),
   ]
 
-  function applyChip(id: string) {
-    if (id === 'fav') {
-      setFavoritesOnly(true)
-      setSubmitted((s) => ({ ...s, favorites: true }))
-      setChip('fav')
-      return
-    }
-    if (id === 'new') {
-      setChip('new')
-      return
-    }
-    if (id === 'popular') {
-      setChip('popular')
-      return
-    }
-    setCategory(id)
-    setChip(id)
-    setSubmitted((s) => ({ ...s, category: id }))
-  }
-
-  const visibleItems = useMemo(() => {
-    let list = items
-    if (chip === 'new') {
-      const cut = Date.now() - 14 * 86400000
-      list = list.filter((a) => new Date(a.created_at).getTime() >= cut)
-    }
-    if (chip === 'popular') {
-      list = [...list].sort((a, b) => (b.view_count ?? 0) - (a.view_count ?? 0))
-    }
-    return list
-  }, [items, chip])
-  const recommended = visibleItems.slice(0, 3)
-  const popular = visibleItems.slice(3, 8)
-
   return (
-    <main className="page stack">
-      {isSupplier && (
-      <div className="stack-sm">
+    <main className="page stack kb-hub">
+      <section className="kb-hero card stack">
+        <p className="eyebrow">Salon-X</p>
         <h1>База знаний</h1>
-        <p className="muted">Ваши материалы для мастеров</p>
-      </div>
-      )}
-
-      {!isSupplier && (
-        <section className="kb-hero card stack">
-          <h1>База знаний</h1>
-          <p className="muted">Профессиональная библиотека протоколов, формул и техник.</p>
-          <form
-            className="search-form"
-            onSubmit={(e) => {
-              e.preventDefault()
-              setSubmitted({ category: category.trim(), brand: brand.trim(), q: search.trim(), favorites: favoritesOnly })
-            }}
-          >
-            <div className="field">
-              <label htmlFor="kb-search">Поиск</label>
-              <input id="kb-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Найти статью, бренд или технику" />
-            </div>
-            <div className="filters-grid">
-              <div className="field">
-                <label>Категория</label>
-                <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                  <option value="">Все</option>
-                  {['Колористика', 'Уход', 'Стайлинг', 'Продукция', 'Процедуры', 'Салон'].map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Бренд</label>
-                <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="L'Oreal, Wella…" list="kb-brands" />
-                <datalist id="kb-brands">
-                  <option value="L'Oreal" />
-                  <option value="Wella" />
-                  <option value="Olaplex" />
-                  <option value="Estel" />
-                </datalist>
-              </div>
-            </div>
-            <div className="chip-row">
-              {chips.map((c) => (
-                <button key={c.id} className={`chip ${chip === c.id || (c.id === 'fav' && favoritesOnly) ? 'active' : ''}`} type="button" onClick={() => applyChip(c.id)}>
-                  {c.label}
-                </button>
-              ))}
-            </div>
-            {(submitted.category || submitted.brand || submitted.q || submitted.favorites || chip) && (
-              <div className="row">
-                {submitted.category && <span className="chip active">{submitted.category}</span>}
-                {submitted.brand && <span className="chip active">{submitted.brand}</span>}
-                {submitted.favorites && <span className="chip active">Избранное</span>}
-                <button className="btn btn-secondary btn-compact" type="button" onClick={() => {
-                  setCategory(''); setBrand(''); setSearch(''); setFavoritesOnly(false); setChip('')
-                  setSubmitted({ category: '', brand: '', q: '', favorites: false })
-                }}>Очистить фильтры</button>
-              </div>
-            )}
-            <button className="btn btn-primary" type="submit">Найти</button>
-          </form>
-        </section>
-      )}
-
-      {isSupplier && (
-        <section className="card stack">
-          <h2>{draft.id ? 'Редактирование статьи' : 'Новая статья'}</h2>
-          {error && <div className="state-box error">{error}</div>}
-          {ok && <div className="state-box success">{ok}</div>}
+        <p className="muted">профессиональные материалы, технологии, инструкции и рекомендации поставщиков.</p>
+        <form
+          className="kb-search-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            patch({ q: search.trim() })
+          }}
+        >
           <div className="field">
-            <label>Заголовок</label>
-            <input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} />
-          </div>
-          <div className="field">
-            <label>Категория</label>
-            <input value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} />
-          </div>
-          <div className="field">
-            <label>Бренд</label>
-            <input value={draft.brand} onChange={(e) => setDraft((d) => ({ ...d, brand: e.target.value }))} placeholder="Опционально" />
-          </div>
-          <MediaDropzone
-            purpose="article"
-            value={draft.coverMediaId}
-            onChange={(id) => setDraft((d) => ({ ...d, coverMediaId: id }))}
-            label="Обложка: перетащите изображение или нажмите для выбора"
-          />
-          <fieldset className="card stack-sm">
-            <legend>Связанные товары</legend>
-            {supplierProducts.isLoading && <span className="muted">Загрузка товаров…</span>}
-            {(supplierProducts.data?.items ?? []).map((product) => {
-              const selected = draft.productIds.split(/[\s,;]+/).filter(Boolean)
-              const checked = selected.includes(product.id)
-              return (
-                <label key={product.id} className="field-check">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...selected, product.id]
-                        : selected.filter((id) => id !== product.id)
-                      setDraft((d) => ({ ...d, productIds: next.join(',') }))
-                    }}
-                  />
-                  <span>{[product.brand, product.name].filter(Boolean).join(' · ')}</span>
-                </label>
-              )
-            })}
-          </fieldset>
-          <div className="field">
-            <label>Текст</label>
-            <RichDocEditor
-              value={draft.doc}
-              onChange={(doc) => setDraft((d) => ({ ...d, doc }))}
-              token={accessToken}
-              imagePurpose="article"
-            />
-          </div>
-          <label className="field-check">
+            <label htmlFor="kb-search">Поиск</label>
             <input
-              type="checkbox"
-              checked={draft.published}
-              onChange={(e) => setDraft((d) => ({ ...d, published: e.target.checked }))}
+              id="kb-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Статья, бренд, продукт или технология"
             />
-            <span>Сразу опубликовать</span>
-          </label>
-          <div className="row">
-            <button
-              className="btn btn-secondary"
-              type="button"
-              disabled={save.isPending || !canSave}
-              onClick={() => save.mutate(false)}
-            >
-              Сохранить черновик
-            </button>
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={save.isPending || !canSave}
-              onClick={() => save.mutate(true)}
-            >
-              {save.isPending ? 'Сохраняем…' : 'Опубликовать'}
-            </button>
-            {draft.id && (
-              <Link className="btn btn-secondary" to={`/knowledge/${draft.id}`}>Предпросмотр</Link>
-            )}
-            {draft.id && (
-              <button className="btn btn-ghost" type="button" onClick={() => setDraft(emptyDraft())}>
-                Отменить
-              </button>
-            )}
           </div>
-        </section>
-      )}
-
-      {(isSupplier ? mine.isLoading : published.isLoading) && <div className="state-box">Загрузка…</div>}
-      {(isSupplier ? mine.isError : published.isError) && <div className="state-box error">Не удалось загрузить статьи</div>}
-      {!mine.isLoading && !published.isLoading && items.length === 0 && (
-        <div className="empty-state">
-          <h2>Статей пока нет</h2>
-          <p>{isSupplier ? 'Создайте первую статью для мастеров.' : 'Опубликованные материалы появятся здесь.'}</p>
+          <div className="row kb-search-actions">
+            <button className="btn btn-primary" type="submit">Найти</button>
+            <button className="btn btn-secondary" type="button" onClick={() => setDrawer((v) => !v)}>Фильтры</button>
+          </div>
+        </form>
+        <div className="chip-row kb-quick-chips">
+          {quickChips.map((c) => (
+            <button key={c.id} type="button" className={`chip ${c.active ? 'active' : ''}`} onClick={c.onClick}>
+              {c.label}
+            </button>
+          ))}
         </div>
-      )}
+        {activeChips.length > 0 && (
+          <div className="row kb-active-filters">
+            {activeChips.map((c) => (
+              <button key={c.key} type="button" className="chip active" onClick={c.clear}>{c.label} ×</button>
+            ))}
+            <button className="btn btn-ghost btn-compact" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
+              Сбросить всё
+            </button>
+          </div>
+        )}
+      </section>
 
-      {!isSupplier && recommended.length > 0 && (
-        <section className="stack">
-          <h2>Рекомендованное</h2>
-          <div className="kb-grid">
-            {recommended.map((a) => (
-              <Link key={a.id} to={`/knowledge/${a.id}`} className="kb-card">
-                <div className="kb-cover">
-                  {a.cover_media_id
-                    ? <MediaImage mediaId={a.cover_media_id} token={accessToken} alt="" className="product-photo" />
-                    : <div className="product-photo placeholder">{(a.category || 'KB').slice(0, 2)}</div>}
-                </div>
-                <strong>{a.title}</strong>
-                <p className="muted">{[a.author_name, a.category, a.brand].filter(Boolean).join(' · ')}</p>
-                <span className="muted">{a.reading_time_minutes ? `${a.reading_time_minutes} мин` : 'Статья'}</span>
-              </Link>
+      {drawer && (
+        <section className="card stack kb-filter-panel" aria-label="Расширенные фильтры">
+          <div className="row between">
+            <h2>Фильтры</h2>
+            <button className="btn btn-ghost btn-compact" type="button" onClick={() => setDrawer(false)}>Закрыть</button>
+          </div>
+          <SearchableMultiSelect
+            id="kb-f-supplier"
+            label="Поставщик"
+            options={suppliers.map((s) => ({ value: s.value, label: s.label }))}
+            values={filters.supplier}
+            onChange={(supplier) => patch({ supplier })}
+            placeholder="Найти поставщика"
+          />
+          <SearchableMultiSelect
+            id="kb-f-brand"
+            label="Бренд"
+            options={brands.map((s) => ({ value: s.value, label: s.label }))}
+            values={filters.brand}
+            onChange={(brand) => patch({ brand })}
+            placeholder="Найти бренд"
+          />
+          <SearchableMultiSelect
+            id="kb-f-pcat"
+            label="Категория товара"
+            options={productCats.map((s) => ({ value: s.id, label: s.name }))}
+            values={filters.product_category_id}
+            onChange={(product_category_id) => patch({ product_category_id })}
+            placeholder="Категория каталога"
+          />
+          <SearchableMultiSelect
+            id="kb-f-acat"
+            label="Категория материала"
+            options={cats.map((s) => ({ value: s.value, label: s.label }))}
+            values={filters.category}
+            onChange={(category) => patch({ category })}
+            placeholder="Колористика, уход…"
+          />
+          <div className="field kb-multiselect">
+            <label htmlFor="kb-f-product">Товар</label>
+            {filters.product_id.length > 0 && (
+              <div className="chip-row">
+                {filters.product_id.map((id) => {
+                  const opt = productOpts.find((p) => p.id === id)
+                  return (
+                    <button key={id} type="button" className="chip active" onClick={() => patch({ product_id: filters.product_id.filter((x) => x !== id) })}>
+                      {opt ? [opt.brand, opt.name].filter(Boolean).join(' · ') : 'Товар'} ×
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            <input
+              id="kb-f-product"
+              value={productQ}
+              onChange={(e) => setProductQ(e.target.value)}
+              placeholder="Название или бренд товара"
+              autoComplete="off"
+            />
+            {(productSearch.data?.items ?? []).filter((p) => !filters.product_id.includes(p.id)).slice(0, 8).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="kb-suggest-btn"
+                onClick={() => {
+                  setProductOpts((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]))
+                  patch({ product_id: [...filters.product_id, p.id] })
+                  setProductQ('')
+                }}
+              >
+                {[p.brand, p.name].filter(Boolean).join(' · ')}
+              </button>
             ))}
           </div>
         </section>
       )}
 
-      <div className={isSupplier ? 'list' : 'kb-grid'}>
-        {(isSupplier ? items : popular.length ? popular : visibleItems).map((a) => (
-          <article key={a.id} className={isSupplier ? 'list-item' : 'kb-card'}>
-            <Link to={`/knowledge/${a.id}`} className="stack-sm">
-              <div className="row between">
-                <strong>{a.title}</strong>
-                <div className="row">
-                  {a.category && <span className="badge badge-default">{a.category}</span>}
-                  {typeof a.published === 'boolean' && (
-                    <span className={`badge ${statusBadgeClass(a.published ? 'published' : 'draft')}`}>
-                      {productStateLabel(a.published ? 'published' : 'draft')}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <p className="muted">
-                {[a.brand, a.author_name || 'Автор не указан', new Date(a.created_at).toLocaleDateString('ru-RU')]
-                  .filter(Boolean)
-                  .join(' · ')}
-                {typeof a.reading_time_minutes === 'number' && a.reading_time_minutes > 0
-                  ? ` · ${a.reading_time_minutes} мин`
-                  : null}
-              </p>
-            </Link>
-            {isSupplier && (
-              <div className="row">
-                <button className="btn btn-secondary btn-compact" type="button" onClick={() => startEdit(a)}>
-                  Редактировать
-                </button>
-                {typeof a.published === 'boolean' && (
-                  <button
-                    className="btn btn-secondary btn-compact"
-                    type="button"
-                    disabled={togglePublish.isPending}
-                    onClick={() => togglePublish.mutate({ article: a, published: !a.published })}
-                  >
-                    {a.published ? 'Снять с публикации' : 'Опубликовать'}
-                  </button>
-                )}
-              </div>
-            )}
+      {list.isLoading && <div className="state-box">Загрузка материалов…</div>}
+      {list.isError && <div className="state-box error">Не удалось загрузить базу знаний</div>}
+
+      {browseHome && (recommended.data?.items?.length ?? 0) > 0 && (
+        <section className="stack kb-section">
+          <h2>Рекомендовано для вас</h2>
+          <p className="muted">Подобрано по связанным товарам, бренду и актуальности материалов</p>
+          <div className="kb-grid">
+            {recommended.data!.items.map((a) => (
+              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {browseHome && (favoritesSec.data?.items?.length ?? 0) > 0 && (
+        <section className="stack kb-section">
+          <h2>Избранное</h2>
+          <div className="kb-grid">
+            {favoritesSec.data!.items.map((a) => (
+              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {browseHome && (newest.data?.items?.length ?? 0) > 0 && (
+        <section className="stack kb-section">
+          <h2>Новое</h2>
+          <div className="kb-grid">
+            {newest.data!.items.map((a) => (
+              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="stack kb-section">
+        <h2>{browseHome ? 'Все материалы' : 'Результаты'}</h2>
+        {!list.isLoading && items.length === 0 && (
+          <div className="empty-state">
+            <h3>По выбранным фильтрам материалов нет</h3>
+            <p className="muted">Снимите один из фильтров или сбросьте все условия поиска.</p>
+            <div className="chip-row">
+              {activeChips.map((c) => (
+                <button key={c.key} type="button" className="chip active" onClick={c.clear}>{c.label} ×</button>
+              ))}
+            </div>
+            <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
+              Сбросить фильтры
+            </button>
+          </div>
+        )}
+        <div className="kb-grid">
+          {items.map((a) => (
+            <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+          ))}
+        </div>
+        {hasMore && (
+          <button className="btn btn-secondary" type="button" onClick={() => void loadMore()}>Показать ещё</button>
+        )}
+      </section>
+    </main>
+  )
+}
+
+function SupplierKnowledgeHome() {
+  const { accessToken } = useAuth()
+  const mine = useQuery({
+    queryKey: ['knowledge-mine'],
+    queryFn: () => apiRequest<KnowledgeListResponse>('/v1/me/knowledge?limit=50', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const items = mine.data?.items ?? []
+
+  return (
+    <main className="page stack">
+      <div className="row between">
+        <div className="stack-sm">
+          <h1>База знаний</h1>
+          <p className="muted">Материалы для мастеров: черновики, публикация и связи с товарами.</p>
+        </div>
+        <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
+      </div>
+      {mine.isLoading && <div className="state-box">Загрузка…</div>}
+      {mine.isError && <div className="state-box error">Не удалось загрузить материалы</div>}
+      {!mine.isLoading && items.length === 0 && (
+        <div className="empty-state">
+          <h2>Материалов пока нет</h2>
+          <p>Создайте инструкцию или технологию и свяжите её со своими товарами.</p>
+          <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
+        </div>
+      )}
+      <div className="list">
+        {items.map((a) => (
+          <article key={a.id} className="list-item">
+            <div className="row between">
+              <Link to={`/knowledge/${a.id}`}><strong>{a.title}</strong></Link>
+              <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
+                {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}
+              </span>
+            </div>
+            <p className="muted">{[a.category, a.brand, a.author_name].filter(Boolean).join(' · ')}</p>
+            <div className="row">
+              <Link className="btn btn-secondary btn-compact" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
+              <Link className="btn btn-ghost btn-compact" to={`/knowledge/${a.id}`}>Предпросмотр</Link>
+            </div>
           </article>
         ))}
       </div>

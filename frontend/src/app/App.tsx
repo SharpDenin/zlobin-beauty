@@ -34,6 +34,7 @@ import { CosmeticsOrdersPage } from '@/pages/CosmeticsOrdersPage'
 import { ServicesPage } from '@/pages/ServicesPage'
 import { KnowledgeListPage } from '@/pages/KnowledgeListPage'
 import { KnowledgeArticlePage } from '@/pages/KnowledgeArticlePage'
+import { KnowledgeEditorPage } from '@/pages/KnowledgeEditorPage'
 import { SupplierAnalyticsPage } from '@/pages/SupplierAnalyticsPage'
 import { SupplierTeamPage } from '@/pages/SupplierTeamPage'
 import { SupplierRepDetailPage } from '@/pages/SupplierRepDetailPage'
@@ -102,6 +103,8 @@ export function App() {
                 <Route path="/rep/finance" element={<RepPage />} />
                 <Route path="/rep/analytics" element={<RepPage />} />
                 <Route path="/knowledge" element={<KnowledgeListPage />} />
+                <Route path="/knowledge/new" element={<KnowledgeEditorPage />} />
+                <Route path="/knowledge/:id/edit" element={<KnowledgeEditorPage />} />
                 <Route path="/knowledge/:id" element={<KnowledgeArticlePage />} />
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/warehouse" element={<WarehousePage />} />

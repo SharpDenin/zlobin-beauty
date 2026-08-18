@@ -165,17 +165,59 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.getByRole('heading', { name: 'Склад', exact: true })).toBeVisible({ timeout: 15_000 })
   })
 
-  test('master knowledge filters + favorite', async ({ page }, info) => {
-    test.skip(info.project.name !== 'phone-390', 'once')
+  test('master knowledge hub search filters favorite article', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'laptop-1366', 'hub viewports')
     await loginUI(page, 'master1@demo.local')
     await page.goto('/knowledge')
     await expect(page.getByRole('heading', { name: 'База знаний' })).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: 'Для окрашивания' }).click()
-    const article = page.locator('a[href*="/knowledge/"]').first()
-    await expect(article).toBeVisible({ timeout: 15_000 })
-    await article.click()
-    await expect(page.getByRole('button', { name: /избранн/i })).toBeVisible({ timeout: 10_000 })
+    await test.info().attach(`knowledge-home-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    await page.getByRole('button', { name: 'Колористика' }).click()
+    await page.getByRole('button', { name: 'Фильтры' }).click()
+    await expect(page.getByLabel('Бренд')).toBeVisible()
+    await page.getByLabel('Бренд').fill("L'Oreal")
+    await page.locator('.kb-filter-panel .kb-suggest button').first().click()
+    await test.info().attach(`knowledge-filtered-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    await page.getByRole('button', { name: 'Сбросить всё' }).click()
+    await page.getByLabel('Поиск').fill('Majirel')
+    await page.getByRole('button', { name: 'Найти' }).click()
+    const majirel = page.getByRole('link', { name: /Majirel/i }).first()
+    await expect(majirel).toBeVisible({ timeout: 15_000 })
+    await majirel.click()
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.prose-article')).toBeVisible()
+    await expect(page.locator('.prose-article img, .prose-article video, .article-video, .article-figure').first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole('button', { name: /избранн/i })).toBeVisible()
     await page.getByRole('button', { name: /избранн/i }).click()
+    await expect(page.getByRole('heading', { name: 'Связанные товары' })).toBeVisible({ timeout: 15_000 })
+    await test.info().attach(`knowledge-article-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    await page.locator('a.product-card').first().click()
+    await expect(page.getByRole('heading', { name: 'Материалы и инструкции' })).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('supplier knowledge editor draft preview publish', async ({ page }, info) => {
+    test.skip(info.project.name !== 'laptop-1366', 'editor desktop')
+    await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/knowledge')
+    await expect(page.getByRole('heading', { name: 'База знаний' })).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('link', { name: 'Создать материал' }).click()
+    await expect(page.getByRole('heading', { name: 'Новый материал' })).toBeVisible({ timeout: 15_000 })
+    const title = `E2E протокол ${Date.now()}`
+    await page.getByLabel('Заголовок').fill(title)
+    await page.getByLabel('Категория материала').fill('Колористика')
+    await page.getByLabel('Бренд').fill("L'Oreal")
+    await page.locator('.rich-doc-surface [contenteditable="true"]').first().click()
+    await page.keyboard.type('Протокол нанесения Majirel для e2e.')
+    await page.getByRole('button', { name: 'Сохранить черновик' }).click()
+    await expect(page.getByText(/Черновик сохран/i)).toBeVisible({ timeout: 20_000 })
+    await page.getByRole('button', { name: 'Предпросмотр' }).click()
+    await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 10_000 })
+    await test.info().attach('knowledge-preview-1366', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    await page.getByRole('button', { name: 'К редактору' }).click()
+    await page.getByRole('button', { name: 'Опубликовать' }).click()
+    await expect(page.getByText('Материал опубликован')).toBeVisible({ timeout: 20_000 })
+    await test.info().attach('knowledge-editor-1366', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
   })
 
   test('representative route and tasks', async ({ page }, info) => {
@@ -954,5 +996,91 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     const wantEnd = new Date(start)
     wantEnd.setMonth(wantEnd.getMonth() + 3)
     expect(Math.abs(end.getTime() - wantEnd.getTime())).toBeLessThan(86400000)
+  })
+
+  test('phase5 knowledge filter combination and ownership', async () => {
+    const master = await apiLogin('master1@demo.local')
+    const s1 = await apiLogin('supplier1@demo.local')
+    const s2 = await apiLogin('supplier2@demo.local')
+
+    const listRes = await fetch(`${api}/v1/knowledge?q=${encodeURIComponent('Majirel')}&brand=${encodeURIComponent("L'Oreal")}&category=${encodeURIComponent('Колористика')}&limit=20`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(listRes.ok).toBeTruthy()
+    const listed = await listRes.json() as { items?: Array<{ id: string; title: string; brand?: string; category?: string }> }
+    expect((listed.items ?? []).length).toBeGreaterThan(0)
+    expect((listed.items ?? []).every((a) => /l'?oreal/i.test(a.brand ?? '') && a.category === 'Колористика')).toBeTruthy()
+
+    const mine = await fetch(`${api}/v1/me/knowledge?limit=50`, {
+      headers: { Authorization: `Bearer ${s1.access_token}` },
+    })
+    expect(mine.ok).toBeTruthy()
+    const mineData = await mine.json() as { items?: Array<{ id: string; title: string; status?: string; published?: boolean }> }
+    const owned = (mineData.items ?? [])[0]
+    expect(owned?.id).toBeTruthy()
+
+    const foreign = await fetch(`${api}/v1/knowledge/${owned!.id}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${s2.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'hack', category: 'Колористика', content: 'x', content_format: 'plain' }),
+    })
+    expect([401, 403, 404]).toContain(foreign.status)
+
+    const draft = mineData.items?.find((a) => a.status === 'draft' || a.published === false)
+    if (draft) {
+      const hidden = await fetch(`${api}/v1/knowledge/${draft.id}`, {
+        headers: { Authorization: `Bearer ${master.access_token}` },
+      })
+      expect(hidden.status).toBe(404)
+      const pubList = await fetch(`${api}/v1/knowledge?q=${encodeURIComponent(draft.title)}`, {
+        headers: { Authorization: `Bearer ${master.access_token}` },
+      })
+      const pubData = await pubList.json() as { items?: Array<{ id: string }> }
+      expect((pubData.items ?? []).some((a) => a.id === draft.id)).toBeFalsy()
+    }
+
+    const s2orgs = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${s2.access_token}` } })
+    const s2orgData = await s2orgs.json() as { items?: Array<{ organization: { id: string; type: string } }> }
+    const s2org = (s2orgData.items ?? []).find((i) => i.organization.type === 'supplier')?.organization.id
+    const s2products = await fetch(`${api}/v1/commerce/products?organization_id=${s2org}`, {
+      headers: { Authorization: `Bearer ${s2.access_token}` },
+    })
+    const s2cats = await s2products.json() as { items?: Array<{ id: string; organization_id?: string }> }
+    const foreignProduct = (s2cats.items ?? [])[0]
+    if (foreignProduct?.id) {
+      const orgs = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${s1.access_token}` } })
+      const orgData = await orgs.json() as { items?: Array<{ organization: { id: string; type: string } }> }
+      const orgId = (orgData.items ?? []).find((i) => i.organization.type === 'supplier')?.organization.id
+      const attach = await fetch(`${api}/v1/knowledge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${s1.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `Foreign product ${Date.now()}`,
+          category: 'Колористика',
+          content: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"no"}]}]}',
+          content_format: 'doc_json',
+          organization_id: orgId,
+          published: false,
+          product_ids: [foreignProduct.id],
+        }),
+      })
+      expect([400, 403]).toContain(attach.status)
+    }
+
+    const favTarget = (listed.items ?? [])[0]
+    const addFav = await fetch(`${api}/v1/knowledge/${favTarget.id}/favorite`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(addFav.ok).toBeTruthy()
+    const favList = await fetch(`${api}/v1/knowledge?favorites=1`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    const favData = await favList.json() as { items?: Array<{ id: string }> }
+    expect((favData.items ?? []).some((a) => a.id === favTarget.id)).toBeTruthy()
+    await fetch(`${api}/v1/knowledge/${favTarget.id}/favorite`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
   })
 })

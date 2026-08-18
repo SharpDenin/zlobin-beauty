@@ -224,6 +224,16 @@ func main() {
 	} else {
 		log.Printf("ok knowledge articles (supplier-authored)")
 	}
+	if err := seedKnowledgeSupplier2(client, base, supplier2, "Поставщик БьютиЛайн", sup2Org, products2); err != nil {
+		log.Printf("warn knowledge supplier2: %v", err)
+	} else {
+		log.Printf("ok knowledge articles (supplier2)")
+	}
+	if err := seedKnowledgeFavorites(client, base, master1); err != nil {
+		log.Printf("warn knowledge favorites: %v", err)
+	} else {
+		log.Printf("ok knowledge favorites for master1")
+	}
 
 	apptID, err := seedAppointments(client, base, client1, master1, m1Profile, func() string {
 		if id, err := lookupMasterServiceByName(client, base, master1, "Окрашивание"); err == nil {
@@ -1257,116 +1267,216 @@ func ensureLocation(c *http.Client, base string, user authUser, orgID, name, kin
 // --- knowledge ---
 
 func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID string, productIDs []string) error {
-	coverID, err := uploadSeedPNG(c, base, user.Token, "article", "kb-cover.png")
+	media, err := seedKnowledgeMedia(c, base, user)
 	if err != nil {
-		log.Printf("warn kb cover upload: %v", err)
+		log.Printf("warn kb media: %v", err)
 	}
-	inlineID, err := uploadSeedPNG(c, base, user.Token, "article", "kb-inline.png")
-	if err != nil {
-		log.Printf("warn kb inline upload: %v", err)
-	}
-	videoID, err := uploadSeedWebM(c, base, user.Token)
-	if err != nil {
-		log.Printf("warn kb video upload: %v (articles still seeded)", err)
-	}
+	cats := listProductCategoryIDs(c, base, user)
+	paint := nonempty(cats["краска"])
+	care := nonempty(cats["уход"])
+	ox := nonempty(cats["окислитель"])
+	style := nonempty(cats["стайлинг"])
 
+	p := func(i int) []string { return pickIndex(productIDs, i) }
+	rich := func(opts kbDocOpts) string { return knowledgeDocJSON(media, opts) }
+
+	articles := []kbArt{
+		{Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
+			Content: rich(kbDocOpts{H: "Тон и фон осветления", Body: "Практический гид по уровням тона: как не пережечь фон и сохранить плотность цвета Majirel.", List: []string{"Определите исходный уровень", "Сверьте фон осветления с картой", "Подберите оксид 3/6/9%"}, Tip: "Держите прядь-контроль каждые 10 минут на пористых волосах.", Image: true, Video: true}),
+			WithCover: true, ProductIDs: p(0), CategoryIDs: paint},
+		{Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
+			Content: rich(kbDocOpts{H: "Протокол ухода", Body: "Диагностика → No.0/No.3 → выдержка → финиш. Не смешивайте с прямым пигментом в одной чаше.", List: []string{"Пористость и эластичность", "Нанесение от длины к корню", "Домашний уход на 2 недели"}, Warn: "Не превышайте время выдержки на осветлённых волосах.", Image: true}),
+			WithCover: true, ProductIDs: firstN(productIDs, 2), CategoryIDs: care},
+		{Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
+			Content: rich(kbDocOpts{H: "Окислители 3% / 6% / 9%", Body: "Совместимость с крем-красками Koleston и контроль фона осветления.", List: []string{"3% — тон в тон и затемнение", "6% — покрытие седины", "9% — подъём на 2–3 уровня"}, Tip: "На тонких волосах лучше 6% дольше, чем 9% быстрее."}),
+			WithCover: true, CategoryIDs: ox},
+		{Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
+			Content: rich(kbDocOpts{H: "Блонд без ломкости", Body: "Поэтапное осветление Essex и защита структуры протеиновым уходом.", Image: true}),
+			WithCover: true, ProductIDs: p(7)},
+		{Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
+			Content: rich(kbDocOpts{H: "Рекомендации клиенту", Body: "Что рекомендовать после окрашивания: No.3 два раза в неделю, без сульфатов первые 14 дней."}),
+			WithCover: true, ProductIDs: p(5), CategoryIDs: care},
+		{Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
+			Content: rich(kbDocOpts{H: "Фиксация", Body: "EIMI Super Set: нанесите на сухие волосы с расстояния 20 см, не лакируйте у корня."}),
+			ProductIDs: p(11), CategoryIDs: style},
+		{Title: "Rich-док: формула окрашивания", Category: "Колористика", Brand: "L'Oreal",
+			Content: rich(kbDocOpts{H: "Формула окрашивания", Body: "Пример схемы Majirel + оксид 6%: 1:1.5, выдержка 35 минут, эмульгация 2 минуты.", Image: true, Video: true, Tip: "Сначала проработайте седину у висков."}),
+			WithCover: true, ProductIDs: firstN(productIDs, 2), CategoryIDs: paint},
+		{Title: "Кислотный уход vs протеиновый", Category: "Уход", Brand: "Olaplex",
+			Content: rich(kbDocOpts{H: "Кислота и протеин", Body: "Кислотный уход закрывает кутикулу после щёлочи. Протеин — если волосы тянутся и рвутся."}),
+			WithCover: true, CategoryIDs: care},
+		{Title: "Коррекция цвета после домашнего окрашивания", Category: "Колористика", Brand: "Wella",
+			Content: rich(kbDocOpts{H: "Коррекция", Body: "Безопасный путь: диагностика, снятие, тонирование Koleston без агрессивного осветления в один визит.", Warn: "Не делайте двойной блонд в день коррекции."}),
+			WithCover: true, ProductIDs: p(3)},
+		{Title: "Санитарные нормы рабочего места", Category: "Салон", Brand: "Salon-X",
+			Content: rich(kbDocOpts{H: "Санитария", Body: "Чек-лист: барьеры, дезинфекция чаш, одноразовые воротнички, проветривание после осветления."})},
+		{Title: "Подбор окислителя для седины", Category: "Продукция", Brand: "Estel",
+			Content: rich(kbDocOpts{H: "Седины", Body: "Покрытие седины Essex: 6% на плотной седине, предварительное заполнение на стеклевидных волосах."}),
+			WithCover: true, ProductIDs: p(7), CategoryIDs: paint},
+		{Title: "Летний уход: UV-защита волос", Category: "Уход", Brand: "L'Oreal",
+			Content: rich(kbDocOpts{H: "UV-защита", Body: "Летний протокол Absolut Repair: несмываемый крем перед пляжем, шампунь без сульфатов."}),
+			WithCover: true, ProductIDs: p(2), CategoryIDs: care},
+		{Title: "Инструкция: Majirel — пропорции и выдержка", Category: "Колористика", Brand: "L'Oreal",
+			Content: rich(kbDocOpts{H: "Majirel по шагам", Body: "Смешайте крем-краску Majirel с оксидантом 1:1.5. Нанесите на сухие волосы, выдержка 35 минут.", List: []string{"Чаша и кисть только для краски", "Эмульгация тёплой водой", "Закройте кутикулу кислым уходом"}, Image: true, Video: true, Tip: "На корнях держите на 5 минут меньше, чем на длине."}),
+			WithCover: true, ProductIDs: p(0), CategoryIDs: paint},
+		{Title: "Troubleshooting: пятна на коже после окрашивания", Category: "Колористика", Brand: "Estel",
+			Content: rich(kbDocOpts{H: "Снятие пятен", Body: "Не трите кожу спиртом. Используйте специализированный ремувер и масло по контуру роста волос до нанесения.", Warn: "Агрессивные растворители сушат кожу и дают раздражение."}),
+			WithCover: true},
+		{Title: "Техника балаяжа на Koleston Perfect", Category: "Колористика", Brand: "Wella",
+			Content: rich(kbDocOpts{H: "Балаяж", Body: "Свободная техника на Koleston: работайте от лица, не перегружайте оксидом 9% у корня.", Image: true}),
+			WithCover: true, ProductIDs: p(3), CategoryIDs: paint},
+		{Title: "Работа с линейкой Olaplex в салоне", Category: "Уход", Brand: "Olaplex",
+			Content: rich(kbDocOpts{H: "Салонный Olaplex", Body: "No.1/No.2 в услуге окрашивания: добавляйте в смесь по протоколу бренда, не заменяйте оксид.", List: []string{"Совместимость с Majirel", "Выдержка No.2 10–20 мин", "Дома — No.3 и No.6"}}),
+			WithCover: true, ProductIDs: []string{}, CategoryIDs: care},
+	}
+	if len(productIDs) > 5 {
+		articles[len(articles)-1].ProductIDs = []string{productIDs[5]}
+		if len(productIDs) > 6 {
+			articles[len(articles)-1].ProductIDs = append(articles[len(articles)-1].ProductIDs, productIDs[6])
+		}
+	}
+	draft := kbArt{Title: "Черновик: внутренняя памятка колориста", Category: "Колористика", Brand: "L'Oreal",
+		Content: rich(kbDocOpts{H: "Внутренняя памятка", Body: "Не публиковать: рабочие формулы салона-партнёра."}), Draft: true}
+	articles = append(articles, draft)
+	return postKnowledgeArticles(c, base, user, authorName, orgID, media.CoverID, articles)
+}
+
+func seedKnowledgeSupplier2(c *http.Client, base string, user authUser, authorName, orgID string, productIDs []string) error {
+	media, err := seedKnowledgeMedia(c, base, user)
+	if err != nil {
+		log.Printf("warn kb media s2: %v", err)
+	}
+	cats := listProductCategoryIDs(c, base, user)
+	paint := nonempty(cats["краска"])
+	mask := nonempty(cats["маска"])
+	rich := func(opts kbDocOpts) string { return knowledgeDocJSON(media, opts) }
+	articles := []kbArt{
+		{Title: "Dia Richesse: тонирование без осветления", Category: "Колористика", Brand: "L'Oreal",
+			Content: rich(kbDocOpts{H: "Тонирование", Body: "Dia Richesse даёт тон без подъёма. Идеально для коррекции блонда и блеска натуральных волос.", Tip: "Не используйте как перманент на седине выше 50%.", Image: true}),
+			WithCover: true, ProductIDs: pickIndex(productIDs, 0), CategoryIDs: paint},
+		{Title: "Fusion-маска: интенсивное восстановление", Category: "Уход", Brand: "Wella",
+			Content: rich(kbDocOpts{H: "Протокол Fusion", Body: "Нанесите маску Fusion на вымытые полотенцем волосы на 5 минут. Не добавляйте тепло на очень повреждённых волосах.", Video: false}),
+			WithCover: true, ProductIDs: pickIndex(productIDs, 1), CategoryIDs: mask},
+		{Title: "Otium Aqua: увлажнение перед укладкой", Category: "Уход", Brand: "Estel",
+			Content: rich(kbDocOpts{H: "Увлажнение", Body: "Шампунь Otium Aqua — база перед термоукладкой. Не сочетайте в один день с сильным протеином."}),
+			WithCover: true, ProductIDs: pickIndex(productIDs, 2)},
+	}
+	return postKnowledgeArticles(c, base, user, authorName, orgID, media.CoverID, articles)
+}
+
+type kbMedia struct{ CoverID, InlineID, VideoID, Base string }
+
+type kbDocOpts struct {
+	H, Body, Tip, Warn string
+	List               []string
+	Image, Video       bool
+}
+
+type kbArt struct {
+	Title, Category, Brand, Content string
+	ProductIDs, CategoryIDs         []string
+	WithCover, Draft                bool
+}
+
+func seedKnowledgeMedia(c *http.Client, base string, user authUser) (kbMedia, error) {
+	m := kbMedia{Base: base}
+	id, err := uploadSeedPNG(c, base, user.Token, "article", "kb-cover.png")
+	if err != nil {
+		return m, err
+	}
+	m.CoverID = id
+	m.InlineID, _ = uploadSeedPNG(c, base, user.Token, "article", "kb-inline.png")
+	m.VideoID, _ = uploadSeedWebM(c, base, user.Token)
+	return m, nil
+}
+
+func knowledgeDocJSON(media kbMedia, o kbDocOpts) string {
 	apiMedia := func(id string) string {
 		if id == "" {
 			return ""
 		}
-		return base + "/v1/media/" + id + "/content"
+		return media.Base + "/v1/media/" + id + "/content"
 	}
+	nodes := []map[string]any{
+		kbHeading(2, o.H),
+		kbPara(o.Body),
+	}
+	if len(o.List) > 0 {
+		nodes = append(nodes, kbList(o.List...))
+	}
+	if o.Tip != "" {
+		nodes = append(nodes, kbCallout("tip", o.Tip))
+	}
+	if o.Warn != "" {
+		nodes = append(nodes, kbCallout("warning", o.Warn))
+	}
+	nodes = append(nodes, map[string]any{"type": "horizontalRule"})
+	if o.Image && media.InlineID != "" {
+		nodes = append(nodes, map[string]any{"type": "image", "attrs": map[string]any{"src": apiMedia(media.InlineID), "alt": "Иллюстрация протокола"}})
+	}
+	if o.Video && media.VideoID != "" {
+		nodes = append(nodes, map[string]any{"type": "video", "attrs": map[string]any{"src": apiMedia(media.VideoID), "title": "Демо-ролик техники"}})
+	}
+	nodes = append(nodes, kbPara("Salon-X · материал поставщика"))
+	b, _ := json.Marshal(map[string]any{"type": "doc", "content": nodes})
+	return string(b)
+}
 
-	richDoc := func(title, body string) string {
-		nodes := []map[string]any{
-			{"type": "heading", "attrs": map[string]any{"level": 2}, "content": []map[string]any{{"type": "text", "text": title}}},
-			{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": body}}},
-			{"type": "bulletList", "content": []map[string]any{
-				{"type": "listItem", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Диагностика и подготовка"}}}}},
-				{"type": "listItem", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Формула и время выдержки"}}}}},
-				{"type": "listItem", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Финишный уход и рекомендации дома"}}}}},
-			}},
-			{"type": "blockquote", "content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "Проверяйте патч-тест перед агрессивным осветлением."}}}}},
-			{"type": "horizontalRule"},
-		}
-		if inlineID != "" {
-			nodes = append(nodes, map[string]any{
-				"type": "image", "attrs": map[string]any{"src": apiMedia(inlineID), "alt": "Иллюстрация протокола"},
-			})
-		}
-		if videoID != "" {
-			nodes = append(nodes, map[string]any{
-				"type": "video", "attrs": map[string]any{"src": apiMedia(videoID), "title": "Демо-ролик техники"},
-			})
-		}
-		nodes = append(nodes, map[string]any{
-			"type": "paragraph", "content": []map[string]any{{"type": "text", "marks": []map[string]any{{"type": "bold"}}, "text": "Salon-X · база знаний поставщика"}},
-		})
-		b, _ := json.Marshal(map[string]any{"type": "doc", "content": nodes})
-		return string(b)
+func kbHeading(level int, text string) map[string]any {
+	return map[string]any{"type": "heading", "attrs": map[string]any{"level": level}, "content": []map[string]any{{"type": "text", "text": text}}}
+}
+func kbPara(text string) map[string]any {
+	return map[string]any{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": text}}}
+}
+func kbList(items ...string) map[string]any {
+	lis := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		lis = append(lis, map[string]any{"type": "listItem", "content": []map[string]any{kbPara(it)}})
 	}
+	return map[string]any{"type": "bulletList", "content": lis}
+}
+func kbCallout(kind, text string) map[string]any {
+	return map[string]any{"type": "callout", "attrs": map[string]any{"kind": kind}, "content": []map[string]any{kbPara(text)}}
+}
 
-	type art struct {
-		Title, Category, Brand, Content, ContentFormat string
-		ProductIDs                                     []string
-		WithCover                                      bool
-	}
-	articles := []art{
-		{Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
-			Content: richDoc("Тон и фон осветления", "Практический гид по уровням тона для мастеров Salon-X."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 1)},
-		{Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
-			Content: richDoc("Протокол ухода", "Диагностика → нанесение → выдержка → финиш."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 2)},
-		{Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
-			Content: richDoc("Окислители 3% / 6% / 9%", "Совместимость с крем-красками и контроль фона."), ContentFormat: "doc_json", WithCover: true},
-		{Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
-			Content: richDoc("Блонд без ломкости", "Поэтапное осветление и защита структуры."), ContentFormat: "doc_json", WithCover: true},
-		{Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
-			Content: richDoc("Рекомендации клиенту", "Что рекомендовать после окрашивания."), ContentFormat: "doc_json", WithCover: true},
-		{Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
-			Content: richDoc("Фиксация", "Подбор средств под тип волос."), ContentFormat: "doc_json"},
-		{Title: "Rich-док: формула окрашивания", Category: "Колористика", Brand: "L'Oreal",
-			Content: richDoc("Формула окрашивания", "Пример структурированной схемы с медиа."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 2)},
-		{Title: "Кислотный уход vs протеиновый", Category: "Уход", Brand: "Olaplex",
-			Content: richDoc("Кислота и протеин", "Когда какой протокол выбирать."), ContentFormat: "doc_json", WithCover: true},
-		{Title: "Коррекция цвета после домашнего окрашивания", Category: "Колористика", Brand: "Wella",
-			Content: richDoc("Коррекция", "Безопасный путь после домашнего окрашивания."), ContentFormat: "doc_json", WithCover: true},
-		{Title: "Санитарные нормы рабочего места", Category: "Салон", Brand: "Salon-X",
-			Content: richDoc("Санитария", "Чек-лист подготовки места мастера."), ContentFormat: "doc_json"},
-		{Title: "Подбор окислителя для седины", Category: "Продукция", Brand: "Estel",
-			Content: richDoc("Седины", "Процент окислителя и покрытие."), ContentFormat: "doc_json", WithCover: true, ProductIDs: firstN(productIDs, 1)},
-		{Title: "Летний уход: UV-защита волос", Category: "Уход", Brand: "L'Oreal",
-			Content: richDoc("UV-защита", "Летний протокол для окрашенных волос."), ContentFormat: "doc_json", WithCover: true},
-	}
-
+func postKnowledgeArticles(c *http.Client, base string, user authUser, authorName, orgID, coverID string, articles []kbArt) error {
 	var list struct {
 		Items []struct {
 			Category string `json:"category"`
 			Title    string `json:"title"`
 		} `json:"items"`
 	}
-	_, _ = doJSON(c, http.MethodGet, base+"/v1/knowledge", "", nil, &list)
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/knowledge?limit=100", user.Token, nil, &list)
 	have := map[string]bool{}
 	for _, it := range list.Items {
 		have[strings.ToLower(it.Category+"|"+it.Title)] = true
 	}
-
-	pub := true
+	mine, _ := doJSON(c, http.MethodGet, base+"/v1/me/knowledge?limit=100", user.Token, nil, &list)
+	if mine < 300 {
+		for _, it := range list.Items {
+			have[strings.ToLower(it.Category+"|"+it.Title)] = true
+		}
+	}
 	for _, a := range articles {
 		key := strings.ToLower(a.Category + "|" + a.Title)
 		if have[key] {
 			log.Printf("skip knowledge %q", a.Title)
 			continue
 		}
+		pub := !a.Draft
 		payload := map[string]any{
 			"title": a.Title, "category": a.Category, "content": a.Content, "brand": a.Brand,
 			"author_name": authorName, "organization_id": orgID, "published": pub,
-			"content_format": a.ContentFormat, "reading_time_minutes": 4,
+			"content_format": "doc_json",
 		}
 		if a.WithCover && coverID != "" {
 			payload["cover_media_id"] = coverID
 		}
 		if len(a.ProductIDs) > 0 {
 			payload["product_ids"] = a.ProductIDs
+		}
+		if len(a.CategoryIDs) > 0 {
+			payload["category_ids"] = a.CategoryIDs
 		}
 		status, err := doJSON(c, http.MethodPost, base+"/v1/knowledge", user.Token, payload, nil)
 		if err != nil {
@@ -1377,6 +1487,56 @@ func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID
 		}
 	}
 	return nil
+}
+
+func seedKnowledgeFavorites(c *http.Client, base string, master authUser) error {
+	var list struct {
+		Items []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"items"`
+	}
+	_, err := doJSON(c, http.MethodGet, base+"/v1/knowledge?limit=100", master.Token, nil, &list)
+	if err != nil {
+		return err
+	}
+	want := []string{"инструкция: majirel", "основы колористики", "протокол уходовых"}
+	n := 0
+	for _, it := range list.Items {
+		low := strings.ToLower(it.Title)
+		for _, w := range want {
+			if strings.Contains(low, w) {
+				st, err := doJSON(c, http.MethodPost, base+"/v1/knowledge/"+it.ID+"/favorite", master.Token, map[string]any{}, nil)
+				if err != nil {
+					return err
+				}
+				if st < 300 {
+					n++
+				}
+			}
+		}
+	}
+	if n == 0 && len(list.Items) > 0 {
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/knowledge/"+list.Items[0].ID+"/favorite", master.Token, map[string]any{}, nil)
+		if len(list.Items) > 1 {
+			_, _ = doJSON(c, http.MethodPost, base+"/v1/knowledge/"+list.Items[1].ID+"/favorite", master.Token, map[string]any{}, nil)
+		}
+	}
+	return nil
+}
+
+func nonempty(id string) []string {
+	if id == "" {
+		return nil
+	}
+	return []string{id}
+}
+
+func pickIndex(ids []string, i int) []string {
+	if i < 0 || i >= len(ids) {
+		return nil
+	}
+	return []string{ids[i]}
 }
 
 func firstN(ids []string, n int) []string {

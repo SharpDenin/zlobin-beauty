@@ -15,17 +15,32 @@ import (
 const knowledgeCols = `id, title, category, content, content_format, cover_media_id, reading_time_minutes, brand, product_id, author_user_id, author_org_id, author_name, published, published_at, created_at, updated_at, status, view_count, archived_at`
 
 type KnowledgeListFilter struct {
-	Category          string
-	Brand             string
-	Query             string
-	SupplierOrgID     *uuid.UUID
-	ProductID         *uuid.UUID
-	ProductCategoryID *uuid.UUID
-	ViewerID          *uuid.UUID
-	AuthorUserID      *uuid.UUID
-	FavoritesOnly     bool
-	PublishedOnly     bool
-	Limit             int
+	Categories         []string
+	Brands             []string
+	Query              string
+	SupplierOrgIDs     []uuid.UUID
+	ProductIDs         []uuid.UUID
+	ProductCategoryIDs []uuid.UUID
+	ViewerID           *uuid.UUID
+	AuthorUserID       *uuid.UUID
+	ExcludeID          *uuid.UUID
+	FavoritesOnly      bool
+	PublishedOnly      bool
+	Sort               string
+	Limit              int
+	Offset             int
+}
+
+type KnowledgeFacet struct {
+	Value string
+	Label string
+	Count int
+}
+
+type KnowledgeFacets struct {
+	Categories []KnowledgeFacet
+	Brands     []KnowledgeFacet
+	Suppliers  []KnowledgeFacet
 }
 
 func (s *Store) CreateKnowledgeArticle(ctx context.Context, a domain.KnowledgeArticle) error {
@@ -99,69 +114,22 @@ func (s *Store) GetKnowledgeArticleForViewer(ctx context.Context, id uuid.UUID, 
 
 func (s *Store) ListKnowledgeArticles(ctx context.Context, f KnowledgeListFilter) ([]domain.KnowledgeArticle, error) {
 	if f.Limit <= 0 {
-		f.Limit = 100
+		f.Limit = 24
 	}
 	if f.Limit > 500 {
 		f.Limit = 500
 	}
-
-	var b strings.Builder
-	args := make([]any, 0, 12)
-	n := 1
-	b.WriteString(`SELECT ` + knowledgeCols + ` FROM knowledge_articles ka WHERE 1=1`)
-
-	if f.PublishedOnly {
-		b.WriteString(` AND ka.status = 'published' AND ka.published = TRUE`)
-	}
-	if f.AuthorUserID != nil {
-		b.WriteString(fmt.Sprintf(` AND ka.author_user_id=$%d`, n))
-		args = append(args, *f.AuthorUserID)
-		n++
-	}
-	if cat := strings.TrimSpace(f.Category); cat != "" {
-		b.WriteString(fmt.Sprintf(` AND ka.category ILIKE $%d`, n))
-		args = append(args, cat)
-		n++
-	}
-	if brand := strings.TrimSpace(f.Brand); brand != "" {
-		b.WriteString(fmt.Sprintf(` AND ka.brand ILIKE $%d`, n))
-		args = append(args, brand)
-		n++
-	}
-	if f.SupplierOrgID != nil {
-		b.WriteString(fmt.Sprintf(` AND ka.author_org_id=$%d`, n))
-		args = append(args, *f.SupplierOrgID)
-		n++
-	}
-	if f.ProductID != nil {
-		b.WriteString(fmt.Sprintf(` AND (ka.product_id=$%d OR EXISTS (SELECT 1 FROM knowledge_article_products p WHERE p.article_id=ka.id AND p.product_id=$%d))`, n, n))
-		args = append(args, *f.ProductID)
-		n++
-	}
-	if f.ProductCategoryID != nil {
-		b.WriteString(fmt.Sprintf(` AND EXISTS (SELECT 1 FROM knowledge_article_categories c WHERE c.article_id=ka.id AND c.category_id=$%d)`, n))
-		args = append(args, *f.ProductCategoryID)
-		n++
-	}
-	if q := strings.TrimSpace(f.Query); q != "" {
-		like := "%" + q + "%"
-		b.WriteString(fmt.Sprintf(` AND (ka.title ILIKE $%d OR ka.brand ILIKE $%d OR ka.category ILIKE $%d OR ka.content ILIKE $%d)`, n, n, n, n))
-		args = append(args, like)
-		n++
-	}
-	if f.FavoritesOnly {
-		if f.ViewerID == nil {
-			return []domain.KnowledgeArticle{}, nil
-		}
-		b.WriteString(fmt.Sprintf(` AND EXISTS (SELECT 1 FROM knowledge_favorites fav WHERE fav.article_id=ka.id AND fav.user_id=$%d)`, n))
-		args = append(args, *f.ViewerID)
-		n++
+	if f.Offset < 0 {
+		f.Offset = 0
 	}
 
-	b.WriteString(fmt.Sprintf(` ORDER BY ka.published_at DESC NULLS LAST, ka.created_at DESC LIMIT $%d`, n))
-	args = append(args, f.Limit)
+	where, args, n := knowledgeWhere(f)
+	order := knowledgeOrder(f.Sort)
+	query := `SELECT ` + knowledgeCols + ` FROM knowledge_articles ka WHERE ` + where +
+		fmt.Sprintf(` ORDER BY %s LIMIT $%d OFFSET $%d`, order, n, n+1)
+	args = append(args, f.Limit, f.Offset)
 
-	rows, err := s.pool.Query(ctx, b.String(), args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +149,156 @@ func (s *Store) ListKnowledgeArticles(ctx context.Context, f KnowledgeListFilter
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *Store) CountKnowledgeArticles(ctx context.Context, f KnowledgeListFilter) (int, error) {
+	where, args, _ := knowledgeWhere(f)
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM knowledge_articles ka WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+func (s *Store) ListKnowledgeFacets(ctx context.Context) (*KnowledgeFacets, error) {
+	out := &KnowledgeFacets{}
+	catRows, err := s.pool.Query(ctx, `
+SELECT category, COUNT(*) FROM knowledge_articles
+WHERE status='published' AND published=TRUE AND category <> ''
+GROUP BY category ORDER BY COUNT(*) DESC, category`)
+	if err != nil {
+		return nil, err
+	}
+	defer catRows.Close()
+	for catRows.Next() {
+		var f KnowledgeFacet
+		if err := catRows.Scan(&f.Value, &f.Count); err != nil {
+			return nil, err
+		}
+		f.Label = f.Value
+		out.Categories = append(out.Categories, f)
+	}
+	brandRows, err := s.pool.Query(ctx, `
+SELECT brand, COUNT(*) FROM knowledge_articles
+WHERE status='published' AND published=TRUE AND brand <> ''
+GROUP BY brand ORDER BY COUNT(*) DESC, brand`)
+	if err != nil {
+		return nil, err
+	}
+	defer brandRows.Close()
+	for brandRows.Next() {
+		var f KnowledgeFacet
+		if err := brandRows.Scan(&f.Value, &f.Count); err != nil {
+			return nil, err
+		}
+		f.Label = f.Value
+		out.Brands = append(out.Brands, f)
+	}
+	supRows, err := s.pool.Query(ctx, `
+SELECT author_org_id::text, COALESCE(NULLIF(author_name,''), 'Поставщик'), COUNT(*)
+FROM knowledge_articles
+WHERE status='published' AND published=TRUE AND author_org_id IS NOT NULL
+GROUP BY author_org_id, author_name
+ORDER BY COUNT(*) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer supRows.Close()
+	for supRows.Next() {
+		var f KnowledgeFacet
+		if err := supRows.Scan(&f.Value, &f.Label, &f.Count); err != nil {
+			return nil, err
+		}
+		out.Suppliers = append(out.Suppliers, f)
+	}
+	return out, nil
+}
+
+func knowledgeOrder(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "popular":
+		return `ka.view_count DESC, ka.published_at DESC NULLS LAST, ka.created_at DESC`
+	case "new":
+		return `ka.published_at DESC NULLS LAST, ka.created_at DESC`
+	default:
+		return `ka.published_at DESC NULLS LAST, ka.created_at DESC`
+	}
+}
+
+func knowledgeWhere(f KnowledgeListFilter) (string, []any, int) {
+	var b strings.Builder
+	args := make([]any, 0, 16)
+	n := 1
+	b.WriteString(`1=1`)
+	if f.PublishedOnly {
+		b.WriteString(` AND ka.status = 'published' AND ka.published = TRUE`)
+	}
+	if f.AuthorUserID != nil {
+		b.WriteString(fmt.Sprintf(` AND ka.author_user_id=$%d`, n))
+		args = append(args, *f.AuthorUserID)
+		n++
+	}
+	if f.ExcludeID != nil {
+		b.WriteString(fmt.Sprintf(` AND ka.id <> $%d`, n))
+		args = append(args, *f.ExcludeID)
+		n++
+	}
+	if cats := trimNonEmpty(f.Categories); len(cats) > 0 {
+		b.WriteString(fmt.Sprintf(` AND ka.category ILIKE ANY($%d)`, n))
+		args = append(args, cats)
+		n++
+	}
+	if brands := trimNonEmpty(f.Brands); len(brands) > 0 {
+		b.WriteString(fmt.Sprintf(` AND ka.brand ILIKE ANY($%d)`, n))
+		args = append(args, brands)
+		n++
+	}
+	if len(f.SupplierOrgIDs) > 0 {
+		b.WriteString(fmt.Sprintf(` AND ka.author_org_id = ANY($%d)`, n))
+		args = append(args, f.SupplierOrgIDs)
+		n++
+	}
+	if len(f.ProductIDs) > 0 {
+		b.WriteString(fmt.Sprintf(` AND (ka.product_id = ANY($%d) OR EXISTS (
+  SELECT 1 FROM knowledge_article_products p WHERE p.article_id=ka.id AND p.product_id = ANY($%d)))`, n, n))
+		args = append(args, f.ProductIDs)
+		n++
+	}
+	if len(f.ProductCategoryIDs) > 0 {
+		b.WriteString(fmt.Sprintf(` AND EXISTS (
+  SELECT 1 FROM knowledge_article_categories c WHERE c.article_id=ka.id AND c.category_id = ANY($%d))`, n))
+		args = append(args, f.ProductCategoryIDs)
+		n++
+	}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		like := "%" + q + "%"
+		b.WriteString(fmt.Sprintf(` AND (
+  ka.title ILIKE $%d OR ka.brand ILIKE $%d OR ka.category ILIKE $%d OR ka.content ILIKE $%d
+  OR to_tsvector('simple', coalesce(ka.title,'') || ' ' || coalesce(ka.brand,'') || ' ' || coalesce(ka.category,''))
+     @@ plainto_tsquery('simple', $%d)
+)`, n, n, n, n, n+1))
+		args = append(args, like, q)
+		n += 2
+	}
+	if f.FavoritesOnly {
+		if f.ViewerID == nil {
+			b.WriteString(` AND FALSE`)
+		} else {
+			b.WriteString(fmt.Sprintf(` AND EXISTS (SELECT 1 FROM knowledge_favorites fav WHERE fav.article_id=ka.id AND fav.user_id=$%d)`, n))
+			args = append(args, *f.ViewerID)
+			n++
+		}
+	}
+	return b.String(), args, n
+}
+
+func trimNonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (s *Store) ReplaceKnowledgeProducts(ctx context.Context, articleID uuid.UUID, productIDs []uuid.UUID) error {

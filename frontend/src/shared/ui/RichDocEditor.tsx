@@ -1,22 +1,25 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { EditorContent, useEditor, type JSONContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 import Placeholder from '@tiptap/extension-placeholder'
-import { ApiError, API_BASE_URL } from '@/shared/api/client'
-import { uploadMedia } from '@/shared/lib/mediaUpload'
+import { API_BASE_URL } from '@/shared/api/client'
+import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { Video } from '@/shared/ui/tiptapVideo'
+import { Callout } from '@/shared/ui/tiptapCallout'
+import { sanitizeHref } from '@/shared/ui/richSanitize'
 
 type Props = {
   value?: JSONContent | null
   onChange: (doc: JSONContent) => void
   token?: string | null
-  /** Media purpose for inline images. Backend supports `article`; fall back to `document`. */
   imagePurpose?: 'article' | 'document' | 'portfolio' | 'product'
   placeholder?: string
   disabled?: boolean
 }
+
+type InsertKind = 'image' | 'video' | null
 
 export function RichDocEditor({
   value,
@@ -26,10 +29,11 @@ export function RichDocEditor({
   placeholder = 'Напишите текст статьи…',
   disabled,
 }: Props) {
+  const [insertKind, setInsertKind] = useState<InsertKind>(null)
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: { levels: [2] },
+        heading: { levels: [1, 2, 3] },
       }),
       Link.configure({
         openOnClick: false,
@@ -37,6 +41,7 @@ export function RichDocEditor({
       }),
       Image.configure({ allowBase64: false }),
       Video,
+      Callout,
       Placeholder.configure({ placeholder }),
     ],
     content: value ?? { type: 'doc', content: [{ type: 'paragraph' }] },
@@ -58,46 +63,6 @@ export function RichDocEditor({
     }
   }, [editor, value])
 
-  async function uploadImage() {
-    if (!editor || !token) return
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'image/jpeg,image/png,image/webp'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) return
-      try {
-        const res = await uploadMedia(file, imagePurpose, token)
-        const src = `${API_BASE_URL}/v1/media/${res.id}/content`
-        editor.chain().focus().setImage({ src, alt: file.name }).run()
-      } catch (e) {
-        if (e instanceof ApiError) {
-          // parent forms handle toast; keep editor usable
-        }
-      }
-    }
-    input.click()
-  }
-
-  async function uploadVideo() {
-    if (!editor || !token) return
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'video/mp4,video/webm,video/quicktime'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) return
-      try {
-        const res = await uploadMedia(file, 'video', token, undefined, { allowVideo: true })
-        const src = `${API_BASE_URL}/v1/media/${res.id}/content`
-        editor.chain().focus().setVideo({ src, title: file.name }).run()
-      } catch {
-        /* keep editor usable */
-      }
-    }
-    input.click()
-  }
-
   function setLink() {
     if (!editor) return
     const prev = editor.getAttributes('link').href as string | undefined
@@ -108,7 +73,21 @@ export function RichDocEditor({
       editor.chain().focus().extendMarkRange('link').unsetLink().run()
       return
     }
-    editor.chain().focus().extendMarkRange('link').setLink({ href: trimmed }).run()
+    const safe = sanitizeHref(trimmed)
+    if (!safe) return
+    editor.chain().focus().extendMarkRange('link').setLink({ href: safe }).run()
+  }
+
+  function insertUploaded(mediaId: string | null, kind: 'image' | 'video') {
+    if (!editor || !mediaId) return
+    const src = `${API_BASE_URL}/v1/media/${mediaId}/content`
+    editor.chain().focus()
+    if (kind === 'video') {
+      editor.chain().focus().setVideo({ src, title: 'Видео' }).run()
+    } else {
+      editor.chain().focus().setImage({ src }).run()
+    }
+    setInsertKind(null)
   }
 
   if (!editor) return <div className="state-box">Загрузка редактора…</div>
@@ -116,60 +95,37 @@ export function RichDocEditor({
   return (
     <div className={`rich-doc-editor${disabled ? ' is-disabled' : ''}`}>
       <div className="editor-toolbar" role="toolbar" aria-label="Форматирование">
-        <button
-          type="button"
-          className={editor.isActive('heading', { level: 2 }) ? 'active' : ''}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-        >
-          H2
-        </button>
-        <button
-          type="button"
-          className={editor.isActive('bold') ? 'active' : ''}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBold().run()}
-        >
-          Ж
-        </button>
-        <button
-          type="button"
-          className={editor.isActive('italic') ? 'active' : ''}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-        >
-          К
-        </button>
-        <button
-          type="button"
-          className={editor.isActive('bulletList') ? 'active' : ''}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-        >
-          Список
-        </button>
-        <button
-          type="button"
-          className={editor.isActive('blockquote') ? 'active' : ''}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-        >
-          Цитата
-        </button>
-        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setHorizontalRule().run()}>
-          Разделитель
-        </button>
-        <button type="button" className={editor.isActive('link') ? 'active' : ''} disabled={disabled} onClick={setLink}>
-          Ссылка
-        </button>
-        <button type="button" disabled={disabled || !token} onClick={() => void uploadImage()}>
-          Изображение
-        </button>
-        <button type="button" disabled={disabled || !token} onClick={() => void uploadVideo()}>
-          Видео
-        </button>
+        <button type="button" className={editor.isActive('heading', { level: 1 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>H1</button>
+        <button type="button" className={editor.isActive('heading', { level: 2 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
+        <button type="button" className={editor.isActive('heading', { level: 3 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>H3</button>
+        <button type="button" className={editor.isActive('bold') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBold().run()}>Ж</button>
+        <button type="button" className={editor.isActive('italic') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleItalic().run()}>К</button>
+        <button type="button" className={editor.isActive('bulletList') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBulletList().run()}>Список</button>
+        <button type="button" className={editor.isActive('blockquote') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBlockquote().run()}>Цитата</button>
+        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setCallout('tip').run()}>Совет</button>
+        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setCallout('warning').run()}>Важно</button>
+        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setHorizontalRule().run()}>Разделитель</button>
+        <button type="button" className={editor.isActive('link') ? 'active' : ''} disabled={disabled} onClick={setLink}>Ссылка</button>
+        <button type="button" disabled={disabled || !token} onClick={() => setInsertKind('image')}>Изображение</button>
+        <button type="button" disabled={disabled || !token} onClick={() => setInsertKind('video')}>Видео</button>
       </div>
       <EditorContent editor={editor} className="rich-doc-surface" />
+      {insertKind && (
+        <div className="kb-media-modal" role="dialog" aria-modal="true" aria-label={insertKind === 'video' ? 'Вставить видео' : 'Вставить изображение'}>
+          <div className="card stack">
+            <h3>{insertKind === 'video' ? 'Вставить видео' : 'Вставить изображение'}</h3>
+            <p className="muted">Файл загрузится и встанет в текущую позицию текста.</p>
+            <MediaDropzone
+              purpose={insertKind === 'video' ? 'video' : imagePurpose}
+              value={null}
+              allowVideo={insertKind === 'video'}
+              onChange={(id) => insertUploaded(id, insertKind)}
+              label={insertKind === 'video' ? 'Перетащите видео или нажмите для выбора' : 'Перетащите изображение или нажмите для выбора'}
+            />
+            <button className="btn btn-secondary" type="button" onClick={() => setInsertKind(null)}>Отмена</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

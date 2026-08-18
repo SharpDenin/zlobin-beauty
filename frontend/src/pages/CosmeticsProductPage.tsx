@@ -9,6 +9,14 @@ import { formatMoney } from '@/shared/lib/money'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useState } from 'react'
 
+type KnowledgeItem = {
+  id: string
+  title: string
+  category?: string
+  cover_media_id?: string | null
+  reading_time_minutes?: number
+}
+
 export function CosmeticsProductPage() {
   const { productId = '' } = useParams()
   const { accessToken } = useAuth()
@@ -18,6 +26,13 @@ export function CosmeticsProductPage() {
   const product = useQuery({
     queryKey: ['commerce-product', productId],
     queryFn: () => apiRequest<CommerceProduct>(`/v1/commerce/products/${productId}`, { token: accessToken }),
+    enabled: Boolean(accessToken && productId),
+  })
+
+  const knowledge = useQuery({
+    queryKey: ['product-knowledge', productId],
+    queryFn: () =>
+      apiRequest<{ items: KnowledgeItem[] }>(`/v1/knowledge?product_id=${productId}&limit=6`, { token: accessToken }),
     enabled: Boolean(accessToken && productId),
   })
 
@@ -81,6 +96,24 @@ export function CosmeticsProductPage() {
         </div>
         {added && <div className="state-box success">Товар в корзине. Оформите заказ в каталоге поставщика.</div>}
       </section>
+      {(knowledge.data?.items?.length ?? 0) > 0 && (
+        <section className="stack-sm">
+          <h2>Материалы и инструкции</h2>
+          <div className="kb-grid">
+            {knowledge.data!.items.map((a) => (
+              <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`}>
+                {a.cover_media_id ? (
+                  <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} className="kb-cover" />
+                ) : (
+                  <div className="kb-cover" />
+                )}
+                <strong>{a.title}</strong>
+                <p className="muted">{[a.category, a.reading_time_minutes ? `${a.reading_time_minutes} мин` : ''].filter(Boolean).join(' · ')}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
     </main>
   )
 }

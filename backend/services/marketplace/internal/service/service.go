@@ -22,6 +22,7 @@ type Service struct {
 	store            *store.Store
 	organizationsURL string
 	bookingURL       string
+	commerceURL      string
 	internalToken    string
 	httpClient       *http.Client
 	now              func() time.Time
@@ -39,6 +40,11 @@ func (s *Service) WithOrganizations(organizationsURL, internalToken string) *Ser
 
 func (s *Service) WithBooking(bookingURL string) *Service {
 	s.bookingURL = strings.TrimRight(bookingURL, "/")
+	return s
+}
+
+func (s *Service) WithCommerce(commerceURL string) *Service {
+	s.commerceURL = strings.TrimRight(commerceURL, "/")
 	return s
 }
 

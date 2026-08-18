@@ -44,6 +44,16 @@ export function SupplierProductEditPage() {
     enabled: Boolean(accessToken && !isNew && id),
   })
 
+  const productKnowledge = useQuery({
+    queryKey: ['product-knowledge', id],
+    queryFn: () =>
+      apiRequest<{ items: Array<{ id: string; title: string; status?: string; published?: boolean }> }>(
+        `/v1/knowledge?product_id=${id}&limit=8`,
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken && !isNew && id),
+  })
+
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -235,6 +245,18 @@ export function SupplierProductEditPage() {
           {save.isPending ? 'Сохраняем…' : 'Сохранить'}
         </button>
       </form>
+      {!isNew && (
+        <section className="card stack-sm">
+          <h2>Материалы по товару</h2>
+          {(productKnowledge.data?.items?.length ?? 0) === 0 && (
+            <p className="muted">Пока нет опубликованных статей. Создайте материал в Базе знаний и привяжите этот товар.</p>
+          )}
+          {(productKnowledge.data?.items ?? []).map((a) => (
+            <Link key={a.id} to={`/knowledge/${a.id}/edit`}>{a.title}</Link>
+          ))}
+          <Link className="btn btn-secondary btn-compact" to="/knowledge/new">Создать материал</Link>
+        </section>
+      )}
     </main>
   )
 }

@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -17,7 +20,8 @@ import (
 )
 
 const (
-	knowledgeListLimit      = 100
+	knowledgeListLimit      = 24
+	knowledgeListMax        = 100
 	knowledgeRankFetchLimit = 500
 )
 
@@ -43,16 +47,27 @@ type KnowledgeInput struct {
 }
 
 type KnowledgeListQuery struct {
-	Category          string
-	Brand             string
-	Query             string
-	SupplierOrgID     *uuid.UUID
-	ProductID         *uuid.UUID
-	ProductCategoryID *uuid.UUID
-	ViewerID          *uuid.UUID
-	AuthorUserID      *uuid.UUID
-	FavoritesOnly     bool
-	PublishedOnly     bool
+	Categories         []string
+	Brands             []string
+	Query              string
+	SupplierOrgIDs     []uuid.UUID
+	ProductIDs         []uuid.UUID
+	ProductCategoryIDs []uuid.UUID
+	ViewerID           *uuid.UUID
+	AuthorUserID       *uuid.UUID
+	ExcludeID          *uuid.UUID
+	FavoritesOnly      bool
+	PublishedOnly      bool
+	Sort               string
+	Limit              int
+	Offset             int
+}
+
+type KnowledgeListResult struct {
+	Items  []domain.KnowledgeArticle
+	Total  int
+	Limit  int
+	Offset int
 }
 
 // KnowledgeRankInput is the deterministic ranking signal set. No ML / embeddings.
@@ -109,7 +124,14 @@ func knowledgeRecencyScore(publishedAt *time.Time, createdAt, now time.Time) flo
 }
 
 func shouldRankKnowledge(q KnowledgeListQuery) bool {
-	return strings.TrimSpace(q.Query) != "" || q.ProductID != nil || q.ProductCategoryID != nil
+	sort := strings.ToLower(strings.TrimSpace(q.Sort))
+	if sort == "recommended" || sort == "rank" {
+		return true
+	}
+	if sort == "new" || sort == "popular" {
+		return false
+	}
+	return strings.TrimSpace(q.Query) != "" || len(q.ProductIDs) > 0 || len(q.ProductCategoryIDs) > 0
 }
 
 func rankKnowledgeArticles(items []domain.KnowledgeArticle, q KnowledgeListQuery, now time.Time) []domain.KnowledgeArticle {
@@ -121,7 +143,6 @@ func rankKnowledgeArticles(items []domain.KnowledgeArticle, q KnowledgeListQuery
 		score float64
 	}
 	needle := strings.ToLower(strings.TrimSpace(q.Query))
-	brandFilter := strings.TrimSpace(q.Brand)
 	ranked := make([]scored, len(items))
 	for i, a := range items {
 		in := KnowledgeRankInput{
@@ -130,14 +151,27 @@ func rankKnowledgeArticles(items []domain.KnowledgeArticle, q KnowledgeListQuery
 			CreatedAt:   a.CreatedAt,
 			Now:         now,
 		}
-		if q.ProductID != nil {
-			in.ExactProductMatch = containsUUID(a.ProductIDs, *q.ProductID) || (a.ProductID != nil && *a.ProductID == *q.ProductID)
+		if len(q.ProductIDs) > 0 {
+			for _, pid := range q.ProductIDs {
+				if containsUUID(a.ProductIDs, pid) || (a.ProductID != nil && *a.ProductID == pid) {
+					in.ExactProductMatch = true
+					break
+				}
+			}
 		}
-		if q.ProductCategoryID != nil {
-			in.CategoryMatch = containsUUID(a.CategoryIDs, *q.ProductCategoryID)
+		if len(q.ProductCategoryIDs) > 0 {
+			for _, cid := range q.ProductCategoryIDs {
+				if containsUUID(a.CategoryIDs, cid) {
+					in.CategoryMatch = true
+					break
+				}
+			}
 		}
-		if brandFilter != "" && strings.EqualFold(strings.TrimSpace(a.Brand), brandFilter) {
-			in.BrandMatch = true
+		for _, brandFilter := range q.Brands {
+			if strings.EqualFold(strings.TrimSpace(a.Brand), strings.TrimSpace(brandFilter)) {
+				in.BrandMatch = true
+				break
+			}
 		}
 		if needle != "" {
 			if strings.Contains(strings.ToLower(a.Title), needle) {
@@ -162,47 +196,91 @@ func rankKnowledgeArticles(items []domain.KnowledgeArticle, q KnowledgeListQuery
 	return out
 }
 
-func (s *Service) ListKnowledge(ctx context.Context, q KnowledgeListQuery) ([]domain.KnowledgeArticle, error) {
+func (s *Service) ListKnowledge(ctx context.Context, q KnowledgeListQuery) (KnowledgeListResult, error) {
+	empty := KnowledgeListResult{Items: []domain.KnowledgeArticle{}, Limit: knowledgeListLimit}
 	if q.FavoritesOnly && q.ViewerID == nil {
-		return nil, apperr.Unauthorized("authentication required for favorites filter")
+		return empty, apperr.Unauthorized("authentication required for favorites filter")
+	}
+	limit := q.Limit
+	if limit <= 0 {
+		limit = knowledgeListLimit
+	}
+	if limit > knowledgeListMax {
+		limit = knowledgeListMax
+	}
+	offset := q.Offset
+	if offset < 0 {
+		offset = 0
 	}
 	f := store.KnowledgeListFilter{
-		Category:          q.Category,
-		Brand:             q.Brand,
-		Query:             q.Query,
-		SupplierOrgID:     q.SupplierOrgID,
-		ProductID:         q.ProductID,
-		ProductCategoryID: q.ProductCategoryID,
-		ViewerID:          q.ViewerID,
-		AuthorUserID:      q.AuthorUserID,
-		FavoritesOnly:     q.FavoritesOnly,
-		PublishedOnly:     q.PublishedOnly,
-		Limit:             knowledgeListLimit,
+		Categories:         q.Categories,
+		Brands:             q.Brands,
+		Query:              q.Query,
+		SupplierOrgIDs:     q.SupplierOrgIDs,
+		ProductIDs:         q.ProductIDs,
+		ProductCategoryIDs: q.ProductCategoryIDs,
+		ViewerID:           q.ViewerID,
+		AuthorUserID:       q.AuthorUserID,
+		ExcludeID:          q.ExcludeID,
+		FavoritesOnly:      q.FavoritesOnly,
+		PublishedOnly:      q.PublishedOnly,
+		Sort:               q.Sort,
+		Limit:              limit,
+		Offset:             offset,
 	}
 	if shouldRankKnowledge(q) {
 		f.Limit = knowledgeRankFetchLimit
+		f.Offset = 0
+		f.Sort = ""
 	}
 	items, err := s.store.ListKnowledgeArticles(ctx, f)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return empty, apperr.Internal(err)
 	}
 	if items == nil {
 		items = []domain.KnowledgeArticle{}
 	}
-	items = rankKnowledgeArticles(items, q, s.now().UTC())
-	if len(items) > knowledgeListLimit {
-		items = items[:knowledgeListLimit]
+	total := len(items)
+	if shouldRankKnowledge(q) {
+		items = rankKnowledgeArticles(items, q, s.now().UTC())
+		total = len(items)
+		if offset > len(items) {
+			items = []domain.KnowledgeArticle{}
+		} else {
+			end := offset + limit
+			if end > len(items) {
+				end = len(items)
+			}
+			items = items[offset:end]
+		}
+	} else {
+		n, err := s.store.CountKnowledgeArticles(ctx, f)
+		if err != nil {
+			return empty, apperr.Internal(err)
+		}
+		total = n
 	}
-	return items, nil
+	return KnowledgeListResult{Items: items, Total: total, Limit: limit, Offset: offset}, nil
 }
 
-func (s *Service) ListMyKnowledge(ctx context.Context, authorUserID uuid.UUID, q KnowledgeListQuery) ([]domain.KnowledgeArticle, error) {
+func (s *Service) ListMyKnowledge(ctx context.Context, authorUserID uuid.UUID, q KnowledgeListQuery) (KnowledgeListResult, error) {
 	q.AuthorUserID = &authorUserID
 	q.PublishedOnly = false
 	if q.ViewerID == nil {
 		q.ViewerID = &authorUserID
 	}
 	return s.ListKnowledge(ctx, q)
+}
+
+func (s *Service) KnowledgeFacets(ctx context.Context) (*store.KnowledgeFacets, error) {
+	f, err := s.store.ListKnowledgeFacets(ctx)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if f == nil {
+		f = &store.KnowledgeFacets{}
+	}
+	return f, nil
 }
 
 func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID, viewerID *uuid.UUID) (*domain.KnowledgeArticle, error) {
@@ -262,8 +340,14 @@ func (s *Service) CreateKnowledge(ctx context.Context, claims *auth.Claims, in K
 			return nil, err
 		}
 	}
-	now := s.now().UTC()
 	productIDs := resolveProductIDs(in)
+	if err := s.ensureOwnProducts(ctx, in.OrgID, productIDs); err != nil {
+		return nil, err
+	}
+	if in.ReadingTimeMinutes == 0 {
+		in.ReadingTimeMinutes = EstimateReadingMinutes(content, format)
+	}
+	now := s.now().UTC()
 	a := domain.KnowledgeArticle{
 		ID: ids.New(), Title: title, Category: strings.TrimSpace(in.Category), Content: content,
 		ContentFormat: format, CoverMediaID: in.CoverMediaID, ReadingTimeMinutes: in.ReadingTimeMinutes,
@@ -318,6 +402,9 @@ func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.
 	if in.ReadingTimeMinutes < 0 {
 		return nil, apperr.Validation("reading_time_minutes must be >= 0")
 	}
+	if in.ReadingTimeMinutes == 0 {
+		in.ReadingTimeMinutes = EstimateReadingMinutes(content, format)
+	}
 	a.Title = title
 	a.Category = strings.TrimSpace(in.Category)
 	a.Content = content
@@ -348,6 +435,13 @@ func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.
 	}
 	if in.SetProductIDs {
 		productIDs := resolveProductIDs(in)
+		org := in.OrgID
+		if org == nil {
+			org = a.AuthorOrgID
+		}
+		if err := s.ensureOwnProducts(ctx, org, productIDs); err != nil {
+			return nil, err
+		}
 		a.ProductIDs = productIDs
 		if len(productIDs) > 0 {
 			first := productIDs[0]
@@ -581,4 +675,153 @@ func containsUUID(ids []uuid.UUID, id uuid.UUID) bool {
 		}
 	}
 	return false
+}
+
+func EstimateReadingMinutes(content, format string) int {
+	text := content
+	if format == "doc_json" {
+		text = extractDocJSONText(content)
+	}
+	words := len(strings.Fields(text))
+	if words == 0 {
+		return 1
+	}
+	m := (words + 179) / 180
+	if m < 1 {
+		return 1
+	}
+	return m
+}
+
+func extractDocJSONText(raw string) string {
+	var node map[string]any
+	if err := json.Unmarshal([]byte(raw), &node); err != nil {
+		return raw
+	}
+	var b strings.Builder
+	walkDocText(node, &b)
+	return b.String()
+}
+
+func walkDocText(node map[string]any, b *strings.Builder) {
+	if t, ok := node["text"].(string); ok {
+		b.WriteString(t)
+		b.WriteByte(' ')
+	}
+	content, _ := node["content"].([]any)
+	for _, child := range content {
+		if m, ok := child.(map[string]any); ok {
+			walkDocText(m, b)
+		}
+	}
+}
+
+func (s *Service) ensureOwnProducts(ctx context.Context, orgID *uuid.UUID, productIDs []uuid.UUID) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+	if orgID == nil {
+		return apperr.Validation("organization_id is required to attach products")
+	}
+	if s.commerceURL == "" || s.internalToken == "" {
+		return nil
+	}
+	for _, pid := range productIDs {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.commerceURL+"/v1/internal/products/"+pid.String(), nil)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		req.Header.Set("X-Internal-Token", s.internalToken)
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return apperr.Validation("product not found")
+		}
+		if resp.StatusCode >= 300 {
+			return apperr.Internal(fmt.Errorf("commerce product status %d", resp.StatusCode))
+		}
+		var payload struct {
+			OrganizationID string `json:"organization_id"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return apperr.Internal(err)
+		}
+		oid, err := uuid.Parse(payload.OrganizationID)
+		if err != nil || oid != *orgID {
+			return apperr.Forbidden("knowledge can only attach own products")
+		}
+	}
+	return nil
+}
+
+// ArticleMatchesListQuery is the AND-combination contract used by tests and ranking.
+func ArticleMatchesListQuery(a domain.KnowledgeArticle, q KnowledgeListQuery) bool {
+	if len(q.Categories) > 0 {
+		ok := false
+		for _, c := range q.Categories {
+			if strings.EqualFold(a.Category, strings.TrimSpace(c)) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if len(q.Brands) > 0 {
+		ok := false
+		for _, b := range q.Brands {
+			if strings.EqualFold(a.Brand, strings.TrimSpace(b)) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if len(q.SupplierOrgIDs) > 0 {
+		if a.AuthorOrgID == nil {
+			return false
+		}
+		ok := false
+		for _, id := range q.SupplierOrgIDs {
+			if *a.AuthorOrgID == id {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if len(q.ProductIDs) > 0 {
+		ok := false
+		for _, pid := range q.ProductIDs {
+			if containsUUID(a.ProductIDs, pid) || (a.ProductID != nil && *a.ProductID == pid) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if len(q.ProductCategoryIDs) > 0 {
+		ok := false
+		for _, cid := range q.ProductCategoryIDs {
+			if containsUUID(a.CategoryIDs, cid) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }

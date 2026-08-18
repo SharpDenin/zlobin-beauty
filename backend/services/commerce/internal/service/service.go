@@ -248,6 +248,10 @@ func normalizeAudience(v string) string {
 	return "all"
 }
 
+func (s *Service) GetProductInternal(ctx context.Context, id uuid.UUID) (*domain.Product, error) {
+	return s.getProductOrErr(ctx, id)
+}
+
 func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.Product, error) {
 	p, err := s.getProductOrErr(ctx, id)
 	if err != nil {

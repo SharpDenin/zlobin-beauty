@@ -1,16 +1,23 @@
 # UI_ACCEPTANCE.md — Salon-X
 
-Дата проверки: **2026-08-18** (Phase 4).  
+Дата проверки: **2026-08-18** (Phase 5).  
 Стек: docker compose + seed. UI: `http://localhost:5173`. API: `http://localhost:8090`.  
 Пароль seed: `Password123!`.
 
 Playwright `frontend/e2e/salon-x.spec.ts`:
+- Phase 5: Knowledge Hub search/filters/favorite/article/product reverse; supplier draft→preview→publish; API ownership + filter combo.
 - Phase 4: free scheme complete, premium skip, expired subscription, registration trial.
 - Phase 3: checkout e2e, multi-supplier API, cross-role pickup API, price-change UI, idempotency group.
 - Phase 1–2 regression: phone-390 + laptop-1366.
 
 | Screen | Role | Route | Purpose | Implemented | Responsive | Notes |
 |---|---|---|---|---|---|---|
+| Knowledge Home | Master | `/knowledge` | Editorial hub: search, chips from facets, sections | Yes | 390, 768, 1366, 1920 | URL query state, load more |
+| Filter drawer | Master | `/knowledge` | Searchable multi-select Supplier/Brand/Product/Categories | Yes | 390 drawer, desktop panel | AND-комбинация на backend |
+| Article Detail | Master | `/knowledge/:id` | Editorial column, media, related products | Yes | 390, 1366 | Lightbox image, HTML5 video |
+| Supplier Editor | Supplier | `/knowledge/new`, `/knowledge/:id/edit` | CMS: cover, relations, TipTap, MediaDropzone insert | Yes | tablet/desktop | Draft / preview / publish / unpublish / archive |
+| Preview | Supplier | editor → Предпросмотр | Same renderer as article | Yes | 1366 e2e | |
+| Product ↔ Knowledge | Master / Client / Supplier | product detail | «Материалы и инструкции» | Yes | 390, 1366 | Cosmetics + Shop + supplier product edit |
 | Subscription trial | Master | `/profile/subscription` | Premium Trial banner, days left | Yes | 390, 1366 | master1 |
 | Subscription free | Master | `/profile/subscription` | Free + expired trial UX | Yes | 390, 1366 | expired1 |
 | Subscription premium | Master | `/profile/subscription` | Paid Premium state | Yes | 390 | premium1 |
@@ -18,7 +25,7 @@ Playwright `frontend/e2e/salon-x.spec.ts`:
 | Scheme skip | Master | `/appointments/:id` | Premium skip confirm | Yes | 390 | premium1 |
 | Client card scheme | Master | `/clients/id/:id` | Summary / withheld | Yes | 390, 1366 | VisitSchemeSummary |
 | Client shop | Client | `/shop` | Каталог ≥12 товаров, фото, PROFESSIONAL_ONLY скрыт | Yes | 390, 1366 | Не UUID |
-| Product detail | Client | `/shop/:id` | Галерея, add to cart | Yes | 390, 1366 | |
+| Product detail | Client | `/shop/:id` | Галерея, add to cart, knowledge links | Yes | 390, 1366 | |
 | Cart | Client | `/shop/cart` | Persistence, multi-supplier info | Yes | 390, 1366 | Auto-split at checkout |
 | Checkout | Client | `/shop/checkout` | Pickup, payment, grouped summary | Yes | 390, 1366 | One UX → N supplier orders |
 | Checkout success | Client | `/shop/checkout/success` | Group total + order numbers CL-* | Yes | 390 | |
@@ -68,8 +75,8 @@ _Previous Phase 2 rows retained below._
 | Representative route/map | Rep | `/rep/map` | Leaflet + polyline + stops | Yes | 390, 430, 768, 1366, 1920 | Карта ≤220px на 390. Side/list: салон, окно, к получению. «Рекомендованный маршрут» (haversine) |
 | Representative finance | Rep | `/rep/finance` | День таблица + месяц chart | Yes | 390, 430, 768, 1366, 1920 | Payment model. Итого на день / получено за месяц |
 | Representative analytics | Rep | `/rep/analytics` | Доставки, деньги, товары, задачи | Yes | 390, 430, 768, 1366, 1920 | Recharts, не div-графики |
-| Knowledge hub | Master | `/knowledge` | Поиск, chips, секции, карточки | Partial | 390 | Фильтры+избранное e2e. Не полноценный editorial hub на всех данных |
-| Knowledge editor | Supplier | `/knowledge` | TipTap, inline media, товары чекбоксами | Yes | not this run | Не JSON textarea |
+| Knowledge hub | Master | `/knowledge` | Search, chips, sections, cards | Yes | 390, 1366 | Facets + URL filters + favorite on card |
+| Knowledge editor | Supplier | `/knowledge/new` | TipTap, MediaDropzone at cursor, product search | Yes | 1366 | Draft / preview / publish |
 | Subscription | Master | `/profile/subscription` | Trial/plan, сравнение, DEV controls | Yes | 390 | DEV-кнопки только `import.meta.env.DEV`. Docker production build их не показывает |
 
 ## Accounts for walkthrough
@@ -95,7 +102,6 @@ _Previous Phase 2 rows retained below._
 - Dashboard widgets: нет перетаскивания по сетке, только enable/size.
 - Calendar DnD прошлых seed-записей может откатываться backend-валидацией (future-only reschedule).
 - Chain owner: филиалы через localStorage, не серверный context.
-- Knowledge: нет searchable multi-select поставщик/товар как отдельный combobox; chips + dropdown категории/бренд.
 - Recurring propose/accept есть в UI, отдельного e2e нет.
 - Contact privacy: toggle проверен, скрытие phone/email на карточке — не отдельный browser e2e в этом прогоне.
 - No-show: blacklist API для `client3` = blocked; UI «запись заблокирована» не гонялся как полный booking e2e.

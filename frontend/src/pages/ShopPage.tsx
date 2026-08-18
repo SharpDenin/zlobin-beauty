@@ -521,7 +521,7 @@ function ProductView({ id }: { id: string }) {
 
       {(knowledge.data?.items?.length ?? 0) > 0 && (
         <section className="stack-sm">
-          <h2>Связанные материалы</h2>
+          <h2>Материалы и инструкции</h2>
           <div className="kb-grid">
             {knowledge.data!.items.map((a) => (
               <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`}>

@@ -51,6 +51,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/commerce/units/{id}", auth(http.HandlerFunc(a.updateUnit)))
 	mux.Handle("DELETE /v1/commerce/units/{id}", auth(http.HandlerFunc(a.deleteUnit)))
 	mux.Handle("POST /v1/internal/stock/consume-appointment", internal(http.HandlerFunc(a.consumeAppointment)))
+	mux.Handle("GET /v1/internal/products/{id}", internal(http.HandlerFunc(a.internalGetProduct)))
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
 	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
 	mux.Handle("POST /v1/commerce/dev/backdate", auth(http.HandlerFunc(a.devBackdate)))
@@ -266,6 +267,27 @@ func (a *API) getProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, productDTO(*p))
+}
+
+func (a *API) internalGetProduct(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	p, err := a.svc.GetProductInternal(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	var categoryID any
+	if p.CategoryID != nil {
+		categoryID = p.CategoryID.String()
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"id": p.ID.String(), "organization_id": p.OrganizationID.String(),
+		"name": p.Name, "brand": p.Brand, "category_id": categoryID,
+	})
 }
 
 func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {

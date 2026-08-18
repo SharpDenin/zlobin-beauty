@@ -1,12 +1,15 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/service"
+	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
@@ -14,6 +17,7 @@ import (
 
 func (a *API) registerKnowledgeRoutes(mux *http.ServeMux, authMw, optional func(http.Handler) http.Handler) {
 	mux.Handle("GET /v1/knowledge", optional(http.HandlerFunc(a.listKnowledge)))
+	mux.Handle("GET /v1/knowledge/facets", optional(http.HandlerFunc(a.knowledgeFacets)))
 	mux.Handle("GET /v1/knowledge/{id}", optional(http.HandlerFunc(a.getKnowledge)))
 	mux.Handle("POST /v1/knowledge", authMw(http.HandlerFunc(a.createKnowledge)))
 	mux.Handle("PUT /v1/knowledge/{id}", authMw(http.HandlerFunc(a.updateKnowledge)))
@@ -66,6 +70,50 @@ func knowledgeDTO(a domain.KnowledgeArticle) map[string]any {
 	}
 }
 
+func knowledgeListDTO(a domain.KnowledgeArticle) map[string]any {
+	dto := knowledgeDTO(a)
+	delete(dto, "content")
+	dto["excerpt"] = knowledgeExcerpt(a)
+	return dto
+}
+
+func knowledgeExcerpt(a domain.KnowledgeArticle) string {
+	raw := a.Content
+	if a.ContentFormat == "doc_json" {
+		raw = extractPlainFromDoc(a.Content)
+	}
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\n", " "))
+	runes := []rune(raw)
+	if len(runes) > 140 {
+		return string(runes[:140]) + "…"
+	}
+	return raw
+}
+
+func extractPlainFromDoc(content string) string {
+	var node map[string]any
+	if err := json.Unmarshal([]byte(content), &node); err != nil {
+		return content
+	}
+	var b strings.Builder
+	var walk func(map[string]any)
+	walk = func(n map[string]any) {
+		if t, ok := n["text"].(string); ok {
+			b.WriteString(t)
+			b.WriteByte(' ')
+		}
+		if kids, ok := n["content"].([]any); ok {
+			for _, c := range kids {
+				if m, ok := c.(map[string]any); ok {
+					walk(m)
+				}
+			}
+		}
+	}
+	walk(node)
+	return b.String()
+}
+
 func (a *API) listKnowledge(w http.ResponseWriter, r *http.Request) {
 	q, err := parseKnowledgeListQuery(r)
 	if err != nil {
@@ -76,16 +124,16 @@ func (a *API) listKnowledge(w http.ResponseWriter, r *http.Request) {
 	if claims, ok := httpx.ClaimsFrom(r.Context()); ok {
 		q.ViewerID = &claims.UserID
 	}
-	items, err := a.svc.ListKnowledge(r.Context(), q)
+	res, err := a.svc.ListKnowledge(r.Context(), q)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, knowledgeDTO(item))
+	out := make([]map[string]any, 0, len(res.Items))
+	for _, item := range res.Items {
+		out = append(out, knowledgeListDTO(item))
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out, "total": res.Total, "limit": res.Limit, "offset": res.Offset})
 }
 
 func (a *API) listMyKnowledge(w http.ResponseWriter, r *http.Request) {
@@ -95,16 +143,36 @@ func (a *API) listMyKnowledge(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	items, err := a.svc.ListMyKnowledge(r.Context(), claims.UserID, q)
+	itemsRes, err := a.svc.ListMyKnowledge(r.Context(), claims.UserID, q)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, knowledgeDTO(item))
+	out := make([]map[string]any, 0, len(itemsRes.Items))
+	for _, item := range itemsRes.Items {
+		out = append(out, knowledgeListDTO(item))
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out, "total": itemsRes.Total, "limit": itemsRes.Limit, "offset": itemsRes.Offset})
+}
+
+func (a *API) knowledgeFacets(w http.ResponseWriter, r *http.Request) {
+	f, err := a.svc.KnowledgeFacets(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	mapFacets := func(items []store.KnowledgeFacet) []map[string]any {
+		out := make([]map[string]any, 0, len(items))
+		for _, it := range items {
+			out = append(out, map[string]any{"value": it.Value, "label": it.Label, "count": it.Count})
+		}
+		return out
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"categories": mapFacets(f.Categories),
+		"brands":     mapFacets(f.Brands),
+		"suppliers":  mapFacets(f.Suppliers),
+	})
 }
 
 func (a *API) getKnowledge(w http.ResponseWriter, r *http.Request) {
@@ -225,28 +293,84 @@ func (a *API) removeKnowledgeFavorite(w http.ResponseWriter, r *http.Request) {
 func parseKnowledgeListQuery(r *http.Request) (service.KnowledgeListQuery, error) {
 	values := r.URL.Query()
 	q := service.KnowledgeListQuery{
-		Category: values.Get("category"),
-		Brand:    values.Get("brand"),
-		Query:    values.Get("q"),
+		Query: values.Get("q"),
+		Sort:  values.Get("sort"),
 	}
-	supplier, err := parseQueryUUID(values.Get("supplier"))
+	if cats := collectQueryValues(values["category"]); len(cats) > 0 {
+		q.Categories = cats
+	}
+	if brands := collectQueryValues(values["brand"]); len(brands) > 0 {
+		q.Brands = brands
+	}
+	suppliers, err := parseRepeatUUIDs(values, "supplier", "supplier_id")
 	if err != nil {
 		return q, apperr.Validation("invalid supplier")
 	}
-	q.SupplierOrgID = supplier
-	productID, err := parseQueryUUID(values.Get("product_id"))
+	q.SupplierOrgIDs = suppliers
+	products, err := parseRepeatUUIDs(values, "product_id")
 	if err != nil {
 		return q, apperr.Validation("invalid product_id")
 	}
-	q.ProductID = productID
-	catID, err := parseQueryUUID(values.Get("product_category_id"))
+	q.ProductIDs = products
+	catIDs, err := parseRepeatUUIDs(values, "product_category_id")
 	if err != nil {
 		return q, apperr.Validation("invalid product_category_id")
 	}
-	q.ProductCategoryID = catID
+	q.ProductCategoryIDs = catIDs
+	exclude, err := parseQueryUUID(values.Get("exclude_id"))
+	if err != nil {
+		return q, apperr.Validation("invalid exclude_id")
+	}
+	q.ExcludeID = exclude
 	fav := strings.TrimSpace(strings.ToLower(values.Get("favorites")))
 	q.FavoritesOnly = fav == "1" || fav == "true" || fav == "yes"
+	if lim := strings.TrimSpace(values.Get("limit")); lim != "" {
+		n, err := strconv.Atoi(lim)
+		if err != nil || n < 0 {
+			return q, apperr.Validation("invalid limit")
+		}
+		q.Limit = n
+	}
+	if off := strings.TrimSpace(values.Get("offset")); off != "" {
+		n, err := strconv.Atoi(off)
+		if err != nil || n < 0 {
+			return q, apperr.Validation("invalid offset")
+		}
+		q.Offset = n
+	}
+	if page := strings.TrimSpace(values.Get("page")); page != "" && q.Offset == 0 {
+		n, err := strconv.Atoi(page)
+		if err != nil || n < 1 {
+			return q, apperr.Validation("invalid page")
+		}
+		lim := q.Limit
+		if lim <= 0 {
+			lim = 24
+		}
+		q.Offset = (n - 1) * lim
+	}
 	return q, nil
+}
+
+func collectQueryValues(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+func parseRepeatUUIDs(values map[string][]string, keys ...string) ([]uuid.UUID, error) {
+	var raw []string
+	for _, k := range keys {
+		raw = append(raw, values[k]...)
+	}
+	return parseUUIDList(collectQueryValues(raw), keys[0])
 }
 
 func decodeKnowledgeWrite(r *http.Request, isUpdate bool) (service.KnowledgeInput, error) {

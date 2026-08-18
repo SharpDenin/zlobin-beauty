@@ -80,6 +80,101 @@ async function salonPickupBranchId(masterToken: string) {
   return branch!.id
 }
 
+const PLANNER_OCCUPY_STATUSES = new Set(['pending_confirmation', 'confirmed', 'in_progress'])
+
+function krasnoyarskYmd(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Krasnoyarsk',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
+function intervalsOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number) {
+  return aStart < bEnd && bStart < aEnd
+}
+
+function krasnoyarskWeekStartMs(d: Date): number {
+  const ymd = krasnoyarskYmd(d)
+  const [y, m, day] = ymd.split('-').map(Number)
+  const utcMidnight = Date.UTC(y, m - 1, day)
+  const daysFromMonday = (new Date(utcMidnight).getUTCDay() + 6) % 7
+  return utcMidnight - daysFromMonday * 86400000
+}
+
+function listWeeksAhead(from: Date, target: Date): number {
+  const delta = krasnoyarskWeekStartMs(target) - krasnoyarskWeekStartMs(from)
+  return Math.max(0, Math.round(delta / (7 * 86400000)))
+}
+
+function waitForPlannerBlocksFetch(page: Page) {
+  return page.waitForResponse(
+    (res) => res.request().method() === 'GET' && res.url().includes('/v1/planner/blocks') && res.ok(),
+    { timeout: 8_000 },
+  ).catch(() => undefined)
+}
+
+async function openListWeekContaining(page: Page, when: Date) {
+  const listReady = waitForPlannerBlocksFetch(page)
+  await page.getByRole('button', { name: 'Список' }).click()
+  await listReady
+  await expect(page.locator('.fc-list-empty, .fc-list-event').first()).toBeVisible({ timeout: 15_000 })
+  const weeks = listWeeksAhead(new Date(), when)
+  for (let i = 0; i < weeks; i++) {
+    const nextReady = waitForPlannerBlocksFetch(page)
+    await page.getByRole('button', { name: 'След' }).click()
+    await nextReady
+    await expect(page.locator('.fc-list-empty, .fc-list-event').first()).toBeVisible({ timeout: 15_000 })
+  }
+}
+
+/** Find a 60-minute interval inside working hours that does not overlap appointments or planner blocks. */
+async function findFreePlannerSlot(token: string): Promise<{ start: Date; end: Date }> {
+  const meRes = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+  expect(meRes.ok).toBeTruthy()
+  const me = await meRes.json() as { id?: string; user?: { id?: string } }
+  const masterId = me.id ?? me.user?.id
+  expect(masterId).toBeTruthy()
+
+  const hoursRes = await fetch(`${api}/v1/me/working-hours`, { headers: { Authorization: `Bearer ${token}` } })
+  expect(hoursRes.ok).toBeTruthy()
+  const hours = await hoursRes.json() as { items?: Array<{ weekday: number }> }
+  expect((hours.items ?? []).length, 'working hours required').toBeGreaterThan(0)
+
+  const windowFrom = new Date()
+  windowFrom.setUTCHours(0, 0, 0, 0)
+  const windowTo = new Date(windowFrom.getTime() + 21 * 86400000)
+  const qs = `from=${encodeURIComponent(windowFrom.toISOString())}&to=${encodeURIComponent(windowTo.toISOString())}`
+  const [blocksRes, apptsRes] = await Promise.all([
+    fetch(`${api}/v1/planner/blocks?${qs}`, { headers: { Authorization: `Bearer ${token}` } }),
+    fetch(`${api}/v1/appointments/mine?role=master&${qs}`, { headers: { Authorization: `Bearer ${token}` } }),
+  ])
+  expect(blocksRes.ok).toBeTruthy()
+  expect(apptsRes.ok).toBeTruthy()
+  const blocks = await blocksRes.json() as { items?: Array<{ starts_at: string; ends_at: string }> }
+  const appts = await apptsRes.json() as { items?: Array<{ starts_at: string; ends_at: string; status?: string }> }
+  const busy = [
+    ...(blocks.items ?? []),
+    ...(appts.items ?? []).filter((a) => PLANNER_OCCUPY_STATUSES.has(a.status ?? '')),
+  ].map((x) => ({ start: new Date(x.starts_at).getTime(), end: new Date(x.ends_at).getTime() }))
+
+  const durationMs = 60 * 60 * 1000
+  for (let i = 0; i < 14; i++) {
+    const date = krasnoyarskYmd(new Date(Date.now() + i * 86400000))
+    const slotsRes = await fetch(`${api}/v1/masters/${masterId}/slots?date=${date}&duration_minutes=60`)
+    if (!slotsRes.ok) continue
+    const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+    for (const slot of slots.items ?? []) {
+      const start = new Date(slot.starts_at)
+      const end = new Date(start.getTime() + durationMs)
+      const taken = busy.some((b) => intervalsOverlap(start.getTime(), end.getTime(), b.start, b.end))
+      if (!taken) return { start, end }
+    }
+  }
+  throw new Error('no free working-hours interval for planner block')
+}
+
 async function masterInProgressAppointment(token: string, masterUserId: string) {
   const res = await fetch(`${api}/v1/appointments/mine?role=master`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -787,35 +882,40 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('calendar planner block is clickable and editable', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     const master = await apiLogin('master1@demo.local')
-    const from = new Date(Date.UTC(2026, 7, 17)).toISOString()
-    const to = new Date(Date.UTC(2026, 8, 1)).toISOString()
-    const listed = await fetch(`${api}/v1/planner/blocks?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
-      headers: { Authorization: `Bearer ${master.access_token}` },
-    })
-    const listedBody = await listed.json() as { items?: Array<{ id: string; title: string }> }
+    const windowFrom = new Date()
+    windowFrom.setUTCHours(0, 0, 0, 0)
+    const windowTo = new Date(windowFrom.getTime() + 21 * 86400000)
+    const listed = await fetch(
+      `${api}/v1/planner/blocks?from=${encodeURIComponent(windowFrom.toISOString())}&to=${encodeURIComponent(windowTo.toISOString())}`,
+      { headers: { Authorization: `Bearer ${master.access_token}` } },
+    )
+    const listedBody = await listed.json() as { items?: Array<{ id: string; title: string; starts_at: string }> }
     let block = listedBody.items?.find((b) => b.title === 'E2E блок планера')
+    let startsAt: Date
     if (!block) {
-      const start = new Date(Date.UTC(2026, 7, 19, 3, 30, 0))
-      const end = new Date(Date.UTC(2026, 7, 19, 4, 30, 0))
+      const slot = await findFreePlannerSlot(master.access_token)
       const create = await fetch(`${api}/v1/planner/blocks`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'E2E блок планера',
           category: 'task',
-          starts_at: start.toISOString(),
-          ends_at: end.toISOString(),
+          starts_at: slot.start.toISOString(),
+          ends_at: slot.end.toISOString(),
           timezone: 'Asia/Krasnoyarsk',
         }),
       })
       const created = await create.json() as { id?: string }
       expect(create.status, JSON.stringify(created)).toBeLessThan(300)
-      block = { id: created.id!, title: 'E2E блок планера' }
+      block = { id: created.id!, title: 'E2E блок планера', starts_at: slot.start.toISOString() }
+      startsAt = slot.start
+    } else {
+      startsAt = new Date(block.starts_at)
     }
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
     await expect(page.getByRole('button', { name: 'Неделя' })).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: 'Список' }).click()
+    await openListWeekContaining(page, startsAt)
     const row = page.locator('.fc-list-event').filter({ hasText: 'E2E блок планера' }).first()
     await expect(row).toBeVisible({ timeout: 15_000 })
     await row.scrollIntoViewIfNeeded()

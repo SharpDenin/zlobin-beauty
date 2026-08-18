@@ -1,15 +1,47 @@
 # UI_ACCEPTANCE.md — Salon-X
 
-Дата проверки: **2026-08-18** (Phase 2).  
-Стек: текущий docker compose (frontend+organizations rebuilt) + ранее прогнанный seed.  
-UI: `http://localhost:5173`. API: `http://localhost:8090`.  
-Пароль всех seed-аккаунтов: `Password123!`.
+Дата проверки: **2026-08-18** (Phase 3).  
+Стек: docker compose + seed. UI: `http://localhost:5173`. API: `http://localhost:8090`.  
+Пароль seed: `Password123!`.
 
 Playwright `frontend/e2e/salon-x.spec.ts`:
-- Phase 2: **passed** на 390 / 430 / 768 / 1366 / 1920 (monitoring — один раз на 390). Без skip из‑за данных/логина.
-- P0 phone-390: 22 passed; chain switcher locator поправлен под два филиала «Новосибирск».
+- Phase 3: checkout e2e, multi-supplier API, cross-role pickup API, price-change UI, idempotency group.
+- Phase 1–2 regression: phone-390 + laptop-1366.
 
-Критерий `Implemented`: экран открывается под указанной ролью, без UUID в основном сценарии, назначение кабинета понятно. `Partial` — экран есть, но UX/покрытие неполное.
+| Screen | Role | Route | Purpose | Implemented | Responsive | Notes |
+|---|---|---|---|---|---|---|
+| Client shop | Client | `/shop` | Каталог ≥12 товаров, фото, PROFESSIONAL_ONLY скрыт | Yes | 390, 1366 | Не UUID |
+| Product detail | Client | `/shop/:id` | Галерея, add to cart | Yes | 390, 1366 | |
+| Cart | Client | `/shop/cart` | Persistence, multi-supplier info | Yes | 390, 1366 | Auto-split at checkout |
+| Checkout | Client | `/shop/checkout` | Pickup, payment, grouped summary | Yes | 390, 1366 | One UX → N supplier orders |
+| Checkout success | Client | `/shop/checkout/success` | Group total + order numbers CL-* | Yes | 390 | |
+| My orders | Client | `/orders` | History, reorder | Yes | 390, 1366 | client2 seeded states |
+| Order detail | Client | `/orders/:id` | Timeline from status_history | Yes | 390 | |
+| Salon pickup | Owner/admin/staff | `/pickup-orders` | Accept + handover | Yes | 390, 1366 | delivered → ready → received |
+| Supplier client orders | Supplier | `/supplier/client-orders` | Confirm → delivery | Yes | 390 | |
+| Notifications | Client | `/notifications` | Deep link to order | Yes | — | client_order entity |
+
+## Phase 3 commerce architecture (acceptance)
+
+- **One checkout UX** → `client_checkout_groups` + N `client_orders` (one per supplier).
+- **Idempotency** on `(user_id, idempotency_key)` for the whole group.
+- **Atomicity**: single DB transaction in `CreateCheckoutBatch` — group + all orders + stock reserve + cart clear; rollback on any failure.
+- **Pickup**: rep `delivered` = at salon; salon accept → `ready_for_pickup`; handover → `received`.
+- **Payment**: card must be authorized before handover; cash/bank at handover — not tied to delivery status alone.
+
+## Accounts (Phase 3 walkthrough)
+
+| Email | Use |
+|---|---|
+| `client1@demo.local` | Shop checkout demo |
+| `client2@demo.local` | Order history (processing → received) |
+| `master1@demo.local` | Salon pickup accept/handover |
+| `supplier1@demo.local` / `supplier2@demo.local` | Supplier client orders (isolated) |
+| `rep1@demo.local` | Rep delivery complete |
+
+---
+
+_Previous Phase 2 rows retained below._
 
 | Screen | Role | Route | Purpose | Implemented | Responsive checked | Notes |
 |---|---|---|---|---|---|---|

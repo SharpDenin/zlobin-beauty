@@ -237,13 +237,23 @@ type OrderDelivery struct {
 
 // Client order statuses (B2C shop).
 const (
-	ClientOrderStatusSubmitted  = "submitted"
-	ClientOrderStatusConfirmed  = "confirmed"
-	ClientOrderStatusPicking    = "picking"
-	ClientOrderStatusInDelivery = "in_delivery"
-	ClientOrderStatusDelivered  = "delivered"
-	ClientOrderStatusCancelled  = "cancelled"
+	ClientOrderStatusSubmitted     = "submitted"
+	ClientOrderStatusConfirmed     = "confirmed"
+	ClientOrderStatusPicking       = "picking"
+	ClientOrderStatusInDelivery    = "in_delivery"
+	ClientOrderStatusDelivered     = "delivered"
+	ClientOrderStatusReadyForPickup = "ready_for_pickup"
+	ClientOrderStatusReceived      = "received"
+	ClientOrderStatusCancelled     = "cancelled"
 )
+
+type ClientCheckoutGroup struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	IdempotencyKey string
+	TotalMinor     int64
+	CreatedAt      time.Time
+}
 
 // Debt ledger entry kinds.
 const (
@@ -320,6 +330,7 @@ type ClientOrder struct {
 	PickupBranchID       *uuid.UUID
 	PaymentStatus        string
 	IdempotencyKey       string
+	CheckoutGroupID      *uuid.UUID
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }

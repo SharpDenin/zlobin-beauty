@@ -58,6 +58,13 @@ type OrderHistoryEntry = {
   note?: string
 }
 
+type CheckoutResult = {
+  checkout_group_id?: string
+  total_minor: number
+  orders: ClientOrder[]
+  order?: ClientOrder
+}
+
 type ClientOrder = {
   id: string
   order_number?: string
@@ -572,8 +579,8 @@ function CartView() {
         </div>
       )}
       {cart.data?.multi_supplier && (
-        <div className="state-box error">
-          В корзине товары разных поставщиков. Оформите заказ по одному поставщику за раз.
+        <div className="state-box">
+          Товары разных поставщиков будут оформлены отдельными заказами в одном checkout.
         </div>
       )}
       <div className="stack">
@@ -616,7 +623,6 @@ function CartView() {
           <button
             className="btn btn-primary btn-block"
             type="button"
-            disabled={Boolean(cart.data?.multi_supplier)}
             onClick={() => navigate('/shop/checkout')}
           >
             Оформить заказ
@@ -685,7 +691,7 @@ function CheckoutView() {
 
   const checkout = useMutation({
     mutationFn: () =>
-      apiRequest<ClientOrder>('/v1/commerce/shop/checkout', {
+      apiRequest<CheckoutResult>('/v1/commerce/shop/checkout', {
         token: accessToken,
         idempotencyKey: idempotencyKey.current,
         body: {
@@ -696,10 +702,10 @@ function CheckoutView() {
           confirm_price_changes: confirmPrices,
         },
       }),
-    onSuccess: async (order) => {
+    onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ['shop-cart'] })
       await qc.invalidateQueries({ queryKey: ['shop-orders'] })
-      navigate('/shop/checkout/success', { state: { order } })
+      navigate('/shop/checkout/success', { state: { checkout: result } })
     },
     onError: async (e) => {
       if (e instanceof ApiError && e.status === 409 && e.message.toLowerCase().includes('цена')) {
@@ -714,6 +720,16 @@ function CheckoutView() {
   })
 
   const items = cart.data?.items ?? []
+  const supplierGroups = useMemo(() => {
+    const groups = new Map<string, CartItem[]>()
+    for (const it of items) {
+      const key = it.organization_id ?? 'supplier'
+      const list = groups.get(key) ?? []
+      list.push(it)
+      groups.set(key, list)
+    }
+    return [...groups.entries()]
+  }, [items])
   if (!cart.isLoading && items.length === 0) {
     return (
       <main className="page stack">
@@ -743,7 +759,13 @@ function CheckoutView() {
       {error && <div className="state-box error">{error}</div>}
       {priceWarning && (
         <div className="state-box">
-          {priceWarning} Проверьте обновлённые цены в сводке и подтвердите заказ снова.
+          <p>Цена одного или нескольких товаров изменилась. Проверьте сводку и подтвердите новую цену или вернитесь в корзину.</p>
+          <div className="row">
+            <Link className="btn btn-secondary btn-compact" to="/shop/cart">Вернуться в корзину</Link>
+            <button className="btn btn-primary btn-compact" type="button" onClick={() => { setConfirmPrices(true); setStep(4) }}>
+              Подтвердить новую цену
+            </button>
+          </div>
         </div>
       )}
 
@@ -835,13 +857,26 @@ function CheckoutView() {
       {step === 3 && (
         <section className="card stack">
           <h2>Сводка</h2>
-          {items.map((it) => (
-            <div key={it.product_id} className="row between">
-              <span>{it.brand} {it.name} × {it.qty}</span>
-              <span>{formatMoney(it.line_total_minor)}</span>
+          {supplierGroups.map(([key, groupItems], idx) => (
+            <div key={key} className="stack-sm checkout-supplier-group">
+              <p className="eyebrow">Поставщик {supplierGroups.length > 1 ? idx + 1 : ''}</p>
+              {groupItems.map((it) => (
+                <div key={it.product_id} className="stack-sm">
+                  <div className="row between">
+                    <span>{it.brand} {it.name} × {it.qty}</span>
+                    <span>{formatMoney(it.price_changed && it.current_price_minor != null ? Math.round(it.qty * it.current_price_minor) : it.line_total_minor)}</span>
+                  </div>
+                  {it.price_changed && it.current_price_minor != null && (
+                    <p className="muted">Цена изменилась: {formatMoney(it.price_minor)} → {formatMoney(it.current_price_minor)}</p>
+                  )}
+                </div>
+              ))}
             </div>
           ))}
           <div className="row between"><strong>Итого</strong><strong>{formatMoney(cart.data?.total_minor ?? 0)}</strong></div>
+          {supplierGroups.length > 1 && (
+            <p className="muted">Будет создано заказов: {supplierGroups.length}</p>
+          )}
           <p><strong>Самовывоз:</strong> {selected ? branchLabel(selected) : address}</p>
           <p><strong>Оплата:</strong> {paymentLabel(payment)}</p>
           <div className="row">
@@ -939,16 +974,18 @@ function OrdersView() {
 function CheckoutSuccessView() {
   const loc = useLocation()
   const navigate = useNavigate()
-  const order = (loc.state as { order?: ClientOrder } | null)?.order
+  const state = loc.state as { checkout?: CheckoutResult; order?: ClientOrder } | null
+  const orders = state?.checkout?.orders ?? (state?.order ? [state.order] : [])
+  const total = state?.checkout?.total_minor ?? orders.reduce((s, o) => s + o.total_minor, 0)
   const { accessToken } = useAuth()
   const pickup = useQuery({
     queryKey: ['shop-pickup'],
     queryFn: () => fetchPickupBranches(accessToken),
     enabled: Boolean(accessToken),
   })
-  const salon = pickup.data?.find((b) => b.id === order?.pickup_branch_id)
+  const salon = pickup.data?.find((b) => b.id === orders[0]?.pickup_branch_id)
 
-  if (!order) {
+  if (orders.length === 0) {
     return (
       <main className="page stack">
         <ShopChrome title="Заказ оформлен" />
@@ -965,12 +1002,15 @@ function CheckoutSuccessView() {
       <section className="card stack success-panel">
         <p className="eyebrow">Готово</p>
         <h2>Заказ оформлен</h2>
-        <p className="order-number">{order.order_number ?? 'Ваш заказ'}</p>
-        <p><strong>Самовывоз:</strong> {salon ? branchLabel(salon) : order.delivery_address}</p>
-        <p><strong>Оплата:</strong> {paymentLabel(order.payment_method)} · {shopPaymentStatus(order)}</p>
+        <p className="order-number">{orders.length === 1 ? (orders[0].order_number ?? 'Ваш заказ') : `${orders.length} заказа · ${formatMoney(total)}`}</p>
+        {orders.map((o) => (
+          <p key={o.id}>{o.order_number ?? formatMoney(o.total_minor)}</p>
+        ))}
+        <p><strong>Самовывоз:</strong> {salon ? branchLabel(salon) : orders[0].delivery_address}</p>
+        <p><strong>Оплата:</strong> {paymentLabel(orders[0].payment_method)} · {shopPaymentStatus(orders[0])}</p>
         <p className="muted">Мы сообщим, когда заказ будет готов к выдаче в салоне.</p>
         <div className="row">
-          <Link className="btn btn-primary" to={`/orders/${order.id}`}>Детали заказа</Link>
+          {orders.length === 1 && <Link className="btn btn-primary" to={`/orders/${orders[0].id}`}>Детали заказа</Link>}
           <Link className="btn btn-secondary" to="/orders">Мои заказы</Link>
           <button className="btn btn-secondary" type="button" onClick={() => navigate('/shop')}>Продолжить покупки</button>
         </div>

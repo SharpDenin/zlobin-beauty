@@ -24,12 +24,13 @@ import (
 var allRoles = []string{"owner", "admin", "master", "staff", "rep"}
 
 type Service struct {
-	store            *store.Store
-	organizationsURL string
-	bookingURL       string
-	internalToken    string
-	httpClient       *http.Client
-	now              func() time.Time
+	store              *store.Store
+	organizationsURL   string
+	bookingURL         string
+	communicationsURL  string
+	internalToken      string
+	httpClient         *http.Client
+	now                func() time.Time
 }
 
 func New(st *store.Store) *Service {
@@ -44,6 +45,11 @@ func (s *Service) WithIntegrations(organizationsURL, internalToken string) *Serv
 
 func (s *Service) WithBooking(bookingURL string) *Service {
 	s.bookingURL = strings.TrimRight(bookingURL, "/")
+	return s
+}
+
+func (s *Service) WithCommunications(communicationsURL string) *Service {
+	s.communicationsURL = strings.TrimRight(communicationsURL, "/")
 	return s
 }
 
@@ -1094,6 +1100,60 @@ func (s *Service) validateDestinationBranch(ctx context.Context, branchID uuid.U
 		return apperr.Validation("destination branch must be published and pickup_enabled")
 	}
 	return nil
+}
+
+type branchInfo struct {
+	OrganizationID uuid.UUID
+	Name           string
+	Published      bool
+	PickupEnabled  bool
+}
+
+func (s *Service) fetchBranch(ctx context.Context, branchID uuid.UUID) (*branchInfo, error) {
+	if s.organizationsURL == "" {
+		return nil, apperr.Internal(fmt.Errorf("organizations service is not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/branches/"+branchID.String(), nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, apperr.NotFound("branch not found")
+	}
+	if resp.StatusCode >= 300 {
+		return nil, apperr.Internal(fmt.Errorf("branch lookup status %d: %s", resp.StatusCode, string(body)))
+	}
+	var out struct {
+		OrganizationID string `json:"organization_id"`
+		Name           string `json:"name"`
+		Published      bool   `json:"published"`
+		PickupEnabled  bool   `json:"pickup_enabled"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	orgID, err := uuid.Parse(out.OrganizationID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &branchInfo{OrganizationID: orgID, Name: out.Name, Published: out.Published, PickupEnabled: out.PickupEnabled}, nil
+}
+
+func (s *Service) requireSalonPickupAccess(ctx context.Context, actor, branchID uuid.UUID) (*branchInfo, error) {
+	b, err := s.fetchBranch(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireMembership(ctx, b.OrganizationID, actor, "owner", "admin", "master", "staff"); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func (s *Service) ListSupplierOrders(ctx context.Context, actor, orgID uuid.UUID, asSupplier bool) ([]domain.SupplierOrder, error) {

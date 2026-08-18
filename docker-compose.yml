@@ -190,6 +190,7 @@ services:
       MIGRATIONS_DIR: /migrations
       ORGANIZATIONS_URL: http://organizations:8080
       BOOKING_URL: http://booking:8080
+      COMMUNICATIONS_URL: http://communications:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info

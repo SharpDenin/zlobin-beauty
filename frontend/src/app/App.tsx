@@ -22,6 +22,8 @@ import { SupplierProductEditPage } from '@/pages/SupplierProductEditPage'
 import { SupplierOrdersPage } from '@/pages/SupplierOrdersPage'
 import { SalonReportsPage } from '@/pages/SalonReportsPage'
 import { ShopPage } from '@/pages/ShopPage'
+import { SalonPickupPage } from '@/pages/SalonPickupPage'
+import { SupplierClientOrdersPage } from '@/pages/SupplierClientOrdersPage'
 import { RepPage } from '@/pages/RepPage'
 import { AdminCatalogsPage } from '@/pages/AdminCatalogsPage'
 import { CalendarPage } from '@/pages/CalendarPage'
@@ -116,6 +118,7 @@ export function App() {
                   <Route path="/cosmetics/recurring" element={<RecurringPage />} />
                   <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
                   <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
+                  <Route path="/pickup-orders" element={<SalonPickupPage />} />
                   <Route path="/staff" element={<StaffPage />} />
                   <Route path="/reports" element={<SalonReportsPage />} />
                 </Route>
@@ -128,6 +131,7 @@ export function App() {
                   <Route path="/supplier/analytics" element={<SupplierAnalyticsPage />} />
                   <Route path="/supplier/team" element={<SupplierTeamPage />} />
                   <Route path="/supplier/team/:id" element={<SupplierRepDetailPage />} />
+                  <Route path="/supplier/client-orders" element={<SupplierClientOrdersPage />} />
                   <Route path="/supplier/recurring" element={<RecurringPage />} />
                 </Route>
               </Route>

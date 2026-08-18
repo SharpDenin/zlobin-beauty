@@ -62,6 +62,7 @@ export type CabinetFeature =
   | 'clients'
   | 'services'
   | 'location'
+  | 'pickup_orders'
 
 const CabinetContext = createContext<CabinetState | null>(null)
 
@@ -139,6 +140,8 @@ function canFeature(kind: CabinetKind, feature: CabinetFeature) {
       return kind !== 'client' && kind !== 'supplier' && kind !== 'supplier_rep' && kind !== 'salon_admin'
     case 'location':
       return kind === 'chair_master' || kind === 'mobile_master' || kind === 'salon_employee' || ownerLike
+    case 'pickup_orders':
+      return ownerLike || kind === 'salon_admin' || kind === 'salon_employee' || kind === 'chair_master'
     default:
       return false
   }
@@ -154,6 +157,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     ]
     const secondary: NavLink[] = [
       { to: '/supplier/orders', label: 'Заказы' },
+      { to: '/supplier/client-orders', label: 'Заказы клиентов' },
       { to: '/supplier/analytics', label: 'Аналитика' },
       { to: '/supplier/team', label: 'Команда' },
       { to: '/supplier/recurring', label: 'Регулярные' },
@@ -204,6 +208,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   if (canFeature(kind, 'cosmetics')) secondary.push({ to: '/cosmetics', label: 'Косметика' })
   if (canFeature(kind, 'knowledge')) secondary.push({ to: '/knowledge', label: 'База знаний' })
   if (canFeature(kind, 'staff')) secondary.push({ to: '/staff', label: 'Команда' })
+  if (canFeature(kind, 'pickup_orders')) secondary.push({ to: '/pickup-orders', label: 'Выдача заказов' })
   if (canFeature(kind, 'reports')) secondary.push({ to: '/reports', label: 'Аналитика' })
   if (kind === 'chain_owner' || kind === 'salon_owner' || kind === 'chair_master' || kind === 'mobile_master') {
     secondary.push({ to: '/master', label: 'Салон' })

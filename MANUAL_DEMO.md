@@ -49,10 +49,19 @@ UI: `http://localhost:5173` (или публичный URL из README_DEPLOY).
 Профиль: subscription / trial.
 Checkout косметики: филиал получения выбирается из списка салонов, без ручного ввода идентификаторов.
 
-## 7. Audience (1 мин)
+## 8. Client Shop / Commerce (Phase 3, 5 мин)
 
-Товар Pro Fiber не виден клиенту в shop API; виден мастеру/поставщику.
+`client1@demo.local` → **Магазин** → товар → **Корзина** → **Оформить** → самовывоз (рекомендованный салон) → оплата → сводка (несколько поставщиков — один checkout) → **Готово** → **Мои заказы** → детали + timeline.
+
+Multi-supplier: добавьте товар S1-* и S2-* — после checkout два заказа CL-*.
+
+## 9. Pickup chain (заранее seeded, 2 мин)
+
+`client2@demo.local` → **Мои заказы** — статусы processing / in delivery / ready for pickup / received.
+
+Живой cross-role (acceptance test, не обязательно на сцене):
+`supplier1` → **Заказы клиентов** → confirm → delivery → `rep1` → complete → `master1` → **Выдача заказов** → принять → выдать.
 
 ---
 
-После демо: сверьте `FINAL_REPORT.md` → **BLOCKERS BEFORE SERVER DEMO** должен быть пустым.
+После демо: `FINAL_REPORT.md` → **PHASE 3 BLOCKERS: NONE**.

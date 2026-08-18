@@ -24,6 +24,9 @@ func (a *API) registerShopRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.Handle("GET /v1/commerce/shop/orders", auth(http.HandlerFunc(a.listMyClientOrders)))
 	mux.Handle("GET /v1/commerce/shop/orders/{id}", auth(http.HandlerFunc(a.getMyClientOrder)))
 	mux.Handle("POST /v1/commerce/shop/orders/{id}/reorder", auth(http.HandlerFunc(a.reorder)))
+	mux.Handle("GET /v1/commerce/shop/pickup/orders", auth(http.HandlerFunc(a.listSalonPickupOrders)))
+	mux.Handle("POST /v1/commerce/shop/pickup/orders/{id}/accept", auth(http.HandlerFunc(a.acceptSalonPickupOrder)))
+	mux.Handle("POST /v1/commerce/shop/pickup/orders/{id}/handover", auth(http.HandlerFunc(a.handoverSalonPickupOrder)))
 	mux.Handle("GET /v1/commerce/shop/supplier/orders", auth(http.HandlerFunc(a.listSupplierClientOrders)))
 	mux.Handle("POST /v1/commerce/shop/supplier/orders/{id}/transition", auth(http.HandlerFunc(a.transitionClientOrder)))
 	mux.Handle("GET /v1/commerce/rep/deliveries", auth(http.HandlerFunc(a.listRepDeliveries)))
@@ -208,12 +211,12 @@ func (a *API) checkout(w http.ResponseWriter, r *http.Request) {
 		}
 		in.PickupBranchID = &id
 	}
-	order, items, err := a.svc.Checkout(r.Context(), claims.UserID, hasProfessionalRole(roles), in)
+	result, err := a.svc.Checkout(r.Context(), claims.UserID, hasProfessionalRole(roles), in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, clientOrderDTO(*order, items, nil))
+	httpx.JSON(w, http.StatusCreated, checkoutResultDTO(*result))
 }
 
 func (a *API) listMyClientOrders(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +580,82 @@ func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem, histor
 		"pickup_branch_id": pickup, "created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
 		"items": itemsOut, "status_history": historyOut,
 	}
+}
+
+func checkoutResultDTO(r service.CheckoutResult) map[string]any {
+	ordersOut := make([]map[string]any, 0, len(r.Orders))
+	for _, o := range r.Orders {
+		ordersOut = append(ordersOut, clientOrderDTO(o.Order, o.Items, nil))
+	}
+	var first map[string]any
+	if len(ordersOut) > 0 {
+		first = ordersOut[0]
+	}
+	return map[string]any{
+		"checkout_group_id": r.GroupID.String(),
+		"total_minor":       r.TotalMinor,
+		"orders":            ordersOut,
+		"order":             first,
+	}
+}
+
+func (a *API) listSalonPickupOrders(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.URL.Query().Get("branch_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("branch_id is required"))
+		return
+	}
+	orders, err := a.svc.ListSalonPickupOrders(r.Context(), claims.UserID, branchID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(orders))
+	for _, o := range orders {
+		items, _ := a.svc.ClientOrderItems(r.Context(), o.ID)
+		out = append(out, clientOrderDTO(o, items, nil))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) acceptSalonPickupOrder(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	order, err := a.svc.AcceptSalonPickupOrder(r.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, _ := a.svc.ClientOrderItems(r.Context(), id)
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items, nil))
+}
+
+func (a *API) handoverSalonPickupOrder(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		PaymentReceived      bool  `json:"payment_received"`
+		AmountCollectedMinor int64 `json:"amount_collected_minor"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	order, err := a.svc.HandoverSalonPickupOrder(r.Context(), claims.UserID, id, service.HandoverPickupInput{
+		PaymentReceived: req.PaymentReceived, AmountCollectedMinor: req.AmountCollectedMinor,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, _ := a.svc.ClientOrderItems(r.Context(), id)
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items, nil))
 }
 
 func jsonUnmarshal(data []byte, v any) error {

@@ -536,3 +536,29 @@ AI, mentorship, courses, coworking, новые маркетплейсы.
 4. Recurring custom interval + propose e2e.
 5. Representative GPS/provider и supplier drill-down performance.
 6. Responsive ручной проход calendar/map/analytics на 430/768/1366 (e2e UI сценарии сейчас в основном 390).
+
+---
+
+## Phase 3 — Client Commerce (2026-08-18)
+
+### Status
+**DONE** — PHASE 3 BLOCKERS: NONE
+
+### Implemented
+- Client shop: catalog, product detail, cart (persisted), checkout with pickup + payment.
+- **Multi-supplier checkout**: one UX; backend groups by supplier; `client_checkout_groups`; idempotency on whole checkout.
+- **Atomicity**: `CreateCheckoutBatch` — single PostgreSQL transaction (group insert → per-supplier orders + items + stock reserve → cart clear). Partial failure rolls back entirely; idempotent replay returns existing group.
+- Pickup completion: rep delivery → `delivered` (at salon) → salon accept → `ready_for_pickup` → handover → `received`.
+- Salon UI `/pickup-orders`; supplier `/supplier/client-orders`.
+- Notifications via communications (`client_order.*`); deep link `/orders/:id`.
+- Price snapshot + 409 price change + UI confirm.
+- Stock race: `applyMovementTx` row lock; backend test `checkout_stock_race_test.go`.
+- Seed: ≥12 client-visible products with photos; client2 order history; race product qty=1.
+
+### Tests
+- E2E: phase3 checkout UI, idempotency group, multi-supplier, cross-role pickup API, price change UI.
+- Backend: `TestConcurrentCheckoutStockRace` (requires stack + seed).
+- Regression: phase1 + phase2 + phase3 on 390 and 1366.
+
+### Success bar (Phase 3)
+All items in user checklist verified via code + automated acceptance where noted.

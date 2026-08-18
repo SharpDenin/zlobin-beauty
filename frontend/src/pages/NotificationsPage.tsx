@@ -54,6 +54,9 @@ export function NotificationsPage() {
             {n.entity_type === 'appointment' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/appointments/${n.entity_id}`}>Открыть запись</Link>
             )}
+            {n.entity_type === 'client_order' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/orders/${n.entity_id}`}>Открыть заказ</Link>
+            )}
             {!n.read_at && (
               <button className="btn btn-secondary btn-compact" type="button" disabled={markRead.isPending} onClick={() => markRead.mutate(n.id)}>
                 Прочитано

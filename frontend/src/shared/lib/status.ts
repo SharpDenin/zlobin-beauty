@@ -49,7 +49,9 @@ const clientOrderMap: Record<string, string> = {
   confirmed: 'Подтверждён',
   picking: 'Собирается',
   in_delivery: 'В доставке',
-  delivered: 'Доставлен',
+  delivered: 'Доставлен в салон',
+  ready_for_pickup: 'Готов к выдаче',
+  received: 'Получен',
   cancelled: 'Отменён',
 }
 

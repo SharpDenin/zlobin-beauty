@@ -266,6 +266,12 @@ func main() {
 		log.Printf("ok client marketplace order")
 	}
 
+	if err := seedClient2ShopHistory(client, base, client2, supplier1, master1, rep1, products1, products2, m1Branch); err != nil {
+		log.Printf("warn client2 shop history: %v", err)
+	} else {
+		log.Printf("ok client2 shop order history")
+	}
+
 	if err := seedPhase2History(client, base, master1, supplier1, client1, m1Org, m1Branch, products1, rep1, rep2); err != nil {
 		log.Printf("warn phase2 history: %v", err)
 	} else {
@@ -366,6 +372,7 @@ func supplier1Products() []prodSpec {
 		{Brand: "L'Oreal", Name: "Pro Fiber концентрат", SKU: "S1-LOR-PRO-FIB", Unit: "pcs", Volume: "150ml", Category: "уход", Description: "Только для мастеров: профессиональный концентрат", Price: 410000, Published: true, ForSale: true, DeliveryDays: 2, Audience: "professional_only"},
 		{Brand: "Wella", Name: "EIMI Super Set", SKU: "S1-WEL-EIMI-SS", Unit: "pcs", Volume: "300ml", Category: "стайлинг", Description: "Лак сильной фиксации", Price: 145000, Published: true, ForSale: true, DeliveryDays: 4},
 		{Brand: "Olaplex", Name: "No.6 Bond Smoother", SKU: "S1-OLA-N6", Unit: "pcs", Volume: "100ml", Category: "уход", Description: "Крем-несмывашка для гладкости", Price: 280000, Published: true, ForSale: true, DeliveryDays: 6},
+		{Brand: "Estel", Name: "Race Test Single Unit", SKU: "S1-RACE-001", Unit: "pcs", Volume: "30ml", Category: "уход", Description: "E2E stock race product (qty=1)", Price: 100000, Published: true, ForSale: true, DeliveryDays: 1},
 	}
 }
 
@@ -764,8 +771,7 @@ func seedSupplier(c *http.Client, base string, user authUser, cfg supplierSeed) 
 	}
 
 	if cfg.MinPublished > 0 && publishedCount >= cfg.MinPublished {
-		log.Printf("skip product create for org=%s — already %d published (need %d)", orgID, publishedCount, cfg.MinPublished)
-		return orgID, uniqueStrings(productIDs), nil
+		log.Printf("skip bulk product create for org=%s — already %d published (need %d); upserting missing SKUs", orgID, publishedCount, cfg.MinPublished)
 	}
 
 	catIDs := listProductCategoryIDs(c, base, user)
@@ -810,9 +816,18 @@ func seedSupplier(c *http.Client, base string, user authUser, cfg supplierSeed) 
 			productIDs = append(productIDs, id)
 		}
 		// Stock so products look available.
+		qty := 50.0
+		if strings.Contains(w.SKU, "RACE-") {
+			qty = 1
+		}
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/stock/movements", user.Token, map[string]any{
-			"location_id": locID, "product_id": id, "kind": "receipt", "qty": 50, "reason": "seed stock",
+			"location_id": locID, "product_id": id, "kind": "receipt", "qty": qty, "reason": "seed stock",
 		}, nil)
+		if photoID, err := uploadSeedPNG(c, base, user.Token, "product", "product-"+w.SKU+".png"); err == nil && photoID != "" {
+			_, _ = doJSON(c, http.MethodPut, base+"/v1/commerce/products/"+id, user.Token, map[string]any{
+				"photo_media_id": photoID,
+			}, nil)
+		}
 	}
 	return orgID, uniqueStrings(productIDs), nil
 }
@@ -1062,15 +1077,17 @@ func seedPhase2History(c *http.Client, base string, master, supplier, clientUser
 		if err != nil || st >= 300 {
 			return "", fmt.Errorf("cart %d %v", st, err)
 		}
-		var created struct{ ID string `json:"id"` }
-		st, err = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/checkout", clientUser.Token, map[string]any{
+		ids, err := checkoutShopOrder(c, base, clientUser.Token, map[string]any{
 			"delivery_address": address, "delivery_comment": comment,
 			"payment_method": "cash_on_delivery", "pickup_branch_id": destBranchID,
-		}, &created)
-		if err != nil || st >= 300 || created.ID == "" {
-			return "", fmt.Errorf("checkout %d %v", st, err)
+		})
+		if err != nil {
+			return "", err
 		}
-		return created.ID, nil
+		if len(ids) == 0 {
+			return "", fmt.Errorf("checkout returned no orders")
+		}
+		return ids[0], nil
 	}
 	advance := func(id, status, repID string) {
 		body := map[string]any{"status": status}
@@ -1965,6 +1982,56 @@ func seedPlannerBlocks(c *http.Client, base string, master authUser) error {
 	return nil
 }
 
+func listShopProductIDs(c *http.Client, base, token string) ([]string, error) {
+	var list struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	st, err := doJSON(c, http.MethodGet, base+"/v1/commerce/shop/products?limit=50", token, nil, &list)
+	if err != nil {
+		return nil, err
+	}
+	if st >= 300 {
+		return nil, fmt.Errorf("shop products status %d", st)
+	}
+	out := make([]string, 0, len(list.Items))
+	for _, it := range list.Items {
+		if it.ID != "" {
+			out = append(out, it.ID)
+		}
+	}
+	return out, nil
+}
+
+func checkoutShopOrder(c *http.Client, base, token string, body map[string]any) ([]string, error) {
+	var resp struct {
+		Orders []struct {
+			ID string `json:"id"`
+		} `json:"orders"`
+		Order struct {
+			ID string `json:"id"`
+		} `json:"order"`
+	}
+	st, err := doJSON(c, http.MethodPost, base+"/v1/commerce/shop/checkout", token, body, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if st >= 300 {
+		return nil, fmt.Errorf("checkout status %d", st)
+	}
+	ids := make([]string, 0, len(resp.Orders))
+	for _, o := range resp.Orders {
+		if o.ID != "" {
+			ids = append(ids, o.ID)
+		}
+	}
+	if len(ids) == 0 && resp.Order.ID != "" {
+		ids = []string{resp.Order.ID}
+	}
+	return ids, nil
+}
+
 func seedClientShopOrder(c *http.Client, base string, client authUser, productIDs []string, pickupBranchID string) error {
 	if len(productIDs) == 0 {
 		return fmt.Errorf("no products")
@@ -1978,18 +2045,146 @@ func seedClientShopOrder(c *http.Client, base string, client authUser, productID
 	if st >= 300 {
 		return fmt.Errorf("cart status %d", st)
 	}
-	st, err = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/checkout", client.Token, map[string]any{
+	_, err = checkoutShopOrder(c, base, client.Token, map[string]any{
 		"delivery_address":  "Салон Анны, ул. Ленина, 50",
 		"delivery_comment":  "seed pickup",
 		"payment_method":    "cash_on_delivery",
 		"pickup_branch_id": pickupBranchID,
-	}, nil)
+	})
+	return err
+}
+
+func seedClient2ShopHistory(c *http.Client, base string, client2, supplier, salonOwner, rep authUser, products1, products2 []string, pickupBranchID string) error {
+	if client2.Token == "" || pickupBranchID == "" {
+		return fmt.Errorf("missing seed inputs")
+	}
+	shopProducts, err := listShopProductIDs(c, base, client2.Token)
+	if err != nil || len(shopProducts) < 4 {
+		return fmt.Errorf("client2 shop products: %w", err)
+	}
+	p1 := shopProducts[0]
+	p2 := shopProducts[1]
+	p3 := shopProducts[2]
+	p4 := shopProducts[3]
+	var p5, p6 string
+	if len(shopProducts) > 4 {
+		p5 = shopProducts[4]
+	}
+	if len(shopProducts) > 5 {
+		p6 = shopProducts[5]
+	}
+	// Prefer a second supplier item when available.
+	for _, id := range shopProducts {
+		if id != p1 && id != p2 && id != p3 && id != p4 {
+			if p5 == "" {
+				p5 = id
+			} else if p6 == "" {
+				p6 = id
+				break
+			}
+		}
+	}
+	if p5 == "" {
+		p5 = p2
+	}
+	if p6 == "" {
+		p6 = p3
+	}
+	_ = products1
+	_ = products2
+	addr := "Салон Анны, ул. Ленина, 50"
+	checkoutOne := func(productID string, comment string) (string, error) {
+		st, err := doJSON(c, http.MethodPut, base+"/v1/commerce/shop/cart/items", client2.Token, map[string]any{
+			"product_id": productID, "qty": 1,
+		}, nil)
+		if err != nil || st >= 300 {
+			return "", fmt.Errorf("cart %d %v", st, err)
+		}
+		ids, err := checkoutShopOrder(c, base, client2.Token, map[string]any{
+			"delivery_address": addr, "delivery_comment": comment,
+			"payment_method": "cash", "pickup_branch_id": pickupBranchID,
+		})
+		if err != nil || len(ids) == 0 {
+			return "", err
+		}
+		return ids[0], nil
+	}
+	advance := func(id, status string, repID string) {
+		body := map[string]any{"status": status}
+		if repID != "" {
+			body["rep_user_id"] = repID
+		}
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/supplier/orders/"+id+"/transition", supplier.Token, body, nil)
+	}
+	completeRep := func(id string) {
+		var order struct {
+			Items []struct {
+				ProductID string  `json:"product_id"`
+				Qty       float64 `json:"qty"`
+			} `json:"items"`
+		}
+		_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/shop/orders/"+id, client2.Token, nil, &order)
+		items := make([]map[string]any, 0, len(order.Items))
+		for _, it := range order.Items {
+			items = append(items, map[string]any{"product_id": it.ProductID, "qty_delivered": it.Qty})
+		}
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/rep/deliveries/"+id+"/complete", rep.Token, map[string]any{
+			"items": items, "note": "seed", "amount_collected_minor": 89000, "payment_received": true,
+		}, nil)
+	}
+
+	if _, err := checkoutOne(p1, "[client2] processing"); err != nil {
+		return err
+	}
+	idConfirmed, err := checkoutOne(p2, "[client2] confirmed")
 	if err != nil {
 		return err
 	}
-	if st >= 300 {
-		return fmt.Errorf("checkout status %d", st)
+	advance(idConfirmed, "confirmed", "")
+
+	idDelivery, err := checkoutOne(p3, "[client2] in delivery")
+	if err != nil {
+		return err
 	}
+	advance(idDelivery, "confirmed", "")
+	advance(idDelivery, "picking", "")
+	if rep.ID != "" {
+		advance(idDelivery, "in_delivery", rep.ID)
+	}
+
+	idReady, err := checkoutOne(p5, "[client2] ready for pickup")
+	if err != nil {
+		return err
+	}
+	advance(idReady, "confirmed", "")
+	advance(idReady, "picking", "")
+	if rep.ID != "" {
+		advance(idReady, "in_delivery", rep.ID)
+		completeRep(idReady)
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/pickup/orders/"+idReady+"/accept", salonOwner.Token, nil, nil)
+
+	idReceived, err := checkoutOne(p6, "[client2] received")
+	if err != nil {
+		return err
+	}
+	advance(idReceived, "confirmed", "")
+	advance(idReceived, "picking", "")
+	if rep.ID != "" {
+		advance(idReceived, "in_delivery", rep.ID)
+		completeRep(idReceived)
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/pickup/orders/"+idReceived+"/accept", salonOwner.Token, nil, nil)
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/shop/pickup/orders/"+idReceived+"/handover", salonOwner.Token, map[string]any{
+		"payment_received": true,
+	}, nil)
+
+	idCancel, err := checkoutOne(p4, "[client2] cancelled")
+	if err != nil {
+		return err
+	}
+	advance(idCancel, "cancelled", "")
+
 	return nil
 }
 

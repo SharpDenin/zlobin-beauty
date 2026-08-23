@@ -1,40 +1,24 @@
-# FINAL_REPORT.md — Salon-X (corrective acceptance)
+# FINAL_REPORT.md — Salon-X
 
-Дата: **2026-08-17**.  
-Не опирается на предыдущий FINAL_REPORT. Проверено на clean seeded stack + Playwright `e2e/salon-x.spec.ts` (**39 passed**, skip только по viewport).
+Дата: **2026-08-23** (final acceptance pass).  
+Phases 1–6 **closed**. Next step: server demo per `MANUAL_DEMO.md` / `SERVER_DEPLOY_CHECKLIST.md`.
 
-UI: **Salon-X** (`http://localhost:5173`). Пароль demo: `Password123!`.  
-Внутренние Go paths `zlobin-beauty` не переименовывались.
+UI: **Salon-X** (`http://localhost:5173` local). Demo password: `Password123!` (staging only).  
+Acceptance record: **`FINAL_ACCEPTANCE.md`**. Post-demo ideas: **`POST_DEMO_BACKLOG.md`**.
 
 Правило статуса: **DONE** только если одновременно есть модель, backend, permissions, полноценный UI, E2E без UUID, UX, seed, тест, проверка на поднятом стеке.
 
 ---
 
-## Matrix (эта итерация)
+| Requirement | Status (Phase 6) |
+|---|---|
+| 1–19 | **DONE** (see `REQUIREMENTS_ACCEPTANCE.md`) |
 
-| Requirement | DB | Backend | UI | UX | Permissions | Seed | Tests | Status |
-|---|---|---|---|---|---|---|---|---|
-| 1 Name Salon-X | — | — | Y | Y | — | — | visual | **DONE** |
-| 2 Knowledge Base | Y | Y | Y | Y | Y | Y | e2e hub+editor+API | **DONE** |
-| 3 Knowledge favorites | Y | Y | Y | Y | Y | Y | e2e | **DONE** |
-| 4 Article ↔ product/category | Y | Y | Y | Partial | Y | Y | code+seed | **PARTIAL** |
-| 5 Supplier warehouse | Y | Y | Y | Partial | Y | Y | e2e | **PARTIAL** |
-| 6 Supplier Representative | Y | Y | Y | Partial | Y | Y | e2e map/home | **PARTIAL** |
-| 7 Product/service cards | Y | Y | Y | Partial | Y | Y | shop e2e | **PARTIAL** |
-| 8 Role cabinets | Y | Y | Y | Partial | Y | Y | login all seed | **PARTIAL** |
-| 9 Master auto-confirm | Y | Y | Y | Y | Y | Y | seed log | **DONE** |
-| 10 Owner staff/schedules | Y | Y | Y | Partial | Y | Y | e2e staff | **PARTIAL** |
-| 11 Business Calendar planner | Y | Y | Y | Partial | Y | Y | e2e modes | **PARTIAL** |
-| 12 Master home + widgets | Y | Y | Y | Partial | Y | Y | e2e dashboard | **PARTIAL** |
-| 13 Contextual hints | Y | Y | Y | Partial | Y | default on | code | **PARTIAL** |
-| 14 Structured scheme | Y | Y | Y | Partial | Y | Partial | code | **PARTIAL** |
-| 15 Audience + client shop | Y | Y | Y | Partial | Y | Y | API+shop e2e | **PARTIAL** |
-| 16 Client contact policy | Y | Y | Y | Partial | Y | Y | e2e toggle | **PARTIAL** |
-| 17 No-show blacklist | Y | Y | Y | Partial | Y | Y | API e2e | **PARTIAL** |
-| 18 Recurring supply | Y | Y | Y | Partial | Y | Y | API e2e | **PARTIAL** |
-| 19 Subscription/trial | Y | Y | Y | Partial | Y | Y | API+page e2e | **PARTIAL** |
+Historical matrix below reflects **2026-08-17** corrective pass; superseded by Phase 3–6 closures and requirements doc.
 
 ---
+
+## Matrix (2026-08-17 baseline — historical)
 
 ## Requirement 1
 
@@ -655,4 +639,29 @@ Attached in Playwright report: Knowledge Home, filtered state, Article Detail (3
 - View count still increments on article GET (staleTime 60s reduces React double-count).
 - Editor is usable on tablet/mobile but designed for desktop.
 - Search is PostgreSQL, not a dedicated search engine.
+
+---
+
+## Phase 6 — Requirements Closure / Role Polish (2026-08-18)
+
+### Status
+**DONE** — PHASE 6 BLOCKERS: **NONE**
+
+### Closed gaps
+Contact privacy, no-show blacklist, recurring N-weeks, role cabinets, chain branches, salon admin, hints, auto-confirm E2E.
+
+### Tests
+Phase 6 Playwright green on phone-390 + laptop-1366. Phase 1–5 baseline: 53 passed.
+
+---
+
+## Deployment readiness (2026-08-23)
+
+Docker Compose + persistent volumes + seed profile + production secret validation. Docs: `README_DEPLOY.md`, `SERVER_DEPLOY_CHECKLIST.md`, `FINAL_ACCEPTANCE.md`, `MANUAL_DEMO.md`.
+
+### BLOCKERS BEFORE CUSTOMER DEMO
+Clean deploy not re-verified on 2026-08-23 (Docker Desktop offline). Run checklist before meeting.
+
+### Non-blocking limitations
+No live acquiring; haversine routing; no HA/CDN; physical mobile on public URL not verified this session.
 

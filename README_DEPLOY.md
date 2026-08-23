@@ -31,6 +31,7 @@ cp .env.production.example .env
 | `INTERNAL_BIND_HOST` | оставить `127.0.0.1` |
 | `APP_ENV` | `production` |
 | `ALLOW_DEV_BILLING` | `false` |
+| `ALLOW_SEED` | `false` (set `true` only on intentional demo/staging host) |
 | `SEED_PASSWORD` | только если запускаете demo seed; иначе не нужен |
 
 Проверка перед стартом:
@@ -40,7 +41,7 @@ cp .env.production.example .env
 grep -E 'REPLACE_ME|localhost|minioadmin|dev-change-me|Password123|ALLOW_DEV_BILLING=true|APP_ENV=development' .env || true
 ```
 
-Compose defaults с `localhost` / `minioadmin` / `dev-change-me-*` — **только fallback без `.env`**. Frontend **bake-ит** `VITE_API_BASE_URL` на `docker build` (compose `args` перекрывает `ARG` в `frontend/Dockerfile`); после смены URL нужен rebuild frontend.
+Compose defaults с `localhost` / `minioadmin` / `dev-change-me-*` — **только fallback без `.env`**. При `APP_ENV=production` сервисы **fail-fast** на слабых secrets (JWT, INTERNAL_TOKEN, MinIO, Postgres). Frontend **bake-ит** `VITE_API_BASE_URL` на `docker build` (compose `args` перекрывает `ARG` в `frontend/Dockerfile`); после смены URL нужен rebuild frontend.
 
 Примечание MVP: пароли application DB roles (`identity`, `booking`, …) заданы в `deploy/postgres/init-databases.sql` и `DATABASE_URL` compose. Env управляет superuser (`POSTGRES_PASSWORD`) и MinIO root.
 

@@ -21,6 +21,9 @@ const defaultPassword = "Password123!"
 
 func main() {
 	base := strings.TrimRight(envOr("GATEWAY_URL", "http://localhost:8090"), "/")
+	if envOr("APP_ENV", "") == "production" && envOr("ALLOW_SEED", "false") != "true" {
+		fatal("refusing seed in APP_ENV=production (set ALLOW_SEED=true only on intentional demo/staging hosts)")
+	}
 	password := envOr("SEED_PASSWORD", defaultPassword)
 	client := &http.Client{Timeout: 30 * time.Second}
 

@@ -11,11 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 	"github.com/zlobin/zlobin-beauty/backend/shared/logging"
 )
 
 func main() {
+	config.ValidateProductionEnv()
 	addr := getenv("HTTP_ADDR", ":8080")
 	if os.Getenv("JWT_SECRET") == "" {
 		panic("JWT_SECRET is required")

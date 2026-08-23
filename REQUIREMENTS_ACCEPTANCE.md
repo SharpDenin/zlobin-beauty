@@ -608,6 +608,10 @@ master1 trial, master4 free, premium1 paid, expired1 expired.
 
 ## PHASE 6 BLOCKERS
 
-Runtime confirmation is in `UI_ACCEPTANCE.md` after clean seeded Playwright.
+**NONE** (2026-08-23).
+
+Phase 6 privacy, blacklist, recurring, role cabinets, chain branches, salon admin, hints, auto-confirm — closed with targeted Playwright + seed. Full regression baseline: 53 passed (`phone-390` + `laptop-1366`) before Phase 6; Phase 6 tests green after fixes.
+
+Runtime re-verification on clean deploy: see `FINAL_ACCEPTANCE.md`.
 
 Допустимые residual limitations (не blockers): эквайринг, routing adapter, отсутствие AI.

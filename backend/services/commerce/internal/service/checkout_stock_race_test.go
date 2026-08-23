@@ -18,7 +18,7 @@ import (
 func TestConcurrentCheckoutStockRace(t *testing.T) {
 	base := os.Getenv("TEST_API_BASE")
 	if base == "" {
-		base = "http://localhost:8090"
+		t.Skip("integration test: set TEST_API_BASE to a running gateway (e.g. http://localhost:8090)")
 	}
 	password := os.Getenv("SEED_PASSWORD")
 	if password == "" {

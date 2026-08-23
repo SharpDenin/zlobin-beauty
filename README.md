@@ -67,6 +67,7 @@ Swagger / OpenAPI UI в текущем MVP **нет**.
 | `INTERNAL_TOKEN` | S2S вызовы между сервисами | `dev-internal-token` |
 | `VITE_API_BASE_URL` | URL API для браузера (bake в frontend image) | `http://localhost:8090` |
 | `SEED_PASSWORD` | Пароль demo-аккаунтов | `Password123!` |
+| `ALLOW_SEED` | Разрешить seed при `APP_ENV=production` | `false` (demo staging only) |
 | `BOOTSTRAP_ADMIN_*` | Опциональный system admin (`--profile bootstrap`) | см. `.env.example` |
 
 ### PostgreSQL (из compose)
@@ -171,7 +172,12 @@ docker compose up -d --build
 
 ## Документация
 
-- `FINAL_REPORT.md` — production readiness / scheduling / commerce / gaps (2026-08-10)
-- `MANUAL_DEMO.md` — 12–15 мин сценарий показа заказчику
-- `MANUAL_TEST.md` — детальные acceptance-сценарии
-- `docs/` — историческая архитектура и ADRs (часть scope шире текущего MVP)
+- `FINAL_ACCEPTANCE.md` — final deployment acceptance record
+- `FINAL_REPORT.md` — phases, architecture, limitations
+- `README_DEPLOY.md` — server deployment (copy-paste commands)
+- `SERVER_DEPLOY_CHECKLIST.md` — operational checklist for demo day
+- `MANUAL_DEMO.md` — 15–20 min customer demo script
+- `REQUIREMENTS_ACCEPTANCE.md` — requirements 1–19
+- `POST_DEMO_BACKLOG.md` — post-demo ideas (not implemented)
+- `MANUAL_TEST.md` — detailed acceptance scenarios
+- `docs/` — historical architecture and ADRs

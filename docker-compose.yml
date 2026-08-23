@@ -316,6 +316,8 @@ services:
         SERVICE_PATH: cmd/seed
     environment:
       GATEWAY_URL: http://gateway:8080
+      APP_ENV: ${APP_ENV:-development}
+      ALLOW_SEED: ${ALLOW_SEED:-false}
       SEED_PASSWORD: ${SEED_PASSWORD:-Password123!}
     depends_on:
       - gateway

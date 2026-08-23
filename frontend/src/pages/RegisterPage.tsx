@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { ApiError } from '@/shared/api/client'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 const schema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
@@ -26,8 +27,8 @@ export function RegisterPage() {
 
   return (
     <div className="app-shell app-shell--auth">
-      <div className="page page-narrow stack">
-        <div className="brand">Salon-X</div>
+      <div className="page page-narrow stack auth-screen">
+        <BrandLogo size="lg" />
         <h1>Регистрация</h1>
         <p>Создайте аккаунт клиента, мастера или поставщика.</p>
         <form

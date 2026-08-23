@@ -13,6 +13,7 @@ import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { tokens } from '@/shared/ui/tokens'
 import { statusLabel } from '@/shared/lib/status'
 import { datetimeLocalToIso, isoToDatetimeLocal } from '@/shared/lib/time'
 import { Hint } from '@/shared/ui/Hint'
@@ -62,26 +63,26 @@ type CalendarSelection = {
 }
 
 const MASTER_CATEGORIES: Category[] = [
-  { id: 'client', label: 'Клиент', color: '#2f6f78', icon: '✦', system: true },
-  { id: 'personal', label: 'Личное', color: '#8f6a55', icon: '●' },
-  { id: 'break', label: 'Перерыв', color: '#748079', icon: 'Ⅱ' },
-  { id: 'blocked', label: 'Заблокировано', color: '#525c65', icon: '◆' },
-  { id: 'task', label: 'Задача', color: '#55785f', icon: '✓' },
-  { id: 'delivery', label: 'Получение / доставка', color: '#6b5d91', icon: '→' },
+  { id: 'client', label: 'Клиент', color: tokens.color.primary, icon: '✦', system: true },
+  { id: 'personal', label: 'Личное', color: tokens.color.textSecondary, icon: '●' },
+  { id: 'break', label: 'Перерыв', color: '#6B7385', icon: 'Ⅱ' },
+  { id: 'blocked', label: 'Заблокировано', color: tokens.color.danger, icon: '◆' },
+  { id: 'task', label: 'Задача', color: tokens.color.success, icon: '✓' },
+  { id: 'delivery', label: 'Получение / доставка', color: tokens.color.primarySoft, icon: '→' },
 ]
 
 const REP_CATEGORIES: Category[] = [
-  { id: 'delivery', label: 'Доставка', color: '#2f6f78', icon: '→' },
-  { id: 'salon_visit', label: 'Посещение салона', color: '#55785f', icon: '⌂' },
-  { id: 'task', label: 'Задача', color: '#8f6a55', icon: '✓' },
-  { id: 'personal', label: 'Личное', color: '#748079', icon: '●' },
+  { id: 'delivery', label: 'Доставка', color: tokens.color.primary, icon: '→' },
+  { id: 'salon_visit', label: 'Посещение салона', color: tokens.color.success, icon: '⌂' },
+  { id: 'task', label: 'Задача', color: tokens.color.primarySoft, icon: '✓' },
+  { id: 'personal', label: 'Личное', color: tokens.color.textSecondary, icon: '●' },
 ]
 
 const ADMIN_CATEGORIES: Category[] = [
-  { id: 'client', label: 'Запись клиента', color: '#2f6f78', icon: '✦', system: true },
-  { id: 'task', label: 'Задача', color: '#55785f', icon: '✓' },
-  { id: 'operational', label: 'Операционное', color: '#8f6a55', icon: '◆' },
-  { id: 'staff', label: 'Сотрудники', color: '#6b5d91', icon: '◎' },
+  { id: 'client', label: 'Запись клиента', color: tokens.color.primary, icon: '✦', system: true },
+  { id: 'task', label: 'Задача', color: tokens.color.success, icon: '✓' },
+  { id: 'operational', label: 'Операционное', color: tokens.color.warning, icon: '◆' },
+  { id: 'staff', label: 'Сотрудники', color: tokens.color.primarySoft, icon: '◎' },
 ]
 
 function categoriesFor(kind: string): Category[] {
@@ -266,7 +267,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   })
 
   function category(id: string) {
-    return palette.find((c) => c.id === id) ?? { id, label: id, color: '#66747a', icon: '•' }
+    return palette.find((c) => c.id === id) ?? { id, label: id, color: tokens.color.textSecondary, icon: '•' }
   }
 
   const businessHours = useMemo(() => {
@@ -363,7 +364,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           start: ex.day,
           allDay: true,
           display: 'background',
-          backgroundColor: '#f3e6e6',
+          backgroundColor: 'rgba(239, 119, 119, 0.18)',
           editable: false,
         })
       }

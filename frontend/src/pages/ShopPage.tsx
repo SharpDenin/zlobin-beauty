@@ -9,6 +9,7 @@ import { clientOrderLabel, paymentStatusLabel, statusBadgeClass } from '@/shared
 import { fetchPickupBranches, type BranchCard, type SupplierCard } from '@/shared/lib/commerce'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { Hint } from '@/shared/ui/Hint'
+import { CHART } from '@/shared/ui/chart-theme'
 import 'leaflet/dist/leaflet.css'
 
 type ShopProduct = {
@@ -798,7 +799,7 @@ function CheckoutView() {
                       key={b.id}
                       center={[b.latitude as number, b.longitude as number]}
                       radius={b.id === pickupId ? 12 : 8}
-                      pathOptions={{ color: b.id === pickupId ? '#2f5d50' : '#c4a574' }}
+                      pathOptions={{ color: b.id === pickupId ? CHART.accent : CHART.muted }}
                       eventHandlers={{
                         click: () => {
                           setPickupId(b.id)

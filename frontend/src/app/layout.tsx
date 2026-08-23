@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { workTypeLabel } from '@/shared/lib/status'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -149,7 +150,7 @@ export function AppShell() {
   return (
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
-        <div className="brand">Salon-X</div>
+        <div className="brand"><BrandLogo size="md" /></div>
         <p className="muted cabinet-label">{cabinet.label}</p>
         {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
         {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
@@ -190,7 +191,7 @@ export function AppShell() {
       <div className="shell-main">
         <header className="topbar">
           <div>
-            <div className="brand">Salon-X</div>
+            <div className="brand"><BrandLogo size="sm" /></div>
             <div className="muted topbar-cabinet">{cabinet.label}</div>
           </div>
           <div className="row">

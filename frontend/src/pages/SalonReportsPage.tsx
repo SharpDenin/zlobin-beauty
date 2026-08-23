@@ -6,6 +6,7 @@ import { API_BASE_URL, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
+import { CHART } from '@/shared/ui/chart-theme'
 
 type PeriodMetrics = {
   turnover_minor: number
@@ -233,8 +234,8 @@ export function SalonReportsPage() {
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="previous" name="Прошлый период" fill="#c4b7a6" radius={6} />
-                  <Bar dataKey="current" name="Текущий период" fill="#2f6f78" radius={6} />
+                  <Bar dataKey="previous" name="Прошлый период" fill={CHART.muted} radius={6} />
+                  <Bar dataKey="current" name="Текущий период" fill={CHART.accent} radius={6} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -251,7 +252,7 @@ export function SalonReportsPage() {
                     <XAxis type="number" domain={[0, 100]} unit="%" />
                     <YAxis type="category" dataKey="name" width={120} />
                     <Tooltip />
-                    <Bar dataKey="load" name="Загрузка" fill="#8f6a55" radius={6} />
+                    <Bar dataKey="load" name="Загрузка" fill={CHART.gold} radius={6} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -272,9 +273,9 @@ export function SalonReportsPage() {
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="revenue" name="Выручка, ₽" fill="#2f6f78" radius={6} />
-                  <Bar dataKey="visits" name="Записи" fill="#8f6a55" radius={6} />
-                  <Bar dataKey="load" name="Загрузка %" fill="#6b5d91" radius={6} />
+                  <Bar dataKey="revenue" name="Выручка, ₽" fill={CHART.accent} radius={6} />
+                  <Bar dataKey="visits" name="Записи" fill={CHART.gold} radius={6} />
+                  <Bar dataKey="load" name="Загрузка %" fill={CHART.clay} radius={6} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

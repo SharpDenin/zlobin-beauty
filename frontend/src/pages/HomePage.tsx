@@ -5,6 +5,7 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 type Appointment = {
   id: string
@@ -46,7 +47,7 @@ function ClientHome() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Salon-X</div>
+          <BrandLogo size="md" />
           <h1>Здравствуйте, {user?.display_name}</h1>
           <p>Запишитесь к мастеру или откройте ближайшую запись.</p>
           <div className="row">

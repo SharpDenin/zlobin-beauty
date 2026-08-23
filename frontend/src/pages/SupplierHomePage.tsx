@@ -5,6 +5,7 @@ import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 type Analytics = {
   revenue_today_minor?: number
@@ -89,7 +90,7 @@ export function SupplierHomePage() {
       <main className="page stack">
         <section className="hero">
           <div className="stack">
-            <div className="brand">Salon-X</div>
+            <BrandLogo size="md" />
             <h1>Профиль поставщика</h1>
             <p>Создайте организацию, чтобы публиковать товары для салонов.</p>
           </div>

@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { ApiError } from '@/shared/api/client'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 const schema = z.object({
   email: z.string().email('Введите корректный email'),
@@ -22,8 +23,8 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   })
 
   return (
-    <div className="page page-narrow stack" style={{ paddingTop: 48 }}>
-        <div className="brand">Salon-X</div>
+    <div className="page page-narrow stack auth-screen">
+        <BrandLogo size="lg" />
         <h1>Вход</h1>
         <p>Войдите, чтобы искать мастеров и управлять записями.</p>
         <form

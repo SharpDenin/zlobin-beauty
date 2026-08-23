@@ -1,0 +1,18 @@
+---
+description: Salon-X visual language is MIDNIGHT / SIGNAL. Follow it for every UI change.
+alwaysApply: true
+---
+
+# MIDNIGHT / SIGNAL
+
+Salon-X has one permanent design system. Read `docs/DESIGN_SYSTEM.md` before changing UI.
+
+- Dark-first canvas `#0B0D12`, surfaces `#141821` / `#1D2230`, text `#F5F7FA` / `#9EA6B5`.
+- Single accent `#7C82FF` (soft `#A8ACFF`). Do not purple entire screens.
+- Semantic `#5DC08B` / `#FFB020` / `#EF7777` only for success / warning / danger.
+- Font is Inter. 8px spacing. Radius 14px default, pills only for badges.
+- Primary button: bg `#7C82FF`, text `#0B0D12`.
+- Logo: `frontend/public/logo.png` via `BrandLogo`. Never recolor, stretch, or restyle.
+- Use CSS variables / `tokens.ts`. Do not introduce a second component kit, gradients, glass, neon, or a new palette.
+
+New entities reuse card, badge, table, form, modal, and nav patterns already in the system.

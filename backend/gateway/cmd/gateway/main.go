@@ -11,11 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 	"github.com/zlobin/zlobin-beauty/backend/shared/logging"
 )
 
 func main() {
+	config.ValidateProductionEnv()
 	addr := getenv("HTTP_ADDR", ":8080")
 	if os.Getenv("JWT_SECRET") == "" {
 		panic("JWT_SECRET is required")
@@ -39,6 +41,14 @@ func main() {
 	})
 
 	mux.Handle("/v1/auth/", identity)
+	mux.Handle("/v1/me/subscription", identity)
+	mux.Handle("/v1/me/subscription/", identity)
+	mux.Handle("/v1/me/dashboard", identity)
+	mux.Handle("/v1/me/hints", identity)
+	mux.Handle("/v1/internal/entitlements/", identity)
+	mux.Handle("/v1/internal/users/", identity)
+	mux.Handle("/v1/me/representative", organizations)
+	mux.Handle("/v1/tasks/", organizations)
 	mux.Handle("/v1/organizations", organizations)
 	mux.Handle("/v1/organizations/", organizations)
 	mux.Handle("/v1/branches", organizations)
@@ -56,6 +66,7 @@ func main() {
 	mux.Handle("/v1/knowledge", marketplace)
 	mux.Handle("/v1/knowledge/", marketplace)
 	mux.Handle("/v1/me/knowledge", marketplace)
+	mux.Handle("/v1/me/knowledge/", marketplace)
 	mux.Handle("/v1/me/working-hours", booking)
 	mux.Handle("/v1/me/schedule-exceptions", booking)
 	mux.Handle("/v1/me/clients/", booking)
@@ -71,6 +82,9 @@ func main() {
 	mux.Handle("/v1/reviews", communications)
 	mux.Handle("/v1/reviews/", communications)
 	mux.Handle("/v1/commerce/", commerce)
+	mux.Handle("/v1/planner", booking)
+	mux.Handle("/v1/planner/", booking)
+	mux.Handle("/v1/calendar/", booking)
 	mux.Handle("/v1/media", media)
 	mux.Handle("/v1/media/", media)
 	mux.Handle("/v1/masters", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

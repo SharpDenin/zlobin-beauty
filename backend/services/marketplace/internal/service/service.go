@@ -22,6 +22,7 @@ type Service struct {
 	store            *store.Store
 	organizationsURL string
 	bookingURL       string
+	commerceURL      string
 	internalToken    string
 	httpClient       *http.Client
 	now              func() time.Time
@@ -39,6 +40,11 @@ func (s *Service) WithOrganizations(organizationsURL, internalToken string) *Ser
 
 func (s *Service) WithBooking(bookingURL string) *Service {
 	s.bookingURL = strings.TrimRight(bookingURL, "/")
+	return s
+}
+
+func (s *Service) WithCommerce(commerceURL string) *Service {
+	s.commerceURL = strings.TrimRight(commerceURL, "/")
 	return s
 }
 
@@ -72,7 +78,7 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		workType = "independent"
 	}
 	switch workType {
-	case "employee", "renter", "owner", "salon_owner", "independent":
+	case "employee", "renter", "chair_master", "owner", "salon_owner", "chain_owner", "independent", "private_master", "mobile_master":
 	default:
 		return nil, apperr.Validation("invalid work_type")
 	}
@@ -670,165 +676,4 @@ func (s *Service) DeleteServiceCategory(ctx context.Context, claims *auth.Claims
 		return apperr.Internal(err)
 	}
 	return nil
-}
-
-type KnowledgeInput struct {
-	ActorUserID        uuid.UUID
-	ActorName          string
-	OrgID              *uuid.UUID
-	Title              string
-	Category           string
-	Content            string
-	ContentFormat      string
-	CoverMediaID       *uuid.UUID
-	ClearCover         bool
-	ReadingTimeMinutes int
-	Brand              string
-	ProductID          *uuid.UUID
-	Published          bool
-}
-
-func normalizeContentFormat(format, content string) (string, error) {
-	format = strings.TrimSpace(format)
-	if format == "" {
-		format = "plain"
-	}
-	switch format {
-	case "plain":
-		return format, nil
-	case "doc_json":
-		var obj map[string]any
-		if err := json.Unmarshal([]byte(content), &obj); err != nil || obj == nil {
-			return "", apperr.Validation("content must be a valid JSON object for doc_json")
-		}
-		return format, nil
-	default:
-		return "", apperr.Validation("content_format must be plain or doc_json")
-	}
-}
-
-func (s *Service) ListKnowledge(ctx context.Context, category string, includeUnpublished bool) ([]domain.KnowledgeArticle, error) {
-	items, err := s.store.ListKnowledgeArticles(ctx, strings.TrimSpace(category), !includeUnpublished, 100)
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	if items == nil {
-		items = []domain.KnowledgeArticle{}
-	}
-	return items, nil
-}
-
-func (s *Service) ListMyKnowledge(ctx context.Context, authorUserID uuid.UUID) ([]domain.KnowledgeArticle, error) {
-	items, err := s.store.ListKnowledgeArticlesByAuthor(ctx, authorUserID, 100)
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	if items == nil {
-		items = []domain.KnowledgeArticle{}
-	}
-	return items, nil
-}
-
-func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID, viewerID *uuid.UUID) (*domain.KnowledgeArticle, error) {
-	a, err := s.store.GetKnowledgeArticle(ctx, id)
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	if a == nil {
-		return nil, apperr.NotFound("article not found")
-	}
-	if a.Published {
-		return a, nil
-	}
-	if viewerID != nil && *viewerID == a.AuthorUserID {
-		return a, nil
-	}
-	return nil, apperr.NotFound("article not found")
-}
-
-func (s *Service) CreateKnowledge(ctx context.Context, in KnowledgeInput) (*domain.KnowledgeArticle, error) {
-	title := strings.TrimSpace(in.Title)
-	content := strings.TrimSpace(in.Content)
-	if title == "" || content == "" {
-		return nil, apperr.Validation("title and content are required")
-	}
-	format, err := normalizeContentFormat(in.ContentFormat, content)
-	if err != nil {
-		return nil, err
-	}
-	if in.ReadingTimeMinutes < 0 {
-		return nil, apperr.Validation("reading_time_minutes must be >= 0")
-	}
-	now := s.now().UTC()
-	a := domain.KnowledgeArticle{
-		ID: ids.New(), Title: title, Category: strings.TrimSpace(in.Category), Content: content,
-		ContentFormat: format, CoverMediaID: in.CoverMediaID, ReadingTimeMinutes: in.ReadingTimeMinutes,
-		Brand: strings.TrimSpace(in.Brand), ProductID: in.ProductID,
-		AuthorUserID: in.ActorUserID, AuthorOrgID: in.OrgID, AuthorName: strings.TrimSpace(in.ActorName),
-		Published: in.Published, CreatedAt: now, UpdatedAt: now,
-	}
-	if in.Published {
-		a.PublishedAt = &now
-	}
-	if err := s.store.CreateKnowledgeArticle(ctx, a); err != nil {
-		return nil, apperr.Internal(err)
-	}
-	return &a, nil
-}
-
-func (s *Service) UpdateKnowledge(ctx context.Context, actor uuid.UUID, id uuid.UUID, in KnowledgeInput) (*domain.KnowledgeArticle, error) {
-	a, err := s.store.GetKnowledgeArticle(ctx, id)
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	if a == nil {
-		return nil, apperr.NotFound("article not found")
-	}
-	if a.AuthorUserID != actor {
-		return nil, apperr.Forbidden("only author can update article")
-	}
-	title := strings.TrimSpace(in.Title)
-	content := strings.TrimSpace(in.Content)
-	if title == "" || content == "" {
-		return nil, apperr.Validation("title and content are required")
-	}
-	format, err := normalizeContentFormat(in.ContentFormat, content)
-	if err != nil {
-		return nil, err
-	}
-	if in.ReadingTimeMinutes < 0 {
-		return nil, apperr.Validation("reading_time_minutes must be >= 0")
-	}
-	wasPublished := a.Published
-	a.Title = title
-	a.Category = strings.TrimSpace(in.Category)
-	a.Content = content
-	a.ContentFormat = format
-	a.ReadingTimeMinutes = in.ReadingTimeMinutes
-	a.Brand = strings.TrimSpace(in.Brand)
-	a.ProductID = in.ProductID
-	a.Published = in.Published
-	if in.ClearCover {
-		a.CoverMediaID = nil
-	} else if in.CoverMediaID != nil {
-		a.CoverMediaID = in.CoverMediaID
-	}
-	if in.OrgID != nil {
-		a.AuthorOrgID = in.OrgID
-	}
-	if name := strings.TrimSpace(in.ActorName); name != "" {
-		a.AuthorName = name
-	}
-	now := s.now().UTC()
-	if in.Published && (!wasPublished || a.PublishedAt == nil) {
-		a.PublishedAt = &now
-	}
-	a.UpdatedAt = now
-	if err := s.store.UpdateKnowledgeArticle(ctx, *a); err != nil {
-		if ae, ok := apperr.As(err); ok {
-			return nil, ae
-		}
-		return nil, apperr.Internal(err)
-	}
-	return a, nil
 }

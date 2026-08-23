@@ -1,360 +1,667 @@
-# FINAL_REPORT.md — Zlobin Beauty MVP
+# FINAL_REPORT.md — Salon-X
 
-Дата: **2026-08-10**
+Дата: **2026-08-23** (final acceptance pass).  
+Phases 1–6 **closed**. Next step: server demo per `MANUAL_DEMO.md` / `SERVER_DEPLOY_CHECKLIST.md`.
 
-Честный обзор production-readiness по коду, миграциям, seed и автотестам.  
-Стек: React/Vite frontend → HTTP gateway `:8090` → Go-микросервисы → PostgreSQL per service; медиа через MinIO.
+UI: **Salon-X** (`http://localhost:5173` local). Demo password: `Password123!` (staging only).  
+Acceptance record: **`FINAL_ACCEPTANCE.md`**. Post-demo ideas: **`POST_DEMO_BACKLOG.md`**.
 
-Демо-аккаунты (пароль `Password123!`):  
-`client1@demo.local`, `client2@demo.local`, `master1@demo.local` … `master4@demo.local`, `supplier1@demo.local`, `supplier2@demo.local`.
-
-См. также: `MANUAL_TEST.md`, `MANUAL_DEMO.md`, `README.md`.
+Правило статуса: **DONE** только если одновременно есть модель, backend, permissions, полноценный UI, E2E без UUID, UX, seed, тест, проверка на поднятом стеке.
 
 ---
 
-## Production readiness review
+| Requirement | Status (Phase 6) |
+|---|---|
+| 1–19 | **DONE** (see `REQUIREMENTS_ACCEPTANCE.md`) |
 
-**Implemented**
-
-- Docker Compose поднимает Postgres, MinIO, NATS, сервисы, gateway (**host :8090 → :8080**), frontend (:5173).
-- Миграции при старте сервисов; seed через API (`docker compose --profile seed run --rm seed` / `scripts/seed.ps1`).
-- JWT access + refresh, роли `client` / `master` / `supplier` (+ claim `salon_owner` / `system_admin` в identity).
-- MVP-потоки: поиск/запись, кабинет мастера, B2B-косметика, база знаний, lifecycle записей и заказов.
-
-**Tested**
-
-- Backend unit/интеграционные тесты (overlap, conflict mapping, delivery transitions, payment helpers, commerce order build).
-- Frontend Vitest (status labels и др.).
-- Playwright `frontend/e2e/demo-mvp.spec.ts` (устойчивые сценарии + skip при unhealthy API / failed login).
-- Ручной demo-сценарий: `MANUAL_DEMO.md`.
-
-**Known limitation**
-
-- Не production HA: один gateway, нет rate-limit / WAF / JWT-verify на edge.
-- Нет OpenAPI/Swagger UI.
-- Out-of-scope маршруты (`/shop`, `/warehouse`, `/rep`, `/reports`, `/admin/catalogs`) остаются в бандле, скрыты из primary nav.
-- Секреты `JWT_SECRET` / `INTERNAL_TOKEN` — dev defaults; нужны ротация и секрет-стор для prod.
-- Observability: базовые логи контейнеров, без централизованных метрик/трейсинга.
+Historical matrix below reflects **2026-08-17** corrective pass; superseded by Phase 3–6 closures and requirements doc.
 
 ---
 
-## Scheduling correctness
+## Matrix (2026-08-17 baseline — historical)
 
-**Implemented**
+## Requirement 1
 
-- Шаблон недели: `PUT/GET /v1/me/working-hours`.
-- Исключения дня: `schedule_exceptions` (day-off / кастомные часы).
-- `FreeSlots`: локальный день в timezone мастера → окна минус appointments и exceptions; шаг 30 мин; длительность услуги обязательна.
-- Запись: `POST /v1/appointments` с `starts_at`; жизненный цикл confirm/reject/cancel/start/complete/no-show.
-- Auto-confirm на пару Master user ↔ Client user (`master_client_settings`).
-- UI wizard на карточке мастера: услуга → дата → слот → итог (гибкий режим).
+### Original requirement
+Название Salon-X.
 
-**Tested**
+### Status
+DONE
 
-- Go: overlap half-open `[start,end)`, conflict → apperr; concurrency-сценарий вокруг exclusion.
-- Playwright: flexible booking path (soft skip, если слотов/seed нет).
-- Seed создаёт demo-appointments и рабочие часы будней.
+### Implemented
+Бренд в shell, login, client home, topbar.
 
-**Known limitation**
+### UI
+Любой экран после входа: «Salon-X».
 
-- Месячный grid-календарь не реализован (день/неделя + exceptions).
-- Создание occurrence из UI через `datetime-local` = browser-local → UTC; при TZ браузера ≠ TZ салона возможен сдвиг.
-- Reschedule для fixed-window запрещён; полноценного «переноса» гибкой записи в UI нет.
+### Backend
+Не требуется.
 
----
+### Test
+Визуально + e2e login.
 
-## Timezone strategy
-
-**Implemented**
-
-- Хранение: `TIMESTAMPTZ` (UTC-инстанты).
-- IANA timezone на филиале / occurrence / `location_timezone` записи; слоты принимают `timezone` query.
-- Resolve: явный param → TZ филиала мастера (marketplace → organizations) → fallback **`Europe/Moscow`**.
-- Seed multi-city: Красноярск `Asia/Krasnoyarsk`, Новосибирск `Asia/Novosibirsk`, Москва `Europe/Moscow`.
-- Frontend: `formatLocalInTimezone` / `formatRangeInTimezone` / `formatDualTime`.
-
-**Tested**
-
-- Seed workshop occurrence в `Asia/Krasnoyarsk` (14:00–18:00 локально).
-- UI dual-time на fixed occurrences.
-
-**Known limitation**
-
-- Исторически были риски wall-clock в UTC; текущий `FreeSlots` резолвит IANA, но полный аудит всех вызовов вне happy-path не заявлялся.
-- Клиентские даты (`input[type=date]`) без явной salon-TZ подсказки в гибком wizard.
+### Known limitations
+Внутренние package paths остаются `zlobin-beauty`.
 
 ---
 
-## Fixed-window services
+## Requirement 2
 
-**Implemented**
+### Original requirement
+Knowledge Base: product/category links, multi filters, dropdown, quick chips, ranking, recommendations, favorites, rich inline photo/video, production UX.
 
-- Миграция `009_booking_mode_occurrences.sql`: `services.booking_mode ∈ {flexible, fixed_window}`, таблица `service_occurrences` (starts/ends, timezone, capacity, booked_count, status, title/note).
-- API: CRUD occurrences; internal book/release capacity; DTO `remaining = capacity - booked_count`.
-- Booking: appointment с `occurrence_id` + `booking_mode`; capacity book atomичен (`booked_count < capacity`).
-- UI клиент: выбор `.occurrence-card` («мест: N»); мастер: управление на Services.
-- Seed: услуга Анны «Авторский мастер-класс по окрашиванию» + один scheduled occurrence (capacity 1).
+### Status
+DONE (Phase 5)
 
-**Tested**
+### Implemented
+Knowledge Hub: search (title/body/brand/product), facet chips, searchable multi-select filters, URL state, recommended/favorites/new sections, visual cards, editorial article, related products, reverse product→knowledge, supplier CMS with cursor media insert, draft/preview/publish/unpublish/archive, own-product attach.
 
-- Playwright: fixed occurrence UI (skip, если сервис/seed отсутствует).
-- Store/service constraints на occurrences + appointments.
+### UI
+`/knowledge`, `/knowledge/:id`, `/knowledge/new`, `/knowledge/:id/edit`.
 
-**Known limitation**
+### Backend
+Combined filters, pagination, FTS+ILIKE+trgm indexes, deterministic ranking, commerce ownership check, facets.
 
-- Unique index «один активный appointment на occurrence» фактически блокирует capacity > 1 на слое appointments, даже если marketplace считает capacity.
-- Нет видео/стриминга для МК; это только запись на окно.
+### Test
+e2e master hub + supplier editor; API ownership, draft hidden, favorites, filter combination unit test; XSS URL sanitizer.
 
----
-
-## Media uploads
-
-**Implemented**
-
-- Media-сервис + MinIO (`zlobin-media`): `POST /v1/media`, `GET /v1/media/{id}`, `/content`, delete.
-- Purposes: profile/salon/portfolio/before_after/product/delivery/document/article/video.
-- Лимиты: изображения/docs 5 MiB; video 50 MiB (MIME mp4/webm/quicktime при `purpose=video`).
-- Public purposes отдаются через gateway `/content` без CDN.
-- Frontend: `MediaDropzone` + `mediaUpload.ts` (jpeg/png/webp).
-
-**Tested**
-
-- Upload path используется в кабинетах/редакторах (products, articles cover, профиля где подключено).
-
-**Known limitation**
-
-- **Нет CDN и signed/presigned URL** — стриминг объекта через API (не подходит для крупных video в prod).
-- UI dropzone — **только изображения**; video purpose в API есть, полноценного video UX нет.
-- Seed часто оставляет placeholder без реальных фото.
+### Known limitations
+Search is PostgreSQL ILIKE + simple FTS, not Elasticsearch. Ranking is deterministic (product/category/brand/title/views/recency), not ML. Client knowledge access is not expanded.
 
 ---
 
-## Commerce architecture
+## Requirement 3
 
-**Implemented**
+### Original requirement
+Knowledge favorites.
 
-- B2B: `supplier_orders` + line items (snapshot name/sku/price); каталог чужого org только published/for_sale.
-- `GET /v1/suppliers` — карточки поставщиков без ручного UUID в master UX.
-- Поля заказа (mig `007_delivery_payment.sql`): `destination_branch_id`, payment_*, money totals, `idempotency_key`.
-- Отдельная сущность `order_deliveries` (одна активная non-cancelled/failed на заказ).
-- Legacy B2C shop / warehouse / rep код сохранён, вне MVP nav.
+### Status
+DONE
 
-**Tested**
+### Implemented
+Toggle избранного на карточке статьи, фильтр chip «Избранное».
 
-- Go order_build / payment domain tests; Playwright cosmetics list без UUID; checkout филиала.
-- Seed: товары, demo orders.
+### UI
+Деталь статьи, кнопка избранного.
 
-**Known limitation**
+### Backend
+`POST/DELETE /v1/knowledge/{id}/favorite`, `?favorites=1`.
 
-- Нет единого ERP-склада и прогноза; warehouse UI скрыт.
-- Seed-заказы могут не заполнять все новые поля одинаково с UI checkout (ручной путь в UI — источник истины для pickup+payment).
+### Test
+e2e favorite click.
 
----
-
-## Delivery model
-
-**Implemented**
-
-- Отдельная state machine (`delivery_transitions.go`):  
-  pending → scheduled | preparing | cancelled | failed; … → in_transit → arrived | delivered | failed и т.д.
-- ETA: `estimated_delivery_at` на заказе; `planned_delivery_at` / window на delivery.
-- Смена destination — пока delivery в `pending`.
-- UI поставщика: запланировать доставку, переходы статусов; покупатель видит «Получение: {филиал}».
-
-**Tested**
-
-- Unit-тесты переходов delivery.
-- Supplier orders UI wired to schedule/transition.
-
-**Known limitation**
-
-- Нет внешнего 3PL / трекинг-интеграции (поля provider/tracking — заготовка).
-- Legacy статусы `in_transit`/`delivered` на самом заказе ещё допускаются рядом с delivery entity — два слоя статусов.
+### Known limitations
+Нет отдельной страницы «только избранное» кроме фильтра.
 
 ---
 
-## Payment model
+## Requirement 4
 
-**Implemented**
+### Original requirement
+Supplier article → product/category relation.
 
-- Методы (CHECK): `cash`, `bank_transfer`, `card`, `invoice`.
-- Статусы (CHECK): `pending`, `awaiting_payment`, `authorized`, `paid`, `partially_paid`, `failed`, `refunded`, `cancelled`.
-- Init: cash → `pending`; иначе → `awaiting_payment`.
-- `POST .../mark-paid` (supplier owner/admin) → `paid` + `paid_at` (**ручная отметка**).
-- UI: выбор способа оплаты; для `card` — hint «Онлайн-оплата будет подключена позже».
+### Status
+PARTIAL
 
-**Tested**
+### Implemented
+Категория поля + чекбоксы товаров поставщика при создании/редактировании.
 
-- Domain payment tests; UI labels (`paymentMethodLabel` / `paymentStatusLabel`).
+### UI
+Редактор на `/knowledge` у supplier.
 
-**Known limitation**
+### Backend
+`product_ids` на статье.
 
-- **Acquiring — mock/заглушка:** нет PSP, webhook, authorize/capture, refunds.
-- Статусы `authorized` / `partially_paid` в схеме почти не используются живыми flow.
+### Test
+Seed articles с product links; UI чекбоксы.
 
----
-
-## Pickup branches
-
-**Implemented**
-
-- Mig `005_branch_pickup.sql`: `pickup_enabled` (DEFAULT true), geo, `working_hours_note`, `photo_media_id`.
-- `GET /v1/branches/pickup`; create order валидирует published + pickup_enabled.
-- Checkout косметики: поиск филиала по имени/городу/адресу, выбор карточки (не UUID).
-
-**Tested**
-
-- Playwright: блок «Филиал получения» без UUID-полей.
-- Seed публикует филиалы салонов (default pickup true).
-
-**Known limitation**
-
-- Нет отдельного UI-мастера «настроить часы самовывоза» для всех сценариев beyond branch fields.
-- Поставщицкие склады тоже branch entities; UX фокусируется на филиалах салона-покупателя.
+### Known limitations
+Нет отдельного UX «статьи по продуктам» как витрины категорий; связь видна в карточке/детали.
 
 ---
 
-## Knowledge rich content
+## Requirement 5
 
-**Implemented**
+### Original requirement
+Supplier warehouse.
 
-- Mig `010_knowledge_rich.sql`: `content_format ∈ {plain, doc_json}`, `cover_media_id`, `reading_time_minutes`.
-- `RichDocEditor` / `RichDocRenderer` (TipTap); создание статей supplier с `doc_json`.
-- Список/статья: cover, badges (brand/category), reading time, связанный product link.
-- Авторство у supplier org; master читает published.
+### Status
+PARTIAL
 
-**Tested**
+### Implemented
+Раздел «Склад»: карточки товара, available, reserved (supplier), статусы, search/filter, движения. Rep видит три человеческих статуса.
 
-- Playwright: knowledge list + article page render.
-- Seed: статьи (часто `plain` без cover — совместимо с renderer).
+### UI
+`/warehouse`.
 
-**Known limitation**
+### Backend
+`GET /v1/commerce/stock`, `GET /v1/commerce/stock/movements` (добавлен list).
 
-- Seed не заполняет rich doc_json / cover массово.
-- Нет версиирования статей, модерации, full-text search advanced.
+### Test
+e2e heading «Склад» под supplier1.
 
----
-
-## Permissions/security
-
-**Implemented**
-
-- Argon2 passwords; JWT HS256 (access ~15m, refresh ~30d); roles в claims.
-- Per-service BearerAuth + org membership checks (`owner|admin|master|staff`…).
-- Frontend: `RequireAuth` / `RequireMaster` / `RequireSupplier` / `RequireAdmin`.
-- Register: `as_master` / `as_supplier` (взаимоисключение).
-
-**Tested**
-
-- Role-based nav вручную и через e2e login под разными ролями.
-- API unauthorized на protected маршрутах (штатное поведение сервисов).
-
-**Known limitation**
-
-- Gateway в основном reverse-proxy: **нет центральной JWT-верификации на edge**.
-- `user_roles.role` без жёсткого DB CHECK на enum.
-- Скрытые маршруты всё ещё доступны по прямому URL при наличии токена/слабого guard.
-- INTERNAL_TOKEN для S2S — shared secret, без mTLS.
+### Known limitations
+Фото зависят от `photo_media_id` товара. Салонский склад по-прежнему смешан с нормами/CSV (скрыты у supplier/rep). Не отдельный WMS.
 
 ---
 
-## Database constraints
+## Requirement 6
 
-**Implemented**
+### Original requirement
+Supplier Representative: stock, route map, optimization, salon visits, tasks, monitoring, planner, amount to collect, day/month, sales analytics, supplier analytics.
 
-- Appointments: GiST `EXCLUDE` no-overlap на активных статусах; unique active per `occurrence_id`.
-- Occurrences: no-overlap для того же master при `scheduled|full`; `booked_count <= capacity`.
-- Commerce: CHECKs payment method/status; unique `(created_by, idempotency_key)` где ключ задан; одна активная delivery на заказ.
-- Booking idempotency table (`007_idempotency.sql`) + `Idempotency-Key` на create appointment.
+### Status
+PARTIAL
 
-**Tested**
+### Implemented
+Кабинет `/rep`: KPI, задачи, `/rep/map` Leaflet+OSM, optimize, `/rep/finance`, `/rep/analytics` charts, склад, supplier analytics + team cards + create task (салон/дата/priority).
 
-- `conflict_test.go` мапит exclusion → conflict; concurrency_test документирует `23P01`.
+### UI
+`/rep`, `/rep/map`, `/rep/finance`, `/rep/analytics`, `/supplier/team`, `/supplier/analytics`.
 
-**Known limitation**
+### Backend
+routes+stops, `GET /v1/commerce/rep/analytics`, supplier analytics, tasks.
 
-- Не все кросс-сервисные инварианты (marketplace capacity vs booking unique) согласованы идеально (см. Fixed-window).
-- Нет распределённых транзакций между сервисами.
+### Test
+e2e: «Кабинет представителя», «Карта маршрута», `.leaflet-container`.
 
----
-
-## Concurrency
-
-**Implemented**
-
-- Half-open interval overlap helper для слотов.
-- DB exclusion + atomic capacity `UPDATE … WHERE booked_count < capacity`.
-- Idempotency keys на create appointment.
-
-**Tested**
-
-- `overlap_test.go`, `concurrency_test.go`, `conflict_test.go`.
-
-**Known limitation**
-
-- Advisory locks не используются.
-- Нагрузочного/chaos-теста в CI нет; e2e не бьёт параллельными бронями в prod-like объёме.
+### Known limitations
+Optimize использует adapter (haversine), не production routing provider. Маркерные координаты seed/recommend — не живой GPS. Мониторинг представителя у supplier — карточки, не полный drill-down schedule/route/performance.
 
 ---
 
-## Browser testing
+## Requirement 7
 
-**Implemented**
+### Original requirement
+Simple product/service cards.
 
-- Адаптивный shell, bottom nav / drawer «Ещё», русские статусы.
-- Multi-city search default **Красноярск** + toggle «Показывать мастеров из других городов».
-- Wizard flexible + fixed; cosmetics checkout с филиалом; knowledge article.
+### Status
+PARTIAL
 
-**Tested**
+### Implemented
+Shop/product cards: фото, бренд, цена, наличие. Услуги — карточки/список в `/services`.
 
-| Сценарий | Как | Результат / ожидание |
-|----------|-----|----------------------|
-| Search Красноярск + toggle → Иван (Новосибирск) | Playwright | PASS при поднятом seed |
-| Flexible booking wizard | Playwright | PASS / skip если API или слоты недоступны |
-| Fixed occurrence cards | Playwright | PASS / skip если нет fixed_window seed |
-| Cosmetics pickup selection | Playwright | PASS при каталоге |
-| Knowledge article | Playwright | PASS при статьях |
-| Login / overflow 390px | Playwright responsive | PASS |
+### UI
+`/shop`, `/services`, `/cosmetics`.
 
-**Known limitation**
+### Test
+e2e shop catalog heading.
 
-- Полный screen-share / MCP browser не заменяет приёмку; перед демо заказчику пройти `MANUAL_DEMO.md`.
-- Playwright skips при down stack — зелёный CI без Docker ≠ доказанный runtime.
+### Known limitations
+Не все каталоги одинаково «карточечные»; часть salon-страниц всё ещё list-item.
 
 ---
 
-## Automated testing
+## Requirement 8
 
-**Implemented**
+### Original requirement
+Roles with separate cabinets: Client, Master types, Salon/Chain Owner, Admin, Supplier, Rep.
 
-- Go: `go test ./…` (booking overlap/concurrency/conflict; commerce delivery/payment; и др.).
-- Frontend: Vitest `npm test`; Playwright `npm run test:e2e` (`demo-mvp.spec.ts`, `responsive.spec.ts`).
-- Defaults: API `http://localhost:8090`, UI `http://localhost:5173`; skip on unhealthy `/healthz` или failed login.
+### Status
+PARTIAL
 
-**Tested**
+### Implemented
+`cabinet.tsx`: nav по `role` + `work_type`. Реп не видит client home. Owner видит staff/reports, private master — нет. Client видит Shop.
 
-- Локально/в итерации MVP: unit + build + выборочный Playwright phone-390 / desktop-1440.
+### UI
+Sidenav + bottom nav + label кабинета.
 
-**Known limitation**
+### Backend
+JWT roles + `/v1/me/master.work_type` + memberships.
 
-- Нет полного matrix CI всех viewports + обязательного docker compose в каждом PR (зависит от окружения).
-- Stage1/2 API-driven e2e в `responsive.spec.ts` всё ещё создают Moscow masters — пересекаются с новым multi-city seed, но самодостаточны.
+### Test
+Все seed-аккаунты логинятся. e2e client/master/supplier/rep.
 
----
-
-## Known production gaps
-
-1. **Оплата:** acquiring mock; только ручной `mark-paid`.
-2. **Медиа:** нет CDN/signed URLs; video через API proxy; UI upload без video.
-3. **Capacity > 1** на fixed-window ломается appointment unique index.
-4. **Gateway** без edge authz/rate-limit; shared INTERNAL_TOKEN.
-5. **Observability / backups / миграции rollback** не оформлены prod-процессом.
-6. **Out-of-scope UI** остаётся в бандле.
-7. **Salon ERP** (сотрудники, %, полный owner cabinet) — только work_type framing.
-8. **Доставка:** нет 3PL; dual status model order vs delivery.
-9. **Нагрузка / failover** Postgres и MinIO single-node в compose.
-10. **Seed ≠ полный rich knowledge/media** — демо-контент частично plain/placeholder.
+### Known limitations
+Типы мастеров делят много экранов (calendar/clients). Различие в основном в навигации, не в полностью разных приложениях. Chain switcher — localStorage.
 
 ---
 
-Эти пробелы ожидаемы для MVP-демо 2026-08-10; закрывать по приоритету: payment acquiring → media CDN/signed URLs → capacity model alignment → edge security.
+## Requirement 9
+
+### Original requirement
+Master auto-confirm Client.
+
+### Status
+DONE
+
+### Implemented
+Seed: запись client1 → master1 подтверждается. UI записей мастера.
+
+### UI
+`/appointments`, dashboard pending widget.
+
+### Backend
+Booking confirm / auto-confirm policy.
+
+### Test
+Seed log `ok auto-confirm`.
+
+### Known limitations
+Не отдельный e2e «включить auto-confirm в UI» в этом прогоне.
+
+---
+
+## Requirement 10
+
+### Original requirement
+Salon Owner manages masters and schedules.
+
+### Status
+PARTIAL
+
+### Implemented
+`/staff`: список, invite по email (lookup, не UUID), disable. `/master` — профиль/салон. Календарь фильтры категорий.
+
+### UI
+`/staff`, `/master`, `/calendar`.
+
+### Backend
+org staff, contact-policy, schedules.
+
+### Test
+e2e `/staff` heading Команда + текст про контакты.
+
+### Known limitations
+Нет визуального staff-calendar «все мастера салона» с фильтром мастера как отдельный product screen. Invite требует уже зарегистрированный email.
+
+---
+
+## Requirement 11
+
+### Original requirement
+Business Calendar 2-like planner: blocks, colors, categories, drag/drop, flexible, role-aware.
+
+### Status
+PARTIAL
+
+### Implemented
+FullCalendar: Day/Week/Month/List, категории+цвета, hide chips, DnD, resize личных блоков, создание блока без UUID.
+
+### UI
+`/calendar`, виджет календаря на dashboard.
+
+### Backend
+appointments + planner blocks, reschedule validation.
+
+### Test
+e2e кнопки День/Неделя/Месяц/Список + «Новый блок».
+
+### Known limitations
+Не pixel-perfect BC2. Resize appointment откатывается. Конфликт — revert UI, но не отдельный e2e. Role palettes заданы, кастом цвета категории в UI ограничен.
+
+---
+
+## Requirement 12
+
+### Original requirement
+Master home: important notifications top, calendar, customizable widgets, layout, size.
+
+### Status
+PARTIAL
+
+### Implemented
+Dashboard: alerts/pending сверху, календарь, библиотека виджетов, small/medium/large/full, persist `/v1/me/dashboard`.
+
+### UI
+`/` для master.
+
+### Backend
+dashboard layout prefs.
+
+### Test
+e2e heading /Сегодня/.
+
+### Known limitations
+Нет drag-and-drop сетки. Часть виджетов-заглушки (tasks/deliveries).
+
+---
+
+## Requirement 13
+
+### Original requirement
+New user contextual hints.
+
+### Status
+PARTIAL
+
+### Implemented
+Компонент `Hint` (`?`), dismiss, Profile → «Показывать подсказки новичкам».
+
+### UI
+Dashboard, calendar, rep, shop (точечно).
+
+### Backend
+`GET/PATCH /v1/me/hints`.
+
+### Test
+Код + profile toggle. Нет e2e hints.
+
+### Known limitations
+Покрыты не все экраны. Нет тура/onboarding wizard.
+
+---
+
+## Requirement 14
+
+### Original requirement
+Structured service scheme: required free, optional premium/trial, full flow.
+
+### Status
+**DONE**
+
+### Implemented
+Category templates (coloring, haircut, care, generic) in DB `scheme_templates` with version. Template-driven form on complete; validation backend-side. Free must fill; Premium/Trial can skip with audit. Atomic complete+scheme transaction. Client card shows scheme summary or «Схема не раскрыта мастером».
+
+### UI
+`/appointments/:id` — `ServiceSchemeForm`; client card visit history.
+
+### Backend
+`GET /v1/appointments/{id}/scheme-template`, `CompleteWithScheme`, entitlement via identity internal API.
+
+### Test
+e2e phase4 free complete + premium skip (390, 1366). Seed: in_progress + completed scheme/skipped.
+
+### Known limitations
+Scheme immutable after complete (no edit UI). Not all service categories have unique templates beyond the four seeded.
+
+---
+
+## Requirement 15
+
+### Original requirement
+Product audience all / professionals only; client marketplace; nearest salon pickup; manual override.
+
+### Status
+PARTIAL
+
+### Implemented
+Client `/shop`: только ALL. Pickup select, geolocation default если разрешена. Cart/qty/checkout. История заказов.
+
+### UI
+`/shop` (каталог / корзина / заказы).
+
+### Backend
+shop products audience filter, `pickup_branch_id` на client order.
+
+### Test
+API: Pro Fiber скрыт. e2e: heading Магазин + Каталог.
+
+### Known limitations
+Checkout e2e не гонял полный create order в UI. Related KB на detail — если API отдаёт.
+
+---
+
+## Requirement 16
+
+### Original requirement
+Salon Owner controls client contact visibility.
+
+### Status
+PARTIAL
+
+### Implemented
+Staff settings toggle. Backend не отдаёт phone/email мастеру при OFF.
+
+### UI
+`/staff` → «Показывать контактные данные клиентов мастерам».
+
+### Test
+e2e видимость toggle. Нет e2e «карточка без телефона».
+
+### Known limitations
+Нужен явный browser test OFF → master client card без phone/email.
+
+---
+
+## Requirement 17
+
+### Original requirement
+No-show protection: 2 no-show → master-local blacklist.
+
+### Status
+PARTIAL
+
+### Implemented
+Seed: client2 один no-show; client3 blacklist у master1. API blacklist status. UI unblock на карточке клиента (существовал).
+
+### UI
+Client card master.
+
+### Backend
+no-show count, local blacklist, booking block.
+
+### Test
+e2e API: `client3` `blocked=true`, `no_show_count>=2`.
+
+### Known limitations
+Полный UI-сценарий «client3 пытается записаться к master1 → blocked, к master B → ok, unblock» не прогнан Playwright как booking flow.
+
+---
+
+## Requirement 18
+
+### Original requirement
+Recurring supply: frequency, supplier approval, flexible management.
+
+### Status
+PARTIAL
+
+### Implemented
+Create: supplier, product, qty, weekly/biweekly/monthly, weekday, delivery window, start. Supplier: approve/reject/**propose**. Buyer: accept/reject proposal, pause/resume/cancel.
+
+### UI
+`/cosmetics/recurring`, `/supplier/recurring`.
+
+### Backend
+`decide` actions: approve, reject, propose, accept_proposal, reject_proposal. `proposed_change` JSONB.
+
+### Test
+e2e API: buyer видит seeded agreements.
+
+### Known limitations
+Нет `every N weeks` как отдельная frequency (CHECK: weekly/biweekly/monthly). Reconfirm при edit ключевых условий — через propose, не полный edit-form. Нет e2e propose.
+
+---
+
+## Requirement 19
+
+### Original requirement
+Subscription: Free, Premium, 3 months trial, complete product flow, no real acquiring.
+
+### Status
+**DONE**
+
+### Implemented
+Free/Premium plans; 3 calendar-month trial for professional roles only (master/supplier/supplier_rep/salon_admin); clients get Free without trial. `ResolveEffectivePlan` + `CanSkipServiceScheme`. Subscription page with trial banner, expired UX, upgrade modal (no acquiring). DEV billing controls when `ALLOW_DEV_BILLING`. Seed: master1 trial, master4 free, premium1 paid, expired1 expired trial.
+
+### UI
+`/profile/subscription`, compact trial hint on dashboard.
+
+### Backend
+`GET /v1/me/subscription`, `POST /v1/me/subscription/dev`, internal entitlements. Trial granted once per user (no re-grant on login/onboarding).
+
+### Test
+e2e: subscription page, expired1 free, registration trial API (+3 months). Backend entitlement unit tests.
+
+### Known limitations
+No real payment acquiring. Trial expiry notifications — UI warning only (7-day threshold on subscription page), no push/email campaign.
+
+---
+
+## P0 verification log
+
+| Flow | Account | Steps | Expected | Actual |
+|---|---|---|---|---|
+| Supplier catalog | supplier1 | login → `/supplier/products` → analytics → warehouse | headings Товары / Аналитика / Склад | OK e2e 390+1920 |
+| Knowledge | master1 | `/knowledge` → chip окрашивание → favorite | статья и кнопка избранного | OK e2e |
+| Rep map | rep1 | `/rep` → `/rep/map` | кабинет + leaflet | OK e2e |
+| Staff policy | master1 | `/staff` | Команда + «контактн» | OK e2e |
+| Shop audience | client1 | GET shop products | нет Pro Fiber | OK API |
+| Shop UI | client1 | `/shop` | Магазин + Каталог | OK e2e |
+| Dashboard/calendar | master1 | `/` `/calendar` | Сегодня + режимы | OK e2e |
+| Subscription | master1 | `/profile/subscription` | Подписка | OK e2e |
+| Blacklist | client3/master1 | GET blacklist | blocked | OK API |
+| Seed logins | all listed | `/v1/auth/login` | 200 | OK e2e |
+
+---
+
+## Out of scope (не добавлялось)
+
+AI, mentorship, courses, coworking, новые маркетплейсы.
+
+---
+
+## Что остаётся до честного DONE по ТЗ 2–19
+
+1. Browser e2e: no-show booking block + unblock; contact privacy hide phone; scheme complete FREE vs Premium.
+2. Dashboard drag-grid; calendar conflict e2e; chain context на сервере.
+3. Knowledge Hub закрыт в Phase 5.
+4. Recurring custom interval + propose e2e.
+5. Representative GPS/provider и supplier drill-down performance.
+6. Responsive ручной проход calendar/map/analytics на 430/768/1366 (e2e UI сценарии сейчас в основном 390).
+
+---
+
+## Phase 3 — Client Commerce (2026-08-18)
+
+### Status
+**DONE** — PHASE 3 BLOCKERS: NONE
+
+### Implemented
+- Client shop: catalog, product detail, cart (persisted), checkout with pickup + payment.
+- **Multi-supplier checkout**: one UX; backend groups by supplier; `client_checkout_groups`; idempotency on whole checkout.
+- **Atomicity**: `CreateCheckoutBatch` — single PostgreSQL transaction (group insert → per-supplier orders + items + stock reserve → cart clear). Partial failure rolls back entirely; idempotent replay returns existing group.
+- Pickup completion: rep delivery → `delivered` (at salon) → salon accept → `ready_for_pickup` → handover → `received`.
+- Salon UI `/pickup-orders`; supplier `/supplier/client-orders`.
+- Notifications via communications (`client_order.*`); deep link `/orders/:id`.
+- Price snapshot + 409 price change + UI confirm.
+- Stock race: `applyMovementTx` row lock; backend test `checkout_stock_race_test.go`.
+- Seed: ≥12 client-visible products with photos; client2 order history; race product qty=1.
+
+### Tests
+- E2E: phase3 checkout UI, idempotency group, multi-supplier, cross-role pickup API, price change UI.
+- Backend: `TestConcurrentCheckoutStockRace` (requires stack + seed).
+- Regression: phase1 + phase2 + phase3 on 390 and 1366.
+
+### Success bar (Phase 3)
+All items in user checklist verified via code + automated acceptance where noted.
+
+---
+
+## Phase 4 — Subscription + Structured Service Scheme (2026-08-18)
+
+### Status
+**DONE** — PHASE 4 BLOCKERS: NONE
+
+### Backend
+- Subscription: role-gated 3-month trial; `startFreeSubscription` for clients; trial-once invariant; `ResolveEffectivePlan`, `CanSkipServiceScheme`.
+- Scheme templates migration `010_scheme_templates.sql` (coloring, haircut, care, generic).
+- `CompleteWithScheme` atomic transaction; skip audit in `booking_audit_events`.
+- APIs: `GET /v1/appointments/{id}/scheme-template`, enhanced scheme GET with template version.
+
+### UI
+- Template-driven `ServiceSchemeForm` on appointment complete.
+- Subscription page: trial/expired banners, comparison table, upgrade modal, dev controls (demo).
+- Client card: structured scheme summary or withheld message.
+
+### Seed
+- `premium1@demo.local` paid Premium master; `expired1` full master profile.
+- Phase4 in_progress appointments (free/trial/premium/expired) + completed scheme + skipped scheme.
+
+### Tests
+- Backend: `entitlement_test.go`, `scheme_template_test.go`.
+- E2E `phase4`: free scheme complete (390+1366), premium skip, expired subscription, registration trial API.
+
+### Limitations
+- No real acquiring; DEV billing in demo only.
+- Scheme not editable after complete.
+- Subscription lifecycle notifications minimal (UI-only trial warning).
+
+---
+
+## Phase 5 — Knowledge Hub (2026-08-18)
+
+### Status
+**DONE** — PHASE 5 BLOCKERS: NONE
+
+### Backend
+- List contract `{ items, total, limit, offset }`; combined filters `q`, `supplier`, `brand`, `category`, `product_id`, `product_category_id`, `favorites`, `sort`, pagination.
+- Facets `GET /v1/knowledge/facets`.
+- Search: ILIKE on title/brand/category/content + `plainto_tsquery`; GIN FTS + pg_trgm indexes (`012_knowledge_search_trgm.sql`).
+- Ranking: deterministic `KnowledgeRankScore` (exact product, category, brand, title, ln views, recency). No ML.
+- Ownership: `ensureOwnProducts` via commerce `GET /v1/internal/products/{id}` — supplier attaches only own products.
+- Draft/unpublish/archive: master sees published only; owner can preview.
+- Auto reading time from document text.
+
+### Filters / ranking
+AND combination of all selected filters on the server. UI does not filter the full dataset locally. Recommended section uses `sort=recommended`.
+
+### Editorial UI
+- Knowledge Home: hero search, facet chips, filter panel, active chips + reset, empty state, sections Recommended / Favorites / New / All, visual-first cards, favorite without navigating.
+- Article: readable max-width, cover, supplier link (filter), media, related products, related articles by product.
+
+### Editor
+- Routes `/knowledge/new` and `/knowledge/:id/edit`.
+- Sections: Основное / Связи / Материал / Публикация.
+- Searchable product multi-select (own catalog), product category relations, brand from catalog.
+- TipTap H1–H3, lists, quote, tip/warning callouts, MediaDropzone insert at cursor, cover dropzone.
+- Draft / in-editor preview / publish / unpublish / archive.
+
+### Product relations
+- Article → products and product categories.
+- Product detail (shop + cosmetics) «Материалы и инструкции».
+- Supplier product edit lists linked articles.
+
+### Security
+- Supplier B cannot update Supplier A article.
+- Drafts hidden from Master (404).
+- Foreign product attach forbidden when commerce is up.
+- Renderer sanitizes `javascript:` / `data:` hrefs and media src.
+
+### Seed
+- 15+ realistic articles across two suppliers and several brands/categories.
+- Mix: one product, many products, category-only, brand, image/video/tip/warning.
+- One supplier draft; master1 favorites (Majirel / колористика / уход).
+- Default product categories migration for catalog relations.
+
+### Tests
+- `knowledge_filter_test.go` combination contract.
+- Frontend `richSanitize.test.ts` XSS URLs + node order.
+- E2E: hub 390+1366, supplier editor 1366, API ownership/favorites/filters.
+- Phase 1–4 regression suite unchanged.
+
+### Screenshots
+Attached in Playwright report: Knowledge Home, filtered state, Article Detail (390/1366), Supplier Editor, Preview.
+
+### Limitations
+- No AI / embeddings / comments / paid knowledge.
+- View count still increments on article GET (staleTime 60s reduces React double-count).
+- Editor is usable on tablet/mobile but designed for desktop.
+- Search is PostgreSQL, not a dedicated search engine.
+
+---
+
+## Phase 6 — Requirements Closure / Role Polish (2026-08-18)
+
+### Status
+**DONE** — PHASE 6 BLOCKERS: **NONE**
+
+### Closed gaps
+Contact privacy, no-show blacklist, recurring N-weeks, role cabinets, chain branches, salon admin, hints, auto-confirm E2E.
+
+### Tests
+Phase 6 Playwright green on phone-390 + laptop-1366. Phase 1–5 baseline: 53 passed.
+
+---
+
+## Deployment readiness (2026-08-23)
+
+Docker Compose + persistent volumes + seed profile + production secret validation. Docs: `README_DEPLOY.md`, `SERVER_DEPLOY_CHECKLIST.md`, `FINAL_ACCEPTANCE.md`, `MANUAL_DEMO.md`.
+
+### BLOCKERS BEFORE CUSTOMER DEMO
+Clean deploy not re-verified on 2026-08-23 (Docker Desktop offline). Run checklist before meeting.
+
+### Non-blocking limitations
+No live acquiring; haversine routing; no HA/CDN; physical mobile on public URL not verified this session.
+

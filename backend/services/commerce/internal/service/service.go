@@ -24,12 +24,13 @@ import (
 var allRoles = []string{"owner", "admin", "master", "staff", "rep"}
 
 type Service struct {
-	store            *store.Store
-	organizationsURL string
-	bookingURL       string
-	internalToken    string
-	httpClient       *http.Client
-	now              func() time.Time
+	store              *store.Store
+	organizationsURL   string
+	bookingURL         string
+	communicationsURL  string
+	internalToken      string
+	httpClient         *http.Client
+	now                func() time.Time
 }
 
 func New(st *store.Store) *Service {
@@ -44,6 +45,11 @@ func (s *Service) WithIntegrations(organizationsURL, internalToken string) *Serv
 
 func (s *Service) WithBooking(bookingURL string) *Service {
 	s.bookingURL = strings.TrimRight(bookingURL, "/")
+	return s
+}
+
+func (s *Service) WithCommunications(communicationsURL string) *Service {
+	s.communicationsURL = strings.TrimRight(communicationsURL, "/")
 	return s
 }
 
@@ -158,6 +164,7 @@ type ProductInput struct {
 	ForSale        bool
 	DeliveryDays   int
 	PhotoMediaID   *uuid.UUID
+	Audience       string
 }
 
 func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in ProductInput) (*domain.Product, error) {
@@ -212,7 +219,7 @@ func (s *Service) CreateProduct(ctx context.Context, actor uuid.UUID, in Product
 		Name: name, SKU: strings.TrimSpace(in.SKU), Description: strings.TrimSpace(in.Description), Unit: unit,
 		VolumeLabel: strings.TrimSpace(in.VolumeLabel), PriceMinor: in.PriceMinor, Currency: currency,
 		MinStock: in.MinStock, Published: in.Published, ForSale: in.ForSale, DeliveryDays: deliveryDays,
-		PhotoMediaID: in.PhotoMediaID, CreatedAt: now, UpdatedAt: now,
+		PhotoMediaID: in.PhotoMediaID, Audience: normalizeAudience(in.Audience), CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateProduct(ctx, p); err != nil {
 		if ae, ok := apperr.As(err); ok {
@@ -232,6 +239,17 @@ func (s *Service) getProductOrErr(ctx context.Context, id uuid.UUID) (*domain.Pr
 		return nil, apperr.NotFound("product not found")
 	}
 	return p, nil
+}
+
+func normalizeAudience(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), "professional_only") {
+		return "professional_only"
+	}
+	return "all"
+}
+
+func (s *Service) GetProductInternal(ctx context.Context, id uuid.UUID) (*domain.Product, error) {
+	return s.getProductOrErr(ctx, id)
 }
 
 func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.Product, error) {
@@ -264,7 +282,7 @@ func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]d
 	if memberErr != nil {
 		out := make([]domain.Product, 0, len(items))
 		for _, p := range items {
-			if p.Published && p.ForSale {
+		if p.Published && p.ForSale && p.ArchivedAt == nil {
 				out = append(out, p)
 			}
 		}
@@ -289,6 +307,7 @@ type ProductPatch struct {
 	DeliveryDays *int
 	PhotoMediaID *uuid.UUID
 	ClearPhoto   bool
+	Audience     *string
 }
 
 func (s *Service) UpdateProduct(ctx context.Context, actor, id uuid.UUID, patch ProductPatch) (*domain.Product, error) {
@@ -364,6 +383,9 @@ func (s *Service) UpdateProduct(ctx context.Context, actor, id uuid.UUID, patch 
 	} else if patch.PhotoMediaID != nil {
 		p.PhotoMediaID = patch.PhotoMediaID
 	}
+	if patch.Audience != nil {
+		p.Audience = normalizeAudience(*patch.Audience)
+	}
 	p.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateProduct(ctx, *p); err != nil {
 		if ae, ok := apperr.As(err); ok {
@@ -393,13 +415,13 @@ func resolveMovementDelta(kind string, qty float64) (float64, error) {
 			return 0, apperr.Validation("qty must be non-zero for adjust")
 		}
 		return qty, nil
-	case domain.MovementReserve, domain.MovementUnreserve:
+	case domain.MovementReserve, domain.MovementUnreserve, domain.MovementRelease, domain.MovementShipment:
 		if qty <= 0 {
 			return 0, apperr.Validation("qty must be positive for " + kind)
 		}
 		return qty, nil
 	default:
-		return 0, apperr.Validation("kind must be one of receipt, adjust, write_off, consumption, return, reserve, unreserve")
+		return 0, apperr.Validation("kind must be one of receipt, adjust, write_off, consumption, return, reserve, unreserve, release, shipment")
 	}
 }
 
@@ -452,8 +474,27 @@ func (s *Service) ListStock(ctx context.Context, actor, locationID uuid.UUID) ([
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	incoming, _ := s.store.IncomingByProduct(ctx, loc.OrganizationID)
+	for i := range items {
+		items[i].QtyIncoming = incoming[items[i].ProductID]
+	}
 	if items == nil {
 		items = []domain.StockBalanceView{}
+	}
+	return items, nil
+}
+
+func (s *Service) ListMovements(ctx context.Context, actor, locationID uuid.UUID) ([]domain.StockMovement, error) {
+	loc, err := s.getLocationOrErr(ctx, locationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireAnyMembership(ctx, loc.OrganizationID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListMovements(ctx, locationID, 40)
+	if err != nil {
+		return nil, apperr.Internal(err)
 	}
 	return items, nil
 }
@@ -990,6 +1031,9 @@ func (s *Service) CreateSupplierOrder(ctx context.Context, actor uuid.UUID, in C
 	if err != nil {
 		return nil, nil, apperr.Internal(err)
 	}
+	if err := s.reserveOrderStock(ctx, actor, outOrder, outItems); err != nil {
+		return nil, nil, err
+	}
 	return outOrder, outItems, nil
 }
 
@@ -1060,6 +1104,60 @@ func (s *Service) validateDestinationBranch(ctx context.Context, branchID uuid.U
 		return apperr.Validation("destination branch must be published and pickup_enabled")
 	}
 	return nil
+}
+
+type branchInfo struct {
+	OrganizationID uuid.UUID
+	Name           string
+	Published      bool
+	PickupEnabled  bool
+}
+
+func (s *Service) fetchBranch(ctx context.Context, branchID uuid.UUID) (*branchInfo, error) {
+	if s.organizationsURL == "" {
+		return nil, apperr.Internal(fmt.Errorf("organizations service is not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/branches/"+branchID.String(), nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, apperr.NotFound("branch not found")
+	}
+	if resp.StatusCode >= 300 {
+		return nil, apperr.Internal(fmt.Errorf("branch lookup status %d: %s", resp.StatusCode, string(body)))
+	}
+	var out struct {
+		OrganizationID string `json:"organization_id"`
+		Name           string `json:"name"`
+		Published      bool   `json:"published"`
+		PickupEnabled  bool   `json:"pickup_enabled"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	orgID, err := uuid.Parse(out.OrganizationID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &branchInfo{OrganizationID: orgID, Name: out.Name, Published: out.Published, PickupEnabled: out.PickupEnabled}, nil
+}
+
+func (s *Service) requireSalonPickupAccess(ctx context.Context, actor, branchID uuid.UUID) (*branchInfo, error) {
+	b, err := s.fetchBranch(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireMembership(ctx, b.OrganizationID, actor, "owner", "admin", "master", "staff"); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func (s *Service) ListSupplierOrders(ctx context.Context, actor, orgID uuid.UUID, asSupplier bool) ([]domain.SupplierOrder, error) {
@@ -1142,6 +1240,11 @@ func (s *Service) TransitionSupplierOrder(ctx context.Context, actor, orderID uu
 		}
 	}
 	now := s.now().UTC()
+	if toStatus == domain.OrderStatusCancelled {
+		if err := s.releaseOrderStock(ctx, actor, o); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.store.UpdateOrderStatus(ctx, orderID, toStatus, now, estimatedDeliveryAt); err != nil {
 		if ae, ok := apperr.As(err); ok {
 			return nil, ae
@@ -1337,6 +1440,7 @@ func (s *Service) TransitionOrderDelivery(ctx context.Context, actor, orderID uu
 		d.Status = domain.DeliveryStatusDelivered
 		d.DeliveredAt = &now
 		d.UpdatedAt = now
+		_ = s.shipOrderStock(ctx, actor, o)
 		return d, nil
 	}
 

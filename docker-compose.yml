@@ -1,16 +1,26 @@
+x-service-runtime: &service-runtime
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+    interval: 10s
+    timeout: 3s
+    retries: 10
+    start_period: 10s
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5433:5432"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -19,22 +29,33 @@ services:
     image: nats:2.10-alpine
     command: ["-js", "-m", "8222"]
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:4222:4222"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:9000:9000"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:9001:9001"
     volumes:
       - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   identity:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -44,8 +65,11 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      ALLOW_DEV_BILLING: ${ALLOW_DEV_BILLING:-true}
+      APP_ENV: ${APP_ENV:-development}
       MIGRATIONS_DIR: /migrations
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/identity/migrations:/migrations:ro
@@ -54,6 +78,7 @@ services:
         condition: service_healthy
 
   organizations:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -65,7 +90,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       MIGRATIONS_DIR: /migrations
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/organizations/migrations:/migrations:ro
@@ -74,6 +99,7 @@ services:
         condition: service_healthy
 
   marketplace:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -86,8 +112,9 @@ services:
       MIGRATIONS_DIR: /migrations
       ORGANIZATIONS_URL: http://organizations:8080
       BOOKING_URL: http://booking:8080
+      COMMERCE_URL: http://commerce:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/marketplace/migrations:/migrations:ro
@@ -95,9 +122,12 @@ services:
       postgres:
         condition: service_healthy
       organizations:
-        condition: service_started
+        condition: service_healthy
+      commerce:
+        condition: service_healthy
 
   booking:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -113,8 +143,9 @@ services:
       CLIENTS_URL: http://clients:8080
       COMMUNICATIONS_URL: http://communications:8080
       COMMERCE_URL: http://commerce:8080
+      IDENTITY_URL: http://identity:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/booking/migrations:/migrations:ro
@@ -122,11 +153,12 @@ services:
       postgres:
         condition: service_healthy
       marketplace:
-        condition: service_started
+        condition: service_healthy
       clients:
-        condition: service_started
+        condition: service_healthy
 
   clients:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -138,7 +170,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       MIGRATIONS_DIR: /migrations
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173
+      ORGANIZATIONS_URL: http://organizations:8080
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/clients/migrations:/migrations:ro
@@ -147,6 +180,7 @@ services:
         condition: service_healthy
 
   commerce:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -159,8 +193,9 @@ services:
       MIGRATIONS_DIR: /migrations
       ORGANIZATIONS_URL: http://organizations:8080
       BOOKING_URL: http://booking:8080
+      COMMUNICATIONS_URL: http://communications:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/commerce/migrations:/migrations:ro
@@ -168,9 +203,10 @@ services:
       postgres:
         condition: service_healthy
       organizations:
-        condition: service_started
+        condition: service_healthy
 
   communications:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -183,7 +219,7 @@ services:
       MIGRATIONS_DIR: /migrations
       BOOKING_URL: http://booking:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/communications/migrations:/migrations:ro
@@ -192,6 +228,7 @@ services:
         condition: service_healthy
 
   media:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -203,12 +240,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       MIGRATIONS_DIR: /migrations
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       MINIO_BUCKET: zlobin-media
       MINIO_USE_SSL: "false"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/media/migrations:/migrations:ro
@@ -216,9 +253,10 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
 
   gateway:
+    <<: *service-runtime
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -235,19 +273,27 @@ services:
       COMMUNICATIONS_URL: http://communications:8080
       COMMERCE_URL: http://commerce:8080
       MEDIA_URL: http://media:8080
-      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     ports:
       - "8090:8080"
     depends_on:
-      - identity
-      - organizations
-      - marketplace
-      - booking
-      - clients
-      - communications
-      - commerce
-      - media
+      identity:
+        condition: service_healthy
+      organizations:
+        condition: service_healthy
+      marketplace:
+        condition: service_healthy
+      booking:
+        condition: service_healthy
+      clients:
+        condition: service_healthy
+      communications:
+        condition: service_healthy
+      commerce:
+        condition: service_healthy
+      media:
+        condition: service_healthy
 
   frontend:
     build:
@@ -256,8 +302,10 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8090}
     ports:
       - "5173:80"
+    restart: unless-stopped
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy
 
   seed:
     profiles: ["seed"]
@@ -268,6 +316,8 @@ services:
         SERVICE_PATH: cmd/seed
     environment:
       GATEWAY_URL: http://gateway:8080
+      APP_ENV: ${APP_ENV:-development}
+      ALLOW_SEED: ${ALLOW_SEED:-false}
       SEED_PASSWORD: ${SEED_PASSWORD:-Password123!}
     depends_on:
       - gateway

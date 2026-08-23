@@ -27,7 +27,7 @@ export function RegisterPage() {
   return (
     <div className="app-shell app-shell--auth">
       <div className="page page-narrow stack">
-        <div className="brand">Zlobin Beauty</div>
+        <div className="brand">Salon-X</div>
         <h1>Регистрация</h1>
         <p>Создайте аккаунт клиента, мастера или поставщика.</p>
         <form
@@ -42,7 +42,10 @@ export function RegisterPage() {
                 as_master: values.role === 'master',
                 as_supplier: values.role === 'supplier',
               })
-              if (values.role === 'master') navigate('/master')
+              if (values.role === 'master' || values.role === 'supplier') {
+                sessionStorage.setItem('sx.welcome_trial', '1')
+              }
+              if (values.role === 'master') navigate('/')
               else if (values.role === 'supplier') navigate('/supplier')
               else navigate('/')
             } catch (e) {

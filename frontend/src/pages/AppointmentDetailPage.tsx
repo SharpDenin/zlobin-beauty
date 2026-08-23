@@ -8,9 +8,11 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { datetimeLocalToIso } from '@/shared/lib/time'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
+import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/ServiceSchemeForm'
 
 type Appointment = {
   id: string
@@ -24,6 +26,7 @@ type Appointment = {
   client_user_id: string
   organization_id: string
   cancel_reason?: string
+  location_timezone?: string
 }
 
 const cancelSchema = z.object({ reason: z.string().min(2, 'Укажите причину') })
@@ -44,6 +47,14 @@ export function AppointmentDetailPage() {
   const [ok, setOk] = useState<string | null>(null)
   const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
   const [afterDraft, setAfterDraft] = useState<string | null>(null)
+  const [technique, setTechnique] = useState('')
+  const [schemeFields, setSchemeFields] = useState<Record<string, string>>({})
+  const [notes, setNotes] = useState('')
+  const [productName, setProductName] = useState('')
+  const [productQty, setProductQty] = useState('')
+  const [proportion, setProportion] = useState('')
+  const [skipScheme, setSkipScheme] = useState(false)
+  const [skipConfirmed, setSkipConfirmed] = useState(false)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -68,6 +79,13 @@ export function AppointmentDetailPage() {
     enabled: Boolean(id && accessToken),
   })
 
+  const subscription = useQuery({
+    queryKey: ['me-subscription'],
+    queryFn: () =>
+      apiRequest<{ effective_plan: string; features?: string[] }>('/v1/me/subscription', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const canSkipScheme = Boolean(subscription.data?.features?.includes('skip_service_scheme'))
   const [photoPending, setPhotoPending] = useState(false)
 
   const deletePhoto = useMutation({
@@ -176,9 +194,75 @@ export function AppointmentDetailPage() {
             </button>
           )}
           {canComplete && (
-            <button className="btn btn-primary" type="button" disabled={act.isPending} onClick={() => act.mutate({ path: `/v1/appointments/${a.id}/complete` })}>
-              Завершить
-            </button>
+            <div className="stack">
+              <h3>Схема услуги</h3>
+              <p className="muted">
+                {canSkipScheme
+                  ? 'Можно заполнить схему или не раскрывать её — потребуется подтверждение.'
+                  : 'На Free схема обязательна: техника и хотя бы один продукт или материал.'}
+              </p>
+              {!skipScheme && (
+                <ServiceSchemeForm
+                  appointmentId={a.id}
+                  accessToken={accessToken}
+                  disabled={act.isPending}
+                  fieldValues={schemeFields}
+                  onFieldChange={(key, value) => setSchemeFields((prev) => ({ ...prev, [key]: value }))}
+                  technique={technique}
+                  onTechniqueChange={setTechnique}
+                  notes={notes}
+                  onNotesChange={setNotes}
+                  productName={productName}
+                  onProductNameChange={setProductName}
+                  productQty={productQty}
+                  onProductQtyChange={setProductQty}
+                  proportion={proportion}
+                  onProportionChange={setProportion}
+                />
+              )}
+              {canSkipScheme && (
+                <label className="field-check">
+                  <input
+                    type="checkbox"
+                    checked={skipScheme}
+                    onChange={(e) => {
+                      setSkipScheme(e.target.checked)
+                      setSkipConfirmed(false)
+                    }}
+                  />
+                  <span>Не раскрывать схему</span>
+                </label>
+              )}
+              {skipScheme && canSkipScheme && (
+                <div className="card stack-sm" data-testid="scheme-skip-confirm">
+                  <p>Схема не будет сохранена. Эта возможность доступна в Premium.</p>
+                  <label className="field-check">
+                    <input type="checkbox" checked={skipConfirmed} onChange={(e) => setSkipConfirmed(e.target.checked)} />
+                    <span>Подтверждаю, что схема не раскрывается</span>
+                  </label>
+                </div>
+              )}
+              <button
+                className="btn btn-primary"
+                type="button"
+                data-testid="complete-appointment"
+                disabled={act.isPending || (skipScheme && !skipConfirmed)}
+                onClick={() =>
+                  act.mutate({
+                    path: `/v1/appointments/${a.id}/complete`,
+                    body: {
+                      skipped: skipScheme,
+                      technique,
+                      notes,
+                      category_fields: buildCategoryFields(undefined, schemeFields, technique),
+                      components: productName ? [{ name: productName, qty: productQty, proportion, unit: 'г' }] : [],
+                    },
+                  })
+                }
+              >
+                Завершить
+              </button>
+            </div>
           )}
           {canNoShow && (
             <button className="btn btn-danger" type="button" disabled={act.isPending} onClick={() => act.mutate({ path: `/v1/appointments/${a.id}/no-show`, body: { reason: 'no_show' } })}>
@@ -202,9 +286,12 @@ export function AppointmentDetailPage() {
         )}
 
         {cancellable && (
-          <form className="stack" onSubmit={rescheduleForm.handleSubmit((v) => act.mutate({ path: `/v1/appointments/${a.id}/reschedule`, body: { starts_at: new Date(v.starts_at).toISOString() } }))}>
+          <form className="stack" onSubmit={rescheduleForm.handleSubmit((v) => act.mutate({
+            path: `/v1/appointments/${a.id}/reschedule`,
+            body: { starts_at: datetimeLocalToIso(v.starts_at, a.location_timezone || 'Europe/Moscow') },
+          }))}>
             <div className="field">
-              <label htmlFor="starts_at">Перенос · новое время (локальное)</label>
+              <label htmlFor="starts_at">Перенос · новое время (часовой пояс салона: {a.location_timezone || 'Europe/Moscow'})</label>
               <input id="starts_at" type="datetime-local" aria-invalid={Boolean(rescheduleForm.formState.errors.starts_at)} {...rescheduleForm.register('starts_at')} />
               {rescheduleForm.formState.errors.starts_at && <span className="error">{rescheduleForm.formState.errors.starts_at.message}</span>}
             </div>

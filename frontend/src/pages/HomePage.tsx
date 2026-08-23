@@ -1,6 +1,7 @@
 import { Link, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { hasMasterAccess, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
+import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
@@ -45,11 +46,12 @@ function ClientHome() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Zlobin Beauty</div>
+          <div className="brand">Salon-X</div>
           <h1>Здравствуйте, {user?.display_name}</h1>
           <p>Запишитесь к мастеру или откройте ближайшую запись.</p>
           <div className="row">
             <Link className="btn btn-primary" to="/search">Найти мастера</Link>
+            <Link className="btn btn-secondary" to="/shop">Магазин</Link>
             <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
           </div>
         </div>
@@ -97,92 +99,14 @@ function ClientHome() {
   )
 }
 
-function MasterHome() {
-  const { user, accessToken } = useAuth()
-  const todayKey = new Date().toISOString().slice(0, 10)
-
-  const appointments = useQuery({
-    queryKey: ['home-appointments', 'master'],
-    queryFn: () => apiRequest<{ items: Appointment[] }>('/v1/appointments/mine?role=master', { token: accessToken }),
-    enabled: Boolean(accessToken),
-  })
-
-  const today = (appointments.data?.items ?? [])
-    .filter((a) => a.starts_at.slice(0, 10) === todayKey)
-    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
-
-  return (
-    <main className="page stack">
-      <section className="hero">
-        <div className="stack">
-          <div className="brand">Zlobin Beauty</div>
-          <h1>Сегодня, {user?.display_name}</h1>
-          <p>Записи на день и быстрые действия.</p>
-          <div className="row">
-            <Link className="btn btn-primary" to="/calendar">Календарь</Link>
-            <Link className="btn btn-secondary" to="/services">Услуги</Link>
-          </div>
-        </div>
-      </section>
-
-      <div className="tile-grid">
-        <Link className="dashboard-tile" to="/calendar">
-          <span className="muted">Календарь</span>
-          <strong>{today.length}</strong>
-          <span className="muted">записей сегодня</span>
-        </Link>
-        <Link className="dashboard-tile" to="/services">
-          <span className="muted">Услуги</span>
-          <strong>→</strong>
-          <span className="muted">управление прайсом</span>
-        </Link>
-        <Link className="dashboard-tile" to="/cosmetics">
-          <span className="muted">Косметика</span>
-          <strong>→</strong>
-          <span className="muted">заказ поставщику</span>
-        </Link>
-      </div>
-
-      <section className="stack">
-        <div className="row between">
-          <h2>Записи на сегодня</h2>
-          <Link to="/appointments">Все</Link>
-        </div>
-        {appointments.isLoading && <div className="state-box">Загрузка…</div>}
-        {!appointments.isLoading && today.length === 0 && (
-          <div className="empty-state">
-            <h2>Свободный день</h2>
-            <p>Новых записей на сегодня нет.</p>
-            <Link className="btn btn-secondary" to="/calendar">Открыть календарь</Link>
-          </div>
-        )}
-        <div className="timeline">
-          {today.map((a) => (
-            <Link key={a.id} to={`/appointments/${a.id}`} className="list-item timeline-item">
-              <div className="row between">
-                <strong>{a.service_name}</strong>
-                <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
-              </div>
-              <p>
-                {new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-                {' · '}
-                {formatMoney(a.price_minor)}
-              </p>
-            </Link>
-          ))}
-        </div>
-      </section>
-    </main>
-  )
-}
-
 function SupplierHomeRedirect() {
   return <Navigate to="/supplier" replace />
 }
 
 export function HomePage() {
   const { user } = useAuth()
-  if (hasMasterAccess(user)) return <MasterHome />
+  if (hasMasterAccess(user) || hasSalonAdmin(user)) return <DashboardPage />
   if (hasSupplierAccess(user)) return <SupplierHomeRedirect />
+  if (hasSupplierRepAccess(user)) return <Navigate to="/rep" replace />
   return <ClientHome />
 }

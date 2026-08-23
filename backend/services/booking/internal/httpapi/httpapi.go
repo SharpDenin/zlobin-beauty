@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/service"
+	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 )
@@ -28,13 +30,18 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
+	mux.Handle("PUT /v1/calendar/working-hours", auth(http.HandlerFunc(a.setStaffHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
+	mux.Handle("GET /v1/calendar/working-hours", auth(http.HandlerFunc(a.calendarHours)))
+	mux.Handle("GET /v1/calendar/schedule-exceptions", auth(http.HandlerFunc(a.calendarExceptions)))
 	mux.Handle("PUT /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.putScheduleExceptions)))
+	mux.Handle("PUT /v1/calendar/schedule-exceptions", auth(http.HandlerFunc(a.putStaffExceptions)))
 	mux.Handle("GET /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.getScheduleExceptions)))
 	mux.Handle("DELETE /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.deleteScheduleException)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
 	mux.Handle("POST /v1/appointments", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
+	mux.Handle("GET /v1/calendar/appointments", auth(http.HandlerFunc(a.calendarAppointments)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
@@ -43,12 +50,20 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
+	mux.Handle("GET /v1/appointments/{id}/scheme", auth(http.HandlerFunc(a.getScheme)))
+	mux.Handle("GET /v1/appointments/{id}/scheme-template", auth(http.HandlerFunc(a.getSchemeTemplate)))
+	mux.Handle("GET /v1/planner/blocks", auth(http.HandlerFunc(a.listPlannerBlocks)))
+	mux.Handle("POST /v1/planner/blocks", auth(http.HandlerFunc(a.createPlannerBlock)))
+	mux.Handle("PATCH /v1/planner/blocks/{id}", auth(http.HandlerFunc(a.movePlannerBlock)))
+	mux.Handle("DELETE /v1/planner/blocks/{id}", auth(http.HandlerFunc(a.deletePlannerBlock)))
 	mux.Handle("POST /v1/appointments/{id}/no-show", auth(http.HandlerFunc(a.noShow)))
 	mux.Handle("GET /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.listPhotos)))
 	mux.Handle("POST /v1/appointments/{id}/photos", auth(http.HandlerFunc(a.addPhoto)))
 	mux.Handle("DELETE /v1/appointments/{id}/photos/{photoID}", auth(http.HandlerFunc(a.deletePhoto)))
 	mux.Handle("GET /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.getAutoConfirm)))
 	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
+	mux.Handle("GET /v1/me/clients/{clientUserID}/blacklist", auth(http.HandlerFunc(a.getBlacklistStatus)))
+	mux.Handle("POST /v1/me/clients/{clientUserID}/unblock", auth(http.HandlerFunc(a.unblockClient)))
 	a.registerReportRoutes(mux, auth)
 }
 
@@ -114,6 +129,33 @@ func (a *API) setHours(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+func (a *API) setStaffHours(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	masterID, err := uuid.Parse(r.URL.Query().Get("master_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("master_user_id is required"))
+		return
+	}
+	var req struct {
+		Items []service.HoursInput `json:"items"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	hours, err := a.svc.SetStaffWorkingHours(r.Context(), claims.UserID, orgID, masterID, req.Items)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	writeHours(w, hours)
+}
+
 func (a *API) getHours(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	hours, err := a.svc.GetWorkingHours(r.Context(), claims.UserID)
@@ -121,11 +163,94 @@ func (a *API) getHours(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	writeHours(w, hours)
+}
+
+func (a *API) calendarHours(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	masterID := claims.UserID
+	if v := r.URL.Query().Get("master_user_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+			return
+		}
+		masterID = id
+	}
+	var orgID uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = id
+	}
+	hours, err := a.svc.CalendarWorkingHours(r.Context(), claims.UserID, orgID, masterID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	writeHours(w, hours)
+}
+
+func writeHours(w http.ResponseWriter, hours []domain.WorkingHours) {
 	out := make([]map[string]any, 0, len(hours))
 	for _, h := range hours {
 		out = append(out, map[string]any{
 			"weekday": h.Weekday, "start_minute": h.StartMinute, "end_minute": h.EndMinute,
 		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) calendarExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	masterID := claims.UserID
+	if v := r.URL.Query().Get("master_user_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+			return
+		}
+		masterID = id
+	}
+	var orgID uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = id
+	}
+	now := time.Now().UTC()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 60)
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid from (YYYY-MM-DD)"))
+			return
+		}
+		from = t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid to (YYYY-MM-DD)"))
+			return
+		}
+		to = t
+	}
+	items, err := a.svc.CalendarScheduleExceptions(r.Context(), claims.UserID, orgID, masterID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -155,6 +280,37 @@ func (a *API) putScheduleExceptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := a.svc.UpsertScheduleExceptions(r.Context(), claims.UserID, req.Items)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, e := range items {
+		out = append(out, scheduleExceptionDTO(e))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) putStaffExceptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	masterID, err := uuid.Parse(r.URL.Query().Get("master_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("master_user_id is required"))
+		return
+	}
+	var req struct {
+		Items []service.ScheduleExceptionInput `json:"items"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	items, err := a.svc.UpsertStaffScheduleExceptions(r.Context(), claims.UserID, orgID, masterID, req.Items)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -316,7 +472,57 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "client"
 	}
-	items, err := a.svc.ListMine(r.Context(), claims.UserID, role)
+	var fromPtr, toPtr *time.Time
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("from must be RFC3339"))
+			return
+		}
+		fromPtr = &t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("to must be RFC3339"))
+			return
+		}
+		toPtr = &t
+	}
+	if (fromPtr == nil) != (toPtr == nil) {
+		httpx.WriteError(w, r, a.log, apperr.Validation("from and to must be provided together"))
+		return
+	}
+	items, err := a.svc.ListMine(r.Context(), claims.UserID, role, fromPtr, toPtr)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, appointmentDTO(item))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("from must be RFC3339"))
+		return
+	}
+	to, err := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err != nil || !to.After(from) {
+		httpx.WriteError(w, r, a.log, apperr.Validation("to must be RFC3339 and after from"))
+		return
+	}
+	items, err := a.svc.ListOrgCalendar(r.Context(), claims.UserID, orgID, from, to)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -425,6 +631,38 @@ func (a *API) setAutoConfirm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) unblockClient(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client id"))
+		return
+	}
+	if err := a.svc.UnblockClient(r.Context(), claims.UserID, clientID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"unblocked": true})
+}
+
+func (a *API) getBlacklistStatus(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client id"))
+		return
+	}
+	blocked, noShows, err := a.svc.ClientBlacklistStatus(r.Context(), claims.UserID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"blocked":       blocked,
+		"no_show_count": noShows,
+	})
+}
+
 func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	id, err := uuid.Parse(r.PathValue("id"))
@@ -474,7 +712,96 @@ func (a *API) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) complete(w http.ResponseWriter, r *http.Request) {
-	a.simpleAction(w, r, a.svc.Complete)
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Technique      string `json:"technique"`
+		Notes          string `json:"notes"`
+		Skipped        bool   `json:"skipped"`
+		CategoryFields any    `json:"category_fields"`
+		Components     []struct {
+			Name       string `json:"name"`
+			Brand      string `json:"brand"`
+			Qty        string `json:"qty"`
+			Unit       string `json:"unit"`
+			Proportion string `json:"proportion"`
+			Notes      string `json:"notes"`
+		} `json:"components"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	scheme := &service.VisitSchemeInput{Technique: req.Technique, Notes: req.Notes, Skipped: req.Skipped}
+	if req.CategoryFields != nil {
+		if b, err := json.Marshal(req.CategoryFields); err == nil {
+			scheme.CategoryFields = b
+		}
+	}
+	for _, c := range req.Components {
+		scheme.Components = append(scheme.Components, store.SchemeComponent{
+			Name: c.Name, Brand: c.Brand, Qty: c.Qty, Unit: c.Unit, Proportion: c.Proportion, Notes: c.Notes,
+		})
+	}
+	item, err := a.svc.CompleteVisit(r.Context(), id, claims.UserID, scheme)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := a.svc.GetVisitScheme(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if item == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"appointment_id": id.String(), "exists": false})
+		return
+	}
+	comps := make([]map[string]any, 0, len(item.Components))
+	for _, c := range item.Components {
+		comps = append(comps, map[string]any{
+			"name": c.Name, "brand": c.Brand, "qty": c.Qty, "unit": c.Unit, "proportion": c.Proportion, "notes": c.Notes,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"appointment_id": item.AppointmentID.String(), "exists": true,
+		"technique": item.Technique, "notes": item.Notes, "skipped": item.Skipped,
+		"category_fields": item.CategoryFields, "components": comps,
+		"template_id": item.TemplateID, "template_version": item.TemplateVersion,
+	})
+}
+
+func (a *API) getSchemeTemplate(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	tmpl, err := a.svc.GetSchemeTemplateForAppointment(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if tmpl == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"exists": false})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"exists": true, "id": tmpl.ID, "category_key": tmpl.CategoryKey,
+		"version": tmpl.Version, "name": tmpl.Name, "fields": tmpl.Fields,
+	})
 }
 
 func (a *API) noShow(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +947,142 @@ func (a *API) deletePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.svc.DeleteAppointmentPhoto(r.Context(), photoID, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func plannerDTO(b store.PlannerBlock) map[string]any {
+	var org any
+	if b.OrganizationID != nil {
+		org = b.OrganizationID.String()
+	}
+	return map[string]any{
+		"id": b.ID.String(), "owner_user_id": b.OwnerUserID.String(), "title": b.Title, "category": b.Category,
+		"starts_at": b.StartsAt, "ends_at": b.EndsAt, "timezone": b.Timezone, "color": b.Color,
+		"organization_id": org,
+	}
+}
+
+func (a *API) listPlannerBlocks(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	from, err1 := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	to, err2 := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err1 != nil || err2 != nil {
+		now := time.Now().UTC()
+		from = now.Add(-24 * time.Hour)
+		to = now.Add(14 * 24 * time.Hour)
+	}
+	var orgID *uuid.UUID
+	if v := r.URL.Query().Get("organization_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &id
+	}
+	items, err := a.svc.ListPlannerBlocks(r.Context(), claims.UserID, from, to, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, b := range items {
+		out = append(out, plannerDTO(b))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) createPlannerBlock(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Title          string `json:"title"`
+		Category       string `json:"category"`
+		StartsAt       string `json:"starts_at"`
+		EndsAt         string `json:"ends_at"`
+		Timezone       string `json:"timezone"`
+		Color          string `json:"color"`
+		OrganizationID string `json:"organization_id"`
+		OwnerUserID    string `json:"owner_user_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	starts, err1 := time.Parse(time.RFC3339, req.StartsAt)
+	ends, err2 := time.Parse(time.RFC3339, req.EndsAt)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("starts_at and ends_at must be RFC3339"))
+		return
+	}
+	var orgID *uuid.UUID
+	if req.OrganizationID != "" {
+		id, err := uuid.Parse(req.OrganizationID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = &id
+	}
+	var ownerID *uuid.UUID
+	if req.OwnerUserID != "" {
+		id, err := uuid.Parse(req.OwnerUserID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid owner_user_id"))
+			return
+		}
+		ownerID = &id
+	}
+	item, err := a.svc.CreatePlannerBlock(r.Context(), claims.UserID, req.Title, req.Category, req.Timezone, req.Color, starts, ends, orgID, ownerID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, plannerDTO(*item))
+}
+
+func (a *API) movePlannerBlock(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Title    string `json:"title"`
+		Category string `json:"category"`
+		Color    string `json:"color"`
+		StartsAt string `json:"starts_at"`
+		EndsAt   string `json:"ends_at"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	starts, err1 := time.Parse(time.RFC3339, req.StartsAt)
+	ends, err2 := time.Parse(time.RFC3339, req.EndsAt)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("starts_at and ends_at must be RFC3339"))
+		return
+	}
+	item, err := a.svc.UpdatePlannerBlock(r.Context(), claims.UserID, id, req.Title, req.Category, req.Color, starts, ends)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, plannerDTO(*item))
+}
+
+func (a *API) deletePlannerBlock(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.DeletePlannerBlock(r.Context(), claims.UserID, id); err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}

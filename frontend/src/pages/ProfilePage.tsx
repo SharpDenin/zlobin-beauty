@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useCabinet } from '@/shared/lib/cabinet'
 
 const profileSchema = z.object({
   display_name: z.string().min(2, 'Минимум 2 символа'),
@@ -53,6 +54,9 @@ export function ProfilePage() {
     },
   })
 
+  const cabinet = useCabinet()
+  const showSubscription = cabinet.kind !== 'salon_admin' && cabinet.kind !== 'client'
+
   return (
     <main className="page stack">
       <h1>Профиль</h1>
@@ -78,12 +82,65 @@ export function ProfilePage() {
             Сохранить
           </button>
         </form>
+        <SubscriptionHints />
         <div className="row">
           <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
+          {showSubscription && <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>}
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
           <button className="btn btn-danger" type="button" onClick={() => void logout()}>Выйти</button>
         </div>
       </section>
     </main>
+  )
+}
+
+function SubscriptionHints() {
+  const { accessToken } = useAuth()
+  const sub = useQuery({
+    queryKey: ['me-subscription'],
+    queryFn: () =>
+      apiRequest<{ effective_plan: string; status: string; trial_ends_at?: string }>(
+        '/v1/me/subscription',
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken),
+  })
+  const hints = useQuery({
+    queryKey: ['me-hints'],
+    queryFn: () => apiRequest<{ hints_enabled: boolean }>('/v1/me/hints', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const qc = useQueryClient()
+  const toggleHints = useMutation({
+    mutationFn: () =>
+      apiRequest('/v1/me/hints', {
+        method: 'PATCH',
+        token: accessToken,
+        body: { hints_enabled: !(hints.data?.hints_enabled ?? true) },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me-hints'] }),
+  })
+  const plan = sub.data?.effective_plan === 'premium' ? 'Premium' : 'Free'
+  const trial = sub.data?.status === 'trial' && sub.data.trial_ends_at
+    ? `Пробный период до ${new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}`
+    : null
+  return (
+    <section className="stack-sm">
+      <h2>Подписка</h2>
+      {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
+        <p><strong>Premium активирован бесплатно на 3 месяца</strong></p>
+      )}
+      <p>{plan}{trial ? ` · ${trial}` : ''}</p>
+      <p className="muted">Новым пользователям — 3 месяца Premium. После trial без оплаты включается Free.</p>
+      <label className="field-check">
+        <input
+          type="checkbox"
+          data-testid="hints-toggle"
+          checked={hints.data?.hints_enabled !== false}
+          onChange={() => toggleHints.mutate()}
+        />
+        <span>Подсказки интерфейса</span>
+      </label>
+    </section>
   )
 }

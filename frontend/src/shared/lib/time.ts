@@ -67,11 +67,107 @@ export function formatDualTime(
   return result
 }
 
-/** Convert `<input type="datetime-local">` value to RFC3339 UTC ISO string. */
-export function datetimeLocalToIso(value: string): string {
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) {
+/**
+ * Convert `<input type="datetime-local">` (wall clock, no zone) to RFC3339 UTC.
+ * Interprets the wall time in `iana` (salon/branch timezone), NOT the browser zone.
+ * Example: "2026-08-20T14:00" in Asia/Krasnoyarsk → correct UTC instant.
+ */
+export function datetimeLocalToIso(value: string, iana?: string): string {
+  const trimmed = value.trim()
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
     throw new Error('invalid datetime-local')
   }
-  return d.toISOString()
+  const [datePart, timePart] = trimmed.split('T')
+  const [y, mo, d] = datePart.split('-').map(Number)
+  const [hh, mm, ss = '0'] = timePart.split(':')
+  const hour = Number(hh)
+  const minute = Number(mm)
+  const second = Number(String(ss).slice(0, 2)) || 0
+  const tz = (iana ?? '').trim()
+  if (!tz) {
+    // Explicit fallback only when caller has no location TZ — still better than silent browser TZ.
+    const utc = Date.UTC(y, mo - 1, d, hour, minute, second)
+    return new Date(utc).toISOString()
+  }
+  return wallTimeInTimezoneToUtcIso(y, mo, d, hour, minute, second, tz)
+}
+
+/** Binary-search UTC instant whose local wall clock in `tz` matches the given components. */
+export function wallTimeInTimezoneToUtcIso(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  tz: string,
+): string {
+  const target = { year, month, day, hour, minute, second }
+  // Rough guess: treat as UTC then adjust.
+  let guess = Date.UTC(year, month - 1, day, hour, minute, second)
+  for (let i = 0; i < 4; i++) {
+    const parts = getTzParts(new Date(guess), tz)
+    const deltaMin =
+      (target.year - parts.year) * 525600 +
+      (target.month - parts.month) * 43200 +
+      (target.day - parts.day) * 1440 +
+      (target.hour - parts.hour) * 60 +
+      (target.minute - parts.minute) +
+      (target.second - parts.second) / 60
+    if (Math.abs(deltaMin) < 1 / 60) break
+    guess += deltaMin * 60_000
+  }
+  // Final snap: if still off by DST ambiguity, prefer the later offset match.
+  const finalParts = getTzParts(new Date(guess), tz)
+  if (
+    finalParts.year !== year ||
+    finalParts.month !== month ||
+    finalParts.day !== day ||
+    finalParts.hour !== hour ||
+    finalParts.minute !== minute
+  ) {
+    throw new Error(`cannot interpret wall time in timezone ${tz}`)
+  }
+  return new Date(guess).toISOString()
+}
+
+/** Interpret a JS Date's *wall clock* (year/month/day/hour/minute) in `iana`, not the browser zone. */
+export function dateWallToIso(d: Date, iana: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const wall = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return datetimeLocalToIso(wall, iana)
+}
+
+/** Format an ISO instant as datetime-local wall clock in `iana`. */
+export function isoToDatetimeLocal(iso: string, iana: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const parts = getTzParts(date, iana.trim() || 'UTC')
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}`
+}
+
+function getTzParts(date: Date, tz: string) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  })
+  const map: Record<string, string> = {}
+  for (const p of fmt.formatToParts(date)) {
+    if (p.type !== 'literal') map[p.type] = p.value
+  }
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    hour: Number(map.hour),
+    minute: Number(map.minute),
+    second: Number(map.second),
+  }
 }

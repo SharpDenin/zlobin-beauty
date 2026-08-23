@@ -72,7 +72,7 @@ func (s *Service) SalonReport(ctx context.Context, actor, orgID uuid.UUID, from,
 	if !to.After(from) {
 		return nil, apperr.Validation("to must be after from")
 	}
-	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin", "master"); err != nil {
+	if err := s.requireMembership(ctx, orgID, actor, "owner"); err != nil {
 		return nil, err
 	}
 	from = from.UTC()

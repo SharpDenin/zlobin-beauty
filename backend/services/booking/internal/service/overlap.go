@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/domain"
+	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/store"
 )
 
 // IntervalsOverlap reports whether half-open intervals [aStart,aEnd) and [bStart,bEnd) overlap.
@@ -24,4 +25,23 @@ func appointmentBlocksSlot(existing []domain.Appointment, excludeID uuid.UUID, s
 		}
 	}
 	return false
+}
+
+func plannerBlocksSlot(existing []store.PlannerBlock, excludeID uuid.UUID, st, en time.Time) bool {
+	for _, b := range existing {
+		if excludeID != uuid.Nil && b.ID == excludeID {
+			continue
+		}
+		if IntervalsOverlap(st, en, b.StartsAt, b.EndsAt) {
+			return true
+		}
+	}
+	return false
+}
+
+func CanDragAppointment(status, bookingMode string) bool {
+	if bookingMode == domain.BookingModeFixedWindow {
+		return false
+	}
+	return status == domain.StatusPendingConfirmation || status == domain.StatusConfirmed
 }

@@ -60,7 +60,7 @@ type CartResult struct {
 	Items []domain.ClientCartItem
 }
 
-func (s *Service) GetCart(ctx context.Context, userID uuid.UUID) (*CartResult, error) {
+func (s *Service) GetCart(ctx context.Context, userID uuid.UUID, professional bool) (*CartResult, error) {
 	now := s.now().UTC()
 	cart, err := s.store.GetOrCreateCart(ctx, userID, now)
 	if err != nil {
@@ -73,10 +73,22 @@ func (s *Service) GetCart(ctx context.Context, userID uuid.UUID) (*CartResult, e
 	if items == nil {
 		items = []domain.ClientCartItem{}
 	}
-	return &CartResult{Cart: *cart, Items: items}, nil
+	filtered := make([]domain.ClientCartItem, 0, len(items))
+	for _, it := range items {
+		p, err := s.store.GetPublishedProduct(ctx, it.ProductID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if p == nil || !domain.ProductVisibleTo(p.Audience, professional) {
+			_ = s.store.RemoveCartItem(ctx, cart.ID, it.ProductID, now)
+			continue
+		}
+		filtered = append(filtered, it)
+	}
+	return &CartResult{Cart: *cart, Items: filtered}, nil
 }
 
-func (s *Service) SetCartItem(ctx context.Context, userID, productID uuid.UUID, qty float64) (*CartResult, error) {
+func (s *Service) SetCartItem(ctx context.Context, userID, productID uuid.UUID, qty float64, professional bool) (*CartResult, error) {
 	now := s.now().UTC()
 	cart, err := s.store.GetOrCreateCart(ctx, userID, now)
 	if err != nil {
@@ -86,7 +98,7 @@ func (s *Service) SetCartItem(ctx context.Context, userID, productID uuid.UUID, 
 		if err := s.store.RemoveCartItem(ctx, cart.ID, productID, now); err != nil {
 			return nil, apperr.Internal(err)
 		}
-		return s.GetCart(ctx, userID)
+		return s.GetCart(ctx, userID, professional)
 	}
 	p, err := s.store.GetPublishedProduct(ctx, productID)
 	if err != nil {
@@ -95,16 +107,19 @@ func (s *Service) SetCartItem(ctx context.Context, userID, productID uuid.UUID, 
 	if p == nil {
 		return nil, apperr.NotFound("product not found or not published")
 	}
+	if !domain.ProductVisibleTo(p.Audience, professional) {
+		return nil, apperr.Forbidden("product not available")
+	}
 	if p.Available < qty-1e-9 {
 		return nil, apperr.Validation("нет остатка")
 	}
-	if err := s.store.UpsertCartItem(ctx, cart.ID, productID, qty, now); err != nil {
+	if err := s.store.UpsertCartItem(ctx, cart.ID, productID, qty, p.PriceMinor, now); err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return s.GetCart(ctx, userID)
+	return s.GetCart(ctx, userID, professional)
 }
 
-func (s *Service) RemoveCartItem(ctx context.Context, userID, productID uuid.UUID) (*CartResult, error) {
+func (s *Service) RemoveCartItem(ctx context.Context, userID, productID uuid.UUID, professional bool) (*CartResult, error) {
 	now := s.now().UTC()
 	cart, err := s.store.GetOrCreateCart(ctx, userID, now)
 	if err != nil {
@@ -113,82 +128,168 @@ func (s *Service) RemoveCartItem(ctx context.Context, userID, productID uuid.UUI
 	if err := s.store.RemoveCartItem(ctx, cart.ID, productID, now); err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return s.GetCart(ctx, userID)
+	return s.GetCart(ctx, userID, professional)
 }
 
 // --- checkout ---
 
 type CheckoutInput struct {
-	DeliveryAddress string
-	DeliveryComment string
-	PaymentMethod   string
+	DeliveryAddress     string
+	DeliveryComment     string
+	PaymentMethod       string
+	PickupBranchID      *uuid.UUID
+	IdempotencyKey      string
+	ConfirmPriceChanges bool
 }
 
-func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, in CheckoutInput) (*domain.ClientOrder, []domain.ClientOrderItem, error) {
+type CheckoutResult struct {
+	GroupID    uuid.UUID
+	TotalMinor int64
+	Orders     []CheckoutOrderResult
+}
+
+type CheckoutOrderResult struct {
+	Order domain.ClientOrder
+	Items []domain.ClientOrderItem
+}
+
+func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, professional bool, in CheckoutInput) (*CheckoutResult, error) {
 	addr := strings.TrimSpace(in.DeliveryAddress)
 	if addr == "" {
-		return nil, nil, apperr.Validation("delivery_address is required")
+		return nil, apperr.Validation("delivery_address is required")
 	}
-	payment := strings.TrimSpace(in.PaymentMethod)
-	if payment == "" {
-		payment = "cash_on_delivery"
+	if in.PickupBranchID == nil || *in.PickupBranchID == uuid.Nil {
+		return nil, apperr.Validation("pickup_branch_id is required")
+	}
+	if err := s.validateDestinationBranch(ctx, *in.PickupBranchID); err != nil {
+		return nil, err
+	}
+	payment := normalizeClientPaymentMethod(in.PaymentMethod)
+	if !domain.ValidPaymentMethod(payment) {
+		return nil, apperr.Validation("invalid payment_method")
+	}
+	idemKey := strings.TrimSpace(in.IdempotencyKey)
+	if idemKey != "" {
+		if g, orders, err := s.store.GetCheckoutGroupByIdempotencyKey(ctx, userID, idemKey); err != nil {
+			return nil, apperr.Internal(err)
+		} else if g != nil {
+			return s.checkoutResultFromGroup(ctx, *g, orders)
+		}
+		existing, err := s.store.GetClientOrderByIdempotencyKey(ctx, userID, idemKey)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if existing != nil {
+			items, err := s.store.ListClientOrderItems(ctx, existing.ID)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			return &CheckoutResult{
+				TotalMinor: existing.TotalMinor,
+				Orders:     []CheckoutOrderResult{{Order: *existing, Items: items}},
+			}, nil
+		}
 	}
 	now := s.now().UTC()
 	cart, err := s.store.GetOrCreateCart(ctx, userID, now)
 	if err != nil {
-		return nil, nil, apperr.Internal(err)
+		return nil, apperr.Internal(err)
 	}
 	items, err := s.store.ListCartItems(ctx, cart.ID)
 	if err != nil {
-		return nil, nil, apperr.Internal(err)
+		return nil, apperr.Internal(err)
 	}
 	if len(items) == 0 {
-		return nil, nil, apperr.Validation("cart is empty")
+		return nil, apperr.Validation("cart is empty")
 	}
-	supplierOrg := items[0].OrganizationID
+	supplierItems := map[uuid.UUID][]domain.ClientCartItem{}
 	for _, it := range items {
-		if it.OrganizationID != supplierOrg {
-			return nil, nil, apperr.Validation("корзина должна содержать товары одного поставщика")
-		}
 		p, err := s.store.GetPublishedProduct(ctx, it.ProductID)
 		if err != nil {
-			return nil, nil, apperr.Internal(err)
+			return nil, apperr.Internal(err)
 		}
 		if p == nil {
-			return nil, nil, apperr.Validation("product no longer available: " + it.Name)
+			return nil, apperr.Validation("товар больше недоступен: " + it.Name)
+		}
+		if !domain.ProductVisibleTo(p.Audience, professional) {
+			return nil, apperr.Forbidden("товар недоступен для покупки: " + it.Name)
 		}
 		if p.Available < it.Qty-1e-9 {
-			return nil, nil, apperr.Validation("нет остатка для " + it.Name)
+			return nil, apperr.Validation("нет остатка для " + it.Name)
 		}
+		if it.CartPriceMinor != p.PriceMinor && !in.ConfirmPriceChanges {
+			return nil, apperr.Conflict("цена изменилась: " + it.Name + ". Обновите корзину и подтвердите оформление.")
+		}
+		supplierItems[it.OrganizationID] = append(supplierItems[it.OrganizationID], it)
 	}
-	var totalMinor int64
-	orderItems := make([]domain.ClientOrderItem, 0, len(items))
-	for _, it := range items {
-		p, _ := s.store.GetPublishedProduct(ctx, it.ProductID)
-		price := p.PriceMinor
-		totalMinor += int64(it.Qty*float64(price) + 0.5)
-		orderItems = append(orderItems, domain.ClientOrderItem{
-			ID: ids.New(), ProductID: it.ProductID, ProductName: p.Name, Brand: p.Brand,
-			Qty: it.Qty, PriceMinor: price,
+	groupID := ids.New()
+	var groupTotal int64
+	batches := make([]store.CheckoutBatchOrder, 0, len(supplierItems))
+	for supplierOrg, its := range supplierItems {
+		var totalMinor int64
+		orderItems := make([]domain.ClientOrderItem, 0, len(its))
+		for _, it := range its {
+			p, _ := s.store.GetPublishedProduct(ctx, it.ProductID)
+			price := p.PriceMinor
+			totalMinor += int64(it.Qty*float64(price) + 0.5)
+			orderItems = append(orderItems, domain.ClientOrderItem{
+				ID: ids.New(), ProductID: it.ProductID, ProductName: p.Name, Brand: p.Brand,
+				Qty: it.Qty, PriceMinor: price,
+			})
+		}
+		groupTotal += totalMinor
+		orderID := ids.New()
+		order := domain.ClientOrder{
+			ID: orderID, UserID: userID, SupplierOrgID: supplierOrg,
+			Status: domain.ClientOrderStatusSubmitted, Currency: "RUB", TotalMinor: totalMinor,
+			DeliveryAddress: addr, DeliveryComment: strings.TrimSpace(in.DeliveryComment),
+			PaymentMethod: payment, PickupBranchID: in.PickupBranchID,
+			CheckoutGroupID: &groupID, CreatedAt: now, UpdatedAt: now,
+		}
+		payStatus, err := resolveClientPaymentStatus(payment, clientPaymentProvider(payment), ctx, order)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		order.PaymentStatus = payStatus
+		batches = append(batches, store.CheckoutBatchOrder{
+			Order: order, Items: orderItems,
+			History: domain.ClientOrderStatusHistory{
+				ID: ids.New(), OrderID: orderID, FromStatus: "", ToStatus: domain.ClientOrderStatusSubmitted,
+				ActorUserID: userID, CreatedAt: now,
+			},
 		})
 	}
-	order := domain.ClientOrder{
-		ID: ids.New(), UserID: userID, SupplierOrgID: supplierOrg,
-		Status: domain.ClientOrderStatusSubmitted, Currency: "RUB", TotalMinor: totalMinor,
-		DeliveryAddress: addr, DeliveryComment: strings.TrimSpace(in.DeliveryComment),
-		PaymentMethod: payment, CreatedAt: now, UpdatedAt: now,
+	group := domain.ClientCheckoutGroup{
+		ID: groupID, UserID: userID, IdempotencyKey: idemKey, TotalMinor: groupTotal, CreatedAt: now,
 	}
-	history := domain.ClientOrderStatusHistory{
-		ID: ids.New(), OrderID: order.ID, FromStatus: "", ToStatus: domain.ClientOrderStatusSubmitted,
-		ActorUserID: userID, CreatedAt: now,
-	}
-	outOrder, outItems, err := s.store.CreateClientOrderWithItems(ctx, store.CreateClientOrderParams{
-		Order: order, Items: orderItems, History: history, ClearCartID: cart.ID, ActorUserID: userID,
-	})
+	_, outOrders, err := s.store.CreateCheckoutBatch(ctx, group, batches, cart.ID, userID)
 	if err != nil {
-		return nil, nil, apperr.Internal(err)
+		if ae, ok := apperr.As(err); ok {
+			return nil, ae
+		}
+		return nil, apperr.Internal(err)
 	}
-	return outOrder, outItems, nil
+	result, err := s.checkoutResultFromGroup(ctx, group, outOrders)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range result.Orders {
+		num := domain.FormatClientOrderNumber(o.Order.ID, o.Order.CreatedAt)
+		s.notifyClientOrder(ctx, userID, "client_order.created", "Заказ оформлен", "Ваш заказ "+num+" принят в обработку", o.Order.ID)
+	}
+	return result, nil
+}
+
+func (s *Service) checkoutResultFromGroup(ctx context.Context, g domain.ClientCheckoutGroup, orders []domain.ClientOrder) (*CheckoutResult, error) {
+	out := make([]CheckoutOrderResult, 0, len(orders))
+	for _, o := range orders {
+		items, err := s.store.ListClientOrderItems(ctx, o.ID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		out = append(out, CheckoutOrderResult{Order: o, Items: items})
+	}
+	return &CheckoutResult{GroupID: g.ID, TotalMinor: g.TotalMinor, Orders: out}, nil
 }
 
 // --- client orders ---
@@ -204,25 +305,32 @@ func (s *Service) ListMyClientOrders(ctx context.Context, userID uuid.UUID) ([]d
 	return items, nil
 }
 
-func (s *Service) GetMyClientOrder(ctx context.Context, userID, orderID uuid.UUID) (*domain.ClientOrder, []domain.ClientOrderItem, error) {
+func (s *Service) GetMyClientOrder(ctx context.Context, userID, orderID uuid.UUID) (*domain.ClientOrder, []domain.ClientOrderItem, []domain.ClientOrderStatusHistory, error) {
 	o, err := s.store.GetClientOrder(ctx, orderID)
 	if err != nil {
-		return nil, nil, apperr.Internal(err)
+		return nil, nil, nil, apperr.Internal(err)
 	}
 	if o == nil {
-		return nil, nil, apperr.NotFound("order not found")
+		return nil, nil, nil, apperr.NotFound("order not found")
 	}
 	if o.UserID != userID {
-		return nil, nil, apperr.Forbidden("not your order")
+		return nil, nil, nil, apperr.Forbidden("not your order")
 	}
 	items, err := s.store.ListClientOrderItems(ctx, orderID)
 	if err != nil {
-		return nil, nil, apperr.Internal(err)
+		return nil, nil, nil, apperr.Internal(err)
 	}
 	if items == nil {
 		items = []domain.ClientOrderItem{}
 	}
-	return o, items, nil
+	history, err := s.store.ListClientOrderStatusHistory(ctx, orderID)
+	if err != nil {
+		return nil, nil, nil, apperr.Internal(err)
+	}
+	if history == nil {
+		history = []domain.ClientOrderStatusHistory{}
+	}
+	return o, items, history, nil
 }
 
 func (s *Service) ClientOrderItems(ctx context.Context, orderID uuid.UUID) ([]domain.ClientOrderItem, error) {
@@ -247,8 +355,8 @@ type SkippedProduct struct {
 	Reason    string
 }
 
-func (s *Service) Reorder(ctx context.Context, userID, orderID uuid.UUID) (*ReorderResult, error) {
-	o, items, err := s.GetMyClientOrder(ctx, userID, orderID)
+func (s *Service) Reorder(ctx context.Context, userID, orderID uuid.UUID, professional bool) (*ReorderResult, error) {
+	o, items, _, err := s.GetMyClientOrder(ctx, userID, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,15 +379,19 @@ func (s *Service) Reorder(ctx context.Context, userID, orderID uuid.UUID) (*Reor
 			skipped = append(skipped, SkippedProduct{ProductID: it.ProductID, Name: it.ProductName, Reason: "not published"})
 			continue
 		}
+		if !domain.ProductVisibleTo(p.Audience, professional) {
+			skipped = append(skipped, SkippedProduct{ProductID: it.ProductID, Name: it.ProductName, Reason: "not available"})
+			continue
+		}
 		if p.Available < it.Qty-1e-9 {
 			skipped = append(skipped, SkippedProduct{ProductID: it.ProductID, Name: it.ProductName, Reason: "нет остатка"})
 			continue
 		}
-		if err := s.store.UpsertCartItem(ctx, cart.ID, it.ProductID, it.Qty, now); err != nil {
+		if err := s.store.UpsertCartItem(ctx, cart.ID, it.ProductID, it.Qty, p.PriceMinor, now); err != nil {
 			return nil, apperr.Internal(err)
 		}
 	}
-	cartRes, err := s.GetCart(ctx, userID)
+	cartRes, err := s.GetCart(ctx, userID, professional)
 	if err != nil {
 		return nil, err
 	}
@@ -478,10 +590,11 @@ func (s *Service) CompleteRepDelivery(ctx context.Context, actor, orderID uuid.U
 		}
 		return nil, nil, apperr.Internal(err)
 	}
+	num := domain.FormatClientOrderNumber(outOrder.ID, outOrder.CreatedAt)
+	s.notifyClientOrder(ctx, outOrder.UserID, "client_order.delivered_to_salon", "Заказ в салоне",
+		"Заказ "+num+" доставлен в пункт выдачи", outOrder.ID)
 	return outOrder, outItems, nil
 }
-
-// --- debt ---
 
 func (s *Service) GetDebtBalance(ctx context.Context, actor, orgID, clientUserID uuid.UUID) (int64, error) {
 	isStaff := s.requireMembership(ctx, orgID, actor, "owner", "admin", "master", "rep") == nil

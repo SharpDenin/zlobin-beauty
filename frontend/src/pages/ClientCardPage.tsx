@@ -7,6 +7,8 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
+import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
+import { Hint } from '@/shared/ui/Hint'
 
 type ClientCard = {
   id: string
@@ -15,6 +17,7 @@ type ClientCard = {
   display_name: string
   phone: string | null
   email: string | null
+  contacts_hidden?: boolean
   preferences: string
 }
 
@@ -99,6 +102,14 @@ export function ClientCardPage() {
       }),
     enabled: Boolean(canMaster && clientUserId && accessToken),
   })
+  const blacklist = useQuery({
+    queryKey: ['client-blacklist', clientUserId],
+    queryFn: () =>
+      apiRequest<{ blocked: boolean; no_show_count: number }>(`/v1/me/clients/${clientUserId}/blacklist`, {
+        token: accessToken,
+      }),
+    enabled: Boolean(canMaster && clientUserId && accessToken),
+  })
   const setAutoConfirm = useMutation({
     mutationFn: (auto_confirm: boolean) =>
       apiRequest(`/v1/me/clients/${clientUserId}/auto-confirm`, {
@@ -112,6 +123,21 @@ export function ClientCardPage() {
       await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+  })
+
+  const unblock = useMutation({
+    mutationFn: () =>
+      apiRequest(`/v1/me/clients/${clientUserId}/unblock`, {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      }),
+    onSuccess: async () => {
+      setOk('Клиент разблокирован')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['client-blacklist', clientUserId] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось разблокировать'),
   })
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
@@ -161,8 +187,12 @@ export function ClientCardPage() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <h1>{card.display_name}</h1>
-          <p>{card.phone || card.email || 'Контакты не указаны'}</p>
+          <h1>{card.display_name} <Hint id="client-scheme" title="Карточка клиента">Здесь история визитов, автоподтверждение и схема окрашивания. Контакты зависят от политики салона.</Hint></h1>
+          {card.contacts_hidden ? (
+            <p className="muted" data-testid="contacts-hidden">Контакты скрыты политикой салона</p>
+          ) : (
+            <p data-testid="client-contacts">{card.phone || card.email || 'Контакты не указаны'}</p>
+          )}
           {card.preferences && <p className="muted">Предпочтения: {card.preferences}</p>}
         </div>
       </section>
@@ -172,18 +202,39 @@ export function ClientCardPage() {
 
       {canMaster && (
         <section className="card stack">
-          <h2>Автоподтверждение записей</h2>
+          <h2>Автоподтверждение записей <Hint id="auto-confirm" title="Автоподтверждение">Для этого клиента новые записи подтверждаются сразу. Чёрный список имеет приоритет.</Hint></h2>
           <p className="muted">Новые записи этого клиента будут подтверждаться автоматически.</p>
           {autoConfirm.data && (
             <label className="field-check">
               <input
                 type="checkbox"
+                data-testid="auto-confirm-toggle"
                 checked={autoConfirm.data.auto_confirm}
                 disabled={setAutoConfirm.isPending}
                 onChange={(e) => setAutoConfirm.mutate(e.target.checked)}
               />
               <span>Автоподтверждение для этого клиента</span>
             </label>
+          )}
+        </section>
+      )}
+
+      {canMaster && card.user_id && (
+        <section className="card stack">
+          <h2>Чёрный список (no-show)</h2>
+          <p className="muted">
+            No-show: {blacklist.data?.no_show_count ?? 0} · статус:{' '}
+            {blacklist.data?.blocked ? 'заблокирован' : 'доступна запись'}
+          </p>
+          {blacklist.data?.blocked && (
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={unblock.isPending}
+              onClick={() => unblock.mutate()}
+            >
+              Разблокировать клиента
+            </button>
           )}
         </section>
       )}
@@ -200,6 +251,7 @@ export function ClientCardPage() {
                 <span>{formatMoney(v.price_minor)}</span>
               </div>
               <p className="muted">{new Date(v.completed_at).toLocaleString('ru-RU')}</p>
+              <VisitSchemeSummary appointmentId={v.appointment_id} accessToken={accessToken} />
             </article>
           ))}
         </div>

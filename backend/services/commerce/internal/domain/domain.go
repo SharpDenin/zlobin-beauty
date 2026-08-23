@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +25,8 @@ const (
 	MovementReturn      = "return"
 	MovementReserve     = "reserve"
 	MovementUnreserve   = "unreserve"
+	MovementRelease     = "release"
+	MovementShipment    = "shipment"
 )
 
 // Stock balance status buckets.
@@ -114,6 +118,8 @@ type Product struct {
 	ForSale        bool
 	DeliveryDays   int
 	PhotoMediaID   *uuid.UUID
+	Audience       string
+	ArchivedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -146,6 +152,8 @@ type StockBalanceView struct {
 	PriceMinor   int64
 	Currency     string
 	Status       string
+	PhotoMediaID *uuid.UUID
+	QtyIncoming  float64
 }
 
 type StockMovement struct {
@@ -229,13 +237,23 @@ type OrderDelivery struct {
 
 // Client order statuses (B2C shop).
 const (
-	ClientOrderStatusSubmitted  = "submitted"
-	ClientOrderStatusConfirmed  = "confirmed"
-	ClientOrderStatusPicking    = "picking"
-	ClientOrderStatusInDelivery = "in_delivery"
-	ClientOrderStatusDelivered  = "delivered"
-	ClientOrderStatusCancelled  = "cancelled"
+	ClientOrderStatusSubmitted     = "submitted"
+	ClientOrderStatusConfirmed     = "confirmed"
+	ClientOrderStatusPicking       = "picking"
+	ClientOrderStatusInDelivery    = "in_delivery"
+	ClientOrderStatusDelivered     = "delivered"
+	ClientOrderStatusReadyForPickup = "ready_for_pickup"
+	ClientOrderStatusReceived      = "received"
+	ClientOrderStatusCancelled     = "cancelled"
 )
+
+type ClientCheckoutGroup struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	IdempotencyKey string
+	TotalMinor     int64
+	CreatedAt      time.Time
+}
 
 // Debt ledger entry kinds.
 const (
@@ -281,17 +299,18 @@ type ClientCart struct {
 }
 
 type ClientCartItem struct {
-	CartID         uuid.UUID
-	ProductID      uuid.UUID
-	Qty            float64
-	Brand          string
-	Name           string
-	SKU            string
-	Unit           string
-	PriceMinor     int64
-	Currency       string
-	Available      float64
-	OrganizationID uuid.UUID
+	CartID            uuid.UUID
+	ProductID         uuid.UUID
+	Qty               float64
+	Brand             string
+	Name              string
+	SKU               string
+	Unit              string
+	CartPriceMinor    int64
+	CurrentPriceMinor int64
+	Currency          string
+	Available         float64
+	OrganizationID    uuid.UUID
 }
 
 type ClientOrder struct {
@@ -308,8 +327,21 @@ type ClientOrder struct {
 	DeliveredAt          *time.Time
 	DeliveryNote         string
 	AmountCollectedMinor int64
+	PickupBranchID       *uuid.UUID
+	PaymentStatus        string
+	IdempotencyKey       string
+	CheckoutGroupID      *uuid.UUID
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+// FormatClientOrderNumber returns a human-readable order reference for UI.
+func FormatClientOrderNumber(id uuid.UUID, createdAt time.Time) string {
+	hex := strings.ReplaceAll(id.String(), "-", "")
+	if len(hex) > 8 {
+		hex = strings.ToUpper(hex[:8])
+	}
+	return fmt.Sprintf("CL-%s-%s", createdAt.Format("20060102"), hex)
 }
 
 type ClientOrderItem struct {

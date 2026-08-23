@@ -8,6 +8,7 @@ import { workTypeLabel } from '@/shared/lib/status'
 import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
+import { Hint } from '@/shared/ui/Hint'
 
 type BookingMode = 'flexible' | 'fixed_window'
 
@@ -53,6 +54,7 @@ type Occurrence = {
 
 type BookedAppointment = {
   id: string
+  status?: string
   location_name?: string
   location_city?: string
   location_address?: string
@@ -156,17 +158,22 @@ export function MasterPage() {
       })
     },
     onSuccess: async (res) => {
-      setMessage('Запись создана и ожидает подтверждения мастера')
+      const confirmed = res.status === 'confirmed'
+      setMessage(confirmed ? 'Запись подтверждена автоматически' : 'Запись создана и ожидает подтверждения мастера')
       setError(null)
       setBooked(res)
       setDone(true)
-      toast.success('Запись отправлена мастеру')
+      toast.success(confirmed ? 'Запись подтверждена' : 'Запись отправлена мастеру')
       await qc.invalidateQueries({ queryKey: ['appointments'] })
       await qc.invalidateQueries({ queryKey: ['slots'] })
       await qc.invalidateQueries({ queryKey: ['service-occurrences'] })
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Не удалось создать запись'
+      const msg = e instanceof ApiError
+        ? e.message
+        : e instanceof Error
+          ? e.message
+          : 'Не удалось создать запись'
       setMessage(null)
       setError(msg)
       toast.error(msg)
@@ -226,7 +233,7 @@ export function MasterPage() {
             )}
           </div>
           <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
-            <h1>{master.display_name}</h1>
+            <h1>{master.display_name} <Hint id="client-booking" title="Запись">Выберите услугу и время. Если мастер включил автоподтверждение, запись сразу станет подтверждённой.</Hint></h1>
             <div className="row">
               <span className="city-badge">{master.city}</span>
               <span className="chip badge-default">{workTypeLabel(master.work_type)}</span>

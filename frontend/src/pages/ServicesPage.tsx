@@ -9,8 +9,10 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
+import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { useToast } from '@/shared/ui/Toast'
+import { Hint } from '@/shared/ui/Hint'
 
 type Service = {
   id: string
@@ -82,6 +84,13 @@ export function ServicesPage() {
   })
 
   const services = useMemo(() => master.data?.services ?? [], [master.data])
+  const branchId = master.data?.master.branch_id ?? undefined
+  const branch = useQuery({
+    queryKey: ['branch', branchId],
+    queryFn: () => fetchBranch(accessToken, branchId!),
+    enabled: Boolean(accessToken && branchId),
+  })
+  const salonTz = branch.data?.timezone || 'Europe/Moscow'
   const editing = useMemo(
     () => (id ? services.find((s) => s.id === id) : undefined),
     [id, services],
@@ -205,13 +214,14 @@ export function ServicesPage() {
     mutationFn: async () => {
       if (!id) throw new ApiError('Сначала сохраните услугу', 'validation_error', 400)
       if (!occStart || !occEnd) throw new ApiError('Укажите начало и конец сеанса', 'validation_error', 400)
-      const startsAt = datetimeLocalToIso(occStart)
-      const endsAt = datetimeLocalToIso(occEnd)
+      const startsAt = datetimeLocalToIso(occStart, salonTz)
+      const endsAt = datetimeLocalToIso(occEnd, salonTz)
       return apiRequest(`/v1/services/${id}/occurrences`, {
         token: accessToken,
         body: {
           starts_at: startsAt,
           ends_at: endsAt,
+          timezone: salonTz,
           capacity: occCapacity > 0 ? occCapacity : 1,
           branch_id: master.data?.master.branch_id ?? undefined,
         },
@@ -267,7 +277,7 @@ export function ServicesPage() {
     <main className="page stack">
       <div className="row between">
         <div className="stack-sm">
-          <h1>Услуги</h1>
+          <h1>Услуги <Hint id="service-duration" title="Длительность">Длительность услуги задаёт слоты в календаре. Клиент видит её на записи.</Hint></h1>
           <p className="muted">Прайс и длительность для записи клиентов</p>
         </div>
         <button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>
@@ -416,11 +426,11 @@ export function ServicesPage() {
                   <div className="state-box">Сеансов пока нет</div>
                 )}
                 <div className="field">
-                  <label htmlFor="occ-start">Начало</label>
+                  <label htmlFor="occ-start">Начало (время салона: {salonTz})</label>
                   <input id="occ-start" type="datetime-local" value={occStart} onChange={(e) => setOccStart(e.target.value)} />
                 </div>
                 <div className="field">
-                  <label htmlFor="occ-end">Конец</label>
+                  <label htmlFor="occ-end">Конец (время салона: {salonTz})</label>
                   <input id="occ-end" type="datetime-local" value={occEnd} onChange={(e) => setOccEnd(e.target.value)} />
                 </div>
                 <div className="field">

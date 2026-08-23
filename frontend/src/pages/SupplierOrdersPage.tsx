@@ -12,6 +12,7 @@ import {
 } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import {
+  deliveryActionLabel,
   deliveryStatusLabel,
   paymentStatusLabel,
   statusBadgeClass,
@@ -19,13 +20,20 @@ import {
   supplierOrderLabel,
 } from '@/shared/lib/status'
 
-const nextStatus: Record<string, string> = {
+/** Commercial order machine only — physical progress lives on Delivery. */
+const nextCommercialStatus: Record<string, string> = {
   new: 'confirmed',
   submitted: 'confirmed',
   confirmed: 'picking',
-  picking: 'in_transit',
-  in_transit: 'delivered',
-  in_delivery: 'delivered',
+  picking: 'ready_for_dispatch',
+}
+
+const nextDeliveryAction: Record<string, { path: string; labelKey: string }> = {
+  pending: { path: 'preparing', labelKey: 'preparing' },
+  scheduled: { path: 'preparing', labelKey: 'preparing' },
+  preparing: { path: 'in-transit', labelKey: 'in_transit' },
+  in_transit: { path: 'arrived', labelKey: 'arrived' },
+  arrived: { path: 'delivered', labelKey: 'delivered' },
 }
 
 type ScheduleDraft = {
@@ -60,11 +68,27 @@ export function SupplierOrdersPage() {
       }),
     onSuccess: async () => {
       setError(null)
-      setOk('Статус обновлён')
+      setOk('Статус заказа обновлён')
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
       await qc.invalidateQueries({ queryKey: ['supplier-dashboard'] })
+      await qc.invalidateQueries({ queryKey: ['order-delivery'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить статус'),
+  })
+
+  const deliveryTransition = useMutation({
+    mutationFn: (input: { id: string; path: string }) =>
+      apiRequest(`/v1/commerce/supplier-orders/${input.id}/delivery/${input.path}`, {
+        token: accessToken,
+        method: 'POST',
+      }),
+    onSuccess: async () => {
+      setOk('Статус доставки обновлён')
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['order-delivery'] })
+      await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить доставку'),
   })
 
   const markPaid = useMutation({
@@ -98,8 +122,8 @@ export function SupplierOrdersPage() {
           token: accessToken,
           body: {
             planned_delivery_at: planned.toISOString(),
-            ...(windowStart ? { window_start: windowStart.toISOString() } : {}),
-            ...(windowEnd ? { window_end: windowEnd.toISOString() } : {}),
+            window_start: windowStart?.toISOString() ?? null,
+            window_end: windowEnd?.toISOString() ?? null,
           },
         },
       )
@@ -107,14 +131,12 @@ export function SupplierOrdersPage() {
     onSuccess: async () => {
       setOk('Доставка запланирована')
       setError(null)
-      await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
       await qc.invalidateQueries({ queryKey: ['order-delivery'] })
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось запланировать доставку'),
   })
 
   if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
-
   if (!supplierOrgId) {
     return (
       <main className="page">
@@ -130,19 +152,15 @@ export function SupplierOrdersPage() {
     <main className="page stack">
       <div className="row between">
         <div className="stack-sm">
-          <h1>Заказы салонов</h1>
+          <h1>Заказы</h1>
           <p className="muted">{supplierOrg?.organization.name}</p>
+          <p className="muted">Физическая доставка ведётся отдельно от статуса заказа.</p>
         </div>
-      </div>
-
-      <div className="tabs">
-        <Link to="/supplier/products">Товары</Link>
-        <Link className="active" to="/supplier/orders">Заказы</Link>
+        <Link className="btn btn-secondary btn-compact" to="/supplier">На главную</Link>
       </div>
 
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
-
       {orders.isLoading && <div className="state-box">Загрузка…</div>}
       {orders.isError && <div className="state-box error">Не удалось загрузить заказы</div>}
       {orders.data && orders.data.items.length === 0 && (
@@ -154,7 +172,7 @@ export function SupplierOrdersPage() {
 
       <div className="list">
         {orders.data?.items.map((o) => {
-          const next = nextStatus[o.status]
+          const next = nextCommercialStatus[o.status]
           const actionLabel = next ? (supplierOrderActionLabel[next] ?? supplierOrderLabel(next)) : null
           const draft = scheduleDraft[o.id] ?? { date: '', windowStart: '10:00', windowEnd: '18:00' }
           const canMarkPaid = o.payment_status && o.payment_status !== 'paid' && o.payment_status !== 'cancelled'
@@ -178,9 +196,6 @@ export function SupplierOrdersPage() {
               {o.destination_branch_id && (
                 <DestinationLine branchId={o.destination_branch_id} token={accessToken} />
               )}
-              {o.estimated_delivery_at && (
-                <p>Доставка: {new Date(o.estimated_delivery_at).toLocaleDateString('ru-RU')}</p>
-              )}
               {o.comment && <p>{o.comment}</p>}
               {o.items && o.items.length > 0 && (
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -203,7 +218,8 @@ export function SupplierOrdersPage() {
                   onSchedule={(patch) =>
                     scheduleDelivery.mutate({ id: o.id, draft, patch })
                   }
-                  pending={scheduleDelivery.isPending}
+                  onDeliveryAction={(path) => deliveryTransition.mutate({ id: o.id, path })}
+                  pending={scheduleDelivery.isPending || deliveryTransition.isPending}
                 />
               )}
 
@@ -271,6 +287,7 @@ function DeliveryScheduleBlock({
   draft,
   onDraftChange,
   onSchedule,
+  onDeliveryAction,
   pending,
 }: {
   orderId: string
@@ -278,6 +295,7 @@ function DeliveryScheduleBlock({
   draft: ScheduleDraft
   onDraftChange: (d: ScheduleDraft) => void
   onSchedule: (patch: boolean) => void
+  onDeliveryAction: (path: string) => void
   pending: boolean
 }) {
   const delivery = useQuery({
@@ -291,12 +309,16 @@ function DeliveryScheduleBlock({
   })
 
   const hasSchedule = Boolean(delivery.data?.planned_delivery_at || delivery.data?.window_start)
+  const deliveryNext = delivery.data?.status ? nextDeliveryAction[delivery.data.status] : null
 
   return (
     <div className="stack-sm">
       {delivery.data && (
-        <p className="muted">
-          Доставка: {deliveryStatusLabel(delivery.data.status)}
+        <p>
+          Доставка:{' '}
+          <span className={`badge ${statusBadgeClass(delivery.data.status)}`}>
+            {deliveryStatusLabel(delivery.data.status)}
+          </span>
           {delivery.data.planned_delivery_at
             ? ` · ${new Date(delivery.data.planned_delivery_at).toLocaleDateString('ru-RU')}`
             : ''}
@@ -331,14 +353,26 @@ function DeliveryScheduleBlock({
           />
         </div>
       </div>
-      <button
-        className="btn btn-secondary btn-compact"
-        type="button"
-        disabled={pending || !draft.date}
-        onClick={() => onSchedule(hasSchedule)}
-      >
-        {hasSchedule ? 'Обновить расписание' : 'Запланировать доставку'}
-      </button>
+      <div className="row">
+        <button
+          className="btn btn-secondary btn-compact"
+          type="button"
+          disabled={pending || !draft.date}
+          onClick={() => onSchedule(hasSchedule)}
+        >
+          {hasSchedule ? 'Обновить расписание' : 'Запланировать доставку'}
+        </button>
+        {deliveryNext && (
+          <button
+            className="btn btn-primary btn-compact"
+            type="button"
+            disabled={pending}
+            onClick={() => onDeliveryAction(deliveryNext.path)}
+          >
+            {deliveryActionLabel[deliveryNext.labelKey] ?? deliveryNext.labelKey}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

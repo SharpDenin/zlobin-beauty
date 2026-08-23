@@ -7,6 +7,7 @@ import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Hint } from '@/shared/ui/Hint'
 
 export function SupplierProductsPage() {
   const { accessToken } = useAuth()
@@ -39,7 +40,7 @@ export function SupplierProductsPage() {
     <main className="page stack">
       <div className="row between">
         <div className="stack-sm">
-          <h1>Товары</h1>
+          <h1>Товары <Hint id="product-audience" title="Аудитория товара">PROFESSIONAL_ONLY виден салонам. Розница — клиентам в магазине.</Hint></h1>
           <p className="muted">{supplierOrg?.organization.name}</p>
         </div>
         <Link className="btn btn-primary" to="/supplier/products/new">Добавить</Link>

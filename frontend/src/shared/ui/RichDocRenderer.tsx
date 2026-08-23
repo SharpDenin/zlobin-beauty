@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { JSONContent } from '@tiptap/react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { API_BASE_URL } from '@/shared/api/client'
+import { sanitizeHref, sanitizeMediaSrc } from '@/shared/ui/richSanitize'
 
 type Props = {
   content: string
@@ -48,10 +49,18 @@ export function RichDocRenderer({ content, contentFormat, token, className }: Pr
   )
 }
 
+function headingTag(level: unknown) {
+  if (level === 1) return 'h1'
+  if (level === 3) return 'h3'
+  return 'h2'
+}
+
 function DocNode({ node, token }: { node: JSONContent; token?: string | null }) {
   switch (node.type) {
-    case 'heading':
-      return <h2>{inlineChildren(node)}</h2>
+    case 'heading': {
+      const Tag = headingTag(node.attrs?.level) as 'h1' | 'h2' | 'h3'
+      return <Tag>{inlineChildren(node)}</Tag>
+    }
     case 'paragraph':
       return <p>{inlineChildren(node)}</p>
     case 'bulletList':
@@ -74,22 +83,19 @@ function DocNode({ node, token }: { node: JSONContent; token?: string | null }) 
       return <blockquote>{(node.content ?? []).map((child, i) => <DocNode key={i} node={child} token={token} />)}</blockquote>
     case 'horizontalRule':
       return <hr />
-    case 'image': {
-      const src = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
-      const alt = typeof node.attrs?.alt === 'string' ? node.attrs.alt : ''
-      const mediaId = mediaIdFromSrc(src)
-      if (mediaId) {
-        return (
-          <figure>
-            <MediaImage mediaId={mediaId} token={token} alt={alt} />
-          </figure>
-        )
-      }
-      return src ? (
-        <figure>
-          <img src={src} alt={alt} />
-        </figure>
-      ) : null
+    case 'image':
+      return <ArticleImage node={node} token={token} />
+    case 'video':
+      return <ArticleVideo node={node} />
+    case 'callout': {
+      const kind = typeof node.attrs?.kind === 'string' ? node.attrs.kind : 'tip'
+      const label = kind === 'warning' ? 'Важно' : kind === 'note' ? 'Заметка' : 'Совет'
+      return (
+        <aside className={`callout callout-${kind}`}>
+          <strong className="callout-label">{label}</strong>
+          {(node.content ?? []).map((child, i) => <DocNode key={i} node={child} token={token} />)}
+        </aside>
+      )
     }
     case 'hardBreak':
       return <br />
@@ -99,6 +105,65 @@ function DocNode({ node, token }: { node: JSONContent; token?: string | null }) 
       }
       return null
   }
+}
+
+function ArticleImage({ node, token }: { node: JSONContent; token?: string | null }) {
+  const [open, setOpen] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const raw = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
+  const src = sanitizeMediaSrc(raw)
+  const alt = typeof node.attrs?.alt === 'string' ? node.attrs.alt : ''
+  const caption = typeof node.attrs?.title === 'string' ? node.attrs.title : alt
+  if (!src || failed) {
+    return <p className="muted">Изображение недоступно</p>
+  }
+  const mediaId = mediaIdFromSrc(src)
+  const img = mediaId ? (
+    <MediaImage mediaId={mediaId} token={token} alt={alt} />
+  ) : (
+    <img src={src} alt={alt} onError={() => setFailed(true)} />
+  )
+  return (
+    <figure className="article-figure">
+      <button type="button" className="article-figure-btn" onClick={() => setOpen(true)} aria-label="Увеличить изображение">
+        {img}
+      </button>
+      {caption ? <figcaption className="muted">{caption}</figcaption> : null}
+      {open && (
+        <div className="kb-lightbox" role="dialog" aria-modal="true" onClick={() => setOpen(false)}>
+          <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)}>Закрыть</button>
+          {mediaId ? <MediaImage mediaId={mediaId} token={token} alt={alt} /> : <img src={src} alt={alt} />}
+        </div>
+      )}
+    </figure>
+  )
+}
+
+function ArticleVideo({ node }: { node: JSONContent }) {
+  const [failed, setFailed] = useState(false)
+  const raw = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
+  const src = sanitizeMediaSrc(raw)
+  const title = typeof node.attrs?.title === 'string' ? node.attrs.title : 'Видео'
+  const poster = typeof node.attrs?.poster === 'string' ? sanitizeMediaSrc(node.attrs.poster) : null
+  if (!src || failed) {
+    return <p className="muted">Видео недоступно</p>
+  }
+  return (
+    <figure className="article-video">
+      <div className="article-video-wrap">
+        <video
+          src={src}
+          poster={poster ?? undefined}
+          controls
+          playsInline
+          preload="metadata"
+          title={title}
+          onError={() => setFailed(true)}
+        />
+      </div>
+      {title ? <figcaption className="muted">{title}</figcaption> : null}
+    </figure>
+  )
 }
 
 function inlineChildren(node: JSONContent): ReactNode {
@@ -114,11 +179,13 @@ function InlineNode({ node }: { node: JSONContent }) {
       if (mark.type === 'bold') el = <strong>{el}</strong>
       if (mark.type === 'italic') el = <em>{el}</em>
       if (mark.type === 'link') {
-        const href = typeof mark.attrs?.href === 'string' ? mark.attrs.href : '#'
-        el = (
+        const href = sanitizeHref(typeof mark.attrs?.href === 'string' ? mark.attrs.href : '')
+        el = href ? (
           <a href={href} target="_blank" rel="noopener noreferrer">
             {el}
           </a>
+        ) : (
+          <span>{el}</span>
         )
       }
     }

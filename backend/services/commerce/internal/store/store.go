@@ -67,14 +67,14 @@ func scanLocation(row pgx.Row) (*domain.StockLocation, error) {
 
 // --- products ---
 
-const productColumns = `id, organization_id, parent_id, category_id, brand, name, sku, description, unit, volume_label, price_minor, currency, min_stock, published, for_sale, delivery_days, photo_media_id, created_at, updated_at`
+const productColumns = `id, organization_id, parent_id, category_id, brand, name, sku, description, unit, volume_label, price_minor, currency, min_stock, published, for_sale, delivery_days, photo_media_id, audience, archived_at, created_at, updated_at`
 
 func (s *Store) CreateProduct(ctx context.Context, p domain.Product) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO products(`+productColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
 		p.ID, p.OrganizationID, p.ParentID, p.CategoryID, p.Brand, p.Name, p.SKU, p.Description, p.Unit, p.VolumeLabel,
-		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.ForSale, p.DeliveryDays, p.PhotoMediaID, p.CreatedAt, p.UpdatedAt)
+		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.ForSale, p.DeliveryDays, p.PhotoMediaID, p.Audience, p.ArchivedAt, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -109,10 +109,10 @@ func (s *Store) ListProducts(ctx context.Context, orgID uuid.UUID) ([]domain.Pro
 func (s *Store) UpdateProduct(ctx context.Context, p domain.Product) error {
 	tag, err := s.pool.Exec(ctx, `
 UPDATE products SET parent_id=$2, category_id=$3, brand=$4, name=$5, sku=$6, description=$7, unit=$8, volume_label=$9,
-  price_minor=$10, currency=$11, min_stock=$12, published=$13, for_sale=$14, delivery_days=$15, photo_media_id=$16, updated_at=$17
+  price_minor=$10, currency=$11, min_stock=$12, published=$13, for_sale=$14, delivery_days=$15, photo_media_id=$16, audience=$17, archived_at=$18, updated_at=$19
 WHERE id=$1`,
 		p.ID, p.ParentID, p.CategoryID, p.Brand, p.Name, p.SKU, p.Description, p.Unit, p.VolumeLabel,
-		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.ForSale, p.DeliveryDays, p.PhotoMediaID, p.UpdatedAt)
+		p.PriceMinor, p.Currency, p.MinStock, p.Published, p.ForSale, p.DeliveryDays, p.PhotoMediaID, p.Audience, p.ArchivedAt, p.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -129,7 +129,7 @@ WHERE id=$1`,
 func scanProduct(row pgx.Row) (*domain.Product, error) {
 	var p domain.Product
 	if err := row.Scan(&p.ID, &p.OrganizationID, &p.ParentID, &p.CategoryID, &p.Brand, &p.Name, &p.SKU, &p.Description, &p.Unit, &p.VolumeLabel,
-		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.ForSale, &p.DeliveryDays, &p.PhotoMediaID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.ForSale, &p.DeliveryDays, &p.PhotoMediaID, &p.Audience, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -141,7 +141,7 @@ func scanProduct(row pgx.Row) (*domain.Product, error) {
 func scanProductRow(rows pgx.Rows) (*domain.Product, error) {
 	var p domain.Product
 	if err := rows.Scan(&p.ID, &p.OrganizationID, &p.ParentID, &p.CategoryID, &p.Brand, &p.Name, &p.SKU, &p.Description, &p.Unit, &p.VolumeLabel,
-		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.ForSale, &p.DeliveryDays, &p.PhotoMediaID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.PriceMinor, &p.Currency, &p.MinStock, &p.Published, &p.ForSale, &p.DeliveryDays, &p.PhotoMediaID, &p.Audience, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -178,7 +178,7 @@ SELECT qty_on_hand, qty_reserved FROM stock_balances WHERE location_id=$1 AND pr
 		m.QtyBefore = reserved
 		reserved += amount
 		m.QtyAfter = reserved
-	case domain.MovementUnreserve:
+	case domain.MovementUnreserve, domain.MovementRelease:
 		amount := m.Qty
 		if amount <= 0 {
 			return domain.StockMovement{}, apperr.Validation("qty must be positive for unreserve")
@@ -190,6 +190,21 @@ SELECT qty_on_hand, qty_reserved FROM stock_balances WHERE location_id=$1 AND pr
 		reserved -= amount
 		m.QtyAfter = reserved
 		m.Qty = amount
+	case domain.MovementShipment:
+		amount := m.Qty
+		if amount <= 0 {
+			return domain.StockMovement{}, apperr.Validation("qty must be positive for shipment")
+		}
+		if reserved+1e-9 < amount {
+			return domain.StockMovement{}, apperr.Validation("cannot ship more than reserved")
+		}
+		if onHand+1e-9 < amount {
+			return domain.StockMovement{}, apperr.Validation("insufficient stock at location")
+		}
+		m.QtyBefore = onHand
+		onHand -= amount
+		reserved -= amount
+		m.QtyAfter = onHand
 	case domain.MovementReceipt, domain.MovementReturn:
 		m.QtyBefore = onHand
 		onHand += m.Qty
@@ -272,7 +287,7 @@ func (s *Store) CreateMovement(ctx context.Context, m domain.StockMovement) (*do
 func (s *Store) ListBalancesByLocation(ctx context.Context, locationID uuid.UUID) ([]domain.StockBalanceView, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT sb.location_id, sb.product_id, sb.qty_on_hand, sb.qty_reserved, sb.updated_at,
-       p.name, p.brand, p.sku, p.min_stock, p.price_minor, p.currency
+       p.name, p.brand, p.sku, p.min_stock, p.price_minor, p.currency, p.photo_media_id
 FROM stock_balances sb
 JOIN products p ON p.id = sb.product_id
 WHERE sb.location_id=$1
@@ -285,11 +300,36 @@ ORDER BY p.name`, locationID)
 	for rows.Next() {
 		var v domain.StockBalanceView
 		if err := rows.Scan(&v.LocationID, &v.ProductID, &v.QtyOnHand, &v.QtyReserved, &v.UpdatedAt,
-			&v.ProductName, &v.ProductBrand, &v.ProductSKU, &v.MinStock, &v.PriceMinor, &v.Currency); err != nil {
+			&v.ProductName, &v.ProductBrand, &v.ProductSKU, &v.MinStock, &v.PriceMinor, &v.Currency, &v.PhotoMediaID); err != nil {
 			return nil, err
 		}
 		v.Status = domain.StockStatus(v.QtyOnHand, v.QtyReserved, v.MinStock)
 		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListMovements(ctx context.Context, locationID uuid.UUID, limit int) ([]domain.StockMovement, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 40
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, location_id, product_id, kind, qty, qty_before, qty_after, reason, actor_user_id, ref_type, ref_id, created_at
+FROM stock_movements WHERE location_id=$1 ORDER BY created_at DESC LIMIT $2`, locationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.StockMovement
+	for rows.Next() {
+		var m domain.StockMovement
+		if err := rows.Scan(&m.ID, &m.LocationID, &m.ProductID, &m.Kind, &m.Qty, &m.QtyBefore, &m.QtyAfter, &m.Reason, &m.ActorUserID, &m.RefType, &m.RefID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []domain.StockMovement{}
 	}
 	return out, rows.Err()
 }

@@ -18,6 +18,7 @@ type Base struct {
 }
 
 func MustBase(serviceName string) Base {
+	ValidateProductionEnv()
 	b := Base{
 		ServiceName: serviceName,
 		HTTPAddr:    getenv("HTTP_ADDR", ":8080"),

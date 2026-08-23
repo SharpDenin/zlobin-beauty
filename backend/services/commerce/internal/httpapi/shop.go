@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/commerce/internal/domain"
@@ -23,10 +24,14 @@ func (a *API) registerShopRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.Handle("GET /v1/commerce/shop/orders", auth(http.HandlerFunc(a.listMyClientOrders)))
 	mux.Handle("GET /v1/commerce/shop/orders/{id}", auth(http.HandlerFunc(a.getMyClientOrder)))
 	mux.Handle("POST /v1/commerce/shop/orders/{id}/reorder", auth(http.HandlerFunc(a.reorder)))
+	mux.Handle("GET /v1/commerce/shop/pickup/orders", auth(http.HandlerFunc(a.listSalonPickupOrders)))
+	mux.Handle("POST /v1/commerce/shop/pickup/orders/{id}/accept", auth(http.HandlerFunc(a.acceptSalonPickupOrder)))
+	mux.Handle("POST /v1/commerce/shop/pickup/orders/{id}/handover", auth(http.HandlerFunc(a.handoverSalonPickupOrder)))
 	mux.Handle("GET /v1/commerce/shop/supplier/orders", auth(http.HandlerFunc(a.listSupplierClientOrders)))
 	mux.Handle("POST /v1/commerce/shop/supplier/orders/{id}/transition", auth(http.HandlerFunc(a.transitionClientOrder)))
 	mux.Handle("GET /v1/commerce/rep/deliveries", auth(http.HandlerFunc(a.listRepDeliveries)))
 	mux.Handle("POST /v1/commerce/rep/deliveries/{id}/complete", auth(http.HandlerFunc(a.completeRepDelivery)))
+	mux.Handle("GET /v1/commerce/rep/analytics", auth(http.HandlerFunc(a.repAnalytics)))
 	mux.Handle("GET /v1/commerce/shop/debt", auth(http.HandlerFunc(a.getDebtBalance)))
 	mux.Handle("POST /v1/commerce/imports/products/validate", auth(http.HandlerFunc(a.validateProductImport)))
 	mux.Handle("POST /v1/commerce/imports/{id}/apply", auth(http.HandlerFunc(a.applyProductImport)))
@@ -34,6 +39,12 @@ func (a *API) registerShopRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 }
 
 func (a *API) listShopProducts(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	professional := hasProfessionalRole(roles)
 	q := r.URL.Query().Get("q")
 	brand := r.URL.Query().Get("brand")
 	limit := 50
@@ -49,12 +60,20 @@ func (a *API) listShopProducts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, p := range items {
+		if !domain.ProductVisibleTo(p.Audience, professional) {
+			continue
+		}
 		out = append(out, shopProductDTO(p))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) getShopProduct(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
@@ -63,6 +82,10 @@ func (a *API) getShopProduct(w http.ResponseWriter, r *http.Request) {
 	p, err := a.svc.GetShopProduct(r.Context(), id)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if !domain.ProductVisibleTo(p.Audience, hasProfessionalRole(roles)) {
+		httpx.WriteError(w, r, a.log, apperr.NotFound("product not found"))
 		return
 	}
 	variants, err := a.svc.ListShopProductVariants(r.Context(), id)
@@ -85,9 +108,23 @@ func shopProductDTO(p domain.ShopProduct) map[string]any {
 	return dto
 }
 
+func hasProfessionalRole(roles []string) bool {
+	for _, role := range roles {
+		switch role {
+		case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
+			return true
+		}
+	}
+	return false
+}
+
 func (a *API) getCart(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
-	cart, err := a.svc.GetCart(r.Context(), claims.UserID)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	cart, err := a.svc.GetCart(r.Context(), claims.UserID, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -97,6 +134,10 @@ func (a *API) getCart(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) setCartItem(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
 	var req struct {
 		ProductID string  `json:"product_id"`
 		Qty       float64 `json:"qty"`
@@ -110,7 +151,7 @@ func (a *API) setCartItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
 		return
 	}
-	cart, err := a.svc.SetCartItem(r.Context(), claims.UserID, productID, req.Qty)
+	cart, err := a.svc.SetCartItem(r.Context(), claims.UserID, productID, req.Qty, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -120,12 +161,16 @@ func (a *API) setCartItem(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) removeCartItem(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
 	productID, err := uuid.Parse(r.PathValue("product_id"))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
 		return
 	}
-	cart, err := a.svc.RemoveCartItem(r.Context(), claims.UserID, productID)
+	cart, err := a.svc.RemoveCartItem(r.Context(), claims.UserID, productID, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -135,23 +180,43 @@ func (a *API) removeCartItem(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) checkout(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
 	var req struct {
-		DeliveryAddress string `json:"delivery_address"`
-		DeliveryComment string `json:"delivery_comment"`
-		PaymentMethod   string `json:"payment_method"`
+		DeliveryAddress     string `json:"delivery_address"`
+		DeliveryComment     string `json:"delivery_comment"`
+		PaymentMethod       string `json:"payment_method"`
+		PickupBranchID      string `json:"pickup_branch_id"`
+		IdempotencyKey      string `json:"idempotency_key"`
+		ConfirmPriceChanges bool   `json:"confirm_price_changes"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	order, items, err := a.svc.Checkout(r.Context(), claims.UserID, service.CheckoutInput{
+	in := service.CheckoutInput{
 		DeliveryAddress: req.DeliveryAddress, DeliveryComment: req.DeliveryComment, PaymentMethod: req.PaymentMethod,
-	})
+		IdempotencyKey: req.IdempotencyKey, ConfirmPriceChanges: req.ConfirmPriceChanges,
+	}
+	if in.IdempotencyKey == "" {
+		in.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
+	if strings.TrimSpace(req.PickupBranchID) != "" {
+		id, err := uuid.Parse(req.PickupBranchID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid pickup_branch_id"))
+			return
+		}
+		in.PickupBranchID = &id
+	}
+	result, err := a.svc.Checkout(r.Context(), claims.UserID, hasProfessionalRole(roles), in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, clientOrderDTO(*order, items))
+	httpx.JSON(w, http.StatusCreated, checkoutResultDTO(*result))
 }
 
 func (a *API) listMyClientOrders(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +228,12 @@ func (a *API) listMyClientOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(orders))
 	for _, o := range orders {
-		out = append(out, clientOrderSummaryDTO(o))
+		items, err := a.svc.ClientOrderItems(r.Context(), o.ID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, err)
+			return
+		}
+		out = append(out, clientOrderDTO(o, items, nil))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -175,22 +245,26 @@ func (a *API) getMyClientOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
 		return
 	}
-	order, items, err := a.svc.GetMyClientOrder(r.Context(), claims.UserID, id)
+	order, items, history, err := a.svc.GetMyClientOrder(r.Context(), claims.UserID, id)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items))
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items, history))
 }
 
 func (a *API) reorder(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
 		return
 	}
-	res, err := a.svc.Reorder(r.Context(), claims.UserID, id)
+	res, err := a.svc.Reorder(r.Context(), claims.UserID, id, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -224,7 +298,7 @@ func (a *API) listSupplierClientOrders(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, a.log, err)
 			return
 		}
-		out = append(out, clientOrderDTO(o, items))
+		out = append(out, clientOrderDTO(o, items, nil))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -260,7 +334,7 @@ func (a *API) transitionClientOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items))
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items, nil))
 }
 
 func (a *API) listRepDeliveries(w http.ResponseWriter, r *http.Request) {
@@ -282,9 +356,25 @@ func (a *API) listRepDeliveries(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, a.log, err)
 			return
 		}
-		out = append(out, clientOrderDTO(o, items))
+		out = append(out, clientOrderDTO(o, items, nil))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) repAnalytics(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.URL.Query().Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	from, to := parseAnalyticsRange(r)
+	body, err := a.svc.RepAnalytics(r.Context(), claims.UserID, orgID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, body)
 }
 
 func (a *API) completeRepDelivery(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +413,7 @@ func (a *API) completeRepDelivery(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, orderItems))
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, orderItems, nil))
 }
 
 func (a *API) getDebtBalance(w http.ResponseWriter, r *http.Request) {
@@ -416,28 +506,41 @@ func (a *API) productImportTemplate(w http.ResponseWriter, r *http.Request) {
 func cartDTO(c service.CartResult) map[string]any {
 	items := make([]map[string]any, 0, len(c.Items))
 	var totalMinor int64
+	suppliers := map[string]struct{}{}
 	for _, it := range c.Items {
-		lineTotal := int64(it.Qty*float64(it.PriceMinor) + 0.5)
+		lineTotal := int64(it.Qty*float64(it.CartPriceMinor) + 0.5)
 		totalMinor += lineTotal
+		suppliers[it.OrganizationID.String()] = struct{}{}
+		priceChanged := it.CartPriceMinor != it.CurrentPriceMinor
 		items = append(items, map[string]any{
 			"product_id": it.ProductID.String(), "qty": it.Qty, "brand": it.Brand, "name": it.Name,
-			"sku": it.SKU, "unit": it.Unit, "price_minor": it.PriceMinor, "currency": it.Currency,
+			"sku": it.SKU, "unit": it.Unit, "price_minor": it.CartPriceMinor, "current_price_minor": it.CurrentPriceMinor,
+			"price_changed": priceChanged, "currency": it.Currency, "organization_id": it.OrganizationID.String(),
 			"available": it.Available, "line_total_minor": lineTotal,
 		})
 	}
+	multiSupplier := len(suppliers) > 1
 	return map[string]any{
 		"id": c.Cart.ID.String(), "updated_at": c.Cart.UpdatedAt, "items": items, "total_minor": totalMinor,
+		"multi_supplier": multiSupplier,
 	}
 }
 
 func clientOrderSummaryDTO(o domain.ClientOrder) map[string]any {
+	var pickup any
+	if o.PickupBranchID != nil {
+		pickup = o.PickupBranchID.String()
+	}
 	return map[string]any{
-		"id": o.ID.String(), "status": o.Status, "total_minor": o.TotalMinor, "currency": o.Currency,
+		"id": o.ID.String(), "order_number": domain.FormatClientOrderNumber(o.ID, o.CreatedAt),
+		"status": o.Status, "total_minor": o.TotalMinor, "currency": o.Currency,
 		"supplier_org_id": o.SupplierOrgID.String(), "created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
+		"delivery_address": o.DeliveryAddress, "payment_method": o.PaymentMethod, "payment_status": o.PaymentStatus,
+		"pickup_branch_id": pickup,
 	}
 }
 
-func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem) map[string]any {
+func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem, history []domain.ClientOrderStatusHistory) map[string]any {
 	itemsOut := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		itemsOut = append(itemsOut, map[string]any{
@@ -453,14 +556,106 @@ func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem) map[st
 	if o.DeliveredAt != nil {
 		deliveredAt = *o.DeliveredAt
 	}
+	var pickup any
+	if o.PickupBranchID != nil {
+		pickup = o.PickupBranchID.String()
+	}
+	historyOut := make([]map[string]any, 0)
+	if history != nil {
+		for _, h := range history {
+			historyOut = append(historyOut, map[string]any{
+				"from_status": h.FromStatus, "to_status": h.ToStatus,
+				"created_at": h.CreatedAt, "note": h.Note,
+			})
+		}
+	}
 	return map[string]any{
-		"id": o.ID.String(), "user_id": o.UserID.String(), "supplier_org_id": o.SupplierOrgID.String(),
+		"id": o.ID.String(), "order_number": domain.FormatClientOrderNumber(o.ID, o.CreatedAt),
+		"user_id": o.UserID.String(), "supplier_org_id": o.SupplierOrgID.String(),
 		"status": o.Status, "currency": o.Currency, "total_minor": o.TotalMinor,
 		"delivery_address": o.DeliveryAddress, "delivery_comment": o.DeliveryComment,
-		"payment_method": o.PaymentMethod, "rep_user_id": repUser, "delivered_at": deliveredAt,
+		"payment_method": o.PaymentMethod, "payment_status": o.PaymentStatus,
+		"rep_user_id": repUser, "delivered_at": deliveredAt,
 		"delivery_note": o.DeliveryNote, "amount_collected_minor": o.AmountCollectedMinor,
-		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt, "items": itemsOut,
+		"pickup_branch_id": pickup, "created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
+		"items": itemsOut, "status_history": historyOut,
 	}
+}
+
+func checkoutResultDTO(r service.CheckoutResult) map[string]any {
+	ordersOut := make([]map[string]any, 0, len(r.Orders))
+	for _, o := range r.Orders {
+		ordersOut = append(ordersOut, clientOrderDTO(o.Order, o.Items, nil))
+	}
+	var first map[string]any
+	if len(ordersOut) > 0 {
+		first = ordersOut[0]
+	}
+	return map[string]any{
+		"checkout_group_id": r.GroupID.String(),
+		"total_minor":       r.TotalMinor,
+		"orders":            ordersOut,
+		"order":             first,
+	}
+}
+
+func (a *API) listSalonPickupOrders(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.URL.Query().Get("branch_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("branch_id is required"))
+		return
+	}
+	orders, err := a.svc.ListSalonPickupOrders(r.Context(), claims.UserID, branchID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(orders))
+	for _, o := range orders {
+		items, _ := a.svc.ClientOrderItems(r.Context(), o.ID)
+		out = append(out, clientOrderDTO(o, items, nil))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) acceptSalonPickupOrder(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	order, err := a.svc.AcceptSalonPickupOrder(r.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, _ := a.svc.ClientOrderItems(r.Context(), id)
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items, nil))
+}
+
+func (a *API) handoverSalonPickupOrder(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		PaymentReceived      bool  `json:"payment_received"`
+		AmountCollectedMinor int64 `json:"amount_collected_minor"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	order, err := a.svc.HandoverSalonPickupOrder(r.Context(), claims.UserID, id, service.HandoverPickupInput{
+		PaymentReceived: req.PaymentReceived, AmountCollectedMinor: req.AmountCollectedMinor,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, _ := a.svc.ClientOrderItems(r.Context(), id)
+	httpx.JSON(w, http.StatusOK, clientOrderDTO(*order, items, nil))
 }
 
 func jsonUnmarshal(data []byte, v any) error {

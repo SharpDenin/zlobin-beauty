@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { fetchSuppliers, useBuyerOrg } from '@/shared/lib/commerce'
+import { Hint } from '@/shared/ui/Hint'
 
 export function CosmeticsPage() {
   const { accessToken } = useAuth()
@@ -35,10 +36,13 @@ export function CosmeticsPage() {
     <main className="page stack">
       <div className="row between">
         <div className="stack-sm">
-          <h1>Косметика</h1>
+          <h1>Косметика <Hint id="cosmetics-order" title="Заказ косметики">Карточки поставщиков ведут в каталог. Самовывоз — в филиал салона.</Hint></h1>
           <p className="muted">Поставщики для салона «{buyerOrg?.organization.name}»</p>
         </div>
-        <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Мои заказы</Link>
+        <div className="row">
+          <Link className="btn btn-secondary btn-compact" to="/cosmetics/recurring">Регулярные поставки</Link>
+          <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Мои заказы</Link>
+        </div>
       </div>
 
       {suppliers.isLoading && <div className="state-box">Загрузка поставщиков…</div>}

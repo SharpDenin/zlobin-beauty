@@ -26,6 +26,7 @@ type Service struct {
 	clientsURL        string
 	communicationsURL string
 	commerceURL       string
+	identityURL       string
 	internalToken     string
 	httpClient        *http.Client
 	now               func() time.Time
@@ -99,6 +100,10 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	blocks, err := s.store.ListPlannerBlocks(ctx, masterUserID, fromUTC, toUTC)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
 	var slots []Slot
 	step := 30
 	now := s.now().UTC()
@@ -109,9 +114,13 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 			if !st.After(now) {
 				continue
 			}
-			if !appointmentBlocksSlot(existing, excludeAppointmentID, st, en) {
-				slots = append(slots, Slot{StartsAt: st, EndsAt: en})
+			if appointmentBlocksSlot(existing, excludeAppointmentID, st, en) {
+				continue
 			}
+			if plannerBlocksSlot(blocks, uuid.Nil, st, en) {
+				continue
+			}
+			slots = append(slots, Slot{StartsAt: st, EndsAt: en})
 		}
 	}
 	if slots == nil {
@@ -254,10 +263,64 @@ func (s *Service) SetWorkingHours(ctx context.Context, masterUserID uuid.UUID, i
 			ID: ids.New(), MasterUserID: masterUserID, Weekday: in.Weekday, StartMinute: in.StartMinute, EndMinute: in.EndMinute,
 		})
 	}
+	if err := s.rejectHoursIfAppointmentsOutside(ctx, masterUserID, inputs); err != nil {
+		return nil, err
+	}
 	if err := s.store.ReplaceWorkingHours(ctx, masterUserID, hours); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	return hours, nil
+}
+
+func (s *Service) SetStaffWorkingHours(ctx context.Context, actor, orgID, masterUserID uuid.UUID, inputs []HoursInput) ([]domain.WorkingHours, error) {
+	if masterUserID == uuid.Nil {
+		return nil, apperr.Validation("master_user_id is required")
+	}
+	if actor != masterUserID {
+		if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+		if err := s.requireMembership(ctx, orgID, masterUserID, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+	}
+	return s.SetWorkingHours(ctx, masterUserID, inputs)
+}
+
+func (s *Service) rejectHoursIfAppointmentsOutside(ctx context.Context, masterUserID uuid.UUID, inputs []HoursInput) error {
+	from := s.now().UTC()
+	to := from.AddDate(0, 0, 60)
+	items, err := s.store.ListAppointmentsInRange(ctx, masterUserID, from, to)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	byWeekday := map[int]HoursInput{}
+	for _, in := range inputs {
+		byWeekday[in.Weekday] = in
+	}
+	for _, a := range items {
+		tz := a.LocationTimezone
+		if tz == "" {
+			tz = "Europe/Moscow"
+		}
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			loc = time.UTC
+		}
+		local := a.StartsAt.In(loc)
+		wd := int(local.Weekday())
+		startMin := local.Hour()*60 + local.Minute()
+		endLocal := a.EndsAt.In(loc)
+		endMin := endLocal.Hour()*60 + endLocal.Minute()
+		if endLocal.Day() != local.Day() || endMin <= startMin {
+			endMin = 24 * 60
+		}
+		hours, ok := byWeekday[wd]
+		if !ok || startMin < hours.StartMinute || endMin > hours.EndMinute {
+			return apperr.Conflict("existing appointments would fall outside the new schedule")
+		}
+	}
+	return nil
 }
 
 func (s *Service) GetWorkingHours(ctx context.Context, masterUserID uuid.UUID) ([]domain.WorkingHours, error) {
@@ -269,6 +332,30 @@ func (s *Service) GetWorkingHours(ctx context.Context, masterUserID uuid.UUID) (
 		hours = []domain.WorkingHours{}
 	}
 	return hours, nil
+}
+
+func (s *Service) CalendarWorkingHours(ctx context.Context, actor, orgID, masterUserID uuid.UUID) ([]domain.WorkingHours, error) {
+	if masterUserID == uuid.Nil {
+		masterUserID = actor
+	}
+	if masterUserID != actor {
+		if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetWorkingHours(ctx, masterUserID)
+}
+
+func (s *Service) CalendarScheduleExceptions(ctx context.Context, actor, orgID, masterUserID uuid.UUID, from, to time.Time) ([]domain.ScheduleException, error) {
+	if masterUserID == uuid.Nil {
+		masterUserID = actor
+	}
+	if masterUserID != actor {
+		if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+	}
+	return s.ListScheduleExceptions(ctx, masterUserID, from, to)
 }
 
 type ScheduleExceptionInput struct {
@@ -291,6 +378,18 @@ func (s *Service) ListScheduleExceptions(ctx context.Context, masterUserID uuid.
 		items = []domain.ScheduleException{}
 	}
 	return items, nil
+}
+
+func (s *Service) UpsertStaffScheduleExceptions(ctx context.Context, actor, orgID, masterUserID uuid.UUID, inputs []ScheduleExceptionInput) ([]domain.ScheduleException, error) {
+	if actor != masterUserID {
+		if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+			return nil, err
+		}
+		if err := s.requireMembership(ctx, orgID, masterUserID, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+	}
+	return s.UpsertScheduleExceptions(ctx, masterUserID, inputs)
 }
 
 func (s *Service) UpsertScheduleExceptions(ctx context.Context, masterUserID uuid.UUID, inputs []ScheduleExceptionInput) ([]domain.ScheduleException, error) {
@@ -416,6 +515,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	masterUserID, err := uuid.Parse(payload.Master.UserID)
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("bad master user id"))
+	}
+	blocked, err := s.store.IsBlacklisted(ctx, masterUserID, in.ClientUserID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if blocked {
+		return nil, apperr.Forbidden("client is blacklisted for this master")
 	}
 	orgID, err := uuid.Parse(payload.Master.OrganizationID)
 	if err != nil {
@@ -681,6 +787,8 @@ func (s *Service) Cancel(ctx context.Context, appointmentID, actorUserID uuid.UU
 		to = domain.StatusCancelledByClient
 	case a.MasterUserID == actorUserID:
 		to = domain.StatusCancelledByMaster
+	case s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actorUserID):
+		to = domain.StatusCancelledBySalon
 	default:
 		return nil, apperr.Forbidden("access denied")
 	}
@@ -718,12 +826,49 @@ func (s *Service) NoShow(ctx context.Context, appointmentID, actorUserID uuid.UU
 	if strings.TrimSpace(reason) == "" {
 		reason = "no_show"
 	}
-	return s.changeStatus(ctx, appointmentID, actorUserID, domain.StatusNoShow, reason, func(a *domain.Appointment) error {
+	a, err := s.changeStatus(ctx, appointmentID, actorUserID, domain.StatusNoShow, reason, func(a *domain.Appointment) error {
 		if a.MasterUserID != actorUserID {
 			return apperr.Forbidden("only assigned master can mark no-show")
 		}
 		return domain.Transition(a.Status, domain.StatusNoShow)
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.afterNoShow(ctx, a, actorUserID)
+	s.createVisitRecord(ctx, a)
+	return a, nil
+}
+
+func (s *Service) afterNoShow(ctx context.Context, a *domain.Appointment, actor uuid.UUID) {
+	n, err := s.store.CountNoShows(ctx, a.MasterUserID, a.ClientUserID)
+	if err != nil || n < 2 {
+		return
+	}
+	now := s.now().UTC()
+	_ = s.store.UpsertBlacklist(ctx, a.MasterUserID, a.ClientUserID, actor, "no_show_threshold", now)
+	_ = s.store.AddBookingAudit(ctx, actor, "blacklist.auto", "client", a.ClientUserID, `{"reason":"no_show_threshold"}`, now)
+}
+
+func (s *Service) UnblockClient(ctx context.Context, masterID, clientID uuid.UUID) error {
+	now := s.now().UTC()
+	if err := s.store.UnblockClient(ctx, masterID, clientID, masterID, now); err != nil {
+		return apperr.Internal(err)
+	}
+	_ = s.store.AddBookingAudit(ctx, masterID, "blacklist.unblocked", "client", clientID, `{}`, now)
+	return nil
+}
+
+func (s *Service) ClientBlacklistStatus(ctx context.Context, masterID, clientID uuid.UUID) (bool, int, error) {
+	blocked, err := s.store.IsBlacklisted(ctx, masterID, clientID)
+	if err != nil {
+		return false, 0, apperr.Internal(err)
+	}
+	noShows, err := s.store.CountNoShows(ctx, masterID, clientID)
+	if err != nil {
+		return false, 0, apperr.Internal(err)
+	}
+	return blocked, noShows, nil
 }
 
 func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uuid.UUID, startsAt time.Time) (*domain.Appointment, error) {
@@ -737,7 +882,7 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	if a == nil {
 		return nil, apperr.NotFound("appointment not found")
 	}
-	if a.ClientUserID != actorUserID && a.MasterUserID != actorUserID {
+	if a.ClientUserID != actorUserID && a.MasterUserID != actorUserID && !s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actorUserID) {
 		return nil, apperr.Forbidden("access denied")
 	}
 	if a.BookingMode == domain.BookingModeFixedWindow {
@@ -871,13 +1016,43 @@ func (s *Service) createVisitRecord(ctx context.Context, a *domain.Appointment) 
 	if s.clientsURL == "" || s.internalToken == "" {
 		return
 	}
-	payload, _ := json.Marshal(map[string]any{
+	display := "Клиент"
+	payload := map[string]any{
 		"appointment_id": a.ID.String(), "organization_id": a.OrganizationID.String(),
 		"master_user_id": a.MasterUserID.String(), "client_user_id": a.ClientUserID.String(),
 		"service_name": a.ServiceName, "price_minor": a.PriceMinor, "currency": a.Currency,
-		"started_at": a.StartsAt, "completed_at": a.EndsAt, "display_name": "Клиент",
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.clientsURL+"/v1/internal/visits/from-appointment", strings.NewReader(string(payload)))
+		"started_at": a.StartsAt, "completed_at": a.EndsAt, "display_name": display,
+	}
+	if s.identityURL != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/users/"+a.ClientUserID.String(), nil)
+		if err == nil {
+			req.Header.Set("X-Internal-Token", s.internalToken)
+			if resp, err := s.httpClient.Do(req); err == nil {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+				_ = resp.Body.Close()
+				if resp.StatusCode < 300 {
+					var u struct {
+						DisplayName string  `json:"display_name"`
+						Phone       *string `json:"phone"`
+						Email       *string `json:"email"`
+					}
+					if json.Unmarshal(body, &u) == nil {
+						if strings.TrimSpace(u.DisplayName) != "" {
+							payload["display_name"] = u.DisplayName
+						}
+						if u.Phone != nil && strings.TrimSpace(*u.Phone) != "" {
+							payload["phone"] = *u.Phone
+						}
+						if u.Email != nil && strings.TrimSpace(*u.Email) != "" {
+							payload["email"] = *u.Email
+						}
+					}
+				}
+			}
+		}
+	}
+	raw, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.clientsURL+"/v1/internal/visits/from-appointment", strings.NewReader(string(raw)))
 	if err != nil {
 		return
 	}
@@ -927,15 +1102,52 @@ func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appoint
 	if a == nil {
 		return nil, apperr.NotFound("appointment not found")
 	}
-	if a.ClientUserID != actor && a.MasterUserID != actor {
+	if a.ClientUserID != actor && a.MasterUserID != actor && !s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actor) {
 		return nil, apperr.Forbidden("access denied")
 	}
 	return a, nil
 }
 
-func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string) ([]domain.Appointment, error) {
+func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, from, to *time.Time) ([]domain.Appointment, error) {
 	asMaster := role == "master"
-	items, err := s.store.ListForUser(ctx, userID, asMaster)
+	var items []domain.Appointment
+	var err error
+	if from != nil && to != nil {
+		items, err = s.store.ListForUserInRange(ctx, userID, asMaster, from.UTC(), to.UTC())
+	} else {
+		items, err = s.store.ListForUser(ctx, userID, asMaster)
+	}
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Appointment{}
+	}
+	return items, nil
+}
+
+func (s *Service) isOrgOwnerOrAdmin(ctx context.Context, orgID, actor uuid.UUID) bool {
+	if orgID == uuid.Nil || actor == uuid.Nil {
+		return false
+	}
+	return s.requireMembership(ctx, orgID, actor, "owner", "admin") == nil
+}
+
+func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time) ([]domain.Appointment, error) {
+	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
+		return nil, err
+	}
+	statuses := []string{
+		domain.StatusPendingConfirmation,
+		domain.StatusConfirmed,
+		domain.StatusInProgress,
+		domain.StatusCompleted,
+		domain.StatusCancelledByClient,
+		domain.StatusCancelledByMaster,
+		domain.StatusCancelledBySalon,
+		domain.StatusNoShow,
+	}
+	items, err := s.store.ListByOrgInRange(ctx, orgID, from.UTC(), to.UTC(), statuses)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}

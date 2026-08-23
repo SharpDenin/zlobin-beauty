@@ -180,3 +180,82 @@ func (s *Store) TryAcquireBootstrap(ctx context.Context) (bool, error) {
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+func (s *Store) AddUserRole(ctx context.Context, userID uuid.UUID, role string) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO user_roles(user_id, role) VALUES ($1,$2) ON CONFLICT DO NOTHING`, userID, role)
+	return err
+}
+
+func (s *Store) UpsertSubscription(ctx context.Context, sub domain.Subscription) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO user_subscriptions(user_id, plan, status, trial_started_at, trial_ends_at, started_at, paid_until, cancelled_at, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (user_id) DO UPDATE SET
+  plan=EXCLUDED.plan, status=EXCLUDED.status, trial_started_at=EXCLUDED.trial_started_at,
+  trial_ends_at=EXCLUDED.trial_ends_at, started_at=EXCLUDED.started_at, paid_until=EXCLUDED.paid_until,
+  cancelled_at=EXCLUDED.cancelled_at, updated_at=EXCLUDED.updated_at`,
+		sub.UserID, sub.Plan, sub.Status, sub.TrialStartedAt, sub.TrialEndsAt, sub.StartedAt, sub.PaidUntil, sub.CancelledAt, sub.CreatedAt, sub.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetSubscription(ctx context.Context, userID uuid.UUID) (*domain.Subscription, error) {
+	row := s.pool.QueryRow(ctx, `
+SELECT user_id, plan, status, trial_started_at, trial_ends_at, started_at, paid_until, cancelled_at, created_at, updated_at
+FROM user_subscriptions WHERE user_id=$1`, userID)
+	var sub domain.Subscription
+	if err := row.Scan(&sub.UserID, &sub.Plan, &sub.Status, &sub.TrialStartedAt, &sub.TrialEndsAt, &sub.StartedAt, &sub.PaidUntil, &sub.CancelledAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &sub, nil
+}
+
+func (s *Store) UpsertDashboard(ctx context.Context, userID uuid.UUID, widgets []byte, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO user_dashboard_layouts(user_id, widgets, updated_at) VALUES ($1,$2::jsonb,$3)
+ON CONFLICT (user_id) DO UPDATE SET widgets=EXCLUDED.widgets, updated_at=EXCLUDED.updated_at`,
+		userID, string(widgets), at)
+	return err
+}
+
+func (s *Store) GetDashboard(ctx context.Context, userID uuid.UUID) (*domain.DashboardLayout, error) {
+	row := s.pool.QueryRow(ctx, `SELECT user_id, widgets, updated_at FROM user_dashboard_layouts WHERE user_id=$1`, userID)
+	var d domain.DashboardLayout
+	if err := row.Scan(&d.UserID, &d.Widgets, &d.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &d, nil
+}
+
+func (s *Store) UpsertHintPrefs(ctx context.Context, p domain.HintPrefs) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO user_hint_prefs(user_id, hints_enabled, dismissed, updated_at)
+VALUES ($1,$2,$3::jsonb,$4)
+ON CONFLICT (user_id) DO UPDATE SET hints_enabled=EXCLUDED.hints_enabled, dismissed=EXCLUDED.dismissed, updated_at=EXCLUDED.updated_at`,
+		p.UserID, p.HintsEnabled, string(p.Dismissed), p.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetHintPrefs(ctx context.Context, userID uuid.UUID) (*domain.HintPrefs, error) {
+	row := s.pool.QueryRow(ctx, `SELECT user_id, hints_enabled, dismissed, updated_at FROM user_hint_prefs WHERE user_id=$1`, userID)
+	var p domain.HintPrefs
+	if err := row.Scan(&p.UserID, &p.HintsEnabled, &p.Dismissed, &p.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *Store) AddAudit(ctx context.Context, id, actor uuid.UUID, action, entityType string, entityID *uuid.UUID, meta []byte, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO audit_events(id, actor_user_id, action, entity_type, entity_id, meta, created_at)
+VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`, id, actor, action, entityType, entityID, string(meta), at)
+	return err
+}

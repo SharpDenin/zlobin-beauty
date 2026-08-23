@@ -16,13 +16,13 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-const orgCols = `id, name, description, type, status, published, logo_media_id, delivery_note, created_by, created_at, updated_at`
+const orgCols = `id, name, description, type, status, published, logo_media_id, delivery_note, masters_see_client_contacts, created_by, created_at, updated_at`
 const branchCols = `id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
-pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, created_at, updated_at`
+pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, active, created_at, updated_at`
 
 func scanOrg(row pgx.Row) (*domain.Organization, error) {
 	var o domain.Organization
-	if err := row.Scan(&o.ID, &o.Name, &o.Description, &o.Type, &o.Status, &o.Published, &o.LogoMediaID, &o.DeliveryNote, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
+	if err := row.Scan(&o.ID, &o.Name, &o.Description, &o.Type, &o.Status, &o.Published, &o.LogoMediaID, &o.DeliveryNote, &o.MastersSeeClientContacts, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -35,7 +35,7 @@ func scanBranch(row pgx.Row) (*domain.Branch, error) {
 	var b domain.Branch
 	if err := row.Scan(&b.ID, &b.OrganizationID, &b.Name, &b.City, &b.AddressLine, &b.Phone, &b.Timezone,
 		&b.CancelWindowHours, &b.AutoConfirm, &b.Published,
-		&b.PickupEnabled, &b.Latitude, &b.Longitude, &b.WorkingHoursNote, &b.PhotoMediaID,
+		&b.PickupEnabled, &b.Latitude, &b.Longitude, &b.WorkingHoursNote, &b.PhotoMediaID, &b.Active,
 		&b.CreatedAt, &b.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -52,18 +52,18 @@ func (s *Store) CreateOrgWithBranchAndOwner(ctx context.Context, org domain.Orga
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-INSERT INTO organizations(id, name, description, type, status, published, logo_media_id, delivery_note, created_by, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, org.ID, org.Name, org.Description, org.Type, org.Status, org.Published, org.LogoMediaID, org.DeliveryNote, org.CreatedBy, org.CreatedAt, org.UpdatedAt)
+INSERT INTO organizations(id, name, description, type, status, published, logo_media_id, delivery_note, masters_see_client_contacts, created_by, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, org.ID, org.Name, org.Description, org.Type, org.Status, org.Published, org.LogoMediaID, org.DeliveryNote, true, org.CreatedBy, org.CreatedAt, org.UpdatedAt)
 	if err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO branches(id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
-pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, active, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		branch.ID, branch.OrganizationID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone,
 		branch.CancelWindowHours, branch.AutoConfirm, branch.Published,
-		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID,
+		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, true,
 		branch.CreatedAt, branch.UpdatedAt)
 	if err != nil {
 		return err
@@ -75,6 +75,18 @@ VALUES ($1,$2,$3,$4,$5,$6)`, membership.ID, membership.OrganizationID, membershi
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Store) CreateBranch(ctx context.Context, branch domain.Branch) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO branches(id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
+pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, active, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		branch.ID, branch.OrganizationID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone,
+		branch.CancelWindowHours, branch.AutoConfirm, branch.Published,
+		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, true,
+		branch.CreatedAt, branch.UpdatedAt)
+	return err
 }
 
 func (s *Store) ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]domain.Membership, error) {
@@ -102,8 +114,8 @@ func (s *Store) GetOrg(ctx context.Context, id uuid.UUID) (*domain.Organization,
 
 func (s *Store) UpdateOrg(ctx context.Context, org domain.Organization) error {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE organizations SET name=$2, description=$3, published=$4, logo_media_id=$5, delivery_note=$6, updated_at=$7 WHERE id=$1`,
-		org.ID, org.Name, org.Description, org.Published, org.LogoMediaID, org.DeliveryNote, org.UpdatedAt)
+UPDATE organizations SET name=$2, description=$3, published=$4, logo_media_id=$5, delivery_note=$6, masters_see_client_contacts=$7, updated_at=$8 WHERE id=$1`,
+		org.ID, org.Name, org.Description, org.Published, org.LogoMediaID, org.DeliveryNote, org.MastersSeeClientContacts, org.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -117,7 +129,7 @@ UPDATE organizations SET name=$2, description=$3, published=$4, logo_media_id=$5
 func (s *Store) ListPublishedSuppliers(ctx context.Context) ([]domain.SupplierListItem, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT o.id, o.name, o.description, o.type, o.status, o.published, o.logo_media_id, o.delivery_note,
-       o.created_by, o.created_at, o.updated_at,
+       o.masters_see_client_contacts, o.created_by, o.created_at, o.updated_at,
        COALESCE((SELECT b.city FROM branches b WHERE b.organization_id = o.id ORDER BY b.name LIMIT 1), '')
 FROM organizations o
 WHERE o.type = 'supplier' AND o.published = TRUE
@@ -130,7 +142,7 @@ ORDER BY o.name`)
 	for rows.Next() {
 		var item domain.SupplierListItem
 		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Type, &item.Status, &item.Published,
-			&item.LogoMediaID, &item.DeliveryNote, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.City); err != nil {
+			&item.LogoMediaID, &item.DeliveryNote, &item.MastersSeeClientContacts, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.City); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -141,13 +153,13 @@ ORDER BY o.name`)
 func (s *Store) GetPublishedSupplier(ctx context.Context, id uuid.UUID) (*domain.SupplierListItem, error) {
 	row := s.pool.QueryRow(ctx, `
 SELECT o.id, o.name, o.description, o.type, o.status, o.published, o.logo_media_id, o.delivery_note,
-       o.created_by, o.created_at, o.updated_at,
+       o.masters_see_client_contacts, o.created_by, o.created_at, o.updated_at,
        COALESCE((SELECT b.city FROM branches b WHERE b.organization_id = o.id ORDER BY b.name LIMIT 1), '')
 FROM organizations o
 WHERE o.id = $1 AND o.type = 'supplier' AND o.published = TRUE`, id)
 	var item domain.SupplierListItem
 	if err := row.Scan(&item.ID, &item.Name, &item.Description, &item.Type, &item.Status, &item.Published,
-		&item.LogoMediaID, &item.DeliveryNote, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.City); err != nil {
+		&item.LogoMediaID, &item.DeliveryNote, &item.MastersSeeClientContacts, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.City); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -234,10 +246,10 @@ ORDER BY city, name`)
 func (s *Store) UpdateBranch(ctx context.Context, branch domain.Branch) error {
 	tag, err := s.pool.Exec(ctx, `
 UPDATE branches SET name=$2, city=$3, address_line=$4, phone=$5, timezone=$6, published=$7,
-pickup_enabled=$8, latitude=$9, longitude=$10, working_hours_note=$11, photo_media_id=$12, updated_at=$13
+pickup_enabled=$8, latitude=$9, longitude=$10, working_hours_note=$11, photo_media_id=$12, active=$13, updated_at=$14
 WHERE id=$1`,
 		branch.ID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone, branch.Published,
-		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, branch.UpdatedAt)
+		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, branch.Active, branch.UpdatedAt)
 	if err != nil {
 		return err
 	}

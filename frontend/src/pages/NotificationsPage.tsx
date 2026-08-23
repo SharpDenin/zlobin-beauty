@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -50,6 +51,12 @@ export function NotificationsPage() {
             </div>
             <p>{n.body}</p>
             <p>{new Date(n.created_at).toLocaleString('ru-RU')}</p>
+            {n.entity_type === 'appointment' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/appointments/${n.entity_id}`}>Открыть запись</Link>
+            )}
+            {n.entity_type === 'client_order' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/orders/${n.entity_id}`}>Открыть заказ</Link>
+            )}
             {!n.read_at && (
               <button className="btn btn-secondary btn-compact" type="button" disabled={markRead.isPending} onClick={() => markRead.mutate(n.id)}>
                 Прочитано

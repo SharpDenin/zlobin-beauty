@@ -12,26 +12,39 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
+	"github.com/zlobin/zlobin-beauty/backend/shared/entitlement"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
 type Service struct {
-	store     *store.Store
-	jwtSecret string
-	now       func() time.Time
+	store          *store.Store
+	jwtSecret      string
+	allowDevBilling bool
+	now            func() time.Time
 }
 
 func New(st *store.Store, jwtSecret string) *Service {
 	return &Service{store: st, jwtSecret: jwtSecret, now: time.Now}
 }
 
+func (s *Service) WithDevBilling(allow bool) *Service {
+	s.allowDevBilling = allow
+	return s
+}
+
+func (s *Service) AllowDevBilling() bool {
+	return s.allowDevBilling
+}
+
 type RegisterInput struct {
-	Email       string
-	Phone       string
-	Password    string
-	DisplayName string
-	AsMaster    bool
-	AsSupplier  bool
+	Email          string
+	Phone          string
+	Password       string
+	DisplayName    string
+	AsMaster       bool
+	AsSupplier     bool
+	AsSupplierRep  bool
+	AsSalonAdmin   bool
 }
 
 type AuthResult struct {
@@ -71,8 +84,21 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if in.AsMaster && in.AsSupplier {
-		return nil, apperr.Validation("choose either as_master or as_supplier")
+	flags := 0
+	if in.AsMaster {
+		flags++
+	}
+	if in.AsSupplier {
+		flags++
+	}
+	if in.AsSupplierRep {
+		flags++
+	}
+	if in.AsSalonAdmin {
+		flags++
+	}
+	if flags > 1 {
+		return nil, apperr.Validation("choose a single professional role")
 	}
 	now := s.now().UTC()
 	roles := []string{domain.RoleClient}
@@ -81,6 +107,12 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 	}
 	if in.AsSupplier {
 		roles = append(roles, domain.RoleSupplier)
+	}
+	if in.AsSupplierRep {
+		roles = append(roles, domain.RoleSupplierRep)
+	}
+	if in.AsSalonAdmin {
+		roles = append(roles, domain.RoleSalonAdmin, domain.RoleMaster)
 	}
 	var emailPtr, phonePtr *string
 	if email != "" {
@@ -101,6 +133,13 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 		UpdatedAt:    now,
 	}
 	if err := s.store.CreateUser(ctx, user); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if domain.HasAnyRole(user.Roles, domain.RoleMaster, domain.RoleSupplier, domain.RoleSupplierRep, domain.RoleSalonAdmin) {
+		if err := s.startPremiumTrial(ctx, user.ID, now); err != nil {
+			return nil, apperr.Internal(err)
+		}
+	} else if err := s.startFreeSubscription(ctx, user.ID, now); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	_ = s.security(ctx, &user.ID, "user.registered", map[string]any{})
@@ -335,4 +374,259 @@ func (s *Service) issue(ctx context.Context, user domain.User, ip, ua *string) (
 func (s *Service) security(ctx context.Context, userID *uuid.UUID, eventType string, meta map[string]any) error {
 	b, _ := json.Marshal(meta)
 	return s.store.AddSecurityEvent(ctx, ids.New(), userID, eventType, b, s.now().UTC())
+}
+
+func (s *Service) startPremiumTrial(ctx context.Context, userID uuid.UUID, now time.Time) error {
+	existing, err := s.store.GetSubscription(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	plan, status, start, end := entitlement.TrialForNewUser(now)
+	sub := domain.Subscription{
+		UserID: userID, Plan: plan, Status: status,
+		TrialStartedAt: &start, TrialEndsAt: &end, StartedAt: &start,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	return s.store.UpsertSubscription(ctx, sub)
+}
+
+func (s *Service) startFreeSubscription(ctx context.Context, userID uuid.UUID, now time.Time) error {
+	existing, err := s.store.GetSubscription(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	sub := domain.Subscription{
+		UserID: userID, Plan: entitlement.PlanFree, Status: entitlement.StatusExpired,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	return s.store.UpsertSubscription(ctx, sub)
+}
+
+func (s *Service) SubscriptionFor(ctx context.Context, userID uuid.UUID) (entitlement.Snapshot, error) {
+	sub, err := s.store.GetSubscription(ctx, userID)
+	if err != nil {
+		return entitlement.Snapshot{}, apperr.Internal(err)
+	}
+	now := s.now().UTC()
+	if sub == nil {
+		user, err := s.store.GetUserByID(ctx, userID)
+		if err != nil {
+			return entitlement.Snapshot{}, apperr.Internal(err)
+		}
+		if user == nil {
+			return entitlement.Snapshot{}, apperr.NotFound("user not found")
+		}
+		if domain.HasAnyRole(user.Roles, domain.RoleMaster, domain.RoleSupplier, domain.RoleSupplierRep, domain.RoleSalonAdmin) {
+			if err := s.startPremiumTrial(ctx, userID, now); err != nil {
+				return entitlement.Snapshot{}, apperr.Internal(err)
+			}
+		} else if err := s.startFreeSubscription(ctx, userID, now); err != nil {
+			return entitlement.Snapshot{}, apperr.Internal(err)
+		}
+		sub, err = s.store.GetSubscription(ctx, userID)
+		if err != nil || sub == nil {
+			return entitlement.Snapshot{}, apperr.Internal(err)
+		}
+	}
+	snap := entitlement.ResolveEffectivePlan(sub.Plan, sub.Status, sub.TrialEndsAt, sub.PaidUntil, now)
+	snap.TrialStartedAt = sub.TrialStartedAt
+	snap.TrialEndsAt = sub.TrialEndsAt
+	snap.StartedAt = sub.StartedAt
+	snap.PaidUntil = sub.PaidUntil
+	snap.CancelledAt = sub.CancelledAt
+	if snap.Status == entitlement.StatusExpired && sub.Status != entitlement.StatusExpired && sub.Status != entitlement.StatusCancelled {
+		sub.Plan = entitlement.PlanFree
+		sub.Status = entitlement.StatusExpired
+		sub.UpdatedAt = now
+		_ = s.store.UpsertSubscription(ctx, *sub)
+	}
+	return snap, nil
+}
+
+func (s *Service) HasFeature(ctx context.Context, userID uuid.UUID, feature string) (bool, error) {
+	snap, err := s.SubscriptionFor(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return snap.Has(feature), nil
+}
+
+type DevBillingInput struct {
+	Plan      string
+	Status    string
+	PaidUntil *time.Time
+	TrialEnds *time.Time
+}
+
+func (s *Service) DevSetSubscription(ctx context.Context, actor uuid.UUID, in DevBillingInput) (entitlement.Snapshot, error) {
+	if !s.allowDevBilling {
+		return entitlement.Snapshot{}, apperr.Forbidden("dev billing is disabled")
+	}
+	plan := strings.TrimSpace(in.Plan)
+	status := strings.TrimSpace(in.Status)
+	if plan != entitlement.PlanFree && plan != entitlement.PlanPremium {
+		return entitlement.Snapshot{}, apperr.Validation("plan must be free or premium")
+	}
+	switch status {
+	case entitlement.StatusTrial, entitlement.StatusActive, entitlement.StatusExpired, entitlement.StatusCancelled:
+	default:
+		return entitlement.Snapshot{}, apperr.Validation("invalid status")
+	}
+	now := s.now().UTC()
+	existing, err := s.store.GetSubscription(ctx, actor)
+	if err != nil {
+		return entitlement.Snapshot{}, apperr.Internal(err)
+	}
+	sub := domain.Subscription{UserID: actor, Plan: plan, Status: status, CreatedAt: now, UpdatedAt: now}
+	if existing != nil {
+		sub = *existing
+		sub.Plan, sub.Status, sub.UpdatedAt = plan, status, now
+	}
+	if in.PaidUntil != nil {
+		sub.PaidUntil = in.PaidUntil
+	}
+	if in.TrialEnds != nil {
+		sub.TrialEndsAt = in.TrialEnds
+	}
+	switch status {
+	case entitlement.StatusTrial:
+		if sub.TrialStartedAt == nil {
+			sub.TrialStartedAt = &now
+		}
+		if sub.TrialEndsAt == nil || !sub.TrialEndsAt.After(now) {
+			end := now.AddDate(0, 3, 0)
+			sub.TrialEndsAt = &end
+		}
+	case entitlement.StatusActive:
+		if sub.PaidUntil == nil || !sub.PaidUntil.After(now) {
+			end := now.AddDate(1, 0, 0)
+			sub.PaidUntil = &end
+		}
+	case entitlement.StatusExpired:
+		past := now.Add(-24 * time.Hour)
+		sub.TrialEndsAt = &past
+		sub.PaidUntil = &past
+	case entitlement.StatusCancelled:
+		sub.CancelledAt = &now
+	}
+	if err := s.store.UpsertSubscription(ctx, sub); err != nil {
+		return entitlement.Snapshot{}, apperr.Internal(err)
+	}
+	meta, _ := json.Marshal(map[string]any{"plan": plan, "status": status})
+	_ = s.store.AddAudit(ctx, ids.New(), actor, "subscription.dev_set", "subscription", &actor, meta, now)
+	return s.SubscriptionFor(ctx, actor)
+}
+
+func (s *Service) GrantRole(ctx context.Context, email, role string) (*domain.User, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	role = strings.TrimSpace(role)
+	allowed := map[string]struct{}{
+		domain.RoleMaster: {}, domain.RoleSupplier: {}, domain.RoleSupplierRep: {},
+		domain.RoleSalonOwner: {}, domain.RoleSalonAdmin: {}, domain.RoleClient: {},
+	}
+	if _, ok := allowed[role]; !ok {
+		return nil, apperr.Validation("unsupported role")
+	}
+	user, err := s.store.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if user == nil {
+		return nil, apperr.NotFound("user not found")
+	}
+	if err := s.store.AddUserRole(ctx, user.ID, role); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	meta, _ := json.Marshal(map[string]any{"role": role, "email": email})
+	_ = s.store.AddAudit(ctx, ids.New(), user.ID, "role.granted", "user", &user.ID, meta, s.now().UTC())
+	return s.Me(ctx, user.ID)
+}
+
+func (s *Service) LookupByEmail(ctx context.Context, email string) (*domain.User, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return nil, apperr.Validation("email is required")
+	}
+	user, err := s.store.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if user == nil {
+		return nil, apperr.NotFound("user not found")
+	}
+	return user, nil
+}
+
+func (s *Service) GetDashboard(ctx context.Context, userID uuid.UUID) ([]byte, error) {
+	d, err := s.store.GetDashboard(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if d == nil || len(d.Widgets) == 0 {
+		return defaultWidgets(), nil
+	}
+	return d.Widgets, nil
+}
+
+func (s *Service) SaveDashboard(ctx context.Context, userID uuid.UUID, widgets []byte) error {
+	if err := ValidateDashboardWidgets(widgets); err != nil {
+		return err
+	}
+	if err := s.store.UpsertDashboard(ctx, userID, widgets, s.now().UTC()); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) GetHintPrefs(ctx context.Context, userID uuid.UUID) (bool, []string, error) {
+	p, err := s.store.GetHintPrefs(ctx, userID)
+	if err != nil {
+		return false, nil, apperr.Internal(err)
+	}
+	if p == nil {
+		return true, []string{}, nil
+	}
+	var dismissed []string
+	if len(p.Dismissed) > 0 {
+		_ = json.Unmarshal(p.Dismissed, &dismissed)
+	}
+	if dismissed == nil {
+		dismissed = []string{}
+	}
+	return p.HintsEnabled, dismissed, nil
+}
+
+func (s *Service) UpdateHintPrefs(ctx context.Context, userID uuid.UUID, enabled *bool, dismissKey string) (bool, []string, error) {
+	on, dismissed, err := s.GetHintPrefs(ctx, userID)
+	if err != nil {
+		return false, nil, err
+	}
+	if enabled != nil {
+		on = *enabled
+	}
+	if key := strings.TrimSpace(dismissKey); key != "" {
+		found := false
+		for _, d := range dismissed {
+			if d == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dismissed = append(dismissed, key)
+		}
+	}
+	b, _ := json.Marshal(dismissed)
+	if err := s.store.UpsertHintPrefs(ctx, domain.HintPrefs{
+		UserID: userID, HintsEnabled: on, Dismissed: b, UpdatedAt: s.now().UTC(),
+	}); err != nil {
+		return false, nil, apperr.Internal(err)
+	}
+	return on, dismissed, nil
 }

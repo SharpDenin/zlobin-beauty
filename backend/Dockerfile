@@ -8,7 +8,7 @@ ARG SERVICE_PATH
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/service ./$SERVICE_PATH
 
 FROM alpine:3.21
-RUN adduser -D -H -u 10001 appuser && apk add --no-cache ca-certificates tzdata
+RUN adduser -D -H -u 10001 appuser && apk add --no-cache ca-certificates tzdata wget
 USER appuser
 WORKDIR /app
 COPY --from=build /out/service /app/service

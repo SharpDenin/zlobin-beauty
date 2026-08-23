@@ -60,6 +60,16 @@ export function hasSupplierAccess(user: User | null | undefined): boolean {
   return user.roles.some((r) => r === 'supplier' || r === 'system_admin')
 }
 
+export function hasSupplierRepAccess(user: User | null | undefined): boolean {
+  if (!user) return false
+  return user.roles.some((r) => r === 'supplier_rep' || r === 'system_admin')
+}
+
+export function hasSalonAdmin(user: User | null | undefined): boolean {
+  if (!user) return false
+  return user.roles.some((r) => r === 'salon_admin' || r === 'salon_owner' || r === 'system_admin')
+}
+
 export function hasSystemAdmin(user: User | null | undefined): boolean {
   if (!user) return false
   return user.roles.includes('system_admin')
@@ -68,8 +78,9 @@ export function hasSystemAdmin(user: User | null | undefined): boolean {
 /** Default landing path after login/register by primary role. Master wins over supplier. */
 export function homePathForUser(user: User | null | undefined): string {
   if (!user) return '/'
-  if (hasMasterAccess(user)) return '/'
+  if (hasMasterAccess(user) || hasSalonAdmin(user)) return '/'
   if (hasSupplierAccess(user)) return '/supplier'
+  if (hasSupplierRepAccess(user)) return '/rep'
   return '/'
 }
 

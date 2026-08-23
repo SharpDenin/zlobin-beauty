@@ -93,6 +93,12 @@ type PortfolioItem struct {
 	CreatedAt time.Time
 }
 
+const (
+	KnowledgeStatusDraft     = "draft"
+	KnowledgeStatusPublished = "published"
+	KnowledgeStatusArchived  = "archived"
+)
+
 type KnowledgeArticle struct {
 	ID                 uuid.UUID
 	Title              string
@@ -103,11 +109,17 @@ type KnowledgeArticle struct {
 	ReadingTimeMinutes int
 	Brand              string
 	ProductID          *uuid.UUID
+	ProductIDs         []uuid.UUID
+	CategoryIDs        []uuid.UUID
 	AuthorUserID       uuid.UUID
 	AuthorOrgID        *uuid.UUID
 	AuthorName         string
+	Status             string
 	Published          bool
 	PublishedAt        *time.Time
+	ViewCount          int
+	Favorite           bool
+	ArchivedAt         *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }

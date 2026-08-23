@@ -1,6 +1,8 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, type ReactNode } from 'react'
-import { hasMasterAccess, hasSupplierAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
+import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
+import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
+import { workTypeLabel } from '@/shared/lib/status'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -26,10 +28,10 @@ export function RequireAdmin() {
 export function RequireMaster() {
   const { user, loading } = useAuth()
   if (loading) return <div className="state-box page">Загрузка…</div>
-  if (!hasMasterAccess(user)) {
+  if (!hasMasterAccess(user) && !hasSalonAdmin(user)) {
     return (
       <main className="page">
-        <div className="state-box error">Этот раздел доступен только мастерам и владельцам салона</div>
+        <div className="state-box error">Этот раздел доступен мастерам, администраторам и владельцам салона</div>
       </main>
     )
   }
@@ -39,7 +41,7 @@ export function RequireMaster() {
 export function RequireSupplier() {
   const { user, loading } = useAuth()
   if (loading) return <div className="state-box page">Загрузка…</div>
-  if (!hasSupplierAccess(user)) {
+  if (!hasSupplierAccess(user) && !hasSupplierRepAccess(user)) {
     return (
       <main className="page">
         <div className="state-box error">Этот раздел доступен только поставщикам</div>
@@ -49,51 +51,24 @@ export function RequireSupplier() {
   return <Outlet />
 }
 
-type NavLink = { to: string; label: string; end?: boolean }
-
-function masterPrimary(): NavLink[] {
-  return [
-    { to: '/', label: 'Сегодня', end: true },
-    { to: '/calendar', label: 'Календарь' },
-    { to: '/appointments', label: 'Записи' },
-    { to: '/more', label: 'Ещё' },
-  ]
-}
-
-function masterSecondary(): NavLink[] {
-  return [
-    { to: '/clients', label: 'Клиенты' },
-    { to: '/services', label: 'Услуги' },
-    { to: '/cosmetics', label: 'Косметика' },
-    { to: '/knowledge', label: 'База знаний' },
-    { to: '/master', label: 'Кабинет' },
-    { to: '/profile', label: 'Профиль' },
-  ]
-}
-
-function supplierPrimary(): NavLink[] {
-  return [
-    { to: '/supplier', label: 'Главная', end: true },
-    { to: '/supplier/products', label: 'Товары' },
-    { to: '/supplier/orders', label: 'Заказы' },
-    { to: '/knowledge', label: 'База' },
-    { to: '/profile', label: 'Профиль' },
-  ]
-}
-
-function clientPrimary(): NavLink[] {
-  return [
-    { to: '/', label: 'Главная', end: true },
-    { to: '/search', label: 'Найти' },
-    { to: '/appointments', label: 'Записи' },
-    { to: '/profile', label: 'Профиль' },
-  ]
+export function RequireCabinetFeature({ feature }: { feature: CabinetFeature }) {
+  const cabinet = useCabinet()
+  if (!cabinet.ready) return <div className="state-box page">Загрузка…</div>
+  if (!cabinet.can(feature)) {
+    return (
+      <main className="page">
+        <div className="state-box error">Этот раздел недоступен для вашей роли</div>
+      </main>
+    )
+  }
+  return <Outlet />
 }
 
 function linkActive(pathname: string, to: string, end?: boolean) {
   if (to === '/more') return false
   if (end || to === '/') return pathname === to
   if (to === '/supplier/products') return pathname.startsWith('/supplier/products')
+  if (to === '/rep') return pathname === '/rep'
   return pathname === to || pathname.startsWith(`${to}/`)
 }
 
@@ -160,35 +135,50 @@ export function AppShell() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)
+  const cabinet = useCabinet()
 
-  const isMaster = hasMasterAccess(user)
-  const isSupplier = hasSupplierAccess(user) && !isMaster
+  const primary = cabinet.primary
+  const secondary = cabinet.secondary
+  const sideLinks = cabinet.side
 
-  const primary = useMemo(() => {
-    if (isMaster) return masterPrimary()
-    if (isSupplier) return supplierPrimary()
-    return clientPrimary()
-  }, [isMaster, isSupplier])
-
-  const secondary = useMemo(() => (isMaster ? masterSecondary() : []), [isMaster])
-
-  const sideLinks = useMemo(() => {
-    if (isMaster) {
-      return [
-        { to: '/', label: 'Сегодня', end: true },
-        { to: '/calendar', label: 'Календарь' },
-        { to: '/appointments', label: 'Записи' },
-        ...masterSecondary(),
-      ]
-    }
-    if (isSupplier) return supplierPrimary()
-    return clientPrimary()
-  }, [isMaster, isSupplier])
+  const orgOptions = useMemo(
+    () => cabinet.orgs.filter((o) => o.organization.type !== 'supplier'),
+    [cabinet.orgs],
+  )
 
   return (
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
-        <div className="brand">Zlobin Beauty</div>
+        <div className="brand">Salon-X</div>
+        <p className="muted cabinet-label">{cabinet.label}</p>
+        {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
+        {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
+          <label className="field" style={{ marginTop: 12 }}>
+            <span className="muted">Салон</span>
+            <select
+              value={cabinet.selectedOrg?.organization.id ?? ''}
+              onChange={(e) => cabinet.setSelectedOrgId(e.target.value)}
+            >
+              {orgOptions.map((o) => (
+                <option key={o.organization.id} value={o.organization.id}>{o.organization.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+          <label className="field" style={{ marginTop: 12 }}>
+            <span className="muted">Филиал</span>
+            <select
+              data-testid="chain-branch-switcher"
+              value={cabinet.selectedBranch?.id ?? ''}
+              onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
+            >
+              {(cabinet.selectedOrg?.branches ?? []).map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <nav className="stack-sm" style={{ marginTop: 24 }}>
           <NavLinks links={sideLinks} pathname={location.pathname} />
         </nav>
@@ -199,8 +189,24 @@ export function AppShell() {
       </aside>
       <div className="shell-main">
         <header className="topbar">
-          <div className="brand">Zlobin Beauty</div>
+          <div>
+            <div className="brand">Salon-X</div>
+            <div className="muted topbar-cabinet">{cabinet.label}</div>
+          </div>
           <div className="row">
+            {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+              <select
+                className="topbar-branch"
+                data-testid="chain-branch-switcher"
+                aria-label="Филиал"
+                value={cabinet.selectedBranch?.id ?? ''}
+                onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
+              >
+                {(cabinet.selectedOrg?.branches ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            )}
             <span className="muted topbar-name">{user?.display_name}</span>
             <button className="btn btn-secondary btn-compact" type="button" onClick={() => void logout()}>
               Выйти

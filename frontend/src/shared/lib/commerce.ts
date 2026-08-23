@@ -12,10 +12,21 @@ export type BranchCard = {
   timezone?: string
   published?: boolean
   pickup_enabled?: boolean
+  latitude?: number | null
+  longitude?: number | null
+  distance_km?: number | null
 }
 
 export type OrgItem = {
-  organization: { id: string; name: string; type: string; published?: boolean; description?: string; delivery_note?: string }
+  organization: {
+    id: string
+    name: string
+    type: string
+    published?: boolean
+    description?: string
+    delivery_note?: string
+    masters_see_client_contacts?: boolean
+  }
   branches: BranchCard[]
   roles: string[]
 }
@@ -145,12 +156,16 @@ export async function fetchPickupBranches(
   token: string | null,
   buyerOrgId?: string,
   fallbackBranches?: BranchCard[],
+  coords?: { lat: number; lng: number } | null,
 ): Promise<BranchCard[]> {
   const fromMine = () =>
     (fallbackBranches ?? []).filter((b) => b.published !== false && b.pickup_enabled === true)
 
   try {
-    const res = await apiRequest<{ items: BranchCard[] }>('/v1/branches/pickup', { token })
+    const res = await apiRequest<{ items: BranchCard[] }>(
+      coords ? `/v1/branches/pickup?lat=${coords.lat}&lng=${coords.lng}&nearest=1` : '/v1/branches/pickup',
+      { token },
+    )
     let items = res.items ?? []
     if (buyerOrgId) {
       const own = items.filter((b) => b.organization_id === buyerOrgId)

@@ -15,8 +15,11 @@ func TestCanTransitionOrderLegacyAndNew(t *testing.T) {
 	if !CanTransitionOrder(OrderStatusProcessing, OrderStatusReadyForDispatch) {
 		t.Fatal("processing -> ready_for_dispatch")
 	}
-	if !CanTransitionOrder(OrderStatusPicking, OrderStatusInTransit) {
-		t.Fatal("picking -> in_transit (legacy)")
+	if CanTransitionOrder(OrderStatusPicking, OrderStatusInTransit) {
+		t.Fatal("picking -> in_transit must be rejected (Delivery SoT)")
+	}
+	if CanTransitionOrder(OrderStatusReadyForDispatch, OrderStatusInTransit) {
+		t.Fatal("ready_for_dispatch -> in_transit must be rejected (Delivery SoT)")
 	}
 	if !CanTransitionOrder(OrderStatusReadyForDispatch, OrderStatusCompleted) {
 		t.Fatal("ready_for_dispatch -> completed")
@@ -91,5 +94,17 @@ func TestProductEligibleForOrder(t *testing.T) {
 	}
 	if ProductEligibleForOrder(true, true, other, supplier) {
 		t.Fatal("wrong supplier rejected")
+	}
+}
+
+func TestProductVisibleToAudience(t *testing.T) {
+	if ProductVisibleTo("professional_only", false) {
+		t.Fatal("professional-only product must be hidden from clients")
+	}
+	if !ProductVisibleTo("professional_only", true) {
+		t.Fatal("professional-only product must be visible to professionals")
+	}
+	if !ProductVisibleTo("all", false) {
+		t.Fatal("public product must be visible to clients")
 	}
 }

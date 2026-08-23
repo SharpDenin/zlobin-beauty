@@ -1,130 +1,168 @@
-# MANUAL_DEMO.md — сценарий показа заказчику (≈12–15 минут)
+# MANUAL_DEMO.md — Salon-X (15–20 минут)
 
-Перед показом:
+Практический сценарий встречи. Пароль всех demo-аккаунтов: **`Password123!`**.
+
+Перед показом (demo/staging only):
 
 ```bash
+docker compose down -v    # УДАЛЯЕТ pgdata + miniodata — только для reset demo
 docker compose up -d --build
-docker compose --profile seed run --rm seed
+curl -fsS http://127.0.0.1:8090/healthz
+docker compose --profile seed run --rm --build seed
 ```
 
-Откройте http://localhost:5173  
+UI: `http://localhost:5173` (или `PUBLIC_APP_URL` на сервере).  
+Viewports для проверки: **390 / 768 / 1366+**.
 
-Пароль всех demo-аккаунтов: **`Password123!`**
-
-Цель показа (§54): **мульти-город**, **доставка/самовывоз**, **фиксированная услуга**, **rich knowledge** — без технических UUID и админских таблиц.
-
----
-
-## 1. Клиент: мульти-город и гибкая запись (≈4 мин)
-
-**Аккаунт:** `client1@demo.local` / `Password123!`  
-*(город профиля после seed — Красноярск)*
-
-1. Войти → домашний экран клиента.  
-   **Показать:** ближайшая запись / CTA найти мастера.
-2. **Поиск**. Город по умолчанию **Красноярск** → **Искать**.  
-   **Показать:** Анна Колористика, Дмитрий Бровист; бейджи города.
-3. Включить **«Показывать мастеров из других городов»** → **Искать**.  
-   **Показать:** появляется **Иван Стилист** (Новосибирск) — демо гео-расширения выдачи.
-4. Открыть **Анну** → услуга **«Стрижка»** (Гибкая запись) → будний день → слот → подтвердить.  
-   **Показать:** wizard, summary (мастер / адрес / время / цена / тип записи), confirmation UI.
-5. **Мои записи** — статус по-русски (у client1↔master1 часто сразу подтверждена — auto-confirm).
+Не создавать данные на сцене — seed уже содержит нужные состояния.
 
 ---
 
-## 2. Клиент: фиксированное окно / МК (≈2 мин)
+## Demo accounts (quick reference)
 
-Оставаясь под **client1** (или `client2@demo.local`, если нужно без auto-confirm):
-
-1. Карточка Анны → услуга **«Авторский мастер-класс по окрашиванию»** (*Фиксированное окно*).  
-   **Показать:** не сетка произвольных слотов, а **сеансы** (дата/время в timezone, «мест: N»).
-2. Выбрать сеанс → итог → записаться (если место свободно).  
-   **Показать:** тип записи «Фиксированное окно» в summary.
-
-Если мест нет — показать empty-state «Нет доступных сеансов» и объяснить capacity=1 в seed.
-
----
-
-## 3. Мастер: календарь, клиент, кабинет (≈3 мин)
-
-**Аккаунт:** `master1@demo.local` / `Password123!`
-
-1. **Записи** → подтвердить pending-заявки при наличии.  
-2. **Календарь** — день/неделя, связь с рабочими часами.  
-3. **Услуги** — flexible стрижка/окрашивание + fixed МК и occurrences.  
-4. **Клиенты** → карточка → формула окрашивания + (опционально) auto-confirm.
-
-**Показать:** русский UI статусов, не enum’ы бэкенда.
+| Role | Email | State / purpose |
+|------|-------|-----------------|
+| Salon Owner | `master1@demo.local` | Trial, Krasnoyarsk, staff, privacy |
+| Client | `client1@demo.local` | Auto-confirm, shop |
+| Client | `client3@demo.local` | Blacklisted by master1 |
+| Renter | `master2@demo.local` | Novosibirsk |
+| Employee | `employee1@demo.local` | Contacts hidden when owner toggles OFF |
+| Salon Admin | `admin1@demo.local` | Operational dashboard |
+| Chain Owner | `chain1@demo.local` | 2 branches |
+| Private Free | `master4@demo.local` | Scheme required |
+| Premium | `premium1@demo.local` | Scheme skip |
+| Supplier | `supplier1@demo.local` | Warehouse, analytics, KB |
+| Representative | `rep1@demo.local` | Route map, finance |
 
 ---
 
-## 4. Мастер → косметика → самовывоз и оплата (≈3 мин)
+## 1. Master — Dashboard + Calendar (~3 мин)
 
-Оставаясь под **master1**:
+**Account:** `master1@demo.local`  
+**Route:** Login → `/` (Сегодня)
 
-1. **Косметика** — карточки поставщиков (**Поставщик Профи**).  
-   **Критично:** нет поля UUID.
-2. Каталог → товар в корзину → checkout.  
-   **Показать:** блок **«Филиал получения»** — поиск/выбор филиала по имени и адресу (Красноярск центр).
-3. Способ оплаты (наличные / перевод / карта / счёт). Для карты — подсказка «онлайн позже».  
-4. Подтвердить → **Мои заказы**: новый заказ, филиал получения, статус оплаты.
-
----
-
-## 5. Поставщик: заказ, доставка, знания (≈3 мин)
-
-**Аккаунт:** `supplier1@demo.local` / `Password123!`
-
-1. **Заказы** → принять/провести заказ → **запланировать доставку** (дата/окно) → статусы доставки.  
-   **Показать:** отдельная модель доставки + отображение филиала покупателя.
-2. При желании **отметить оплату** (mark-paid) — честно сказать: эквайринг mock/ручной.  
-3. **Товары** — цена / снятие с продажи.  
-4. **База знаний** → открыть или создать материал в rich-редакторе → опубликовать (обложка/категория/бренд по возможности).
-
-**Переключение:** `master1` → База знаний → статья открывается (заголовок + контент, plain или rich).
+| Step | Action | Expected | Say / note |
+|------|--------|----------|------------|
+| 1 | Login | Landing «Сегодня», бренд Salon-X | «Кабинет владельца салона» |
+| 2 | Обратить внимание на виджеты | KPI, записи, важное | Drag layout optional |
+| 3 | **Календарь** в nav | День / Неделя / Список | |
+| 4 | DnD запись или категории | Перетаскивание работает | Desktop; mobile — список |
+| 5 | **Команда** | Список сотрудников | Переход к staff |
 
 ---
 
-## 6. Типы мастеров и города (≈1 мин, по желанию)
+## 2. Client Booking (~2 мин)
 
-| Аккаунт | Тип | Город (seed) |
-|---------|-----|----------------|
-| `master1@demo.local` | owner | Красноярск |
-| `master2@demo.local` | renter | Новосибирск |
-| `master3@demo.local` | employee | Москва |
-| `master4@demo.local` | independent | Красноярск |
+**Account:** `client1@demo.local`  
+**Route:** `/search`
 
-Показать в профиле/кабинете формат работы и город — не org UUID.
-
----
-
-## 7. Mobile (≈1 мин)
-
-DevTools → **390×844**.
-
-1. Client: поиск (toggle городов) → карточка → запись, bottom nav.  
-2. Master: косметика / «Ещё».  
-**Показать:** без горизонтального скролла.
+| Step | Action | Expected | Say / note |
+|------|--------|----------|------------|
+| 1 | Город **Красноярск** | Мастера в списке | |
+| 2 | Выбрать **Анну** (master1) | Профиль, услуги | |
+| 3 | Услуга → слот → Записаться | **Confirmed** сразу | Auto-confirm с master1 |
+| 4 | (Optional) `client2` | Pending flow | Конtrast, не обязательно |
 
 ---
 
-## Что сказать заказчику одной фразой
+## 3. Client Shop (~3 мин)
 
-«Клиент в Красноярске находит локальных мастеров и при необходимости — из других городов; записывается на гибкий слот или фиксированный мастер-класс; мастер заказывает косметику с выбором филиала самовывоза и понятной оплатой; поставщик ведёт доставку и публикует материалы в базе знаний — без технических идентификаторов.»
+**Account:** `client1@demo.local`  
+**Route:** `/shop`
+
+| Step | Action | Expected | Say / note |
+|------|--------|----------|------------|
+| 1 | **Магазин** | Каталог товаров | B2B cosmetics for masters |
+| 2 | Открыть товар | Цена, фото, описание | |
+| 3 | В корзину | Cart badge updates | |
+| 4 | Checkout | Pickup **филиал** (имя, не UUID) | |
+| 5 | Оформить | Заказ в **Заказы** | Mock payment |
 
 ---
 
-## Аккаунты (шпаргалка)
+## 4. Supplier (~2 мин)
 
-| Роль | Email | Password |
-|------|-------|----------|
-| Client (Красноярск) | client1@demo.local | Password123! |
-| Client | client2@demo.local | Password123! |
-| Master (owner, КРС) | master1@demo.local | Password123! |
-| Master (renter, НСК) | master2@demo.local | Password123! |
-| Master (employee, MSK) | master3@demo.local | Password123! |
-| Master (independent, КРС) | master4@demo.local | Password123! |
-| Supplier | supplier1@demo.local | Password123! |
-| Supplier | supplier2@demo.local | Password123! |
+**Account:** `supplier1@demo.local`  
+**Route:** `/` → analytics
 
-Подробная приёмка: **`MANUAL_TEST.md`**. Отчёт MVP: **`FINAL_REPORT.md`**.
+| Step | Action | Expected | Say / note |
+|------|--------|----------|------------|
+| 1 | Dashboard | KPI cards | |
+| 2 | **Аналитика** | Charts / summary | |
+| 3 | **Склад** | Stock levels | Warehouse page |
+
+---
+
+## 5. Representative (~2 мин)
+
+**Account:** `rep1@demo.local`  
+**Route:** `/rep/route`
+
+| Step | Action | Expected | Say / note |
+|------|--------|----------|------------|
+| 1 | Dashboard | Tasks summary | |
+| 2 | **Маршрут** | Leaflet map, stops | «Recommended route» heuristic |
+| 3 | **Деньги** | Finance view | |
+
+---
+
+## 6. Knowledge (~3 мин)
+
+**Master:** `master1@demo.local` → `/knowledge`
+
+| Step | Action | Expected |
+|------|--------|----------|
+| 1 | Filters / chips | Faceted list |
+| 2 | Избранное | Favorite toggle |
+| 3 | Open article | Rich content, related products |
+
+**Supplier (30 sec):** `supplier1@demo.local` → KB editor → preview/publish.
+
+---
+
+## 7. Subscription + Scheme (~2 мин)
+
+| Account | Route | Expected |
+|---------|-------|----------|
+| `master1@demo.local` | `/profile/subscription` | Trial Premium |
+| `master4@demo.local` | Complete visit | Scheme **required** |
+| `premium1@demo.local` | Complete visit | Scheme **skip** |
+
+Show trial on master1 only if time; master4/premium1 optional backup screens.
+
+---
+
+## 8. Owner / Safety (~2 min)
+
+**Privacy:** `master1` → **Настройки** → contacts OFF → logout → `employee1` → **Клиенты** → no phone → owner ON → phone visible.
+
+**Blacklist (brief):** `client3` cannot book master1; can book master2. Owner can unblock in client card.
+
+**Recurring (brief):** `master1` → `/cosmetics/recurring` — seeded weekly agreement or show every-N-weeks from acceptance.
+
+**Chain (10 sec):** `chain1@demo.local` — branch switcher Krasnoyarsk / Novosibirsk.
+
+**Admin (10 sec):** `admin1@demo.local` — operational «Сегодня», no owner finance/settings.
+
+---
+
+## Demo reset (staging only)
+
+```bash
+docker compose down -v
+docker compose up -d --build
+docker compose --profile seed run --rm --build seed
+```
+
+**Warning:** destroys all demo data in volumes.
+
+---
+
+## If something fails
+
+1. `curl -fsS http://127.0.0.1:8090/healthz`
+2. `docker compose ps` — all healthy
+3. Re-run seed (idempotent)
+4. Browser hard refresh / incognito
+
+See `SERVER_DEPLOY_CHECKLIST.md` for server deployment.

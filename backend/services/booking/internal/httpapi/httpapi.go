@@ -65,6 +65,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/me/clients/{clientUserID}/blacklist", auth(http.HandlerFunc(a.getBlacklistStatus)))
 	mux.Handle("POST /v1/me/clients/{clientUserID}/unblock", auth(http.HandlerFunc(a.unblockClient)))
 	a.registerReportRoutes(mux, auth)
+	a.registerWorkModeRoutes(mux, auth)
 }
 
 func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +432,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		ServiceID    string    `json:"service_id"`
 		StartsAt     time.Time `json:"starts_at"`
 		OccurrenceID string    `json:"occurrence_id"`
+		DistrictID   string    `json:"district_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -455,9 +457,19 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		}
 		occurrenceID = &oid
 	}
+	var districtID *uuid.UUID
+	if strings.TrimSpace(req.DistrictID) != "" {
+		did, err := uuid.Parse(req.DistrictID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid district_id"))
+			return
+		}
+		districtID = &did
+	}
 	aapt, err := a.svc.Create(r.Context(), service.CreateInput{
 		ClientUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
 		OccurrenceID: occurrenceID, IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+		DistrictID: districtID,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -887,8 +899,18 @@ func appointmentDTO(a domain.Appointment) map[string]any {
 		"occurrence_id": occ, "booking_mode": mode,
 		"location_name": a.LocationName, "location_city": a.LocationCity,
 		"location_address": a.LocationAddress, "location_timezone": a.LocationTimezone,
+		"work_mode": a.WorkMode, "work_mode_label": domain.WorkModeLabel(a.WorkMode),
+		"work_mode_interval_id": uuidOrNil(a.WorkModeIntervalID), "chair_id": uuidOrNil(a.ChairID),
+		"onsite_city_id": uuidOrNil(a.OnsiteCityID), "onsite_district_id": uuidOrNil(a.OnsiteDistrictID),
 		"created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
+}
+
+func uuidOrNil(id *uuid.UUID) any {
+	if id == nil {
+		return nil
+	}
+	return id.String()
 }
 
 func appointmentPhotoDTO(p domain.AppointmentPhoto) map[string]any {

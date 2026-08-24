@@ -120,7 +120,14 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 			if plannerBlocksSlot(blocks, uuid.Nil, st, en) {
 				continue
 			}
-			slots = append(slots, Slot{StartsAt: st, EndsAt: en})
+			mode, ok, err := s.workModeForSlot(ctx, masterUserID, st, en, loc)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			if !ok {
+				continue
+			}
+			slots = append(slots, Slot{StartsAt: st, EndsAt: en, WorkMode: mode})
 		}
 	}
 	if slots == nil {
@@ -442,6 +449,7 @@ func (s *Service) DeleteScheduleException(ctx context.Context, masterUserID uuid
 type Slot struct {
 	StartsAt time.Time `json:"starts_at"`
 	EndsAt   time.Time `json:"ends_at"`
+	WorkMode string    `json:"work_mode,omitempty"`
 }
 
 type CreateInput struct {
@@ -451,6 +459,7 @@ type CreateInput struct {
 	StartsAt       time.Time
 	OccurrenceID   *uuid.UUID
 	IdempotencyKey string
+	DistrictID     *uuid.UUID
 }
 
 type masterPayload struct {
@@ -648,6 +657,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		OccurrenceID: occurrenceID, BookingMode: bookingMode,
 		LocationName: locName, LocationCity: locCity, LocationAddress: locAddr, LocationTimezone: locTZ,
 		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.attachWorkModeSnapshot(ctx, &a, in.DistrictID); err != nil {
+		if bookedOccurrence {
+			_ = s.releaseOccurrence(ctx, *occurrenceID)
+		}
+		return nil, err
 	}
 	if err := s.store.CreateAppointment(ctx, a); err != nil {
 		if bookedOccurrence {

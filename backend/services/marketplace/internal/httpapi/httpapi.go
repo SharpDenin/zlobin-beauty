@@ -81,14 +81,30 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	case "1", "true", "yes":
 		includeOtherCities = true
 	}
-	items, err := a.svc.Search(r.Context(), city, q, serviceQ, priceMin, priceMax, availableOn, includeOtherCities)
+	var districtID *uuid.UUID
+	if v := strings.TrimSpace(r.URL.Query().Get("district_id")); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid district_id"))
+			return
+		}
+		districtID = &id
+	}
+	hits, err := a.svc.Search(r.Context(), city, q, serviceQ, priceMin, priceMax, availableOn, includeOtherCities, districtID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, m := range items {
-		out = append(out, masterDTO(m))
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		dto := masterDTO(h.Master)
+		if h.Onsite != nil {
+			dto["onsite_match"] = map[string]any{
+				"city": h.Onsite.City, "districts": h.Onsite.Districts,
+				"starts_at": h.Onsite.StartsAt, "ends_at": h.Onsite.EndsAt, "badge": h.Onsite.Badge,
+			}
+		}
+		out = append(out, dto)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

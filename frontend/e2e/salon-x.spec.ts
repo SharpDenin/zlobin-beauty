@@ -1940,4 +1940,146 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByTestId('dispute-submit').click()
     await expect(page.getByTestId('dispute-success')).toContainText(/уже зарегистрировано/i)
   })
+
+  test('phase3 A multiple work modes appear on calendar and reject overlap', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const master = await apiLogin('master1@demo.local')
+    const headers = { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' }
+    const orgsRes = await fetch(`${api}/v1/organizations/mine`, { headers })
+    expect(orgsRes.ok, await orgsRes.clone().text()).toBeTruthy()
+    const orgs = await orgsRes.json() as { items: Array<{ organization: { id: string }; branches: Array<{ id: string }> }> }
+    const orgId = orgs.items[0].organization.id
+    const branchId = orgs.items[0].branches[0].id
+    const day = new Date(Date.now() + 12 * 86400000).toISOString().slice(0, 10)
+    const chairRes = await fetch(`${api}/v1/chairs`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ organization_id: orgId, branch_id: branchId, name: `E2E chair ${Date.now()}`, listed_for_rent: true, rent_note: 'тест' }),
+    })
+    expect(chairRes.status, await chairRes.clone().text()).toBe(201)
+    const chair = await chairRes.json() as { id: string }
+    const chairIv = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ mode: 'chair', chair_id: chair.id, starts_at: `${day}T10:00:00+07:00`, ends_at: `${day}T14:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(chairIv.status, await chairIv.clone().text()).toBe(201)
+    const overlap = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ mode: 'onsite', city_id: '11111111-1111-4111-8111-111111111001', district_ids: ['11111111-1111-4111-8111-111111111011'], starts_at: `${day}T13:00:00+07:00`, ends_at: `${day}T18:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(overlap.status).toBe(409)
+    const onsite = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ mode: 'onsite', city_id: '11111111-1111-4111-8111-111111111001', district_ids: ['11111111-1111-4111-8111-111111111011'], starts_at: `${day}T15:00:00+07:00`, ends_at: `${day}T20:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(onsite.status, await onsite.clone().text()).toBe(201)
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/calendar')
+    await page.getByRole('button', { name: 'Месяц' }).click()
+    const target = new Date(`${day}T12:00:00+07:00`)
+    const now = new Date()
+    const monthsAhead = (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth())
+    for (let i = 0; i < monthsAhead; i++) {
+      await page.locator('.fc-next-button').click()
+    }
+    await expect(page.getByText('В салоне').first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Выезд').first()).toBeVisible()
+  })
+
+  test('phase3 B onsite search matches district and date only', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const master = await apiLogin('master1@demo.local')
+    const headers = { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' }
+    const day = new Date(Date.now() + 13 * 86400000).toISOString().slice(0, 10)
+    const created = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        mode: 'onsite',
+        city_id: '11111111-1111-4111-8111-111111111001',
+        district_ids: ['11111111-1111-4111-8111-111111111011'],
+        starts_at: `${day}T12:00:00+07:00`,
+        ends_at: `${day}T20:00:00+07:00`,
+        timezone: 'Asia/Krasnoyarsk',
+      }),
+    })
+    expect(created.status, await created.clone().text()).toBe(201)
+    const hit = await fetch(`${api}/v1/masters?city=${encodeURIComponent('Красноярск')}&district_id=11111111-1111-4111-8111-111111111011&available_on=${day}`)
+    expect(hit.ok).toBeTruthy()
+    const hitBody = await hit.json() as { items: Array<{ user_id: string; onsite_match?: { badge: string } }> }
+    expect(hitBody.items.some((m) => m.onsite_match?.badge)).toBeTruthy()
+    const missDistrict = await fetch(`${api}/v1/masters?city=${encodeURIComponent('Красноярск')}&district_id=11111111-1111-4111-8111-111111111014&available_on=${day}`)
+    const missBody = await missDistrict.json() as { items: Array<{ onsite_match?: unknown }> }
+    expect(missBody.items.every((m) => !m.onsite_match)).toBeTruthy()
+    const otherDay = new Date(Date.now() + 20 * 86400000).toISOString().slice(0, 10)
+    const missDay = await fetch(`${api}/v1/masters?city=${encodeURIComponent('Красноярск')}&district_id=11111111-1111-4111-8111-111111111011&available_on=${otherDay}`)
+    const missDayBody = await missDay.json() as { items: Array<{ onsite_match?: unknown }> }
+    expect(missDayBody.items.every((m) => !m.onsite_match)).toBeTruthy()
+    await loginUI(page, 'client1@demo.local')
+    await page.goto('/search')
+    await page.locator('#city').fill('Красноярск')
+    await page.locator('#available_on').fill(day)
+    await page.locator('#district_id').selectOption('11111111-1111-4111-8111-111111111011')
+    await page.getByRole('button', { name: 'Искать' }).click()
+    await expect(page.getByTestId('onsite-badge').first()).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('phase3 C chair rental then work interval for renter only', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const owner = await apiLogin('master1@demo.local')
+    const renter = await apiLogin('master2@demo.local')
+    const employee = await apiLogin('employee1@demo.local')
+    const ownerH = { Authorization: `Bearer ${owner.access_token}`, 'Content-Type': 'application/json' }
+    const renterH = { Authorization: `Bearer ${renter.access_token}`, 'Content-Type': 'application/json' }
+    const empH = { Authorization: `Bearer ${employee.access_token}`, 'Content-Type': 'application/json' }
+    const orgsRes = await fetch(`${api}/v1/organizations/mine`, { headers: ownerH })
+    const orgs = await orgsRes.json() as { items: Array<{ organization: { id: string }; branches: Array<{ id: string }> }> }
+    const orgId = orgs.items[0].organization.id
+    const branchId = orgs.items[0].branches[0].id
+    const chairRes = await fetch(`${api}/v1/chairs`, {
+      method: 'POST', headers: ownerH,
+      body: JSON.stringify({ organization_id: orgId, branch_id: branchId, name: `Rent ${Date.now()}`, listed_for_rent: true }),
+    })
+    expect(chairRes.status, await chairRes.clone().text()).toBe(201)
+    const chair = await chairRes.json() as { id: string }
+    const dayAt = (offset: number) => new Date(Date.now() + (110 + offset) * 86400000).toISOString().slice(0, 10)
+    const steal = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers: renterH,
+      body: JSON.stringify({ mode: 'chair', chair_id: chair.id, starts_at: `${dayAt(0)}T10:00:00+07:00`, ends_at: `${dayAt(0)}T18:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(steal.status).toBe(403)
+    const staffOk = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers: empH,
+      body: JSON.stringify({ mode: 'chair', chair_id: chair.id, starts_at: `${dayAt(1)}T10:00:00+07:00`, ends_at: `${dayAt(1)}T12:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(staffOk.status, await staffOk.clone().text()).toBe(201)
+    const reqLease = await fetch(`${api}/v1/chairs/${chair.id}/leases`, {
+      method: 'POST', headers: renterH,
+      body: JSON.stringify({ starts_at: `${dayAt(3)}T00:00:00+07:00`, ends_at: `${dayAt(10)}T00:00:00+07:00` }),
+    })
+    expect(reqLease.status, await reqLease.clone().text()).toBe(201)
+    const lease = await reqLease.json() as { id: string }
+    const approve = await fetch(`${api}/v1/chair-leases/${lease.id}/approve`, { method: 'POST', headers: ownerH })
+    expect(approve.status, await approve.clone().text()).toBe(200)
+    const use = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers: renterH,
+      body: JSON.stringify({ mode: 'chair', chair_id: chair.id, starts_at: `${dayAt(4)}T10:00:00+07:00`, ends_at: `${dayAt(4)}T18:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(use.status, await use.clone().text()).toBe(201)
+    const afterLease = await fetch(`${api}/v1/me/work-mode-intervals`, {
+      method: 'POST', headers: renterH,
+      body: JSON.stringify({ mode: 'chair', chair_id: chair.id, starts_at: `${dayAt(40)}T10:00:00+07:00`, ends_at: `${dayAt(40)}T18:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),
+    })
+    expect(afterLease.status).toBe(403)
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/salon/settings')
+    await expect(page.getByTestId('chair-admin')).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('phase3 D work_type and profession types stay independent', async () => {
+    const master = await apiLogin('master1@demo.local')
+    const res = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(res.ok).toBeTruthy()
+    const body = await res.json() as { master?: { work_type?: string; profession_types?: unknown[] } }
+    expect(body.master?.work_type).toBeTruthy()
+    expect(Array.isArray(body.master?.profession_types)).toBeTruthy()
+  })
 })

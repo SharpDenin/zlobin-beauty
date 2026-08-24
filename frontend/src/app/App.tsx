@@ -41,6 +41,8 @@ import { SupplierRepDetailPage } from '@/pages/SupplierRepDetailPage'
 import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
 import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
+import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
+import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
@@ -114,6 +116,8 @@ export function App() {
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
+                  <Route path="/schedule" element={<WorkSchedulePage />} />
+                  <Route path="/chairs" element={<ChairMarketplacePage />} />
                   <Route path="/clients" element={<ClientsPage />} />
                   <Route path="/services" element={<ServicesPage />} />
                   <Route path="/services/:id" element={<ServicesPage />} />

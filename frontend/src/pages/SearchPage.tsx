@@ -5,6 +5,7 @@ import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { Hint } from '@/shared/ui/Hint'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
+import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
 
 type Master = {
   id: string
@@ -15,6 +16,7 @@ type Master = {
   profession_types?: { id: string; slug: string; name: string }[]
   rating_avg: number
   rating_count: number
+  onsite_match?: { city: string; districts: string[]; badge: string }
 }
 
 type Filters = {
@@ -25,6 +27,7 @@ type Filters = {
   price_max: string
   available_on: string
   include_other_cities: boolean
+  district_id: string
 }
 
 const DEFAULT_CITY = 'Красноярск'
@@ -39,6 +42,7 @@ function buildMastersUrl(f: Filters): string {
   if (minRub !== null && Number.isFinite(minRub)) params.set('price_min', String(Math.round(minRub * 100)))
   if (maxRub !== null && Number.isFinite(maxRub)) params.set('price_max', String(Math.round(maxRub * 100)))
   if (f.available_on) params.set('available_on', f.available_on)
+  if (f.district_id) params.set('district_id', f.district_id)
   if (f.include_other_cities) params.set('include_other_cities', 'true')
   return `/v1/masters?${params.toString()}`
 }
@@ -52,6 +56,7 @@ export function SearchPage() {
   const [priceMin, setPriceMin] = useState('')
   const [priceMax, setPriceMax] = useState('')
   const [availableOn, setAvailableOn] = useState('')
+  const [districtId, setDistrictId] = useState('')
   const [includeOtherCities, setIncludeOtherCities] = useState(false)
   const [submitted, setSubmitted] = useState<Filters>({
     city: defaultCity,
@@ -61,6 +66,7 @@ export function SearchPage() {
     price_max: '',
     available_on: '',
     include_other_cities: false,
+    district_id: '',
   })
 
   useEffect(() => {
@@ -74,6 +80,16 @@ export function SearchPage() {
   const query = useQuery({
     queryKey: ['masters', submitted],
     queryFn: () => apiRequest<{ items: Master[] }>(buildMastersUrl(submitted)),
+  })
+  const cities = useQuery({
+    queryKey: ['geo-cities'],
+    queryFn: () => apiRequest<{ items: GeoCity[] }>('/v1/geo/cities'),
+  })
+  const cityId = cities.data?.items.find((c) => c.name.toLowerCase() === city.trim().toLowerCase())?.id
+  const districts = useQuery({
+    queryKey: ['geo-districts', cityId],
+    queryFn: () => apiRequest<{ items: GeoDistrict[] }>(`/v1/geo/cities/${cityId}/districts`),
+    enabled: Boolean(cityId),
   })
 
   const selectedCity = submitted.city.trim().toLowerCase()
@@ -93,6 +109,7 @@ export function SearchPage() {
             price_max: priceMax.trim(),
             available_on: availableOn,
             include_other_cities: includeOtherCities,
+            district_id: districtId,
           })
         }}
       >
@@ -120,6 +137,17 @@ export function SearchPage() {
           <label htmlFor="available_on">Свободен на дату</label>
           <input id="available_on" type="date" value={availableOn} onChange={(e) => setAvailableOn(e.target.value)} />
         </div>
+        {!!districts.data?.items.length && (
+          <div className="field">
+            <label htmlFor="district_id">Район</label>
+            <select id="district_id" value={districtId} onChange={(e) => setDistrictId(e.target.value)}>
+              <option value="">Любой район</option>
+              {districts.data.items.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="field switch-field">
           <label className="switch" htmlFor="include_other_cities">
             <input
@@ -151,6 +179,9 @@ export function SearchPage() {
               </div>
               <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
               <p className="muted">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</p>
+              {m.onsite_match && (
+                <p className="badge badge-success" data-testid="onsite-badge">{m.onsite_match.badge || 'Выезд в вашем районе'}</p>
+              )}
             </Link>
           )
         })}

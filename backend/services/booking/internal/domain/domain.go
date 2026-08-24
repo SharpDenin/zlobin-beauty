@@ -90,6 +90,11 @@ type Appointment struct {
 	LocationCity       string
 	LocationAddress    string
 	LocationTimezone   string
+	WorkMode           string
+	WorkModeIntervalID *uuid.UUID
+	ChairID            *uuid.UUID
+	OnsiteCityID       *uuid.UUID
+	OnsiteDistrictID   *uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }

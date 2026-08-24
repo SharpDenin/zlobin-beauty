@@ -175,6 +175,20 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     onSuccess: () => qc.invalidateQueries({ queryKey: ['me-dashboard'] }),
   })
 
+  const workModes = useQuery({
+    queryKey: ['calendar-work-modes', ownerMode, orgID, range.from, range.to, masterFilter],
+    queryFn: () => {
+      const qs = new URLSearchParams({ from: range.from, to: range.to })
+      if (ownerMode && orgID) qs.set('organization_id', orgID)
+      if (masterFilter) qs.set('master_user_id', masterFilter)
+      return apiRequest<{ items: Array<{ id: string; mode: string; mode_label: string; starts_at: string; ends_at: string; location_label?: string; master_user_id: string }> }>(
+        `/v1/calendar/work-mode-intervals?${qs.toString()}`,
+        { token: accessToken },
+      )
+    },
+    enabled: Boolean(accessToken),
+  })
+
   const appointments = useQuery({
     queryKey: ['calendar-appointments', ownerMode, orgID, range.from, range.to],
     queryFn: () => ownerMode
@@ -369,10 +383,29 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         })
       }
     }
+    for (const w of workModes.data?.items ?? []) {
+      if (masterFilter && w.master_user_id && w.master_user_id !== masterFilter) continue
+      out.push({
+        id: `mode:${w.id}`,
+        title: `${w.mode_label}${w.location_label ? ` · ${w.location_label}` : ''}`,
+        start: w.starts_at,
+        end: w.ends_at,
+        backgroundColor: tokens.color.primaryMuted,
+        borderColor: tokens.color.primary,
+        editable: false,
+        classNames: ['is-work-mode'],
+        extendedProps: {
+          kind: 'work-mode',
+          category: w.mode,
+          categoryLabel: w.mode_label,
+          location: w.location_label,
+        },
+      })
+    }
     return out
   // category reads the memoized palette and is intentionally resolved for each event.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, hidden, masterFilter, branchFilter, masters.data, palette])
+  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, workModes.data, hidden, masterFilter, branchFilter, masters.data, palette])
 
   const createBlock = useMutation({
     mutationFn: () => apiRequest('/v1/planner/blocks', {
@@ -474,6 +507,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   function onEventClick(info: EventClickArg) {
     if (info.event.display === 'background') return
     const p = info.event.extendedProps
+    if (p.kind === 'work-mode') return
     const sel: CalendarSelection = {
       id: info.event.id,
       kind: p.kind,

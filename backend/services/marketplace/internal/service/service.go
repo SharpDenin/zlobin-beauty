@@ -246,15 +246,31 @@ func (s *Service) PopularServices(ctx context.Context) ([]domain.ServiceItem, er
 	return out, nil
 }
 
-func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time, includeOtherCities bool) ([]domain.MasterProfile, error) {
+type SearchHit struct {
+	Master domain.MasterProfile
+	Onsite *OnsiteMatch
+}
+
+type OnsiteMatch struct {
+	City      string
+	Districts []string
+	StartsAt  time.Time
+	EndsAt    time.Time
+	Badge     string
+}
+
+func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time, includeOtherCities bool, districtID *uuid.UUID) ([]SearchHit, error) {
+	if districtID != nil && availableOn == nil {
+		return nil, apperr.Validation("available_on is required when district_id is set")
+	}
 	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), strings.TrimSpace(service), priceMin, priceMax, includeOtherCities, 50)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
 	if items == nil {
-		return []domain.MasterProfile{}, nil
+		return []SearchHit{}, nil
 	}
-	out := make([]domain.MasterProfile, 0, len(items))
+	filtered := make([]domain.MasterProfile, 0, len(items))
 	for _, m := range items {
 		visible, err := s.isMasterPubliclyVisible(ctx, m)
 		if err != nil {
@@ -263,7 +279,7 @@ func (s *Service) Search(ctx context.Context, city, q, service string, priceMin,
 		if !visible {
 			continue
 		}
-		if availableOn != nil && s.bookingURL != "" {
+		if availableOn != nil && s.bookingURL != "" && districtID == nil {
 			ok, err := s.hasAnySlotOn(ctx, m.UserID, *availableOn)
 			if err != nil {
 				return nil, err
@@ -272,14 +288,87 @@ func (s *Service) Search(ctx context.Context, city, q, service string, priceMin,
 				continue
 			}
 		}
-		out = append(out, m)
+		filtered = append(filtered, m)
 	}
-	ptrs := make([]*domain.MasterProfile, 0, len(out))
-	for i := range out {
-		ptrs = append(ptrs, &out[i])
+	ptrs := make([]*domain.MasterProfile, 0, len(filtered))
+	for i := range filtered {
+		ptrs = append(ptrs, &filtered[i])
 	}
 	if err := s.attachProfessionTypes(ctx, ptrs...); err != nil {
 		return nil, err
+	}
+	matches := map[uuid.UUID]OnsiteMatch{}
+	if districtID != nil && availableOn != nil {
+		got, err := s.fetchOnsiteMatches(ctx, strings.TrimSpace(city), *districtID, *availableOn)
+		if err != nil {
+			return nil, err
+		}
+		matches = got
+	}
+	out := make([]SearchHit, 0, len(filtered))
+	for _, m := range filtered {
+		hit := SearchHit{Master: m}
+		if districtID != nil {
+			match, ok := matches[m.UserID]
+			if !ok {
+				continue
+			}
+			hit.Onsite = &match
+		}
+		out = append(out, hit)
+	}
+	return out, nil
+}
+
+func (s *Service) fetchOnsiteMatches(ctx context.Context, city string, districtID uuid.UUID, day time.Time) (map[uuid.UUID]OnsiteMatch, error) {
+	out := map[uuid.UUID]OnsiteMatch{}
+	if s.bookingURL == "" {
+		return out, nil
+	}
+	u := fmt.Sprintf("%s/v1/internal/onsite-matches?city=%s&district_id=%s&date=%s",
+		s.bookingURL, url.QueryEscape(city), districtID.String(), day.Format("2006-01-02"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if s.internalToken != "" {
+		req.Header.Set("X-Internal-Token", s.internalToken)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return out, nil
+	}
+	var parsed struct {
+		Items []struct {
+			MasterUserID string    `json:"master_user_id"`
+			StartsAt     time.Time `json:"starts_at"`
+			EndsAt       time.Time `json:"ends_at"`
+			City         string    `json:"city"`
+			Districts    []string  `json:"districts"`
+			Badge        string    `json:"badge"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return out, nil
+	}
+	for _, it := range parsed.Items {
+		id, err := uuid.Parse(it.MasterUserID)
+		if err != nil {
+			continue
+		}
+		badge := it.Badge
+		if badge == "" {
+			badge = "Выезд в вашем районе"
+		}
+		if _, exists := out[id]; exists {
+			continue
+		}
+		out[id] = OnsiteMatch{City: it.City, Districts: it.Districts, StartsAt: it.StartsAt, EndsAt: it.EndsAt, Badge: badge}
 	}
 	return out, nil
 }

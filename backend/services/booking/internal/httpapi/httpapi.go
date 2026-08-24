@@ -722,6 +722,7 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		Technique      string `json:"technique"`
 		Notes          string `json:"notes"`
 		Skipped        bool   `json:"skipped"`
+		OmitFormula    bool   `json:"omit_formula"`
 		CategoryFields any    `json:"category_fields"`
 		Components     []struct {
 			Name       string `json:"name"`
@@ -733,7 +734,7 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		} `json:"components"`
 	}
 	_ = httpx.DecodeJSON(r, &req)
-	scheme := &service.VisitSchemeInput{Technique: req.Technique, Notes: req.Notes, Skipped: req.Skipped}
+	scheme := &service.VisitSchemeInput{Technique: req.Technique, Notes: req.Notes, Skipped: req.Skipped, OmitFormula: req.OmitFormula}
 	if req.CategoryFields != nil {
 		if b, err := json.Marshal(req.CategoryFields); err == nil {
 			scheme.CategoryFields = b
@@ -764,7 +765,7 @@ func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	if item == nil {
+	if item == nil || !item.Exists {
 		httpx.JSON(w, http.StatusOK, map[string]any{"appointment_id": id.String(), "exists": false})
 		return
 	}
@@ -774,10 +775,15 @@ func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
 			"name": c.Name, "brand": c.Brand, "qty": c.Qty, "unit": c.Unit, "proportion": c.Proportion, "notes": c.Notes,
 		})
 	}
+	fields := any(item.CategoryFields)
+	if len(item.CategoryFields) == 0 {
+		fields = map[string]any{}
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"appointment_id": item.AppointmentID.String(), "exists": true,
 		"technique": item.Technique, "notes": item.Notes, "skipped": item.Skipped,
-		"category_fields": item.CategoryFields, "components": comps,
+		"omit_formula": item.OmitFormula, "details_redacted": item.DetailsRedacted, "formula_redacted": item.FormulaRedacted,
+		"category_fields": fields, "components": comps,
 		"template_id": item.TemplateID, "template_version": item.TemplateVersion,
 	})
 }

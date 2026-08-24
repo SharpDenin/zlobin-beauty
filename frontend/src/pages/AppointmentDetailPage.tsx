@@ -13,6 +13,8 @@ import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/ServiceSchemeForm'
+import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
+import { hasColorFormulaInput } from '@/shared/lib/visit-visibility'
 
 type Appointment = {
   id: string
@@ -55,6 +57,7 @@ export function AppointmentDetailPage() {
   const [proportion, setProportion] = useState('')
   const [skipScheme, setSkipScheme] = useState(false)
   const [skipConfirmed, setSkipConfirmed] = useState(false)
+  const [omitFormula, setOmitFormula] = useState(false)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -86,6 +89,7 @@ export function AppointmentDetailPage() {
     enabled: Boolean(accessToken),
   })
   const canSkipScheme = Boolean(subscription.data?.features?.includes('skip_service_scheme'))
+  const isPremium = subscription.data?.effective_plan === 'premium'
   const [photoPending, setPhotoPending] = useState(false)
 
   const deletePhoto = useMutation({
@@ -136,6 +140,8 @@ export function AppointmentDetailPage() {
   const canNoShow = isMaster && a.status === 'confirmed'
   const canReview = isClient && a.status === 'completed'
   const canUploadPhotos = isMaster && ['confirmed', 'in_progress', 'completed'].includes(a.status)
+  const hasFormula = hasColorFormulaInput(schemeFields, productName)
+  const canOmitFormula = isPremium && hasFormula
 
   async function attachVisitPhoto(mediaId: string | null, kind: 'before' | 'after') {
     if (!mediaId) {
@@ -185,6 +191,13 @@ export function AppointmentDetailPage() {
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
 
+      {a.status === 'completed' && (
+        <section className="card stack">
+          <h2>Схема услуги</h2>
+          <VisitSchemeSummary appointmentId={a.id} accessToken={accessToken} />
+        </section>
+      )}
+
       <section className="card stack">
         <h2>Действия</h2>
         <div className="row">
@@ -201,29 +214,28 @@ export function AppointmentDetailPage() {
                   ? 'Можно заполнить схему или не раскрывать её — потребуется подтверждение.'
                   : 'На Free схема обязательна: техника и хотя бы один продукт или материал.'}
               </p>
-              {!skipScheme && (
-                <ServiceSchemeForm
-                  appointmentId={a.id}
-                  accessToken={accessToken}
-                  disabled={act.isPending}
-                  fieldValues={schemeFields}
-                  onFieldChange={(key, value) => setSchemeFields((prev) => ({ ...prev, [key]: value }))}
-                  technique={technique}
-                  onTechniqueChange={setTechnique}
-                  notes={notes}
-                  onNotesChange={setNotes}
-                  productName={productName}
-                  onProductNameChange={setProductName}
-                  productQty={productQty}
-                  onProductQtyChange={setProductQty}
-                  proportion={proportion}
-                  onProportionChange={setProportion}
-                />
-              )}
+              <ServiceSchemeForm
+                appointmentId={a.id}
+                accessToken={accessToken}
+                disabled={act.isPending}
+                fieldValues={schemeFields}
+                onFieldChange={(key, value) => setSchemeFields((prev) => ({ ...prev, [key]: value }))}
+                technique={technique}
+                onTechniqueChange={setTechnique}
+                notes={notes}
+                onNotesChange={setNotes}
+                productName={productName}
+                onProductNameChange={setProductName}
+                productQty={productQty}
+                onProductQtyChange={setProductQty}
+                proportion={proportion}
+                onProportionChange={setProportion}
+              />
               {canSkipScheme && (
                 <label className="field-check">
                   <input
                     type="checkbox"
+                    data-testid="skip-scheme"
                     checked={skipScheme}
                     onChange={(e) => {
                       setSkipScheme(e.target.checked)
@@ -235,12 +247,23 @@ export function AppointmentDetailPage() {
               )}
               {skipScheme && canSkipScheme && (
                 <div className="card stack-sm" data-testid="scheme-skip-confirm">
-                  <p>Схема не будет сохранена. Эта возможность доступна в Premium.</p>
+                  <p>Схема не будет раскрыта другим мастерам. Эта возможность доступна в Premium.</p>
                   <label className="field-check">
                     <input type="checkbox" checked={skipConfirmed} onChange={(e) => setSkipConfirmed(e.target.checked)} />
                     <span>Подтверждаю, что схема не раскрывается</span>
                   </label>
                 </div>
+              )}
+              {canOmitFormula && (
+                <label className="field-check">
+                  <input
+                    type="checkbox"
+                    data-testid="omit-formula"
+                    checked={omitFormula}
+                    onChange={(e) => setOmitFormula(e.target.checked)}
+                  />
+                  <span>Не указывать формулу</span>
+                </label>
               )}
               <button
                 className="btn btn-primary"
@@ -252,6 +275,7 @@ export function AppointmentDetailPage() {
                     path: `/v1/appointments/${a.id}/complete`,
                     body: {
                       skipped: skipScheme,
+                      omit_formula: canOmitFormula && omitFormula,
                       technique,
                       notes,
                       category_fields: buildCategoryFields(undefined, schemeFields, technique),

@@ -271,6 +271,157 @@ async function fillColoringScheme(page: Page) {
   await page.locator('#scheme-product').fill('Majirel 7.1')
 }
 
+type AuthMe = { id?: string; user?: { id?: string } }
+type AppointmentRow = { id: string; status: string; master_user_id: string; client_user_id?: string; service_name?: string }
+type SchemeBody = {
+  exists?: boolean
+  skipped?: boolean
+  omit_formula?: boolean
+  details_redacted?: boolean
+  formula_redacted?: boolean
+  technique?: string
+  notes?: string
+  category_fields?: Record<string, unknown> | string
+  components?: Array<{ name?: string }>
+}
+
+const PHASE2_FORMULA = {
+  technique: 'Балаяж E2E',
+  notes: 'phase2 omit_formula',
+  skipped: false,
+  omit_formula: true,
+  category_fields: {
+    technique: 'Балаяж E2E',
+    dye: 'Majirel 7.1',
+    proportions: '1:1.5',
+    oxidizer: '6%',
+  },
+  components: [{ name: 'Majirel 7.1', qty: '30', unit: 'г', proportion: '1:1.5' }],
+}
+
+async function authUserId(token: string) {
+  const res = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+  expect(res.ok).toBeTruthy()
+  const body = await res.json() as AuthMe
+  const id = body.id ?? body.user?.id
+  expect(id).toBeTruthy()
+  return id!
+}
+
+async function fetchScheme(token: string, appointmentId: string) {
+  const res = await fetch(`${api}/v1/appointments/${appointmentId}/scheme`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const text = await res.text()
+  let body: SchemeBody = {}
+  try {
+    body = JSON.parse(text) as SchemeBody
+  } catch {
+    body = {}
+  }
+  return { status: res.status, body, text }
+}
+
+function schemeCategoryFields(body: SchemeBody): Record<string, unknown> {
+  const raw = body.category_fields
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    } catch { /* ignore */ }
+  }
+  return {}
+}
+
+async function completeAppointmentApi(token: string, appointmentId: string, payload: Record<string, unknown>) {
+  const res = await fetch(`${api}/v1/appointments/${appointmentId}/complete`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const text = await res.text()
+  expect(res.ok, text).toBeTruthy()
+}
+
+async function ensureInProgressForClient(masterEmail: string, clientEmail: string, serviceNameContains: string) {
+  const master = await apiLogin(masterEmail)
+  const client = await apiLogin(clientEmail)
+  const masterId = await authUserId(master.access_token)
+  const clientId = await authUserId(client.access_token)
+
+  const list = await fetch(`${api}/v1/appointments/mine?role=master`, {
+    headers: { Authorization: `Bearer ${master.access_token}` },
+  })
+  expect(list.ok).toBeTruthy()
+  const data = await list.json() as { items?: AppointmentRow[] }
+  const existing = (data.items ?? []).find(
+    (a) => a.status === 'in_progress' && a.master_user_id === masterId && a.client_user_id === clientId,
+  )
+  if (existing) return { master, client, masterId, clientId, appt: existing }
+
+  const profile = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+  expect(profile.ok).toBeTruthy()
+  const prof = await profile.json() as {
+    master?: { id: string }
+    services?: Array<{ id: string; name: string; duration_minutes?: number }>
+  }
+  const profileId = prof.master?.id
+  expect(profileId).toBeTruthy()
+  const service = (prof.services ?? []).find((s) => s.name.toLowerCase().includes(serviceNameContains.toLowerCase()))
+  expect(service?.id).toBeTruthy()
+
+  let slotStarts: string | undefined
+  for (let d = 1; d <= 14 && !slotStarts; d++) {
+    const day = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10)
+    const slotsRes = await fetch(`${api}/v1/masters/${masterId}/slots?date=${day}&duration_minutes=${service!.duration_minutes ?? 120}`)
+    if (!slotsRes.ok) continue
+    const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+    slotStarts = slots.items?.[0]?.starts_at
+  }
+  expect(slotStarts).toBeTruthy()
+
+  const create = await fetch(`${api}/v1/appointments`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ master_id: profileId, service_id: service!.id, starts_at: slotStarts }),
+  })
+  if (!create.ok) {
+    throw new Error(`create appointment failed ${create.status}: ${await create.text()}`)
+  }
+  const appt = await create.json() as { id: string; status: string }
+  if (appt.status === 'pending_confirmation' || appt.status === 'pending') {
+    await fetch(`${api}/v1/appointments/${appt.id}/confirm`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+  }
+  const started = await fetch(`${api}/v1/appointments/${appt.id}/start`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+  expect(started.ok, await started.text()).toBeTruthy()
+  return { master, client, masterId, clientId, appt: { id: appt.id, status: 'in_progress', master_user_id: masterId, client_user_id: clientId } }
+}
+
+async function ensureCompletedWithClient(masterEmail: string, clientEmail: string, serviceNameContains: string) {
+  const master = await apiLogin(masterEmail)
+  const client = await apiLogin(clientEmail)
+  const masterId = await authUserId(master.access_token)
+  const clientId = await authUserId(client.access_token)
+  const list = await fetch(`${api}/v1/appointments/mine?role=master`, {
+    headers: { Authorization: `Bearer ${master.access_token}` },
+  })
+  expect(list.ok).toBeTruthy()
+  const data = await list.json() as { items?: AppointmentRow[] }
+  const done = (data.items ?? []).find((a) => a.status === 'completed' && a.client_user_id === clientId)
+  if (done) return { master, client, masterId, clientId, appt: done }
+
+  const started = await ensureInProgressForClient(masterEmail, clientEmail, serviceNameContains)
+  await completeAppointmentApi(started.master.access_token, started.appt.id, {
+    technique: 'E2E peer access',
+    skipped: false,
+    omit_formula: false,
+    category_fields: { dye: 'Majirel 7.1', oxidizer: '6%', proportions: '1:1.5' },
+    components: [{ name: 'Majirel 7.1', qty: '30', unit: 'г' }],
+  })
+  return { master: started.master, client: started.client, masterId: started.masterId, clientId: started.clientId, appt: started.appt }
+}
+
 test.describe('Salon-X P0 flows (seeded stack)', () => {
   test.beforeEach(async () => {
     await requireApi()
@@ -1105,7 +1256,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
 
     await loginUI(page, 'premium1@demo.local')
     await page.goto(`/appointments/${appt.id}`)
-    await page.getByLabel('Не раскрывать схему').check()
+    await page.getByTestId('skip-scheme').check()
     await expect(page.getByTestId('scheme-skip-confirm')).toBeVisible()
     await page.getByText('Подтверждаю, что схема не раскрывается').click()
     await page.getByTestId('complete-appointment').click()
@@ -1675,5 +1826,118 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     })
     expect(blocked.status).toBe(403)
     await page.goto(`/masters/${profBody.master!.id}`)
+  })
+
+  test('phase2 A premium omit_formula is independent of skip_service_scheme', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await ensureCompletedWithClient('master4@demo.local', 'client1@demo.local', 'Phase4')
+    const { appt, master } = await ensureInProgressForClient('premium1@demo.local', 'client1@demo.local', 'Phase4 Premium')
+
+    await loginUI(page, 'premium1@demo.local')
+    await page.goto(`/appointments/${appt.id}`)
+    await fillColoringScheme(page)
+    await expect(page.getByTestId('omit-formula')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('skip-scheme')).not.toBeChecked()
+    await page.getByTestId('omit-formula').check()
+    await expect(page.getByTestId('skip-scheme')).not.toBeChecked()
+    await page.getByTestId('complete-appointment').click()
+    await expect(page.locator('.badge').filter({ hasText: /заверш/i })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('scheme-summary')).toBeVisible()
+    await expect(page.getByTestId('scheme-withheld')).toHaveCount(0)
+    await expect(page.getByTestId('formula-withheld')).toHaveCount(0)
+
+    const owner = await fetchScheme(master.access_token, appt.id)
+    expect(owner.status, owner.text).toBe(200)
+    expect(owner.body.exists).toBe(true)
+    expect(owner.body.skipped).toBe(false)
+    expect(owner.body.omit_formula).toBe(true)
+    expect(owner.body.details_redacted).toBe(false)
+    expect(owner.body.formula_redacted).toBe(false)
+    expect(String(schemeCategoryFields(owner.body).dye ?? '')).toMatch(/Majirel/)
+    expect(owner.body.technique).toMatch(/Балаяж/)
+
+    const free = await apiLogin('master4@demo.local')
+    const peer = await fetchScheme(free.access_token, appt.id)
+    expect(peer.status, peer.text).toBe(200)
+    expect(peer.body.exists).toBe(true)
+    expect(peer.body.skipped).toBe(false)
+    expect(peer.body.omit_formula).toBe(true)
+    expect(peer.body.details_redacted).toBe(true)
+    expect(peer.body.formula_redacted).toBe(true)
+    expect(schemeCategoryFields(peer.body).dye).toBeUndefined()
+    expect(peer.body.technique ?? '').toBe('')
+    expect(peer.text).not.toMatch(/Majirel/i)
+    expect(peer.text).not.toMatch(/Балаяж/i)
+  })
+
+  test('phase2 B free master sees visit fact without technical details', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await ensureCompletedWithClient('master4@demo.local', 'client1@demo.local', 'Phase4')
+    const started = await ensureInProgressForClient('premium1@demo.local', 'client1@demo.local', 'Phase4 Premium')
+    await completeAppointmentApi(started.master.access_token, started.appt.id, PHASE2_FORMULA)
+
+    const owner = await fetchScheme(started.master.access_token, started.appt.id)
+    expect(owner.body.exists).toBe(true)
+    expect(owner.body.omit_formula).toBe(true)
+    expect(owner.body.skipped).toBe(false)
+    expect(owner.body.details_redacted).toBe(false)
+    expect(owner.body.formula_redacted).toBe(false)
+
+    const free = await apiLogin('master4@demo.local')
+    const peer = await fetchScheme(free.access_token, started.appt.id)
+    expect(peer.status, peer.text).toBe(200)
+    expect(peer.body.exists).toBe(true)
+    expect(peer.body.details_redacted).toBe(true)
+    expect(peer.body.formula_redacted).toBe(true)
+    expect(schemeCategoryFields(peer.body).dye).toBeUndefined()
+    expect(peer.body.components ?? []).toEqual([])
+    expect(peer.text).not.toMatch(/Majirel/i)
+
+    await loginUI(page, 'master4@demo.local')
+    await page.goto(`/appointments/${started.appt.id}`)
+    await expect(page.getByTestId('complete-appointment')).toHaveCount(0)
+    await expect(page.getByTestId('formula-field')).toHaveCount(0)
+  })
+
+  test('phase2 C dispute does not mutate client card', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const started = await ensureInProgressForClient('premium1@demo.local', 'client1@demo.local', 'Phase4 Premium')
+    await completeAppointmentApi(started.master.access_token, started.appt.id, {
+      ...PHASE2_FORMULA,
+      omit_formula: false,
+    })
+
+    const cardRes = await fetch(`${api}/v1/clients/appointment/${started.appt.id}`, {
+      headers: { Authorization: `Bearer ${started.master.access_token}` },
+    })
+    expect(cardRes.ok, await cardRes.clone().text()).toBeTruthy()
+    const before = await cardRes.json() as { id: string; preferences?: string; display_name?: string; phone?: string | null; email?: string | null }
+    expect(before.id).toBeTruthy()
+
+    await loginUI(page, 'premium1@demo.local')
+    await page.goto(`/clients/by-appointment/${started.appt.id}`)
+    await expect(page.getByTestId('dispute-open')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('dispute-open').click()
+    await page.getByTestId('dispute-field').selectOption('preferences')
+    await page.getByTestId('dispute-comment').fill(`E2E phase2 dispute ${Date.now()}`)
+    await page.getByTestId('dispute-submit').click()
+    await expect(page.getByTestId('dispute-success')).toBeVisible({ timeout: 15_000 })
+
+    const afterRes = await fetch(`${api}/v1/clients/id/${before.id}`, {
+      headers: { Authorization: `Bearer ${started.master.access_token}` },
+    })
+    expect(afterRes.ok).toBeTruthy()
+    const after = await afterRes.json() as { preferences?: string; display_name?: string; phone?: string | null; email?: string | null }
+    expect(after.preferences ?? '').toBe(before.preferences ?? '')
+    expect(after.display_name).toBe(before.display_name)
+    expect(after.phone ?? null).toBe(before.phone ?? null)
+    expect(after.email ?? null).toBe(before.email ?? null)
+
+    await page.getByRole('button', { name: 'Закрыть' }).click()
+    await page.getByTestId('dispute-open').click()
+    await page.getByTestId('dispute-field').selectOption('preferences')
+    await page.getByTestId('dispute-comment').fill('duplicate open')
+    await page.getByTestId('dispute-submit').click()
+    await expect(page.getByTestId('dispute-success')).toContainText(/уже зарегистрировано/i)
   })
 })

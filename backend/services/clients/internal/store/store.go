@@ -186,15 +186,15 @@ func (s *Store) CreateFormula(ctx context.Context, f domain.ColorFormula) error 
 		components = []byte("[]")
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO color_formulas(id, client_card_id, visit_id, name, brand, components, oxidizer, ratio, comment, created_by, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		f.ID, f.ClientCardID, f.VisitID, f.Name, f.Brand, components, f.Oxidizer, f.Ratio, f.Comment, f.CreatedBy, f.CreatedAt)
+INSERT INTO color_formulas(id, client_card_id, visit_id, name, brand, components, oxidizer, ratio, comment, created_by, created_at, omit_formula)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		f.ID, f.ClientCardID, f.VisitID, f.Name, f.Brand, components, f.Oxidizer, f.Ratio, f.Comment, f.CreatedBy, f.CreatedAt, f.OmitFormula)
 	return err
 }
 
 func (s *Store) ListFormulas(ctx context.Context, cardID uuid.UUID) ([]domain.ColorFormula, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id, client_card_id, visit_id, name, brand, components, oxidizer, ratio, comment, created_by, created_at
+SELECT id, client_card_id, visit_id, name, brand, components, oxidizer, ratio, comment, created_by, created_at, omit_formula
 FROM color_formulas WHERE client_card_id=$1 ORDER BY created_at DESC`, cardID)
 	if err != nil {
 		return nil, err
@@ -204,7 +204,7 @@ FROM color_formulas WHERE client_card_id=$1 ORDER BY created_at DESC`, cardID)
 	for rows.Next() {
 		var f domain.ColorFormula
 		var comps []byte
-		if err := rows.Scan(&f.ID, &f.ClientCardID, &f.VisitID, &f.Name, &f.Brand, &comps, &f.Oxidizer, &f.Ratio, &f.Comment, &f.CreatedBy, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.ClientCardID, &f.VisitID, &f.Name, &f.Brand, &comps, &f.Oxidizer, &f.Ratio, &f.Comment, &f.CreatedBy, &f.CreatedAt, &f.OmitFormula); err != nil {
 			return nil, err
 		}
 		f.Components = comps

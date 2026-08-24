@@ -63,6 +63,46 @@ type ColorFormula struct {
 	Comment      string
 	CreatedBy    uuid.UUID
 	CreatedAt    time.Time
+	OmitFormula  bool
+	Redacted     bool
+}
+
+const (
+	DisputeOpen     = "open"
+	DisputeResolved = "resolved"
+	DisputeRejected = "rejected"
+)
+
+type CardDispute struct {
+	ID             uuid.UUID
+	ClientCardID   uuid.UUID
+	ReporterUserID uuid.UUID
+	FieldKey       string
+	Comment        string
+	Status         string
+	CreatedAt      time.Time
+	ResolvedAt     *time.Time
+	ResolvedBy     *uuid.UUID
+}
+
+type DisputeEvent struct {
+	ID          uuid.UUID
+	DisputeID   uuid.UUID
+	ActorUserID uuid.UUID
+	Action      string
+	FromStatus  *string
+	ToStatus    string
+	Meta        json.RawMessage
+	CreatedAt   time.Time
+}
+
+func AllowedDisputeField(key string) bool {
+	switch key {
+	case "hair_color", "hair_condition", "preferences", "display_name", "phone", "email":
+		return true
+	default:
+		return false
+	}
 }
 
 type Consent struct {

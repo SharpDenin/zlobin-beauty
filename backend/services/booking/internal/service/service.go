@@ -807,19 +807,7 @@ func (s *Service) Start(ctx context.Context, appointmentID, actorUserID uuid.UUI
 }
 
 func (s *Service) Complete(ctx context.Context, appointmentID, actorUserID uuid.UUID) (*domain.Appointment, error) {
-	a, err := s.changeStatus(ctx, appointmentID, actorUserID, domain.StatusCompleted, "", func(a *domain.Appointment) error {
-		if a.MasterUserID != actorUserID {
-			return apperr.Forbidden("only assigned master can complete")
-		}
-		return domain.Transition(a.Status, domain.StatusCompleted)
-	})
-	if err != nil {
-		return nil, err
-	}
-	s.notifyVisitCompleted(ctx, a)
-	s.createVisitRecord(ctx, a)
-	s.consumeStockForAppointment(ctx, a, actorUserID)
-	return a, nil
+	return s.CompleteVisit(ctx, appointmentID, actorUserID, &VisitSchemeInput{})
 }
 
 func (s *Service) NoShow(ctx context.Context, appointmentID, actorUserID uuid.UUID, reason string) (*domain.Appointment, error) {

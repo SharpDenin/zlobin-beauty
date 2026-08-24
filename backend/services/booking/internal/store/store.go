@@ -190,6 +190,16 @@ func (s *Store) GetAppointment(ctx context.Context, id uuid.UUID) (*domain.Appoi
 	return a, nil
 }
 
+func (s *Store) MasterHasCompletedWithClient(ctx context.Context, masterID, clientID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM appointments
+  WHERE master_user_id=$1 AND client_user_id=$2 AND status='completed'
+)`, masterID, clientID).Scan(&ok)
+	return ok, err
+}
+
 func (s *Store) TransitionStatus(ctx context.Context, id uuid.UUID, from, to string, actor uuid.UUID, reason string, at time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

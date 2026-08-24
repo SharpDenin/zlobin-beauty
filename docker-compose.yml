@@ -171,6 +171,7 @@ services:
       MIGRATIONS_DIR: /migrations
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       ORGANIZATIONS_URL: http://organizations:8080
+      IDENTITY_URL: http://identity:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +23,24 @@ type VisitSchemeInput struct {
 	Notes          string
 	CategoryFields json.RawMessage
 	Skipped        bool
+	OmitFormula    bool
 	Components     []store.SchemeComponent
+}
+
+// VisitSchemeView is the disclosure-safe scheme payload for API responses.
+type VisitSchemeView struct {
+	AppointmentID   uuid.UUID
+	Exists          bool
+	Skipped         bool
+	OmitFormula     bool
+	DetailsRedacted bool
+	FormulaRedacted bool
+	Technique       string
+	Notes           string
+	CategoryFields  json.RawMessage
+	Components      []store.SchemeComponent
+	TemplateID      *uuid.UUID
+	TemplateVersion int
 }
 
 func (s *Service) WithIdentity(identityURL string) *Service {
@@ -159,6 +177,15 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 			return nil, apperr.Forbidden("service scheme is required on the current plan")
 		}
 	}
+	if scheme.OmitFormula {
+		snap, err := s.entitlementSnapshot(ctx, actorUserID)
+		if err != nil || !entitlement.CanOmitFormula(snap) {
+			return nil, apperr.Forbidden("omit_formula requires an active paid plan")
+		}
+		if !hasFormulaContent(scheme) {
+			return nil, apperr.Validation("omit_formula requires a color formula")
+		}
+	}
 
 	a, err := s.store.GetAppointment(ctx, appointmentID)
 	if err != nil {
@@ -197,7 +224,8 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 	}
 	stored := store.ServiceScheme{
 		AppointmentID: a.ID, Technique: strings.TrimSpace(scheme.Technique), Notes: strings.TrimSpace(scheme.Notes),
-		CategoryFields: scheme.CategoryFields, Skipped: scheme.Skipped, CreatedBy: actorUserID, Components: comps,
+		CategoryFields: scheme.CategoryFields, Skipped: scheme.Skipped, OmitFormula: scheme.OmitFormula,
+		CreatedBy: actorUserID, Components: comps,
 	}
 	if tmpl != nil {
 		id, parseErr := uuid.Parse(tmpl.ID)
@@ -206,7 +234,7 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 			stored.TemplateVersion = tmpl.Version
 		}
 	}
-	auditMeta := fmt.Sprintf(`{"skipped":%v,"entitlement":"skip_service_scheme"}`, scheme.Skipped)
+	auditMeta := fmt.Sprintf(`{"skipped":%v,"omit_formula":%v,"entitlement":"skip_service_scheme"}`, scheme.Skipped, scheme.OmitFormula)
 	if err := s.store.CompleteWithScheme(ctx, appointmentID, fromStatus, actorUserID, stored, auditMeta, now); err != nil {
 		if ae, ok := apperr.As(err); ok {
 			return nil, ae
@@ -219,19 +247,70 @@ func (s *Service) CompleteVisit(ctx context.Context, appointmentID, actorUserID 
 	s.notifyStatus(ctx, a, domain.StatusCompleted)
 	s.notifyVisitCompleted(ctx, a)
 	s.createVisitRecord(ctx, a)
+	s.persistColorFormula(ctx, a, scheme)
 	s.consumeStockForAppointment(ctx, a, actorUserID)
 	return a, nil
 }
 
-func (s *Service) GetVisitScheme(ctx context.Context, appointmentID, actor uuid.UUID) (*store.ServiceScheme, error) {
-	if _, err := s.Get(ctx, appointmentID, actor); err != nil {
+func (s *Service) GetVisitScheme(ctx context.Context, appointmentID, actor uuid.UUID) (*VisitSchemeView, error) {
+	a, err := s.authorizeSchemeViewer(ctx, appointmentID, actor)
+	if err != nil {
 		return nil, err
 	}
 	item, err := s.store.GetServiceScheme(ctx, appointmentID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return item, nil
+	view := &VisitSchemeView{AppointmentID: appointmentID}
+	if item == nil {
+		return view, nil
+	}
+	isOwner := a.MasterUserID == actor
+	isClient := a.ClientUserID == actor
+	// Salon owner/admin previously received the full stored scheme via Get().
+	// Keep that existing rule: they are not “other masters” under subscription redaction.
+	if !isOwner && !isClient && s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actor) {
+		isOwner = true
+	}
+	snap, _ := s.entitlementSnapshot(ctx, actor)
+	vis := entitlement.VisitTechnicalView(isOwner, isClient, item.Skipped, item.OmitFormula, snap.IsPremium())
+	view.Exists = true
+	view.Skipped = item.Skipped
+	view.OmitFormula = item.OmitFormula
+	view.TemplateID = item.TemplateID
+	view.TemplateVersion = item.TemplateVersion
+	view.DetailsRedacted = !vis.RevealScheme
+	view.FormulaRedacted = !vis.RevealFormula
+	if vis.RevealScheme {
+		view.Technique = item.Technique
+		view.Notes = item.Notes
+	}
+	view.CategoryFields = projectCategoryFields(item.CategoryFields, vis.RevealScheme, vis.RevealFormula)
+	if vis.RevealFormula {
+		view.Components = item.Components
+	}
+	return view, nil
+}
+
+func (s *Service) authorizeSchemeViewer(ctx context.Context, appointmentID, actor uuid.UUID) (*domain.Appointment, error) {
+	a, err := s.store.GetAppointment(ctx, appointmentID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if a == nil {
+		return nil, apperr.NotFound("appointment not found")
+	}
+	if a.MasterUserID == actor || a.ClientUserID == actor || s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actor) {
+		return a, nil
+	}
+	ok, err := s.store.MasterHasCompletedWithClient(ctx, actor, a.ClientUserID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if !ok {
+		return nil, apperr.Forbidden("access denied")
+	}
+	return a, nil
 }
 
 func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title, category, timezone, color string, starts, ends time.Time, orgID *uuid.UUID, ownerUserID *uuid.UUID) (*store.PlannerBlock, error) {
@@ -414,4 +493,115 @@ func (s *Service) validatePlannerInterval(ctx context.Context, owner, excludeID 
 		return apperr.Conflict("planner block overlaps an appointment")
 	}
 	return nil
+}
+
+func hasFormulaContent(scheme *VisitSchemeInput) bool {
+	if scheme == nil {
+		return false
+	}
+	for _, c := range scheme.Components {
+		if strings.TrimSpace(c.Name) != "" {
+			return true
+		}
+	}
+	fields := parseCategoryFields(scheme.CategoryFields)
+	for _, key := range entitlement.FormulaFieldKeys {
+		if strings.TrimSpace(fields[key]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func projectCategoryFields(raw json.RawMessage, revealScheme, revealFormula bool) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	if revealScheme && revealFormula {
+		return raw
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	out := make(map[string]any, len(fields))
+	for k, v := range fields {
+		formula := entitlement.IsFormulaFieldKey(k)
+		if formula && revealFormula {
+			out[k] = v
+		}
+		if !formula && revealScheme {
+			out[k] = v
+		}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return b
+}
+
+func (s *Service) persistColorFormula(ctx context.Context, a *domain.Appointment, scheme *VisitSchemeInput) {
+	if scheme == nil || (!hasFormulaContent(scheme) && !scheme.OmitFormula) {
+		return
+	}
+	if s.clientsURL == "" || s.internalToken == "" {
+		slog.Warn("persist color formula skipped: clients URL or internal token missing", "appointment_id", a.ID)
+		return
+	}
+	// CompleteVisit already authorized omit_formula. Do not second-guess here:
+	// dropping the flag would leak the formula through the clients list endpoint.
+	omit := scheme.OmitFormula
+	fields := parseCategoryFields(scheme.CategoryFields)
+	name := strings.TrimSpace(fields["formula"])
+	if name == "" {
+		name = strings.TrimSpace(fields["dye"])
+	}
+	if name == "" {
+		name = "Состав окрашивания"
+	}
+	comps := make([]map[string]string, 0, len(scheme.Components)+2)
+	for _, c := range scheme.Components {
+		if strings.TrimSpace(c.Name) == "" {
+			continue
+		}
+		comps = append(comps, map[string]string{"label": c.Name, "amount": strings.TrimSpace(c.Qty + " " + c.Proportion)})
+	}
+	if dye := strings.TrimSpace(fields["dye"]); dye != "" {
+		comps = append(comps, map[string]string{"label": dye})
+	}
+	if shades := strings.TrimSpace(fields["shades"]); shades != "" {
+		comps = append(comps, map[string]string{"label": shades})
+	}
+	compJSON, _ := json.Marshal(comps)
+	var compsAny any
+	_ = json.Unmarshal(compJSON, &compsAny)
+	payload, _ := json.Marshal(map[string]any{
+		"appointment_id": a.ID.String(),
+		"master_user_id": a.MasterUserID.String(),
+		"name":           name,
+		"brand":          "",
+		"components":     compsAny,
+		"oxidizer":       strings.TrimSpace(fields["oxidizer"]),
+		"ratio":          strings.TrimSpace(fields["proportions"]),
+		"comment":        strings.TrimSpace(scheme.Notes),
+		"omit_formula":   omit,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.clientsURL+"/v1/internal/formulas", strings.NewReader(string(payload)))
+	if err != nil {
+		slog.Warn("persist color formula request build failed", "appointment_id", a.ID, "error", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		slog.Warn("persist color formula request failed", "appointment_id", a.ID, "error", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		slog.Warn("persist color formula rejected", "appointment_id", a.ID, "status", resp.StatusCode, "body", string(body))
+	}
 }

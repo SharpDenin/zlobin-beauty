@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { Hint } from '@/shared/ui/Hint'
+import { masterProfessionLabel } from '@/shared/lib/profession-types'
 
 type Master = {
   id: string
@@ -11,6 +12,7 @@ type Master = {
   display_name: string
   city: string
   specializations: string[]
+  profession_types?: { id: string; slug: string; name: string }[]
   rating_avg: number
   rating_count: number
 }
@@ -147,7 +149,7 @@ export function SearchPage() {
                 <strong>{m.display_name}</strong>
                 <span className={`city-badge${otherCity ? ' city-badge--other' : ''}`}>{m.city}</span>
               </div>
-              <p>{m.specializations.join(', ') || 'Специализации не указаны'}</p>
+              <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
               <p className="muted">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</p>
             </Link>
           )

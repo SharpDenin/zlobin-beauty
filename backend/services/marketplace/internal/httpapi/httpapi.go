@@ -28,6 +28,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	optional := httpx.OptionalBearerAuth(jwtSecret)
 	a.registerOccurrenceRoutes(mux, jwtSecret)
+	mux.HandleFunc("GET /v1/profession-types", a.listProfessionTypes)
 	mux.HandleFunc("GET /v1/masters", a.search)
 	mux.HandleFunc("GET /v1/masters/{id}", a.getMaster)
 	mux.HandleFunc("GET /v1/services/popular", a.popularServices)
@@ -158,8 +159,9 @@ type upsertMasterReq struct {
 	ExperienceYears int      `json:"experience_years"`
 	Education       string   `json:"education"`
 	PhotoMediaID    string   `json:"photo_media_id"`
-	WorkType        string   `json:"work_type"`
-	Published       bool     `json:"published"`
+	WorkType           string    `json:"work_type"`
+	Published          bool      `json:"published"`
+	ProfessionTypeIDs  *[]string `json:"profession_type_ids"`
 }
 
 func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +184,19 @@ func (a *API) popularServices(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(items))
 	for _, s := range items {
 		out = append(out, serviceDTO(s))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) listProfessionTypes(w http.ResponseWriter, r *http.Request) {
+	items, err := a.svc.ListProfessionTypes(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, t := range items {
+		out = append(out, professionTypeDTO(t))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -217,11 +232,25 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 		photoMediaID = &id
 	}
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	var professionTypeIDs *[]uuid.UUID
+	if req.ProfessionTypeIDs != nil {
+		parsed := make([]uuid.UUID, 0, len(*req.ProfessionTypeIDs))
+		for _, raw := range *req.ProfessionTypeIDs {
+			id, err := uuid.Parse(strings.TrimSpace(raw))
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid profession_type_ids"))
+				return
+			}
+			parsed = append(parsed, id)
+		}
+		professionTypeIDs = &parsed
+	}
 	m, err := a.svc.UpsertMaster(r.Context(), service.UpsertMasterInput{
 		UserID: claims.UserID, OrganizationID: orgID, BranchID: branchID,
 		DisplayName: req.DisplayName, Bio: req.Bio, Specializations: req.Specializations,
 		City: req.City, ExperienceYears: req.ExperienceYears, Education: req.Education,
 		PhotoMediaID: photoMediaID, WorkType: req.WorkType, Published: req.Published, AccessToken: token,
+		ProfessionTypeIDs: professionTypeIDs,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -352,12 +381,27 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	if specs == nil {
 		specs = []string{}
 	}
+	types := make([]map[string]any, 0, len(m.ProfessionTypes))
+	for _, t := range m.ProfessionTypes {
+		types = append(types, professionTypeDTO(t))
+	}
 	return map[string]any{
 		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": m.OrganizationID.String(),
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
 		"photo_media_id": photoMediaID, "work_type": workType,
+		"profession_types": types,
 		"rating_avg": m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
+	}
+}
+
+func professionTypeDTO(t domain.ProfessionType) map[string]any {
+	var lockedAt any
+	if t.LockedAt != nil {
+		lockedAt = t.LockedAt.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"id": t.ID.String(), "slug": t.Slug, "name": t.Name, "is_active": t.IsActive, "locked_at": lockedAt,
 	}
 }
 

@@ -9,13 +9,15 @@ import (
 type Code string
 
 const (
-	CodeValidation   Code = "validation_error"
-	CodeUnauthorized Code = "unauthorized"
-	CodeForbidden    Code = "forbidden"
-	CodeNotFound     Code = "not_found"
-	CodeConflict     Code = "conflict"
-	CodeRateLimited  Code = "rate_limited"
-	CodeInternal     Code = "internal_error"
+	CodeValidation                Code = "validation_error"
+	CodeUnauthorized              Code = "unauthorized"
+	CodeForbidden                 Code = "forbidden"
+	CodeNotFound                  Code = "not_found"
+	CodeConflict                  Code = "conflict"
+	CodeRateLimited               Code = "rate_limited"
+	CodeInternal                  Code = "internal_error"
+	CodeProfessionTypesRequired   Code = "profession_types_required"
+	CodeProfessionTypeLocked      Code = "profession_type_locked"
 )
 
 type AppError struct {
@@ -56,6 +58,18 @@ func NotFound(msg string) *AppError {
 
 func Conflict(msg string) *AppError {
 	return New(CodeConflict, http.StatusConflict, msg)
+}
+
+func Unprocessable(code Code, msg string) *AppError {
+	return New(code, http.StatusUnprocessableEntity, msg)
+}
+
+func ProfessionTypesRequired() *AppError {
+	return Unprocessable(CodeProfessionTypesRequired, "at least one profession type is required")
+}
+
+func ProfessionTypeLocked() *AppError {
+	return New(CodeProfessionTypeLocked, http.StatusConflict, "profession type is locked and cannot be removed")
 }
 
 func RateLimited(msg string) *AppError {

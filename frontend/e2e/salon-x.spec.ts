@@ -353,6 +353,37 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.locator('.leaflet-container')).toBeVisible({ timeout: 15_000 })
   })
 
+  test('phase 0+1 profession types and hidden rep map nav', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const typesRes = await fetch(`${api}/v1/profession-types`)
+    const typesText = await typesRes.text()
+    expect(typesRes.ok, typesText).toBeTruthy()
+    const typesBody = JSON.parse(typesText) as { items?: Array<{ slug: string; name: string }> }
+    const slugs = (typesBody.items ?? []).map((t) => t.slug)
+    expect(slugs).toEqual(expect.arrayContaining(['colorist', 'hairdresser', 'barber', 'nail_master', 'pedicure_master']))
+
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/master')
+    await expect(page.getByText('Профессиональные типы')).toBeVisible({ timeout: 15_000 })
+    const colorist = page.getByRole('checkbox', { name: 'Колорист' })
+    const hairdresser = page.getByRole('checkbox', { name: 'Парикмахер' })
+    await expect(colorist).toBeChecked()
+    await expect(hairdresser).toBeChecked()
+    await expect(page.locator('#work_type')).toHaveValue(/owner|salon_owner/)
+    await expect(page.getByText('Дополнительные теги')).toBeVisible()
+    await expect(page.getByPlaceholder('Свадебные укладки, мужские стрижки')).toHaveValue(/колористика/)
+    await expect(page.getByText('Формат занятости', { exact: true })).toBeVisible()
+
+    await page.evaluate(() => localStorage.clear())
+    await loginUI(page, 'rep1@demo.local')
+    await page.goto('/rep')
+    await expect(page.getByRole('heading', { name: 'Кабинет представителя' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('link', { name: 'Маршрут' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Открыть карту' })).toHaveCount(0)
+    await page.goto('/rep/map')
+    await expect(page.getByRole('heading', { name: 'Карта маршрута' })).toBeVisible({ timeout: 15_000 })
+  })
+
   test('salon owner staff + contact policy', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')

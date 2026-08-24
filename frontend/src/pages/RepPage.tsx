@@ -202,7 +202,6 @@ export function RepPage() {
 
   const tabs = [
     { to: '/rep', label: 'Сегодня' },
-    { to: '/rep/map', label: 'Маршрут' },
     { to: '/rep/finance', label: 'Деньги' },
     { to: '/rep/analytics', label: 'Аналитика' },
   ]
@@ -247,7 +246,7 @@ export function RepPage() {
             <article className="card stack-sm"><span className="muted">К получению месяц</span><strong>{formatMoney(a?.expected_month_minor ?? 0)}</strong></article>
           </div>
           <section className="card stack">
-            <div className="row between"><h2>Маршрут</h2><Link to="/rep/map">Открыть карту</Link></div>
+            <h2>Маршрут дня</h2>
             <p className="muted">{route ? `${route.label || 'Рекомендованный маршрут'} · ${route.total_km?.toFixed?.(1) ?? route.total_km ?? '—'} км · ${route.total_minutes ?? '—'} мин` : 'Маршрут ещё не построен'}</p>
             {nextStop && <p>Следующая остановка: {stopKind(nextStop.kind)} {nextStop.eta_at ? `· ETA ${new Date(nextStop.eta_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : ''}</p>}
           </section>

@@ -81,6 +81,7 @@ func main() {
 		Display: "Анна Колористика", Bio: "Мастер-колорист в Красноярске. Демо-профиль для Salon-X.",
 		Specs: []string{"колористика", "стрижки"}, Experience: 7, Education: "Академия колористики",
 		WorkType: "owner",
+		ProfessionTypeIDs: []string{professionTypeColorist, professionTypeHairdresser},
 		Services: []serviceSpec{
 			{Name: "Стрижка", Category: "стрижки", Description: "Женская стрижка с консультацией по форме.", Duration: 60, Price: 200000},
 			{Name: "Окрашивание", Category: "колористика", Description: "Полное окрашивание с подбором формулы.", Duration: 180, Price: 500000},
@@ -405,6 +406,7 @@ type masterSeed struct {
 	OrgName, BranchName, City, Address, Phone, Timezone string
 	Display, Bio, Education, WorkType                   string
 	Specs                                               []string
+	ProfessionTypeIDs                                   []string
 	Experience                                          int
 	Services                                            []serviceSpec
 }
@@ -597,8 +599,9 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		"specializations":  cfg.Specs,
 		"city":             cfg.City,
 		"experience_years": cfg.Experience,
-		"education":        cfg.Education,
-		"published":        published,
+		"education":          cfg.Education,
+		"published":          published,
+		"profession_type_ids": professionTypeIDsForSeed(cfg),
 	}
 	if cfg.WorkType != "" {
 		body["work_type"] = cfg.WorkType
@@ -621,6 +624,48 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		resp.ID = me.Master.ID
 	}
 	return resp.ID, nil
+}
+
+const (
+	professionTypeColorist        = "11111111-1111-4111-8111-111111111001"
+	professionTypeHairdresser     = "11111111-1111-4111-8111-111111111002"
+	professionTypeBarber          = "11111111-1111-4111-8111-111111111003"
+	professionTypeNailMaster      = "11111111-1111-4111-8111-111111111004"
+	professionTypePedicureMaster  = "11111111-1111-4111-8111-111111111005"
+)
+
+func professionTypeIDsForSeed(cfg masterSeed) []string {
+	if len(cfg.ProfessionTypeIDs) > 0 {
+		return cfg.ProfessionTypeIDs
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(id string) {
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	for _, spec := range cfg.Specs {
+		switch strings.ToLower(strings.TrimSpace(spec)) {
+		case "колористика", "колорист", "окрашивание":
+			add(professionTypeColorist)
+		case "стрижки", "стрижка", "парикмахер", "укладки", "укладка", "уход":
+			add(professionTypeHairdresser)
+		case "барбер", "борода":
+			add(professionTypeBarber)
+		case "маникюр", "ногти":
+			add(professionTypeNailMaster)
+		case "педикюр":
+			add(professionTypePedicureMaster)
+		}
+	}
+	if len(out) == 0 {
+		// Demo-only fallback for unmapped tags (брови/ресницы). Not used for new registrations.
+		add(professionTypeHairdresser)
+	}
+	return out
 }
 
 func ensureOrg(c *http.Client, base string, user authUser, typ, name, branchName, city, address, tz string) (orgID, branchID string, err error) {

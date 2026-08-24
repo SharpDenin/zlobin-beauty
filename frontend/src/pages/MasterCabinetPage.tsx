@@ -7,6 +7,9 @@ import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
+import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
+import type { ProfessionType } from '@/shared/lib/profession-types'
+import { selectedProfessionIds } from '@/shared/lib/profession-types'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
@@ -33,6 +36,7 @@ const masterSchema = z.object({
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
   work_type: z.enum(['employee', 'renter', 'owner', 'salon_owner', 'independent', 'chain_owner', 'mobile_master', 'chair_master', 'private_master']),
+  profession_type_ids: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один профессиональный тип'),
   published: z.boolean(),
 })
 
@@ -95,6 +99,7 @@ export function MasterCabinetPage() {
           specializations?: string[]
           experience_years?: number
           education?: string
+          profession_types?: ProfessionType[]
         }
         services: unknown[]
       }>('/v1/me/master', { token: accessToken }),
@@ -166,6 +171,7 @@ export function MasterCabinetPage() {
       experience_years: 1,
       education: '',
       work_type: 'independent',
+      profession_type_ids: [],
     },
   })
 
@@ -180,6 +186,7 @@ export function MasterCabinetPage() {
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
       work_type: (m.work_type as z.infer<typeof masterSchema>['work_type']) || 'independent',
+      profession_type_ids: selectedProfessionIds(m),
       published: Boolean(m.published),
     })
   }, [master.data, masterForm, user?.display_name])
@@ -263,6 +270,7 @@ export function MasterCabinetPage() {
           experience_years: values.experience_years,
           education: values.education ?? '',
           work_type: values.work_type,
+          profession_type_ids: values.profession_type_ids,
           published: values.published,
         },
       })
@@ -603,7 +611,17 @@ export function MasterCabinetPage() {
             {masterForm.formState.errors.city && <span className="error">{masterForm.formState.errors.city.message}</span>}
           </div>
           <div className="field"><label>О себе</label><textarea {...masterForm.register('bio')} /></div>
-          <div className="field"><label>Специализации через запятую</label><input {...masterForm.register('specializations')} placeholder="Колорист, Парикмахер" /></div>
+          <ProfessionTypePicker
+            value={masterForm.watch('profession_type_ids') ?? []}
+            lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
+            onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
+            error={masterForm.formState.errors.profession_type_ids?.message}
+          />
+          <div className="field">
+            <label>Дополнительные теги</label>
+            <input {...masterForm.register('specializations')} placeholder="Свадебные укладки, мужские стрижки" />
+            <p className="muted">Свободные теги для поиска. Не дублируют профессиональный тип.</p>
+          </div>
           <div className="field">
             <label>Опыт, лет</label>
             <input type="number" {...masterForm.register('experience_years')} />
@@ -611,7 +629,7 @@ export function MasterCabinetPage() {
           </div>
           <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
           <div className="field">
-            <label htmlFor="work_type">Формат работы</label>
+            <label htmlFor="work_type">Формат занятости</label>
             <select id="work_type" {...masterForm.register('work_type')}>
               {WORK_TYPE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>

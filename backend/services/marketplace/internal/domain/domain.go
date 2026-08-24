@@ -6,24 +6,44 @@ import (
 	"github.com/google/uuid"
 )
 
+type ProfessionType struct {
+	ID        uuid.UUID
+	Slug      string
+	Name      string
+	IsActive  bool
+	LockedAt  *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type MasterProfileType struct {
+	ID               uuid.UUID
+	MasterUserID     uuid.UUID
+	ProfessionTypeID uuid.UUID
+	LockedAt         *time.Time
+	CreatedAt        time.Time
+	Type             ProfessionType
+}
+
 type MasterProfile struct {
-	ID              uuid.UUID
-	UserID          uuid.UUID
-	OrganizationID  uuid.UUID
-	BranchID        *uuid.UUID
-	DisplayName     string
-	Bio             string
-	Specializations []string
-	City            string
-	ExperienceYears int
-	Education       string
-	PhotoMediaID    *uuid.UUID
-	WorkType        string
-	RatingAvg       float64
-	RatingCount     int
-	Published       bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	OrganizationID   uuid.UUID
+	BranchID         *uuid.UUID
+	DisplayName      string
+	Bio              string
+	Specializations  []string
+	City             string
+	ExperienceYears  int
+	Education        string
+	PhotoMediaID     *uuid.UUID
+	WorkType         string
+	RatingAvg        float64
+	RatingCount      int
+	Published        bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ProfessionTypes  []ProfessionType
 }
 
 type ServiceCategory struct {

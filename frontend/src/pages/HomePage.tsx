@@ -5,6 +5,7 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 type Appointment = {
@@ -20,6 +21,7 @@ type Master = {
   display_name: string
   city: string
   specializations: string[]
+  profession_types?: { id: string; slug: string; name: string }[]
   rating_avg: number
   rating_count: number
 }
@@ -91,7 +93,7 @@ function ClientHome() {
                 <strong>{m.display_name}</strong>
                 <span className="badge badge-default">★ {m.rating_avg.toFixed(1)}</span>
               </div>
-              <p>{m.specializations.join(', ') || 'Красота и уход'} · {m.city}</p>
+              <p>{masterProfessionLabel(m, 'Красота и уход')} · {m.city}</p>
             </Link>
           ))}
         </div>

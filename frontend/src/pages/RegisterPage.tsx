@@ -46,7 +46,7 @@ export function RegisterPage() {
               if (values.role === 'master' || values.role === 'supplier') {
                 sessionStorage.setItem('sx.welcome_trial', '1')
               }
-              if (values.role === 'master') navigate('/')
+              if (values.role === 'master') navigate('/master')
               else if (values.role === 'supplier') navigate('/supplier')
               else navigate('/')
             } catch (e) {

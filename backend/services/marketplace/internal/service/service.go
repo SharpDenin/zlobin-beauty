@@ -59,9 +59,10 @@ type UpsertMasterInput struct {
 	ExperienceYears int
 	Education       string
 	PhotoMediaID    *uuid.UUID
-	WorkType        string
-	Published       bool
-	AccessToken     string
+	WorkType           string
+	Published          bool
+	AccessToken        string
+	ProfessionTypeIDs  *[]uuid.UUID
 }
 
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
@@ -117,6 +118,20 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 			}
 		}
 	}
+	if existing == nil && (in.ProfessionTypeIDs == nil || len(*in.ProfessionTypeIDs) == 0) {
+		return nil, apperr.ProfessionTypesRequired()
+	}
+	if in.ProfessionTypeIDs != nil {
+		for _, id := range *in.ProfessionTypeIDs {
+			m.ProfessionTypes = append(m.ProfessionTypes, domain.ProfessionType{ID: id})
+		}
+	} else if existing != nil {
+		types, err := s.store.ListMasterProfessionTypes(ctx, in.UserID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		m.ProfessionTypes = types
+	}
 	if m.Published {
 		ready, err := s.evaluateReadiness(ctx, &m, in.AccessToken)
 		if err != nil {
@@ -128,6 +143,9 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	}
 	if err := s.store.UpsertMaster(ctx, m); err != nil {
 		return nil, apperr.Internal(err)
+	}
+	if err := s.applyProfessionTypes(ctx, &m, in.ProfessionTypeIDs, existing == nil); err != nil {
+		return nil, err
 	}
 	return &m, nil
 }
@@ -147,10 +165,18 @@ func (s *Service) MasterReadiness(ctx context.Context, userID uuid.UUID, accessT
 }
 
 func (s *Service) evaluateReadiness(ctx context.Context, m *domain.MasterProfile, accessToken string) (*domain.Readiness, error) {
+	if len(m.ProfessionTypes) == 0 {
+		types, err := s.store.ListMasterProfessionTypes(ctx, m.UserID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		m.ProfessionTypes = types
+	}
 	checks := []domain.ReadinessCheck{
 		{Key: "display_name", Label: "Имя для публикации", OK: strings.TrimSpace(m.DisplayName) != ""},
 		{Key: "city", Label: "Город", OK: strings.TrimSpace(m.City) != ""},
 		{Key: "specializations", Label: "Специализация", OK: len(m.Specializations) > 0},
+		{Key: "profession_types", Label: "Профессиональный тип", OK: len(m.ProfessionTypes) > 0},
 		{Key: "bio", Label: "Описание (от 10 символов)", OK: len([]rune(strings.TrimSpace(m.Bio))) >= 10},
 		{Key: "experience", Label: "Опыт (лет)", OK: m.ExperienceYears > 0},
 	}
@@ -248,6 +274,13 @@ func (s *Service) Search(ctx context.Context, city, q, service string, priceMin,
 		}
 		out = append(out, m)
 	}
+	ptrs := make([]*domain.MasterProfile, 0, len(out))
+	for i := range out {
+		ptrs = append(ptrs, &out[i])
+	}
+	if err := s.attachProfessionTypes(ctx, ptrs...); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -299,6 +332,9 @@ func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterPr
 	if services == nil {
 		services = []domain.ServiceItem{}
 	}
+	if err := s.attachProfessionTypes(ctx, m); err != nil {
+		return nil, nil, err
+	}
 	return m, services, nil
 }
 
@@ -309,6 +345,9 @@ func (s *Service) GetMasterByUserID(ctx context.Context, userID uuid.UUID) (*dom
 	}
 	if m == nil {
 		return nil, apperr.NotFound("master not found")
+	}
+	if err := s.attachProfessionTypes(ctx, m); err != nil {
+		return nil, err
 	}
 	return m, nil
 }
@@ -327,6 +366,9 @@ func (s *Service) GetMyMaster(ctx context.Context, userID uuid.UUID) (*domain.Ma
 	}
 	if services == nil {
 		services = []domain.ServiceItem{}
+	}
+	if err := s.attachProfessionTypes(ctx, m); err != nil {
+		return nil, nil, err
 	}
 	return m, services, nil
 }

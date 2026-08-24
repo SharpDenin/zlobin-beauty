@@ -5,6 +5,7 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { workTypeLabel } from '@/shared/lib/status'
+import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
@@ -32,6 +33,7 @@ type MasterDetails = {
     city: string
     specializations: string[]
     work_type?: string
+    profession_types?: { id: string; slug: string; name: string }[]
     photo_media_id?: string | null
   }
   services: Service[]
@@ -238,7 +240,7 @@ export function MasterPage() {
               <span className="city-badge">{master.city}</span>
               <span className="chip badge-default">{workTypeLabel(master.work_type)}</span>
             </div>
-            <p>{master.specializations.join(', ') || 'Красота и уход'}</p>
+            <p>{masterProfessionLabel(master, 'Красота и уход')}</p>
             <p>{master.bio || 'Мастер ещё не добавил описание.'}</p>
           </div>
         </div>

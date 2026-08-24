@@ -176,7 +176,6 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   if (kind === 'supplier_rep') {
     const primary: NavLink[] = [
       { to: '/rep', label: 'Сегодня', end: true },
-      { to: '/rep/map', label: 'Маршрут' },
       { to: '/rep/finance', label: 'Деньги' },
       { to: '/more', label: 'Ещё' },
     ]

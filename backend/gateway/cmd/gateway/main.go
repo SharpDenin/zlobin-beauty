@@ -57,6 +57,8 @@ func main() {
 	mux.Handle("/v1/suppliers/", organizations)
 	mux.Handle("/v1/me/master", marketplace)
 	mux.Handle("/v1/me/master/", marketplace)
+	mux.Handle("/v1/profession-types", marketplace)
+	mux.Handle("/v1/profession-types/", marketplace)
 	mux.Handle("/v1/services", marketplace)
 	mux.Handle("/v1/services/", marketplace)
 	mux.Handle("/v1/occurrences", marketplace)

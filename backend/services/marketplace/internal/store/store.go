@@ -77,7 +77,18 @@ SELECT DISTINCT
 FROM master_profiles mp
 WHERE mp.published = TRUE
   AND ($1 = '' OR mp.city ILIKE $1)
-  AND ($2 = '' OR mp.display_name ILIKE '%' || $2 || '%' OR EXISTS (SELECT 1 FROM unnest(mp.specializations) s WHERE s ILIKE '%' || $2 || '%'))
+  AND (
+    $2 = ''
+    OR mp.display_name ILIKE '%' || $2 || '%'
+    OR EXISTS (SELECT 1 FROM unnest(mp.specializations) s WHERE s ILIKE '%' || $2 || '%')
+    OR EXISTS (
+      SELECT 1
+      FROM master_profile_types mpt
+      JOIN master_types mt ON mt.id = mpt.profession_type_id AND mt.is_active = TRUE
+      WHERE mpt.master_user_id = mp.user_id
+        AND (mt.name ILIKE '%' || $2 || '%' OR mt.slug ILIKE '%' || $2 || '%')
+    )
+  )
   AND (
     $3 = '' OR EXISTS (
       SELECT 1 FROM master_services ms

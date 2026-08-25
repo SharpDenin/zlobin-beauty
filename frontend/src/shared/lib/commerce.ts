@@ -95,7 +95,15 @@ export type SupplierOrder = {
   paid_at?: string | null
   created_at: string
   comment?: string
-  items?: Array<{ product_id: string; qty_ordered: number; price_minor: number; product_name?: string }>
+  items?: Array<{
+    product_id: string
+    qty_ordered: number
+    qty_accepted?: number
+    qty_damaged?: number
+    qty_rejected?: number
+    price_minor: number
+    product_name?: string
+  }>
 }
 
 export const PAYMENT_METHOD_OPTIONS = [
@@ -193,10 +201,10 @@ export async function fetchBranch(token: string | null, id: string): Promise<Bra
 export function useEnsureLocation(buyerOrgId?: string) {
   const { accessToken } = useAuth()
   const qc = useQueryClient()
-  const locations = useQuery({
-    queryKey: ['commerce-locations', buyerOrgId],
+  const inventory = useQuery({
+    queryKey: ['me-inventory', buyerOrgId],
     queryFn: () =>
-      apiRequest<{ items: Location[] }>(`/v1/commerce/locations?organization_id=${buyerOrgId}`, {
+      apiRequest<{ location: Location }>(`/v1/me/inventory?organization_id=${buyerOrgId}`, {
         token: accessToken,
       }),
     enabled: Boolean(accessToken && buyerOrgId),
@@ -205,17 +213,25 @@ export function useEnsureLocation(buyerOrgId?: string) {
   const ensure = useMutation({
     mutationFn: async () => {
       if (!buyerOrgId) throw new ApiError('Сначала создайте салон', 'validation_error', 400)
-      return apiRequest<{ id?: string }>('/v1/commerce/locations', {
+      const res = await apiRequest<{ location: Location }>(`/v1/me/inventory?organization_id=${buyerOrgId}`, {
         token: accessToken,
-        body: { organization_id: buyerOrgId, name: 'Основной склад', kind: 'salon' },
       })
+      return { id: res.location.id }
     },
     onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['me-inventory'] })
       await qc.invalidateQueries({ queryKey: ['commerce-locations'] })
     },
   })
 
-  return { locations, ensure, locationId: locations.data?.items[0]?.id }
+  return {
+    locations: {
+      data: inventory.data?.location ? { items: [inventory.data.location] } : undefined,
+      isLoading: inventory.isLoading,
+    },
+    ensure,
+    locationId: inventory.data?.location?.id,
+  }
 }
 
 export function newIdempotencyKey() {

@@ -24,13 +24,13 @@ import (
 var allRoles = []string{"owner", "admin", "master", "staff", "rep"}
 
 type Service struct {
-	store              *store.Store
-	organizationsURL   string
-	bookingURL         string
-	communicationsURL  string
-	internalToken      string
-	httpClient         *http.Client
-	now                func() time.Time
+	store             *store.Store
+	organizationsURL  string
+	bookingURL        string
+	communicationsURL string
+	internalToken     string
+	httpClient        *http.Client
+	now               func() time.Time
 }
 
 func New(st *store.Store) *Service {
@@ -113,6 +113,9 @@ func (s *Service) CreateLocation(ctx context.Context, actor, orgID uuid.UUID, na
 	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin", "master"); err != nil {
 		return nil, err
 	}
+	if kind == domain.LocationMaster {
+		return s.EnsureMasterLocation(ctx, actor, orgID)
+	}
 	l := domain.StockLocation{ID: ids.New(), OrganizationID: orgID, Name: name, Kind: kind, CreatedAt: s.now().UTC()}
 	if err := s.store.CreateLocation(ctx, l); err != nil {
 		return nil, apperr.Internal(err)
@@ -128,10 +131,19 @@ func (s *Service) ListLocations(ctx context.Context, actor, orgID uuid.UUID) ([]
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if items == nil {
-		items = []domain.StockLocation{}
+	filtered := make([]domain.StockLocation, 0, len(items))
+	for _, l := range items {
+		if l.Kind == domain.LocationMaster {
+			if l.OwnerUserID == nil || *l.OwnerUserID != actor {
+				continue
+			}
+		}
+		filtered = append(filtered, l)
 	}
-	return items, nil
+	if filtered == nil {
+		filtered = []domain.StockLocation{}
+	}
+	return filtered, nil
 }
 
 func (s *Service) getLocationOrErr(ctx context.Context, id uuid.UUID) (*domain.StockLocation, error) {
@@ -282,7 +294,7 @@ func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]d
 	if memberErr != nil {
 		out := make([]domain.Product, 0, len(items))
 		for _, p := range items {
-		if p.Published && p.ForSale && p.ArchivedAt == nil {
+			if p.Published && p.ForSale && p.ArchivedAt == nil {
 				out = append(out, p)
 			}
 		}
@@ -420,8 +432,13 @@ func resolveMovementDelta(kind string, qty float64) (float64, error) {
 			return 0, apperr.Validation("qty must be positive for " + kind)
 		}
 		return qty, nil
+	case domain.MovementDamage, domain.MovementRejection:
+		if qty <= 0 {
+			return 0, apperr.Validation("qty must be positive for " + kind)
+		}
+		return qty, nil
 	default:
-		return 0, apperr.Validation("kind must be one of receipt, adjust, write_off, consumption, return, reserve, unreserve, release, shipment")
+		return 0, apperr.Validation("kind must be one of receipt, adjust, write_off, consumption, return, reserve, unreserve, release, shipment, damage, rejection")
 	}
 }
 
@@ -441,12 +458,15 @@ func (s *Service) CreateMovement(ctx context.Context, actor uuid.UUID, in Moveme
 	if _, err := s.getProductOrErr(ctx, in.ProductID); err != nil {
 		return nil, err
 	}
-	if err := s.requireMembership(ctx, loc.OrganizationID, actor, "owner", "admin", "master"); err != nil {
+	if err := s.requireLocationWrite(ctx, actor, loc); err != nil {
 		return nil, err
 	}
 	delta, err := resolveMovementDelta(in.Kind, in.Qty)
 	if err != nil {
 		return nil, err
+	}
+	if in.Kind == domain.MovementAdjust && strings.TrimSpace(in.Reason) == "" {
+		return nil, apperr.Validation("reason is required")
 	}
 	m := domain.StockMovement{
 		ID: ids.New(), LocationID: in.LocationID, ProductID: in.ProductID, Kind: in.Kind, Qty: delta,
@@ -467,7 +487,7 @@ func (s *Service) ListStock(ctx context.Context, actor, locationID uuid.UUID) ([
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireAnyMembership(ctx, loc.OrganizationID, actor); err != nil {
+	if err := s.requireLocationRead(ctx, actor, loc); err != nil {
 		return nil, err
 	}
 	items, err := s.store.ListBalancesByLocation(ctx, locationID)
@@ -489,7 +509,7 @@ func (s *Service) ListMovements(ctx context.Context, actor, locationID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireAnyMembership(ctx, loc.OrganizationID, actor); err != nil {
+	if err := s.requireLocationRead(ctx, actor, loc); err != nil {
 		return nil, err
 	}
 	items, err := s.store.ListMovements(ctx, locationID, 40)
@@ -1011,7 +1031,7 @@ func (s *Service) CreateSupplierOrder(ctx context.Context, actor uuid.UUID, in C
 		ID: ids.New(), BuyerOrgID: in.BuyerOrgID, SupplierOrgID: in.SupplierOrgID, LocationID: in.LocationID,
 		DestinationBranchID: destBranchID,
 		Status:              domain.OrderStatusNew, Currency: "RUB",
-		TotalMinor: domain.OrderTotalMinor(built.SubtotalMinor, in.DeliveryCostMinor),
+		TotalMinor:    domain.OrderTotalMinor(built.SubtotalMinor, in.DeliveryCostMinor),
 		SubtotalMinor: built.SubtotalMinor, DeliveryCostMinor: in.DeliveryCostMinor,
 		PaymentMethod: paymentMethod, PaymentStatus: domain.InitialPaymentStatus(paymentMethod),
 		IdempotencyKey: idemKey, Comment: strings.TrimSpace(in.Comment),
@@ -1466,41 +1486,4 @@ type AcceptItemInput struct {
 	QtyAccepted float64
 	QtyDamaged  float64
 	QtyRejected float64
-}
-
-func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, accepted []AcceptItemInput) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
-	if len(accepted) == 0 {
-		return nil, nil, apperr.Validation("at least one item is required")
-	}
-	o, err := s.getOrderOrErr(ctx, orderID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := s.requireMembership(ctx, o.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
-		return nil, nil, err
-	}
-	if !acceptableAcceptStatuses[o.Status] {
-		return nil, nil, apperr.Conflict("order is not ready to be accepted")
-	}
-	items := make([]store.AcceptItem, 0, len(accepted))
-	for _, it := range accepted {
-		if it.ProductID == uuid.Nil {
-			return nil, nil, apperr.Validation("product_id is required")
-		}
-		if it.QtyAccepted <= 0 {
-			return nil, nil, apperr.Validation("qty_accepted must be positive")
-		}
-		if it.QtyDamaged < 0 || it.QtyRejected < 0 {
-			return nil, nil, apperr.Validation("qty_damaged and qty_rejected must not be negative")
-		}
-		items = append(items, store.AcceptItem{ProductID: it.ProductID, QtyDiff: it.QtyAccepted})
-	}
-	outOrder, outItems, err := s.store.AcceptOrder(ctx, orderID, actor, items, s.now().UTC())
-	if err != nil {
-		if ae, ok := apperr.As(err); ok {
-			return nil, nil, ae
-		}
-		return nil, nil, apperr.Internal(err)
-	}
-	return outOrder, outItems, nil
 }

@@ -173,7 +173,7 @@ SELECT qty_on_hand, qty_reserved FROM stock_balances WHERE location_id=$1 AND pr
 			return domain.StockMovement{}, apperr.Validation("qty must be positive for reserve")
 		}
 		if onHand-reserved < amount-1e-9 {
-			return domain.StockMovement{}, apperr.Validation("insufficient stock at location")
+			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
 		}
 		m.QtyBefore = reserved
 		reserved += amount
@@ -199,7 +199,7 @@ SELECT qty_on_hand, qty_reserved FROM stock_balances WHERE location_id=$1 AND pr
 			return domain.StockMovement{}, apperr.Validation("cannot ship more than reserved")
 		}
 		if onHand+1e-9 < amount {
-			return domain.StockMovement{}, apperr.Validation("insufficient stock at location")
+			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
 		}
 		m.QtyBefore = onHand
 		onHand -= amount
@@ -209,22 +209,29 @@ SELECT qty_on_hand, qty_reserved FROM stock_balances WHERE location_id=$1 AND pr
 		m.QtyBefore = onHand
 		onHand += m.Qty
 		if onHand < 0 {
-			return domain.StockMovement{}, apperr.Validation("insufficient stock at location")
+			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
 		}
 		m.QtyAfter = onHand
 	case domain.MovementConsumption, domain.MovementWriteOff:
 		m.QtyBefore = onHand
 		onHand += m.Qty
 		if onHand < 0 || onHand-reserved < -1e-9 {
-			return domain.StockMovement{}, apperr.Validation("insufficient stock at location")
+			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
 		}
 		m.QtyAfter = onHand
 	case domain.MovementAdjust:
 		m.QtyBefore = onHand
 		onHand += m.Qty
 		if onHand < 0 || onHand-reserved < -1e-9 {
-			return domain.StockMovement{}, apperr.Validation("insufficient stock at location")
+			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
 		}
+		m.QtyAfter = onHand
+	case domain.MovementDamage, domain.MovementRejection:
+		amount := m.Qty
+		if amount <= 0 {
+			return domain.StockMovement{}, apperr.Validation("qty must be positive for " + m.Kind)
+		}
+		m.QtyBefore = onHand
 		m.QtyAfter = onHand
 	default:
 		return domain.StockMovement{}, apperr.Validation("unknown movement kind")
@@ -239,9 +246,9 @@ ON CONFLICT (location_id, product_id) DO UPDATE SET
 		return domain.StockMovement{}, err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO stock_movements(id, location_id, product_id, kind, qty, qty_before, qty_after, reason, actor_user_id, ref_type, ref_id, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		m.ID, m.LocationID, m.ProductID, m.Kind, m.Qty, m.QtyBefore, m.QtyAfter, m.Reason, m.ActorUserID, m.RefType, m.RefID, m.CreatedAt); err != nil {
+INSERT INTO stock_movements(id, location_id, product_id, kind, qty, qty_before, qty_after, reason, actor_user_id, ref_type, ref_id, created_at, idempotency_key)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		m.ID, m.LocationID, m.ProductID, m.Kind, m.Qty, m.QtyBefore, m.QtyAfter, m.Reason, m.ActorUserID, m.RefType, m.RefID, m.CreatedAt, nullIfEmpty(m.IdempotencyKey)); err != nil {
 		return domain.StockMovement{}, err
 	}
 	return m, nil
@@ -276,6 +283,11 @@ func (s *Store) CreateMovement(ctx context.Context, m domain.StockMovement) (*do
 	defer tx.Rollback(ctx)
 	out, err := applyMovementTx(ctx, tx, m)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && m.IdempotencyKey != "" {
+			_ = tx.Rollback(ctx)
+			return s.GetMovementByIdempotencyKey(ctx, m.IdempotencyKey)
+		}
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -287,7 +299,7 @@ func (s *Store) CreateMovement(ctx context.Context, m domain.StockMovement) (*do
 func (s *Store) ListBalancesByLocation(ctx context.Context, locationID uuid.UUID) ([]domain.StockBalanceView, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT sb.location_id, sb.product_id, sb.qty_on_hand, sb.qty_reserved, sb.updated_at,
-       p.name, p.brand, p.sku, p.min_stock, p.price_minor, p.currency, p.photo_media_id
+       p.name, p.brand, p.sku, p.min_stock, p.price_minor, p.currency, p.photo_media_id, p.unit, p.volume_label
 FROM stock_balances sb
 JOIN products p ON p.id = sb.product_id
 WHERE sb.location_id=$1
@@ -300,7 +312,8 @@ ORDER BY p.name`, locationID)
 	for rows.Next() {
 		var v domain.StockBalanceView
 		if err := rows.Scan(&v.LocationID, &v.ProductID, &v.QtyOnHand, &v.QtyReserved, &v.UpdatedAt,
-			&v.ProductName, &v.ProductBrand, &v.ProductSKU, &v.MinStock, &v.PriceMinor, &v.Currency, &v.PhotoMediaID); err != nil {
+			&v.ProductName, &v.ProductBrand, &v.ProductSKU, &v.MinStock, &v.PriceMinor, &v.Currency, &v.PhotoMediaID,
+			&v.Unit, &v.VolumeLabel); err != nil {
 			return nil, err
 		}
 		v.Status = domain.StockStatus(v.QtyOnHand, v.QtyReserved, v.MinStock)
@@ -314,7 +327,7 @@ func (s *Store) ListMovements(ctx context.Context, locationID uuid.UUID, limit i
 		limit = 40
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT id, location_id, product_id, kind, qty, qty_before, qty_after, reason, actor_user_id, ref_type, ref_id, created_at
+SELECT id, location_id, product_id, kind, qty, qty_before, qty_after, reason, actor_user_id, ref_type, ref_id, created_at, COALESCE(idempotency_key, '')
 FROM stock_movements WHERE location_id=$1 ORDER BY created_at DESC LIMIT $2`, locationID, limit)
 	if err != nil {
 		return nil, err
@@ -323,7 +336,7 @@ FROM stock_movements WHERE location_id=$1 ORDER BY created_at DESC LIMIT $2`, lo
 	var out []domain.StockMovement
 	for rows.Next() {
 		var m domain.StockMovement
-		if err := rows.Scan(&m.ID, &m.LocationID, &m.ProductID, &m.Kind, &m.Qty, &m.QtyBefore, &m.QtyAfter, &m.Reason, &m.ActorUserID, &m.RefType, &m.RefID, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.LocationID, &m.ProductID, &m.Kind, &m.Qty, &m.QtyBefore, &m.QtyAfter, &m.Reason, &m.ActorUserID, &m.RefType, &m.RefID, &m.CreatedAt, &m.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -371,7 +384,7 @@ FROM stock_locations WHERE organization_id=$1 AND kind=$2 ORDER BY created_at LI
 	}
 	row = s.pool.QueryRow(ctx, `
 SELECT id, organization_id, name, kind, owner_user_id, created_at
-FROM stock_locations WHERE organization_id=$1 ORDER BY created_at LIMIT 1`, orgID)
+FROM stock_locations WHERE organization_id=$1 AND kind <> $2 ORDER BY created_at LIMIT 1`, orgID, domain.LocationMaster)
 	if l, err := scanLocation(row); err != nil {
 		return nil, err
 	} else if l != nil {
@@ -428,7 +441,7 @@ const orderColumns = `id, buyer_org_id, supplier_org_id, location_id, status, cu
 desired_at, estimated_delivery_at, created_by, created_at, updated_at,
 destination_branch_id, payment_method, payment_status, subtotal_minor, delivery_cost_minor, paid_at, idempotency_key`
 
-const orderItemColumns = `id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, price_minor, product_name, product_sku`
+const orderItemColumns = `id, order_id, product_id, qty_ordered, qty_delivered, qty_accepted, qty_damaged, qty_rejected, price_minor, product_name, product_sku`
 
 const deliveryColumns = `id, order_id, supplier_org_id, destination_branch_id, status,
 planned_delivery_at, window_start, window_end, delivered_at,
@@ -618,14 +631,17 @@ UPDATE supplier_orders SET status='confirmed', updated_at=$2 WHERE id=$1 AND sta
 // AcceptItem describes the quantity accepted in this acceptance action for
 // one order line matched by product_id (a delta added on top of any previously accepted qty).
 type AcceptItem struct {
-	ProductID uuid.UUID
-	QtyDiff   float64
+	ProductID   uuid.UUID
+	QtyAccepted float64
+	QtyDamaged  float64
+	QtyRejected float64
 }
 
-// AcceptOrder applies accepted quantities to order items, creates receipt
-// stock movements at the order's location for each accepted delta, and
-// recomputes the order status (accepted_partial or accepted_full) based on
-// total accepted vs total ordered across all items.
+// AcceptOrder applies this-call disposition quantities to order items.
+// Only qty_accepted increases on-hand stock (receipt). Damaged and rejected
+// are recorded as audit movements and never become available stock.
+// If a line is already fully dispositioned, the call is a no-op for that line
+// (idempotent re-accept).
 func (s *Store) AcceptOrder(ctx context.Context, orderID, actorUserID uuid.UUID, accept []AcceptItem, now time.Time) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -668,27 +684,63 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 	for i := range items {
 		byProduct[items[i].ProductID] = &items[i]
 	}
+	refID := order.ID
 	for _, a := range accept {
 		item, ok := byProduct[a.ProductID]
 		if !ok {
 			return nil, nil, apperr.Validation("product does not belong to this order")
 		}
-		newAccepted := item.QtyAccepted + a.QtyDiff
-		if newAccepted > item.QtyOrdered+1e-9 {
+		remaining := domain.DispositionRemaining(item.QtyOrdered, item.QtyAccepted, item.QtyDamaged, item.QtyRejected)
+		if remaining <= 1e-9 {
+			continue
+		}
+		if a.QtyAccepted < 0 || a.QtyDamaged < 0 || a.QtyRejected < 0 {
+			return nil, nil, apperr.Validation("qty_accepted, qty_damaged and qty_rejected must not be negative")
+		}
+		requested := a.QtyAccepted + a.QtyDamaged + a.QtyRejected
+		if requested <= 1e-9 {
+			return nil, nil, apperr.Validation("at least one of qty_accepted, qty_damaged, qty_rejected must be positive")
+		}
+		if requested > remaining+1e-9 {
 			return nil, nil, apperr.Validation("accepted quantity exceeds ordered quantity")
 		}
-		item.QtyAccepted = newAccepted
-		item.QtyDelivered = newAccepted
-		if _, err := tx.Exec(ctx, `UPDATE supplier_order_items SET qty_accepted=$2, qty_delivered=$3 WHERE id=$1`,
-			item.ID, item.QtyAccepted, item.QtyDelivered); err != nil {
-			return nil, nil, err
+
+		if a.QtyAccepted > 1e-9 {
+			mv := domain.StockMovement{
+				ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
+				Kind: domain.MovementReceipt, Qty: a.QtyAccepted, Reason: "приёмка заказа",
+				ActorUserID: actorUserID, RefType: "supplier_order", RefID: &refID, CreatedAt: now,
+			}
+			if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+				return nil, nil, err
+			}
+			item.QtyAccepted += a.QtyAccepted
 		}
-		mv := domain.StockMovement{
-			ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
-			Kind: domain.MovementReceipt, Qty: a.QtyDiff, Reason: "supplier order acceptance",
-			ActorUserID: actorUserID, RefType: "supplier_order", RefID: &order.ID, CreatedAt: now,
+		if a.QtyDamaged > 1e-9 {
+			mv := domain.StockMovement{
+				ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
+				Kind: domain.MovementDamage, Qty: a.QtyDamaged, Reason: "повреждено при приёмке",
+				ActorUserID: actorUserID, RefType: "supplier_order", RefID: &refID, CreatedAt: now,
+			}
+			if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+				return nil, nil, err
+			}
+			item.QtyDamaged += a.QtyDamaged
 		}
-		if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+		if a.QtyRejected > 1e-9 {
+			mv := domain.StockMovement{
+				ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
+				Kind: domain.MovementRejection, Qty: a.QtyRejected, Reason: "отклонено при приёмке",
+				ActorUserID: actorUserID, RefType: "supplier_order", RefID: &refID, CreatedAt: now,
+			}
+			if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+				return nil, nil, err
+			}
+			item.QtyRejected += a.QtyRejected
+		}
+		item.QtyDelivered = item.QtyAccepted + item.QtyDamaged + item.QtyRejected
+		if _, err := tx.Exec(ctx, `UPDATE supplier_order_items SET qty_accepted=$2, qty_delivered=$3, qty_damaged=$4, qty_rejected=$5 WHERE id=$1`,
+			item.ID, item.QtyAccepted, item.QtyDelivered, item.QtyDamaged, item.QtyRejected); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -696,10 +748,10 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 	full := true
 	anyAccepted := false
 	for _, it := range items {
-		if it.QtyAccepted > 1e-9 {
+		if it.QtyAccepted+it.QtyDamaged+it.QtyRejected > 1e-9 {
 			anyAccepted = true
 		}
-		if it.QtyAccepted+1e-9 < it.QtyOrdered {
+		if domain.DispositionRemaining(it.QtyOrdered, it.QtyAccepted, it.QtyDamaged, it.QtyRejected) > 1e-9 {
 			full = false
 		}
 	}
@@ -761,7 +813,7 @@ func scanOrderItems(rows pgx.Rows) ([]domain.SupplierOrderItem, error) {
 	for rows.Next() {
 		var it domain.SupplierOrderItem
 		if err := rows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.QtyOrdered, &it.QtyDelivered, &it.QtyAccepted,
-			&it.PriceMinor, &it.ProductName, &it.ProductSKU); err != nil {
+			&it.QtyDamaged, &it.QtyRejected, &it.PriceMinor, &it.ProductName, &it.ProductSKU); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

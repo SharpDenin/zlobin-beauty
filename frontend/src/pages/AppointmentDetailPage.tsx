@@ -15,6 +15,7 @@ import { useToast } from '@/shared/ui/Toast'
 import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/ServiceSchemeForm'
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { hasColorFormulaInput } from '@/shared/lib/visit-visibility'
+import { AppointmentMaterialsForm } from '@/pages/MasterInventoryPage'
 
 type Appointment = {
   id: string
@@ -190,6 +191,10 @@ export function AppointmentDetailPage() {
 
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
+
+      {a.status === 'completed' && isMaster && (
+        <AppointmentMaterialsForm appointmentId={a.id} orgId={a.organization_id} />
+      )}
 
       {a.status === 'completed' && (
         <section className="card stack">

@@ -80,7 +80,7 @@ func main() {
 		City: "Красноярск", Address: "ул. Ленина, 50", Phone: "+79001112233", Timezone: "Asia/Krasnoyarsk",
 		Display: "Анна Колористика", Bio: "Мастер-колорист в Красноярске. Демо-профиль для Salon-X.",
 		Specs: []string{"колористика", "стрижки"}, Experience: 7, Education: "Академия колористики",
-		WorkType: "owner",
+		WorkType:          "owner",
 		ProfessionTypeIDs: []string{professionTypeColorist, professionTypeHairdresser},
 		Services: []serviceSpec{
 			{Name: "Стрижка", Category: "стрижки", Description: "Женская стрижка с консультацией по форме.", Duration: 60, Price: 200000},
@@ -96,7 +96,8 @@ func main() {
 		log.Printf("warn fixed_window workshop: %v", err)
 	}
 
-	_, _, _, _, err = seedMaster(client, base, master2, masterSeed{
+	var m2Org, m2Branch string
+	m2Org, m2Branch, _, _, err = seedMaster(client, base, master2, masterSeed{
 		OrgName: "Салон Ивана (demo)", BranchName: "Новосибирск юг",
 		City: "Новосибирск", Address: "ул. Красный проспект, 25", Phone: "+79004445566", Timezone: "Asia/Novosibirsk",
 		Display: "Иван Стилист", Bio: "Стилист и мастер укладок в Новосибирске. Демо «другой город» для поиска.",
@@ -242,7 +243,7 @@ func main() {
 
 	apptID, err := seedAppointments(client, base, client1, master1, m1Profile, func() string {
 		if id, err := lookupMasterServiceByName(client, base, master1, "Окрашивание"); err == nil {
-		 return id
+			return id
 		}
 		return m1Service
 	}())
@@ -256,6 +257,12 @@ func main() {
 		log.Printf("warn orders: %v", err)
 	} else {
 		log.Printf("ok supplier orders")
+	}
+
+	if err := seedMaster2Inventory(client, base, master2, supplier1, m2Org, m2Branch, products1); err != nil {
+		log.Printf("warn master2 inventory: %v", err)
+	} else {
+		log.Printf("ok master2 inventory")
 	}
 
 	if err := seedRecurring(client, base, master1, supplier1, m1Org, m1Branch, sup1Org, products1); err != nil {
@@ -592,15 +599,15 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		ID string `json:"id"`
 	}
 	body := map[string]any{
-		"organization_id":  orgID,
-		"branch_id":        branchID,
-		"display_name":     cfg.Display,
-		"bio":              cfg.Bio,
-		"specializations":  cfg.Specs,
-		"city":             cfg.City,
-		"experience_years": cfg.Experience,
-		"education":          cfg.Education,
-		"published":          published,
+		"organization_id":     orgID,
+		"branch_id":           branchID,
+		"display_name":        cfg.Display,
+		"bio":                 cfg.Bio,
+		"specializations":     cfg.Specs,
+		"city":                cfg.City,
+		"experience_years":    cfg.Experience,
+		"education":           cfg.Education,
+		"published":           published,
 		"profession_type_ids": professionTypeIDsForSeed(cfg),
 	}
 	if cfg.WorkType != "" {
@@ -627,11 +634,11 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 }
 
 const (
-	professionTypeColorist        = "11111111-1111-4111-8111-111111111001"
-	professionTypeHairdresser     = "11111111-1111-4111-8111-111111111002"
-	professionTypeBarber          = "11111111-1111-4111-8111-111111111003"
-	professionTypeNailMaster      = "11111111-1111-4111-8111-111111111004"
-	professionTypePedicureMaster  = "11111111-1111-4111-8111-111111111005"
+	professionTypeColorist       = "11111111-1111-4111-8111-111111111001"
+	professionTypeHairdresser    = "11111111-1111-4111-8111-111111111002"
+	professionTypeBarber         = "11111111-1111-4111-8111-111111111003"
+	professionTypeNailMaster     = "11111111-1111-4111-8111-111111111004"
+	professionTypePedicureMaster = "11111111-1111-4111-8111-111111111005"
 )
 
 func professionTypeIDsForSeed(cfg masterSeed) []string {
@@ -778,7 +785,7 @@ func seedFixedWindowWorkshop(c *http.Client, base string, user authUser, orgID, 
 	ids, err := ensureServices(c, base, user, orgID, []serviceSpec{{
 		Name: workshopName, Category: "обучение",
 		Description: "Групповой мастер-класс по авторским техникам окрашивания. Запись на фиксированное окно.",
-		Duration: 240, Price: 850000, BookingMode: "fixed_window",
+		Duration:    240, Price: 850000, BookingMode: "fixed_window",
 	}})
 	if err != nil {
 		return err
@@ -816,13 +823,13 @@ func seedFixedWindowWorkshop(c *http.Client, base string, user authUser, orgID, 
 		ID string `json:"id"`
 	}
 	status, err := doJSON(c, http.MethodPost, base+"/v1/services/"+serviceID+"/occurrences", user.Token, map[string]any{
-		"branch_id":  branchID,
-		"starts_at":  startsLocal.UTC().Format(time.RFC3339),
-		"ends_at":    endsLocal.UTC().Format(time.RFC3339),
-		"timezone":   "Asia/Krasnoyarsk",
-		"capacity":   3,
-		"title":      workshopName,
-		"note":       "Демо fixed_window occurrence capacity=3 (Salon-X)",
+		"branch_id": branchID,
+		"starts_at": startsLocal.UTC().Format(time.RFC3339),
+		"ends_at":   endsLocal.UTC().Format(time.RFC3339),
+		"timezone":  "Asia/Krasnoyarsk",
+		"capacity":  3,
+		"title":     workshopName,
+		"note":      "Демо fixed_window occurrence capacity=3 (Salon-X)",
 	}, &created)
 	if err != nil {
 		return err
@@ -1123,7 +1130,9 @@ func seedPhase2History(c *http.Client, base string, master, supplier, clientUser
 		}
 	}
 	createPaid := func(comment string, p0, p1 int, qty0, qty1 float64) (string, error) {
-		var created struct{ ID string `json:"id"` }
+		var created struct {
+			ID string `json:"id"`
+		}
 		status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders", master.Token, map[string]any{
 			"buyer_org_id": buyerOrgID, "supplier_org_id": supplierOrgID, "location_id": locID,
 			"destination_branch_id": destBranchID, "payment_method": "bank_transfer", "comment": comment,
@@ -1164,7 +1173,9 @@ func seedPhase2History(c *http.Client, base string, master, supplier, clientUser
 		// one unpaid current order for outstanding chart
 		_, _ = createPaid("[seed-history-unpaid] ожидает оплату", 0, 3, 2, 1)
 		// last createPaid marks paid — make a raw unpaid instead
-		var unpaid struct{ ID string `json:"id"` }
+		var unpaid struct {
+			ID string `json:"id"`
+		}
 		st, _ := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders", master.Token, map[string]any{
 			"buyer_org_id": buyerOrgID, "supplier_org_id": supplierOrgID, "location_id": locID,
 			"destination_branch_id": destBranchID, "payment_method": "invoice", "comment": "[seed-history] unpaid",
@@ -1177,9 +1188,9 @@ func seedPhase2History(c *http.Client, base string, master, supplier, clientUser
 
 	var shopExisting struct {
 		Items []struct {
-			ID               string `json:"id"`
-			DeliveryComment  string `json:"delivery_comment"`
-			Status           string `json:"status"`
+			ID              string `json:"id"`
+			DeliveryComment string `json:"delivery_comment"`
+			Status          string `json:"status"`
 		} `json:"items"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/shop/supplier/orders?organization_id="+supplierOrgID, supplier.Token, nil, &shopExisting)
@@ -1348,51 +1359,51 @@ func seedKnowledge(c *http.Client, base string, user authUser, authorName, orgID
 
 	articles := []kbArt{
 		{Title: "Основы колористики: тон и фон осветления", Category: "Колористика", Brand: "L'Oreal",
-			Content: rich(kbDocOpts{H: "Тон и фон осветления", Body: "Практический гид по уровням тона: как не пережечь фон и сохранить плотность цвета Majirel.", List: []string{"Определите исходный уровень", "Сверьте фон осветления с картой", "Подберите оксид 3/6/9%"}, Tip: "Держите прядь-контроль каждые 10 минут на пористых волосах.", Image: true, Video: true}),
+			Content:   rich(kbDocOpts{H: "Тон и фон осветления", Body: "Практический гид по уровням тона: как не пережечь фон и сохранить плотность цвета Majirel.", List: []string{"Определите исходный уровень", "Сверьте фон осветления с картой", "Подберите оксид 3/6/9%"}, Tip: "Держите прядь-контроль каждые 10 минут на пористых волосах.", Image: true, Video: true}),
 			WithCover: true, ProductIDs: p(0), CategoryIDs: paint},
 		{Title: "Протокол уходовых процедур", Category: "Процедуры", Brand: "Olaplex",
-			Content: rich(kbDocOpts{H: "Протокол ухода", Body: "Диагностика → No.0/No.3 → выдержка → финиш. Не смешивайте с прямым пигментом в одной чаше.", List: []string{"Пористость и эластичность", "Нанесение от длины к корню", "Домашний уход на 2 недели"}, Warn: "Не превышайте время выдержки на осветлённых волосах.", Image: true}),
+			Content:   rich(kbDocOpts{H: "Протокол ухода", Body: "Диагностика → No.0/No.3 → выдержка → финиш. Не смешивайте с прямым пигментом в одной чаше.", List: []string{"Пористость и эластичность", "Нанесение от длины к корню", "Домашний уход на 2 недели"}, Warn: "Не превышайте время выдержки на осветлённых волосах.", Image: true}),
 			WithCover: true, ProductIDs: firstN(productIDs, 2), CategoryIDs: care},
 		{Title: "Как выбирать окислитель", Category: "Продукция", Brand: "Wella",
-			Content: rich(kbDocOpts{H: "Окислители 3% / 6% / 9%", Body: "Совместимость с крем-красками Koleston и контроль фона осветления.", List: []string{"3% — тон в тон и затемнение", "6% — покрытие седины", "9% — подъём на 2–3 уровня"}, Tip: "На тонких волосах лучше 6% дольше, чем 9% быстрее."}),
+			Content:   rich(kbDocOpts{H: "Окислители 3% / 6% / 9%", Body: "Совместимость с крем-красками Koleston и контроль фона осветления.", List: []string{"3% — тон в тон и затемнение", "6% — покрытие седины", "9% — подъём на 2–3 уровня"}, Tip: "На тонких волосах лучше 6% дольше, чем 9% быстрее."}),
 			WithCover: true, CategoryIDs: ox},
 		{Title: "Работа с блондом без пересушивания", Category: "Колористика", Brand: "Estel",
-			Content: rich(kbDocOpts{H: "Блонд без ломкости", Body: "Поэтапное осветление Essex и защита структуры протеиновым уходом.", Image: true}),
+			Content:   rich(kbDocOpts{H: "Блонд без ломкости", Body: "Поэтапное осветление Essex и защита структуры протеиновым уходом.", Image: true}),
 			WithCover: true, ProductIDs: p(7)},
 		{Title: "Домашний уход после салона", Category: "Уход", Brand: "Olaplex",
-			Content: rich(kbDocOpts{H: "Рекомендации клиенту", Body: "Что рекомендовать после окрашивания: No.3 два раза в неделю, без сульфатов первые 14 дней."}),
+			Content:   rich(kbDocOpts{H: "Рекомендации клиенту", Body: "Что рекомендовать после окрашивания: No.3 два раза в неделю, без сульфатов первые 14 дней."}),
 			WithCover: true, ProductIDs: p(5), CategoryIDs: care},
 		{Title: "Стайлинг: фиксация без жёсткости", Category: "Стайлинг", Brand: "Wella",
-			Content: rich(kbDocOpts{H: "Фиксация", Body: "EIMI Super Set: нанесите на сухие волосы с расстояния 20 см, не лакируйте у корня."}),
+			Content:    rich(kbDocOpts{H: "Фиксация", Body: "EIMI Super Set: нанесите на сухие волосы с расстояния 20 см, не лакируйте у корня."}),
 			ProductIDs: p(11), CategoryIDs: style},
 		{Title: "Rich-док: формула окрашивания", Category: "Колористика", Brand: "L'Oreal",
-			Content: rich(kbDocOpts{H: "Формула окрашивания", Body: "Пример схемы Majirel + оксид 6%: 1:1.5, выдержка 35 минут, эмульгация 2 минуты.", Image: true, Video: true, Tip: "Сначала проработайте седину у висков."}),
+			Content:   rich(kbDocOpts{H: "Формула окрашивания", Body: "Пример схемы Majirel + оксид 6%: 1:1.5, выдержка 35 минут, эмульгация 2 минуты.", Image: true, Video: true, Tip: "Сначала проработайте седину у висков."}),
 			WithCover: true, ProductIDs: firstN(productIDs, 2), CategoryIDs: paint},
 		{Title: "Кислотный уход vs протеиновый", Category: "Уход", Brand: "Olaplex",
-			Content: rich(kbDocOpts{H: "Кислота и протеин", Body: "Кислотный уход закрывает кутикулу после щёлочи. Протеин — если волосы тянутся и рвутся."}),
+			Content:   rich(kbDocOpts{H: "Кислота и протеин", Body: "Кислотный уход закрывает кутикулу после щёлочи. Протеин — если волосы тянутся и рвутся."}),
 			WithCover: true, CategoryIDs: care},
 		{Title: "Коррекция цвета после домашнего окрашивания", Category: "Колористика", Brand: "Wella",
-			Content: rich(kbDocOpts{H: "Коррекция", Body: "Безопасный путь: диагностика, снятие, тонирование Koleston без агрессивного осветления в один визит.", Warn: "Не делайте двойной блонд в день коррекции."}),
+			Content:   rich(kbDocOpts{H: "Коррекция", Body: "Безопасный путь: диагностика, снятие, тонирование Koleston без агрессивного осветления в один визит.", Warn: "Не делайте двойной блонд в день коррекции."}),
 			WithCover: true, ProductIDs: p(3)},
 		{Title: "Санитарные нормы рабочего места", Category: "Салон", Brand: "Salon-X",
 			Content: rich(kbDocOpts{H: "Санитария", Body: "Чек-лист: барьеры, дезинфекция чаш, одноразовые воротнички, проветривание после осветления."})},
 		{Title: "Подбор окислителя для седины", Category: "Продукция", Brand: "Estel",
-			Content: rich(kbDocOpts{H: "Седины", Body: "Покрытие седины Essex: 6% на плотной седине, предварительное заполнение на стеклевидных волосах."}),
+			Content:   rich(kbDocOpts{H: "Седины", Body: "Покрытие седины Essex: 6% на плотной седине, предварительное заполнение на стеклевидных волосах."}),
 			WithCover: true, ProductIDs: p(7), CategoryIDs: paint},
 		{Title: "Летний уход: UV-защита волос", Category: "Уход", Brand: "L'Oreal",
-			Content: rich(kbDocOpts{H: "UV-защита", Body: "Летний протокол Absolut Repair: несмываемый крем перед пляжем, шампунь без сульфатов."}),
+			Content:   rich(kbDocOpts{H: "UV-защита", Body: "Летний протокол Absolut Repair: несмываемый крем перед пляжем, шампунь без сульфатов."}),
 			WithCover: true, ProductIDs: p(2), CategoryIDs: care},
 		{Title: "Инструкция: Majirel — пропорции и выдержка", Category: "Колористика", Brand: "L'Oreal",
-			Content: rich(kbDocOpts{H: "Majirel по шагам", Body: "Смешайте крем-краску Majirel с оксидантом 1:1.5. Нанесите на сухие волосы, выдержка 35 минут.", List: []string{"Чаша и кисть только для краски", "Эмульгация тёплой водой", "Закройте кутикулу кислым уходом"}, Image: true, Video: true, Tip: "На корнях держите на 5 минут меньше, чем на длине."}),
+			Content:   rich(kbDocOpts{H: "Majirel по шагам", Body: "Смешайте крем-краску Majirel с оксидантом 1:1.5. Нанесите на сухие волосы, выдержка 35 минут.", List: []string{"Чаша и кисть только для краски", "Эмульгация тёплой водой", "Закройте кутикулу кислым уходом"}, Image: true, Video: true, Tip: "На корнях держите на 5 минут меньше, чем на длине."}),
 			WithCover: true, ProductIDs: p(0), CategoryIDs: paint},
 		{Title: "Troubleshooting: пятна на коже после окрашивания", Category: "Колористика", Brand: "Estel",
-			Content: rich(kbDocOpts{H: "Снятие пятен", Body: "Не трите кожу спиртом. Используйте специализированный ремувер и масло по контуру роста волос до нанесения.", Warn: "Агрессивные растворители сушат кожу и дают раздражение."}),
+			Content:   rich(kbDocOpts{H: "Снятие пятен", Body: "Не трите кожу спиртом. Используйте специализированный ремувер и масло по контуру роста волос до нанесения.", Warn: "Агрессивные растворители сушат кожу и дают раздражение."}),
 			WithCover: true},
 		{Title: "Техника балаяжа на Koleston Perfect", Category: "Колористика", Brand: "Wella",
-			Content: rich(kbDocOpts{H: "Балаяж", Body: "Свободная техника на Koleston: работайте от лица, не перегружайте оксидом 9% у корня.", Image: true}),
+			Content:   rich(kbDocOpts{H: "Балаяж", Body: "Свободная техника на Koleston: работайте от лица, не перегружайте оксидом 9% у корня.", Image: true}),
 			WithCover: true, ProductIDs: p(3), CategoryIDs: paint},
 		{Title: "Работа с линейкой Olaplex в салоне", Category: "Уход", Brand: "Olaplex",
-			Content: rich(kbDocOpts{H: "Салонный Olaplex", Body: "No.1/No.2 в услуге окрашивания: добавляйте в смесь по протоколу бренда, не заменяйте оксид.", List: []string{"Совместимость с Majirel", "Выдержка No.2 10–20 мин", "Дома — No.3 и No.6"}}),
+			Content:   rich(kbDocOpts{H: "Салонный Olaplex", Body: "No.1/No.2 в услуге окрашивания: добавляйте в смесь по протоколу бренда, не заменяйте оксид.", List: []string{"Совместимость с Majirel", "Выдержка No.2 10–20 мин", "Дома — No.3 и No.6"}}),
 			WithCover: true, ProductIDs: []string{}, CategoryIDs: care},
 	}
 	if len(productIDs) > 5 {
@@ -1418,13 +1429,13 @@ func seedKnowledgeSupplier2(c *http.Client, base string, user authUser, authorNa
 	rich := func(opts kbDocOpts) string { return knowledgeDocJSON(media, opts) }
 	articles := []kbArt{
 		{Title: "Dia Richesse: тонирование без осветления", Category: "Колористика", Brand: "L'Oreal",
-			Content: rich(kbDocOpts{H: "Тонирование", Body: "Dia Richesse даёт тон без подъёма. Идеально для коррекции блонда и блеска натуральных волос.", Tip: "Не используйте как перманент на седине выше 50%.", Image: true}),
+			Content:   rich(kbDocOpts{H: "Тонирование", Body: "Dia Richesse даёт тон без подъёма. Идеально для коррекции блонда и блеска натуральных волос.", Tip: "Не используйте как перманент на седине выше 50%.", Image: true}),
 			WithCover: true, ProductIDs: pickIndex(productIDs, 0), CategoryIDs: paint},
 		{Title: "Fusion-маска: интенсивное восстановление", Category: "Уход", Brand: "Wella",
-			Content: rich(kbDocOpts{H: "Протокол Fusion", Body: "Нанесите маску Fusion на вымытые полотенцем волосы на 5 минут. Не добавляйте тепло на очень повреждённых волосах.", Video: false}),
+			Content:   rich(kbDocOpts{H: "Протокол Fusion", Body: "Нанесите маску Fusion на вымытые полотенцем волосы на 5 минут. Не добавляйте тепло на очень повреждённых волосах.", Video: false}),
 			WithCover: true, ProductIDs: pickIndex(productIDs, 1), CategoryIDs: mask},
 		{Title: "Otium Aqua: увлажнение перед укладкой", Category: "Уход", Brand: "Estel",
-			Content: rich(kbDocOpts{H: "Увлажнение", Body: "Шампунь Otium Aqua — база перед термоукладкой. Не сочетайте в один день с сильным протеином."}),
+			Content:   rich(kbDocOpts{H: "Увлажнение", Body: "Шампунь Otium Aqua — база перед термоукладкой. Не сочетайте в один день с сильным протеином."}),
 			WithCover: true, ProductIDs: pickIndex(productIDs, 2)},
 	}
 	return postKnowledgeArticles(c, base, user, authorName, orgID, media.CoverID, articles)
@@ -1984,6 +1995,124 @@ func seedOrders(c *http.Client, base string, master, supplier authUser, buyerOrg
 	return nil
 }
 
+func seedMaster2Inventory(c *http.Client, base string, master, supplier authUser, buyerOrgID, destBranchID string, productIDs []string) error {
+	if buyerOrgID == "" || destBranchID == "" || len(productIDs) < 2 {
+		return fmt.Errorf("missing master2 inventory deps")
+	}
+	var inv struct {
+		Location struct {
+			ID string `json:"id"`
+		} `json:"location"`
+	}
+	st, err := doJSON(c, http.MethodGet, base+"/v1/me/inventory?organization_id="+buyerOrgID, master.Token, nil, &inv)
+	if err != nil {
+		return err
+	}
+	if st >= 300 || inv.Location.ID == "" {
+		return fmt.Errorf("ensure master warehouse status %d", st)
+	}
+
+	var mine struct {
+		Items []struct {
+			Organization struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			} `json:"organization"`
+		} `json:"items"`
+	}
+	_, err = doJSON(c, http.MethodGet, base+"/v1/organizations/mine", supplier.Token, nil, &mine)
+	if err != nil {
+		return err
+	}
+	var supplierOrgID string
+	for _, it := range mine.Items {
+		if it.Organization.Type == "supplier" {
+			supplierOrgID = it.Organization.ID
+			break
+		}
+	}
+	if supplierOrgID == "" {
+		return fmt.Errorf("supplier org not found")
+	}
+	supLoc, err := ensureLocation(c, base, supplier, supplierOrgID, "Склад поставщика", "supplier")
+	if err != nil {
+		return err
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/stock/movements", supplier.Token, map[string]any{
+		"location_id": supLoc, "product_id": productIDs[0], "kind": "receipt", "qty": 200, "reason": "phase5 master2 receive stock",
+	}, nil)
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/stock/movements", supplier.Token, map[string]any{
+		"location_id": supLoc, "product_id": productIDs[1], "kind": "receipt", "qty": 80, "reason": "phase5 master2 demo stock",
+	}, nil)
+
+	var existing struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Comment string `json:"comment"`
+			Status  string `json:"status"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/supplier-orders?organization_id="+buyerOrgID, master.Token, nil, &existing)
+	haveReceive, haveDemo := false, false
+	for _, o := range existing.Items {
+		if strings.Contains(o.Comment, "[seed-phase5-receive]") {
+			haveReceive = true
+		}
+		if strings.Contains(o.Comment, "[seed-phase5-demo]") {
+			haveDemo = true
+		}
+	}
+
+	createAndDeliver := func(comment string, productID string, qty float64) (string, error) {
+		var created struct {
+			ID string `json:"id"`
+		}
+		status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders", master.Token, map[string]any{
+			"buyer_org_id": buyerOrgID, "supplier_org_id": supplierOrgID, "location_id": inv.Location.ID,
+			"destination_branch_id": destBranchID, "payment_method": "bank_transfer", "comment": comment,
+			"items": []map[string]any{{"product_id": productID, "qty": qty}},
+		}, &created)
+		if err != nil || status >= 300 {
+			return "", fmt.Errorf("create phase5 order status %d %v", status, err)
+		}
+		est := time.Now().UTC().AddDate(0, 0, 1)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/transition", supplier.Token, map[string]any{"status": "confirmed"}, nil)
+		windowStart := time.Now().UTC().Add(2 * time.Hour)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/delivery/schedule", supplier.Token, map[string]any{
+			"window_start": windowStart, "window_end": windowStart.Add(3 * time.Hour),
+			"planned_delivery_at": windowStart, "recipient_name": "Иван", "recipient_phone": "+79004445566",
+		}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/transition", supplier.Token, map[string]any{"status": "picking", "estimated_delivery_at": est}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/transition", supplier.Token, map[string]any{"status": "ready_for_dispatch"}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/delivery/in-transit", supplier.Token, map[string]any{}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/delivery/arrived", supplier.Token, map[string]any{}, nil)
+		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+created.ID+"/delivery/delivered", supplier.Token, map[string]any{}, nil)
+		return created.ID, nil
+	}
+
+	if !haveReceive {
+		id, err := createAndDeliver("[seed-phase5-receive] Поставка для приёмки мастера", productIDs[0], 100)
+		if err != nil {
+			return err
+		}
+		log.Printf("ok master2 pending receipt order=%s", id)
+	}
+	if !haveDemo {
+		id, err := createAndDeliver("[seed-phase5-demo] Принятый остаток мастера", productIDs[1], 20)
+		if err != nil {
+			return err
+		}
+		stAcc, err := doJSON(c, http.MethodPost, base+"/v1/commerce/supplier-orders/"+id+"/accept", master.Token, map[string]any{
+			"items": []map[string]any{{"product_id": productIDs[1], "qty_accepted": 20, "qty_damaged": 0, "qty_rejected": 0}},
+		}, nil)
+		if err != nil || stAcc >= 300 {
+			return fmt.Errorf("accept demo order status %d %v", stAcc, err)
+		}
+		log.Printf("ok master2 demo stock order=%s", id)
+	}
+	return nil
+}
+
 // --- HTTP helpers ---
 
 func doJSON(c *http.Client, method, url, token string, body any, out any) (int, error) {
@@ -2026,7 +2155,9 @@ func seedRecurring(c *http.Client, base string, master, supplier authUser, buyer
 		return fmt.Errorf("missing recurring deps")
 	}
 	var list struct {
-		Items []struct{ ID string `json:"id"` } `json:"items"`
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/commerce/recurring?organization_id="+supplierOrgID+"&role=supplier", supplier.Token, nil, &list)
 	if len(list.Items) > 0 {
@@ -2034,7 +2165,9 @@ func seedRecurring(c *http.Client, base string, master, supplier authUser, buyer
 		return nil
 	}
 	start := time.Now().UTC().AddDate(0, 0, 7).Format("2006-01-02")
-	var created struct{ ID string `json:"id"` }
+	var created struct {
+		ID string `json:"id"`
+	}
 	status, err := doJSON(c, http.MethodPost, base+"/v1/commerce/recurring", master.Token, map[string]any{
 		"supplier_org_id":  supplierOrgID,
 		"buyer_org_id":     buyerOrgID,
@@ -2423,9 +2556,9 @@ func seedClientShopOrder(c *http.Client, base string, client authUser, productID
 		return fmt.Errorf("cart status %d", st)
 	}
 	_, err = checkoutShopOrder(c, base, client.Token, map[string]any{
-		"delivery_address":  "Салон Анны, ул. Ленина, 50",
-		"delivery_comment":  "seed pickup",
-		"payment_method":    "cash_on_delivery",
+		"delivery_address": "Салон Анны, ул. Ленина, 50",
+		"delivery_comment": "seed pickup",
+		"payment_method":   "cash_on_delivery",
 		"pickup_branch_id": pickupBranchID,
 	})
 	return err
@@ -2710,7 +2843,7 @@ func seedPhase4Appointments(
 			"technique": "Seed Phase4 Free", "dye": "Majirel 7.1", "proportions": "1:1.5", "oxidizer": "6%",
 		},
 		"components": []map[string]any{{"name": "Majirel 7.1", "qty": "30", "unit": "г", "proportion": "1:1.5"}},
-		"notes": "Phase4 completed scheme",
+		"notes":      "Phase4 completed scheme",
 	}); err != nil {
 		log.Printf("warn completed scheme: %v", err)
 	} else {

@@ -27,7 +27,19 @@ const (
 	MovementUnreserve   = "unreserve"
 	MovementRelease     = "release"
 	MovementShipment    = "shipment"
+	MovementDamage      = "damage"
+	MovementRejection   = "rejection"
 )
+
+// DispositionRemaining is qty still expected on an order line after previous
+// accept / damage / reject postings. Never negative.
+func DispositionRemaining(ordered, accepted, damaged, rejected float64) float64 {
+	left := ordered - accepted - damaged - rejected
+	if left < 1e-9 {
+		return 0
+	}
+	return left
+}
 
 // Stock balance status buckets.
 const (
@@ -154,21 +166,24 @@ type StockBalanceView struct {
 	Status       string
 	PhotoMediaID *uuid.UUID
 	QtyIncoming  float64
+	Unit         string
+	VolumeLabel  string
 }
 
 type StockMovement struct {
-	ID          uuid.UUID
-	LocationID  uuid.UUID
-	ProductID   uuid.UUID
-	Kind        string
-	Qty         float64
-	QtyBefore   float64
-	QtyAfter    float64
-	Reason      string
-	ActorUserID uuid.UUID
-	RefType     string
-	RefID       *uuid.UUID
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	LocationID     uuid.UUID
+	ProductID      uuid.UUID
+	Kind           string
+	Qty            float64
+	QtyBefore      float64
+	QtyAfter       float64
+	Reason         string
+	ActorUserID    uuid.UUID
+	RefType        string
+	RefID          *uuid.UUID
+	IdempotencyKey string
+	CreatedAt      time.Time
 }
 
 type ConsumptionNorm struct {
@@ -182,26 +197,26 @@ type ConsumptionNorm struct {
 }
 
 type SupplierOrder struct {
-	ID                   uuid.UUID
-	BuyerOrgID           uuid.UUID
-	SupplierOrgID        uuid.UUID
-	LocationID           uuid.UUID
-	DestinationBranchID  *uuid.UUID
-	Status               string
-	Currency             string
-	TotalMinor           int64
-	SubtotalMinor        int64
-	DeliveryCostMinor    int64
-	PaymentMethod        string
-	PaymentStatus        string
-	PaidAt               *time.Time
-	IdempotencyKey       string
-	Comment              string
-	DesiredAt            *time.Time
-	EstimatedDeliveryAt  *time.Time
-	CreatedBy            uuid.UUID
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                  uuid.UUID
+	BuyerOrgID          uuid.UUID
+	SupplierOrgID       uuid.UUID
+	LocationID          uuid.UUID
+	DestinationBranchID *uuid.UUID
+	Status              string
+	Currency            string
+	TotalMinor          int64
+	SubtotalMinor       int64
+	DeliveryCostMinor   int64
+	PaymentMethod       string
+	PaymentStatus       string
+	PaidAt              *time.Time
+	IdempotencyKey      string
+	Comment             string
+	DesiredAt           *time.Time
+	EstimatedDeliveryAt *time.Time
+	CreatedBy           uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type SupplierOrderItem struct {
@@ -213,6 +228,8 @@ type SupplierOrderItem struct {
 	QtyOrdered   float64
 	QtyDelivered float64
 	QtyAccepted  float64
+	QtyDamaged   float64
+	QtyRejected  float64
 	PriceMinor   int64
 }
 
@@ -237,14 +254,14 @@ type OrderDelivery struct {
 
 // Client order statuses (B2C shop).
 const (
-	ClientOrderStatusSubmitted     = "submitted"
-	ClientOrderStatusConfirmed     = "confirmed"
-	ClientOrderStatusPicking       = "picking"
-	ClientOrderStatusInDelivery    = "in_delivery"
-	ClientOrderStatusDelivered     = "delivered"
+	ClientOrderStatusSubmitted      = "submitted"
+	ClientOrderStatusConfirmed      = "confirmed"
+	ClientOrderStatusPicking        = "picking"
+	ClientOrderStatusInDelivery     = "in_delivery"
+	ClientOrderStatusDelivered      = "delivered"
 	ClientOrderStatusReadyForPickup = "ready_for_pickup"
-	ClientOrderStatusReceived      = "received"
-	ClientOrderStatusCancelled     = "cancelled"
+	ClientOrderStatusReceived       = "received"
+	ClientOrderStatusCancelled      = "cancelled"
 )
 
 type ClientCheckoutGroup struct {

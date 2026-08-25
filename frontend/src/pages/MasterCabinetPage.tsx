@@ -810,7 +810,7 @@ export function MasterCabinetPage() {
         <h2>5. Склад и материалы</h2>
         <p>Товары и остатки создаются приёмкой — без начальных сидов.</p>
         <div className="row">
-          <Link className="btn btn-primary" to="/warehouse">Открыть склад</Link>
+          <Link className="btn btn-primary" to="/inventory">Мой склад</Link>
           <Link className="btn btn-secondary" to="/reports">Отчёты салона</Link>
           <Link className="btn btn-secondary" to="/cosmetics">Косметика</Link>
         </div>

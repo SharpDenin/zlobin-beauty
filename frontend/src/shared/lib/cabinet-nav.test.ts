@@ -17,5 +17,14 @@ describe('navForCabinet', () => {
     expect(master.secondary.some((l) => l.to === '/messages')).toBe(true)
     expect(master.secondary.some((l) => l.to === '/masterclasses')).toBe(true)
     expect(master.secondary.some((l) => l.to === '/models')).toBe(true)
+    expect(master.secondary.some((l) => l.to === '/inventory' && l.label === 'Мой склад')).toBe(true)
+    expect(master.secondary.some((l) => l.to === '/inventory/receipts' && l.label === 'На приёмке')).toBe(true)
+    expect(master.secondary.some((l) => l.to === '/knowledge' && l.label === 'База знаний')).toBe(true)
+  })
+
+  it('does not put personal warehouse on supplier nav', () => {
+    const nav = navForCabinet('supplier')
+    const all = [...nav.primary, ...nav.secondary, ...nav.side]
+    expect(all.some((l) => l.to === '/inventory')).toBe(false)
   })
 })

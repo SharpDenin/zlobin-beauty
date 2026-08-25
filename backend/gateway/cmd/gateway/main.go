@@ -78,6 +78,8 @@ func main() {
 	mux.Handle("/v1/knowledge/", marketplace)
 	mux.Handle("/v1/me/knowledge", marketplace)
 	mux.Handle("/v1/me/knowledge/", marketplace)
+	mux.Handle("/v1/me/inventory", commerce)
+	mux.Handle("/v1/me/inventory/", commerce)
 	mux.Handle("/v1/me/working-hours", booking)
 	mux.Handle("/v1/me/schedule-exceptions", booking)
 	mux.Handle("/v1/me/work-mode-intervals", booking)

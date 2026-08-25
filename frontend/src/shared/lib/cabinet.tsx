@@ -219,6 +219,10 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   if (canFeature(kind, 'clients')) secondary.push({ to: '/clients', label: 'Клиенты' })
   if (canFeature(kind, 'services')) secondary.push({ to: '/services', label: 'Услуги' })
   if (canFeature(kind, 'cosmetics')) secondary.push({ to: '/cosmetics', label: 'Косметика' })
+  if (canFeature(kind, 'cosmetics')) {
+    secondary.push({ to: '/inventory', label: 'Мой склад' })
+    secondary.push({ to: '/inventory/receipts', label: 'На приёмке' })
+  }
   if (canFeature(kind, 'knowledge')) secondary.push({ to: '/knowledge', label: 'База знаний' })
   if (canFeature(kind, 'staff')) secondary.push({ to: '/staff', label: 'Команда' })
   if (canFeature(kind, 'pickup_orders')) secondary.push({ to: '/pickup-orders', label: 'Выдача заказов' })

@@ -47,6 +47,7 @@ import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { MessagesPage } from '@/pages/MessagesPage'
 import { MasterclassCreatePage, MasterclassDetailPage, MasterclassListPage } from '@/pages/MasterclassPages'
 import { ModelRequestCreatePage, ModelRequestDetailPage, ModelsPage } from '@/pages/ModelPages'
+import { MasterInventoryPage, MasterReceiptsPage } from '@/pages/MasterInventoryPage'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
 
@@ -137,6 +138,9 @@ export function App() {
                   <Route path="/cosmetics/recurring" element={<RecurringPage />} />
                   <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
                   <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
+                  <Route path="/inventory/receipts" element={<MasterReceiptsPage />} />
+                  <Route path="/inventory/:productId" element={<MasterInventoryPage />} />
+                  <Route path="/inventory" element={<MasterInventoryPage />} />
                   <Route path="/pickup-orders" element={<SalonPickupPage />} />
                   <Route element={<RequireCabinetFeature feature="staff" />}>
                     <Route path="/staff" element={<StaffPage />} />

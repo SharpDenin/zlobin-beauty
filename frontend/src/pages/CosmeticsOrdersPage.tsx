@@ -46,6 +46,7 @@ export function CosmeticsOrdersPage() {
           <p className="muted">{buyerOrg?.organization.name}</p>
         </div>
         <Link className="btn btn-primary btn-compact" to="/cosmetics">К поставщикам</Link>
+        <Link className="btn btn-secondary btn-compact" to="/inventory/receipts">На приёмке</Link>
       </div>
 
       {orders.isLoading && <div className="state-box">Загрузка…</div>}

@@ -9,15 +9,16 @@ import (
 type Code string
 
 const (
-	CodeValidation                Code = "validation_error"
-	CodeUnauthorized              Code = "unauthorized"
-	CodeForbidden                 Code = "forbidden"
-	CodeNotFound                  Code = "not_found"
-	CodeConflict                  Code = "conflict"
-	CodeRateLimited               Code = "rate_limited"
-	CodeInternal                  Code = "internal_error"
-	CodeProfessionTypesRequired   Code = "profession_types_required"
-	CodeProfessionTypeLocked      Code = "profession_type_locked"
+	CodeValidation              Code = "validation_error"
+	CodeUnauthorized            Code = "unauthorized"
+	CodeForbidden               Code = "forbidden"
+	CodeNotFound                Code = "not_found"
+	CodeConflict                Code = "conflict"
+	CodeRateLimited             Code = "rate_limited"
+	CodeInternal                Code = "internal_error"
+	CodeProfessionTypesRequired Code = "profession_types_required"
+	CodeProfessionTypeLocked    Code = "profession_type_locked"
+	CodeInsufficientStock       Code = "insufficient_stock"
 )
 
 type AppError struct {
@@ -70,6 +71,13 @@ func ProfessionTypesRequired() *AppError {
 
 func ProfessionTypeLocked() *AppError {
 	return New(CodeProfessionTypeLocked, http.StatusConflict, "profession type is locked and cannot be removed")
+}
+
+func InsufficientStock(msg string) *AppError {
+	if msg == "" {
+		msg = "Недостаточно товара на складе"
+	}
+	return New(CodeInsufficientStock, http.StatusConflict, msg)
 }
 
 func RateLimited(msg string) *AppError {

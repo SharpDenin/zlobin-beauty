@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Salon-X Phase 5–6 Master Inventory and Receiving
+  title: Salon-X Phase 6 Supply Receiving
   version: 0.6.0
   description: Personal master warehouse, receiving/acceptance workflow, stock movements, consume and adjustment. Bearer JWT.
 servers:

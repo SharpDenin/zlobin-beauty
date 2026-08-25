@@ -145,6 +145,10 @@ function humanizeError(message: unknown, status: number): string {
       'occurrence is not bookable': 'Этот сеанс недоступен для записи',
       'client is blacklisted': 'Запись к этому мастеру сейчас недоступна.',
       'existing appointments would fall outside': 'Есть записи вне новых рабочих часов. Сначала перенесите или отмените их.',
+      'accepted quantity exceeds remaining quantity': 'Нельзя принять больше оставшегося количества. Склад не изменён.',
+      'order is not ready to be accepted': 'Заказ ещё не доставлен. Приёмка не завершена, склад не изменён.',
+      'order does not belong to this master warehouse': 'Это поставка другого мастера. Склад не изменён.',
+      'master inventory is private': 'Это склад другого мастера. Склад не изменён.',
       unauthorized: 'Требуется вход в аккаунт',
       forbidden: 'Недостаточно прав',
     }

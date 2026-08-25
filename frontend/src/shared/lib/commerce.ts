@@ -98,12 +98,20 @@ export type SupplierOrder = {
   items?: Array<{
     product_id: string
     qty_ordered: number
+    qty_delivered?: number
     qty_accepted?: number
     qty_damaged?: number
     qty_rejected?: number
+    remaining_qty?: number
+    receivable_qty?: number
+    undelivered_qty?: number
     price_minor: number
     product_name?: string
   }>
+  supplier_name?: string
+  acceptance_state?: string
+  remaining_qty?: number
+  undelivered_qty?: number
 }
 
 export const PAYMENT_METHOD_OPTIONS = [

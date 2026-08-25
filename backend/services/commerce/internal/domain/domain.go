@@ -41,6 +41,68 @@ func DispositionRemaining(ordered, accepted, damaged, rejected float64) float64 
 	return left
 }
 
+// Acceptance workflow states derived from order line disposition.
+const (
+	AcceptancePending    = "pending"
+	AcceptanceInProgress = "in_progress"
+	AcceptanceCompleted  = "completed"
+)
+
+// LineReceivable is qty still allowed on this accept call.
+// Cap is remaining vs ordered. When qty_delivered is recorded independently
+// and exceeds already-dispositioned qty, also cap to that leftover.
+func LineReceivable(ordered, delivered, accepted, damaged, rejected float64) float64 {
+	remaining := DispositionRemaining(ordered, accepted, damaged, rejected)
+	if delivered <= 1e-9 {
+		return remaining
+	}
+	leftoverDelivered := delivered - accepted - damaged - rejected
+	if leftoverDelivered < 1e-9 {
+		return remaining
+	}
+	if leftoverDelivered < remaining {
+		return leftoverDelivered
+	}
+	return remaining
+}
+
+func DispositionUndelivered(ordered, delivered float64) float64 {
+	if delivered <= 1e-9 {
+		return 0
+	}
+	left := ordered - delivered
+	if left < 1e-9 {
+		return 0
+	}
+	return left
+}
+
+func OrderAcceptanceState(items []SupplierOrderItem) string {
+	remaining := 0.0
+	disposed := false
+	for _, it := range items {
+		remaining += DispositionRemaining(it.QtyOrdered, it.QtyAccepted, it.QtyDamaged, it.QtyRejected)
+		if it.QtyAccepted+it.QtyDamaged+it.QtyRejected > 1e-9 {
+			disposed = true
+		}
+	}
+	if remaining <= 1e-9 {
+		return AcceptanceCompleted
+	}
+	if disposed {
+		return AcceptanceInProgress
+	}
+	return AcceptancePending
+}
+
+func AcceptMovementIdempotencyKey(base, kind string, productID uuid.UUID) string {
+	base = strings.TrimSpace(base)
+	if base == "" || productID == uuid.Nil {
+		return ""
+	}
+	return base + ":" + kind + ":" + productID.String()
+}
+
 // Stock balance status buckets.
 const (
 	StockSufficient = "sufficient"

@@ -5,7 +5,7 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg, type SupplierOrder } from '@/shared/lib/commerce'
 import { statusBadgeClass, supplierOrderLabel } from '@/shared/lib/status'
-import { formatQty, movementContext, movementDelta, movementTitle, remainingToAccept, type InventoryItem, type InventoryMovement } from '@/pages/inventory-helpers'
+import { formatQty, movementContext, movementDelta, movementTitle, remainingToAccept, acceptanceStateLabel, canCommitReceipt, discrepancyQty, receiptTotals, type InventoryItem, type InventoryMovement, type ReceiptOrder } from '@/pages/inventory-helpers'
 
 type InventoryResponse = {
   location: { id: string; kind: string; owner_user_id?: string | null }
@@ -238,14 +238,23 @@ function MasterStockDetail({ productId }: { productId: string }) {
 }
 
 export function MasterReceiptsPage() {
+  const { orderId } = useParams()
+  if (orderId) return <ReceiptDetail orderId={orderId} />
+  return <ReceiptList />
+}
+
+function ReceiptList() {
   const { accessToken } = useAuth()
   const { buyerOrgId, orgs } = useBuyerOrg()
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [tab, setTab] = useState<'pending' | 'history'>('pending')
 
   const receipts = useQuery({
-    queryKey: ['me-inventory-receipts', buyerOrgId],
+    queryKey: ['me-inventory-receipts', buyerOrgId, tab],
     queryFn: () =>
-      apiRequest<{ items: SupplierOrder[] }>(`/v1/me/inventory/receipts?organization_id=${buyerOrgId}`, { token: accessToken }),
+      apiRequest<{ items: ReceiptOrder[] }>(
+        `/v1/me/inventory/receipts?organization_id=${buyerOrgId}${tab === 'history' ? '&history=1' : ''}`,
+        { token: accessToken },
+      ),
     enabled: Boolean(accessToken && buyerOrgId),
   })
 
@@ -275,28 +284,42 @@ export function MasterReceiptsPage() {
           <Link className="btn btn-secondary btn-compact" to="/knowledge">База знаний</Link>
         </div>
       </div>
+      <div className="row">
+        <button className={`btn btn-compact ${tab === 'pending' ? 'btn-primary' : 'btn-secondary'}`} type="button" data-testid="receipts-pending-tab" onClick={() => setTab('pending')}>
+          На приёмке
+        </button>
+        <button className={`btn btn-compact ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`} type="button" data-testid="receipts-history-tab" onClick={() => setTab('history')}>
+          История поставок
+        </button>
+      </div>
       {receipts.isError && <div className="state-box error">Не удалось загрузить поставки</div>}
       {items.length === 0 && (
         <div className="empty-state" data-testid="receipts-empty">
-          <h2>Нет поставок на приёмке</h2>
-          <p>Когда заказ будет доставлен, он появится здесь.</p>
+          <h2>{tab === 'pending' ? 'Нет поставок на приёмке' : 'История пока пустая'}</h2>
+          <p>{tab === 'pending' ? 'Когда заказ будет доставлен, он появится здесь.' : 'Принятые поставки появятся в истории.'}</p>
         </div>
       )}
       <div className="list">
         {items.map((o) => (
-          <article key={o.id} className="history-card" data-testid="pending-receipt">
+          <article key={o.id} className="history-card" data-testid={tab === 'history' ? 'receipt-history-item' : 'pending-receipt'}>
             <div className="row between">
               <strong>{o.comment || `Заказ #${o.id.slice(0, 8)}`}</strong>
               <span className={`badge ${statusBadgeClass(o.status)}`}>{supplierOrderLabel(o.status)}</span>
             </div>
-            <p className="muted">{new Date(o.created_at).toLocaleString('ru-RU')}</p>
-            {openId === o.id ? (
-            <ReceiptAcceptForm order={o} token={accessToken} onDone={() => setOpenId(null)} />
-            ) : (
-              <button className="btn btn-primary btn-compact" type="button" data-testid="open-receipt" onClick={() => setOpenId(o.id)}>
-                Открыть поставку
-              </button>
+            <p className="muted">Поставщик: {o.supplier_name || '—'}</p>
+            <p className="muted">
+              {new Date(o.created_at).toLocaleString('ru-RU')}
+              {' · '}
+              {(o.items?.length ?? 0)} позиций
+              {' · '}
+              {acceptanceStateLabel(o.acceptance_state)}
+            </p>
+            {(o.undelivered_qty ?? 0) > 0 && (
+              <p className="muted">{o.undelivered_qty} не поступило</p>
             )}
+            <Link className="btn btn-primary btn-compact" to={`/inventory/receipts/${o.id}`} data-testid="open-receipt">
+              Открыть поставку
+            </Link>
           </article>
         ))}
       </div>
@@ -304,105 +327,227 @@ export function MasterReceiptsPage() {
   )
 }
 
+function ReceiptDetail({ orderId }: { orderId: string }) {
+  const { accessToken } = useAuth()
+  const { buyerOrgId } = useBuyerOrg()
+
+  const receipt = useQuery({
+    queryKey: ['me-inventory-receipt', buyerOrgId, orderId],
+    queryFn: () =>
+      apiRequest<ReceiptOrder>(`/v1/me/inventory/receipts/${orderId}?organization_id=${buyerOrgId}`, { token: accessToken }),
+    enabled: Boolean(accessToken && buyerOrgId && orderId),
+  })
+
+  const order = receipt.data
+
+  return (
+    <main className="page stack">
+      <div className="row between">
+        <h1>Приёмка поставки</h1>
+        <Link className="btn btn-secondary btn-compact" to="/inventory/receipts">К поставкам</Link>
+      </div>
+      {receipt.isLoading && <div className="state-box">Загрузка…</div>}
+      {receipt.isError && <div className="state-box error">Не удалось открыть поставку. Склад не изменён.</div>}
+      {order && (
+        <>
+          <section className="card stack-sm" data-testid="receipt-header">
+            <div className="row between">
+              <strong>{order.comment || `Заказ #${order.id.slice(0, 8)}`}</strong>
+              <span className={`badge ${statusBadgeClass(order.status)}`}>{supplierOrderLabel(order.status)}</span>
+            </div>
+            <p className="muted">Поставщик: {order.supplier_name || '—'}</p>
+            <p className="muted">{new Date(order.created_at).toLocaleString('ru-RU')} · {(order.items?.length ?? 0)} позиций · {acceptanceStateLabel(order.acceptance_state)}</p>
+            {(order.undelivered_qty ?? 0) > 0 && (
+              <p data-testid="receipt-discrepancy">{order.undelivered_qty} не поступило</p>
+            )}
+          </section>
+          {order.acceptance_state === 'completed' ? (
+            <section className="card stack-sm" data-testid="receipt-completed">
+              <h2>Приёмка завершена</h2>
+              <p className="muted">Старую запись нельзя изменить. Если ошибка — сделайте корректировку на складе.</p>
+              {(order.items ?? []).map((it) => (
+                <article key={it.product_id} className="history-card">
+                  <strong>{it.product_name || 'Товар'}</strong>
+                  <p className="muted">
+                    Заказано {it.qty_ordered} · принято {it.qty_accepted ?? 0} · повреждено {it.qty_damaged ?? 0} · отклонено {it.qty_rejected ?? 0}
+                  </p>
+                </article>
+              ))}
+            </section>
+          ) : (
+            <ReceiptAcceptForm order={order} token={accessToken} />
+          )}
+        </>
+      )}
+    </main>
+  )
+}
+
 function ReceiptAcceptForm({
   order,
   token,
-  onDone,
 }: {
-  order: SupplierOrder
+  order: ReceiptOrder
   token: string | null
-  onDone: () => void
 }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const [checked, setChecked] = useState(false)
+  const { buyerOrgId } = useBuyerOrg()
+  const [reviewing, setReviewing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [idempotencyKey] = useState(() => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `accept-${Date.now()}`))
   const lines = order.items ?? []
-  const [values, setValues] = useState<Record<string, { accepted: string; damaged: string; rejected: string }>>(() => {
-    const init: Record<string, { accepted: string; damaged: string; rejected: string }> = {}
+  const [values, setValues] = useState<Record<string, { accepted: string; damaged: string; rejected: string; checked: boolean }>>(() => {
+    const init: Record<string, { accepted: string; damaged: string; rejected: string; checked: boolean }> = {}
     for (const it of lines) {
-      const remaining = remainingToAccept(it.qty_ordered, it.qty_accepted ?? 0, it.qty_damaged ?? 0, it.qty_rejected ?? 0)
-      init[it.product_id] = { accepted: String(remaining), damaged: '0', rejected: '0' }
+      const remaining = it.remaining_qty ?? remainingToAccept(it.qty_ordered, it.qty_accepted ?? 0, it.qty_damaged ?? 0, it.qty_rejected ?? 0)
+      init[it.product_id] = { accepted: remaining > 0 ? String(remaining) : '0', damaged: '0', rejected: '0', checked: false }
     }
     return init
   })
+
+  const drafts = lines.map((it) => {
+    const remaining = it.remaining_qty ?? remainingToAccept(it.qty_ordered, it.qty_accepted ?? 0, it.qty_damaged ?? 0, it.qty_rejected ?? 0)
+    const v = values[it.product_id] ?? { accepted: '0', damaged: '0', rejected: '0', checked: false }
+    return {
+      remaining,
+      accepted: Number(v.accepted) || 0,
+      damaged: Number(v.damaged) || 0,
+      rejected: Number(v.rejected) || 0,
+      checked: v.checked,
+    }
+  })
+  const totals = receiptTotals(drafts)
+  const canCommit = canCommitReceipt(drafts)
+  const overRemaining = drafts.some((d) => d.accepted + d.damaged + d.rejected > d.remaining + 1e-9)
 
   const accept = useMutation({
     mutationFn: () =>
       apiRequest(`/v1/commerce/supplier-orders/${order.id}/accept`, {
         token,
         body: {
-          items: lines.map((it) => ({
-            product_id: it.product_id,
-            qty_accepted: Number(values[it.product_id]?.accepted || 0),
-            qty_damaged: Number(values[it.product_id]?.damaged || 0),
-            qty_rejected: Number(values[it.product_id]?.rejected || 0),
-          })),
+          idempotency_key: idempotencyKey,
+          items: lines
+            .map((it) => {
+              const v = values[it.product_id]
+              return {
+                product_id: it.product_id,
+                qty_accepted: Number(v?.accepted || 0),
+                qty_damaged: Number(v?.damaged || 0),
+                qty_rejected: Number(v?.rejected || 0),
+              }
+            })
+            .filter((it) => it.qty_accepted + it.qty_damaged + it.qty_rejected > 0),
         },
       }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['me-inventory'] })
       await qc.invalidateQueries({ queryKey: ['me-inventory-receipts'] })
+      await qc.invalidateQueries({ queryKey: ['me-inventory-receipt', buyerOrgId, order.id] })
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
-      onDone()
       navigate('/inventory')
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось принять поставку'),
+    onError: (e) => {
+      setReviewing(false)
+      setError(e instanceof ApiError ? e.message : 'Не удалось принять поставку. Склад не изменён.')
+    },
   })
 
   return (
     <div className="stack" data-testid="receipt-form">
-      {error && <div className="state-box error">{error}</div>}
+      {error && <div className="state-box error" data-testid="receipt-error">{error}</div>}
       {lines.map((it) => {
-        const remaining = remainingToAccept(it.qty_ordered, it.qty_accepted ?? 0, it.qty_damaged ?? 0, it.qty_rejected ?? 0)
-        const v = values[it.product_id] ?? { accepted: '0', damaged: '0', rejected: '0' }
+        const remaining = it.remaining_qty ?? remainingToAccept(it.qty_ordered, it.qty_accepted ?? 0, it.qty_damaged ?? 0, it.qty_rejected ?? 0)
+        const delivered = it.qty_delivered ?? 0
+        const already = it.qty_accepted ?? 0
+        const v = values[it.product_id] ?? { accepted: '0', damaged: '0', rejected: '0', checked: false }
+        const missing = discrepancyQty(it.qty_ordered, delivered)
         return (
-          <div key={it.product_id} className="card stack-sm">
+          <div key={it.product_id} className="card stack-sm" data-testid="receipt-item">
             <strong>{it.product_name || 'Товар'}</strong>
-            <p className="muted">Заказано {it.qty_ordered} · осталось принять {remaining}</p>
-            <div className="field">
-              <label>Принято</label>
-              <input
-                data-testid="qty-accepted"
-                type="number"
-                min={0}
-                value={v.accepted}
-                onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, accepted: e.target.value } }))}
-              />
-            </div>
-            <div className="field">
-              <label>Повреждено</label>
-              <input
-                data-testid="qty-damaged"
-                type="number"
-                min={0}
-                value={v.damaged}
-                onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, damaged: e.target.value } }))}
-              />
-            </div>
-            <div className="field">
-              <label>Брак / отказ</label>
-              <input
-                data-testid="qty-rejected"
-                type="number"
-                min={0}
-                value={v.rejected}
-                onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, rejected: e.target.value } }))}
-              />
-            </div>
+            <p className="muted">
+              Заказано {it.qty_ordered}
+              {' · '}Доставлено {delivered || '—'}
+              {' · '}Уже принято {already}
+              {' · '}Осталось принять {remaining}
+            </p>
+            {missing > 0 && <p className="muted">{missing} не поступило</p>}
+            {remaining > 0 ? (
+              <>
+                <div className="field">
+                  <label>Принято</label>
+                  <input
+                    data-testid="qty-accepted"
+                    type="number"
+                    min={0}
+                    value={v.accepted}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, accepted: e.target.value } }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Повреждено</label>
+                  <input
+                    data-testid="qty-damaged"
+                    type="number"
+                    min={0}
+                    value={v.damaged}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, damaged: e.target.value } }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Отклонено</label>
+                  <input
+                    data-testid="qty-rejected"
+                    type="number"
+                    min={0}
+                    value={v.rejected}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, rejected: e.target.value } }))}
+                  />
+                </div>
+                <label className="field-check">
+                  <input
+                    type="checkbox"
+                    data-testid="item-checked"
+                    checked={v.checked}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [it.product_id]: { ...v, checked: e.target.checked } }))}
+                  />
+                  <span>Проверено</span>
+                </label>
+              </>
+            ) : (
+              <p className="muted">По этой позиции принимать нечего.</p>
+            )}
           </div>
         )
       })}
-      <label className="field-check">
-        <input type="checkbox" data-testid="receipt-checked" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-        <span>Проверено</span>
-      </label>
+      <section className="card stack-sm" data-testid="receipt-totals">
+        <p><strong>В склад: {totals.stockIn}</strong></p>
+        <p className="muted">Не поступило / повреждено / отклонено: {totals.notStock}</p>
+        <p className="muted">Принято {totals.accepted} · повреждено {totals.damaged} · отклонено {totals.rejected}</p>
+      </section>
+      {overRemaining && <div className="state-box error">Сумма по позиции больше оставшегося количества. Склад не изменён.</div>}
+      {reviewing && (
+        <section className="card stack-sm" data-testid="receipt-summary">
+          <h2>Подтверждение</h2>
+          <p>В склад попадёт только принятое: {totals.stockIn}</p>
+          <p className="muted">Повреждено {totals.damaged} · отклонено {totals.rejected}. Эти количества не станут остатком.</p>
+          <button
+            className="btn btn-primary"
+            type="button"
+            data-testid="confirm-receipt"
+            disabled={accept.isPending}
+            onClick={() => accept.mutate()}
+          >
+            Подтвердить
+          </button>
+        </section>
+      )}
       <button
         className="btn btn-primary"
         type="button"
         data-testid="commit-receipt"
-        disabled={!checked || accept.isPending}
-        onClick={() => accept.mutate()}
+        disabled={!canCommit || overRemaining || accept.isPending}
+        onClick={() => setReviewing(true)}
       >
         Внести всё в склад
       </button>

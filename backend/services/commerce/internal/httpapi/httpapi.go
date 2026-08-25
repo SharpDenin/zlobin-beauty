@@ -1040,7 +1040,8 @@ func (a *API) acceptSupplierOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Items []struct {
+		IdempotencyKey string `json:"idempotency_key"`
+		Items          []struct {
 			ProductID   string  `json:"product_id"`
 			QtyAccepted float64 `json:"qty_accepted"`
 			QtyDamaged  float64 `json:"qty_damaged"`
@@ -1063,7 +1064,11 @@ func (a *API) acceptSupplierOrder(w http.ResponseWriter, r *http.Request) {
 			QtyDamaged: it.QtyDamaged, QtyRejected: it.QtyRejected,
 		})
 	}
-	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted)
+	idem := strings.TrimSpace(req.IdempotencyKey)
+	if idem == "" {
+		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
+	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted, idem)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -1106,7 +1111,7 @@ func (a *API) acceptSupplierOrderLegacy(w http.ResponseWriter, r *http.Request) 
 		}
 		accepted = append(accepted, service.AcceptItemInput{ProductID: productID, QtyAccepted: it.QtyAccepted})
 	}
-	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted)
+	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted, strings.TrimSpace(r.Header.Get("Idempotency-Key")))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

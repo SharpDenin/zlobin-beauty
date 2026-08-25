@@ -641,8 +641,8 @@ type AcceptItem struct {
 // Only qty_accepted increases on-hand stock (receipt). Damaged and rejected
 // are recorded as audit movements and never become available stock.
 // If a line is already fully dispositioned, the call is a no-op for that line
-// (idempotent re-accept).
-func (s *Store) AcceptOrder(ctx context.Context, orderID, actorUserID uuid.UUID, accept []AcceptItem, now time.Time) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
+// (idempotent re-accept). Concurrent callers serialize on FOR UPDATE.
+func (s *Store) AcceptOrder(ctx context.Context, orderID, actorUserID uuid.UUID, accept []AcceptItem, now time.Time, idempotencyKey string) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -680,6 +680,21 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 		return nil, nil, err
 	}
 
+	if idempotencyKey != "" {
+		for _, a := range accept {
+			for _, kind := range []string{domain.MovementReceipt, domain.MovementDamage, domain.MovementRejection} {
+				existing, err := s.GetMovementByIdempotencyKey(ctx, domain.AcceptMovementIdempotencyKey(idempotencyKey, kind, a.ProductID))
+				if err != nil {
+					return nil, nil, err
+				}
+				if existing != nil {
+					_ = tx.Rollback(ctx)
+					return &order, items, nil
+				}
+			}
+		}
+	}
+
 	byProduct := make(map[uuid.UUID]*domain.SupplierOrderItem, len(items))
 	for i := range items {
 		byProduct[items[i].ProductID] = &items[i]
@@ -690,7 +705,7 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 		if !ok {
 			return nil, nil, apperr.Validation("product does not belong to this order")
 		}
-		remaining := domain.DispositionRemaining(item.QtyOrdered, item.QtyAccepted, item.QtyDamaged, item.QtyRejected)
+		remaining := domain.LineReceivable(item.QtyOrdered, item.QtyDelivered, item.QtyAccepted, item.QtyDamaged, item.QtyRejected)
 		if remaining <= 1e-9 {
 			continue
 		}
@@ -702,16 +717,22 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 			return nil, nil, apperr.Validation("at least one of qty_accepted, qty_damaged, qty_rejected must be positive")
 		}
 		if requested > remaining+1e-9 {
-			return nil, nil, apperr.Validation("accepted quantity exceeds ordered quantity")
+			return nil, nil, apperr.Validation("accepted quantity exceeds remaining quantity")
 		}
 
+		itemID := item.ID
 		if a.QtyAccepted > 1e-9 {
 			mv := domain.StockMovement{
 				ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
-				Kind: domain.MovementReceipt, Qty: a.QtyAccepted, Reason: "приёмка заказа",
+				Kind: domain.MovementReceipt, Qty: a.QtyAccepted,
+				Reason:      "приёмка заказа · позиция " + itemID.String()[:8],
 				ActorUserID: actorUserID, RefType: "supplier_order", RefID: &refID, CreatedAt: now,
+				IdempotencyKey: domain.AcceptMovementIdempotencyKey(idempotencyKey, domain.MovementReceipt, item.ProductID),
 			}
 			if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+				if o, lines, replayErr := s.replayAccept(ctx, tx, orderID, idempotencyKey, err); replayErr == nil {
+					return o, lines, nil
+				}
 				return nil, nil, err
 			}
 			item.QtyAccepted += a.QtyAccepted
@@ -719,10 +740,15 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 		if a.QtyDamaged > 1e-9 {
 			mv := domain.StockMovement{
 				ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
-				Kind: domain.MovementDamage, Qty: a.QtyDamaged, Reason: "повреждено при приёмке",
+				Kind: domain.MovementDamage, Qty: a.QtyDamaged,
+				Reason:      "повреждено при приёмке · позиция " + itemID.String()[:8],
 				ActorUserID: actorUserID, RefType: "supplier_order", RefID: &refID, CreatedAt: now,
+				IdempotencyKey: domain.AcceptMovementIdempotencyKey(idempotencyKey, domain.MovementDamage, item.ProductID),
 			}
 			if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+				if o, lines, replayErr := s.replayAccept(ctx, tx, orderID, idempotencyKey, err); replayErr == nil {
+					return o, lines, nil
+				}
 				return nil, nil, err
 			}
 			item.QtyDamaged += a.QtyDamaged
@@ -730,10 +756,15 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 		if a.QtyRejected > 1e-9 {
 			mv := domain.StockMovement{
 				ID: uuid.Must(uuid.NewV7()), LocationID: order.LocationID, ProductID: item.ProductID,
-				Kind: domain.MovementRejection, Qty: a.QtyRejected, Reason: "отклонено при приёмке",
+				Kind: domain.MovementRejection, Qty: a.QtyRejected,
+				Reason:      "отклонено при приёмке · позиция " + itemID.String()[:8],
 				ActorUserID: actorUserID, RefType: "supplier_order", RefID: &refID, CreatedAt: now,
+				IdempotencyKey: domain.AcceptMovementIdempotencyKey(idempotencyKey, domain.MovementRejection, item.ProductID),
 			}
 			if _, err := applyMovementTx(ctx, tx, mv); err != nil {
+				if o, lines, replayErr := s.replayAccept(ctx, tx, orderID, idempotencyKey, err); replayErr == nil {
+					return o, lines, nil
+				}
 				return nil, nil, err
 			}
 			item.QtyRejected += a.QtyRejected
@@ -772,6 +803,22 @@ FROM supplier_order_items WHERE order_id=$1 FOR UPDATE`, orderID)
 		return nil, nil, err
 	}
 	return &order, items, nil
+}
+
+func (s *Store) replayAccept(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, idempotencyKey string, cause error) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
+	if !isUniqueViolation(cause) || idempotencyKey == "" {
+		return nil, nil, cause
+	}
+	_ = tx.Rollback(ctx)
+	o, err := s.GetOrder(ctx, orderID)
+	if err != nil || o == nil {
+		return nil, nil, cause
+	}
+	items, err := s.ListOrderItems(ctx, orderID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return o, items, nil
 }
 
 func scanOrder(row pgx.Row) (*domain.SupplierOrder, error) {

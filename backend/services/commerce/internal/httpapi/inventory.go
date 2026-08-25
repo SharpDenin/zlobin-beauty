@@ -14,6 +14,7 @@ func (a *API) registerInventoryRoutes(mux *http.ServeMux, auth func(http.Handler
 	mux.Handle("GET /v1/me/inventory", auth(http.HandlerFunc(a.myInventory)))
 	mux.Handle("GET /v1/me/inventory/movements", auth(http.HandlerFunc(a.myInventoryMovements)))
 	mux.Handle("GET /v1/me/inventory/receipts", auth(http.HandlerFunc(a.myInventoryReceipts)))
+	mux.Handle("GET /v1/me/inventory/receipts/{orderID}", auth(http.HandlerFunc(a.myInventoryReceipt)))
 	mux.Handle("POST /v1/me/inventory/consume", auth(http.HandlerFunc(a.myInventoryConsume)))
 	mux.Handle("POST /v1/me/inventory/adjust", auth(http.HandlerFunc(a.myInventoryAdjust)))
 	mux.Handle("GET /v1/me/inventory/{productID}", auth(http.HandlerFunc(a.myInventoryItem)))
@@ -66,9 +67,16 @@ func (a *API) myInventoryItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	names := a.svc.SupplierNamesForMovements(r.Context(), movements)
 	mv := make([]map[string]any, 0, len(movements))
 	for _, m := range movements {
-		mv = append(mv, movementDTO(m))
+		dto := movementDTO(m)
+		if m.RefID != nil {
+			if name := names[m.RefID.String()]; name != "" {
+				dto["supplier_name"] = name
+			}
+		}
+		mv = append(mv, dto)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"location":  locationDTO(*loc),
@@ -112,16 +120,66 @@ func (a *API) myInventoryReceipts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	items, err := a.svc.ListMyPendingReceipts(r.Context(), claims.UserID, orgID)
+	pendingOnly := r.URL.Query().Get("history") != "1"
+	items, err := a.svc.ListMyReceipts(r.Context(), claims.UserID, orgID, pendingOnly)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, orderDTO(it.Order, it.Items))
+		out = append(out, receiptDTO(it))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) myInventoryReceipt(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := parseOrgID(r)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	orderID, err := uuid.Parse(r.PathValue("orderID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid order_id"))
+		return
+	}
+	item, err := a.svc.GetMyReceipt(r.Context(), claims.UserID, orgID, orderID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, receiptDTO(*item))
+}
+
+func receiptDTO(it service.PendingReceipt) map[string]any {
+	dto := orderDTO(it.Order, it.Items)
+	dto["supplier_name"] = it.SupplierName
+	dto["acceptance_state"] = it.AcceptanceState
+	remaining := 0.0
+	undelivered := 0.0
+	itemsOut := make([]map[string]any, 0, len(it.Items))
+	rawItems, _ := dto["items"].([]map[string]any)
+	for i, line := range it.Items {
+		row := map[string]any{}
+		if i < len(rawItems) {
+			row = rawItems[i]
+		}
+		rem := domain.DispositionRemaining(line.QtyOrdered, line.QtyAccepted, line.QtyDamaged, line.QtyRejected)
+		recv := domain.LineReceivable(line.QtyOrdered, line.QtyDelivered, line.QtyAccepted, line.QtyDamaged, line.QtyRejected)
+		und := domain.DispositionUndelivered(line.QtyOrdered, line.QtyDelivered)
+		row["remaining_qty"] = rem
+		row["receivable_qty"] = recv
+		row["undelivered_qty"] = und
+		remaining += rem
+		undelivered += und
+		itemsOut = append(itemsOut, row)
+	}
+	dto["items"] = itemsOut
+	dto["remaining_qty"] = remaining
+	dto["undelivered_qty"] = undelivered
+	return dto
 }
 
 func (a *API) myInventoryConsume(w http.ResponseWriter, r *http.Request) {

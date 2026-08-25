@@ -109,19 +109,24 @@ LIMIT $3`, locationID, productID, limit)
 	return out, rows.Err()
 }
 
-func (s *Store) ListPendingBuyerOrders(ctx context.Context, buyerOrgID, locationID uuid.UUID) ([]domain.SupplierOrder, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT `+orderColumns+`
+func (s *Store) ListBuyerOrdersForLocation(ctx context.Context, buyerOrgID, locationID uuid.UUID, pendingOnly bool) ([]domain.SupplierOrder, error) {
+	q := `
+SELECT ` + orderColumns + `
 FROM supplier_orders
 WHERE buyer_org_id=$1
   AND location_id=$2
-  AND status IN ('delivered', 'completed', 'accepted_partial')
+  AND status IN ('delivered', 'completed', 'accepted_partial', 'accepted_full')`
+	if pendingOnly {
+		q += `
   AND EXISTS (
     SELECT 1 FROM supplier_order_items i
     WHERE i.order_id = supplier_orders.id
       AND (i.qty_ordered - i.qty_accepted - i.qty_damaged - i.qty_rejected) > 0.0001
-  )
-ORDER BY created_at DESC`, buyerOrgID, locationID)
+  )`
+	}
+	q += `
+ORDER BY created_at DESC`
+	rows, err := s.pool.Query(ctx, q, buyerOrgID, locationID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +143,10 @@ ORDER BY created_at DESC`, buyerOrgID, locationID)
 		out = []domain.SupplierOrder{}
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListPendingBuyerOrders(ctx context.Context, buyerOrgID, locationID uuid.UUID) ([]domain.SupplierOrder, error) {
+	return s.ListBuyerOrdersForLocation(ctx, buyerOrgID, locationID, true)
 }
 
 func isUniqueViolation(err error) bool {

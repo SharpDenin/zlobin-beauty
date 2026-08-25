@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
@@ -102,6 +104,28 @@ func (s *Service) GetMyInventoryItem(ctx context.Context, actor, orgID, productI
 	return loc, view, movements, nil
 }
 
+func (s *Service) SupplierNamesForMovements(ctx context.Context, movements []domain.StockMovement) map[string]string {
+	out := map[string]string{}
+	seen := map[uuid.UUID]struct{}{}
+	for _, m := range movements {
+		if m.RefType != "supplier_order" || m.RefID == nil {
+			continue
+		}
+		if _, ok := seen[*m.RefID]; ok {
+			continue
+		}
+		seen[*m.RefID] = struct{}{}
+		o, err := s.store.GetOrder(ctx, *m.RefID)
+		if err != nil || o == nil {
+			continue
+		}
+		if name := s.organizationName(ctx, o.SupplierOrgID); name != "" {
+			out[m.RefID.String()] = name
+		}
+	}
+	return out
+}
+
 func (s *Service) ListMyMovements(ctx context.Context, actor, orgID uuid.UUID, productID *uuid.UUID) (*domain.StockLocation, []domain.StockMovement, error) {
 	loc, err := s.EnsureMasterLocation(ctx, actor, orgID)
 	if err != nil {
@@ -123,16 +147,22 @@ func (s *Service) ListMyMovements(ctx context.Context, actor, orgID uuid.UUID, p
 }
 
 type PendingReceipt struct {
-	Order domain.SupplierOrder
-	Items []domain.SupplierOrderItem
+	Order           domain.SupplierOrder
+	Items           []domain.SupplierOrderItem
+	SupplierName    string
+	AcceptanceState string
 }
 
 func (s *Service) ListMyPendingReceipts(ctx context.Context, actor, orgID uuid.UUID) ([]PendingReceipt, error) {
+	return s.ListMyReceipts(ctx, actor, orgID, true)
+}
+
+func (s *Service) ListMyReceipts(ctx context.Context, actor, orgID uuid.UUID, pendingOnly bool) ([]PendingReceipt, error) {
 	loc, err := s.EnsureMasterLocation(ctx, actor, orgID)
 	if err != nil {
 		return nil, err
 	}
-	orders, err := s.store.ListPendingBuyerOrders(ctx, orgID, loc.ID)
+	orders, err := s.store.ListBuyerOrdersForLocation(ctx, orgID, loc.ID, pendingOnly)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -145,9 +175,65 @@ func (s *Service) ListMyPendingReceipts(ctx context.Context, actor, orgID uuid.U
 		if items == nil {
 			items = []domain.SupplierOrderItem{}
 		}
-		out = append(out, PendingReceipt{Order: o, Items: items})
+		out = append(out, PendingReceipt{
+			Order: o, Items: items,
+			SupplierName:    s.organizationName(ctx, o.SupplierOrgID),
+			AcceptanceState: domain.OrderAcceptanceState(items),
+		})
 	}
 	return out, nil
+}
+
+func (s *Service) GetMyReceipt(ctx context.Context, actor, orgID, orderID uuid.UUID) (*PendingReceipt, error) {
+	loc, err := s.EnsureMasterLocation(ctx, actor, orgID)
+	if err != nil {
+		return nil, err
+	}
+	o, err := s.getOrderOrErr(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if o.BuyerOrgID != orgID || o.LocationID != loc.ID {
+		return nil, apperr.Forbidden("order does not belong to this master warehouse")
+	}
+	items, err := s.store.ListOrderItems(ctx, o.ID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.SupplierOrderItem{}
+	}
+	return &PendingReceipt{
+		Order: *o, Items: items,
+		SupplierName:    s.organizationName(ctx, o.SupplierOrgID),
+		AcceptanceState: domain.OrderAcceptanceState(items),
+	}, nil
+}
+
+func (s *Service) organizationName(ctx context.Context, orgID uuid.UUID) string {
+	if s.organizationsURL == "" || s.internalToken == "" || orgID == uuid.Nil {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/internal/organizations/"+orgID.String(), nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return ""
+	}
+	var out struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return ""
+	}
+	return out.Name
 }
 
 type ConsumeStockInput struct {
@@ -256,7 +342,7 @@ func (s *Service) AdjustMyStock(ctx context.Context, actor uuid.UUID, in AdjustS
 	return out, nil
 }
 
-func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, accepted []AcceptItemInput) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
+func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.UUID, accepted []AcceptItemInput, idempotencyKey string) (*domain.SupplierOrder, []domain.SupplierOrderItem, error) {
 	if len(accepted) == 0 {
 		return nil, nil, apperr.Validation("at least one item is required")
 	}
@@ -266,6 +352,32 @@ func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.U
 	}
 	if err := s.requireMembership(ctx, o.BuyerOrgID, actor, "owner", "admin", "master"); err != nil {
 		return nil, nil, err
+	}
+	loc, err := s.getLocationOrErr(ctx, o.LocationID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.requireLocationWrite(ctx, actor, loc); err != nil {
+		return nil, nil, err
+	}
+	key := strings.TrimSpace(idempotencyKey)
+	if key != "" && accepted[0].ProductID != uuid.Nil {
+		for _, kind := range []string{domain.MovementReceipt, domain.MovementDamage, domain.MovementRejection} {
+			existing, err := s.store.GetMovementByIdempotencyKey(ctx, domain.AcceptMovementIdempotencyKey(key, kind, accepted[0].ProductID))
+			if err != nil {
+				return nil, nil, apperr.Internal(err)
+			}
+			if existing != nil {
+				if existing.LocationID != o.LocationID {
+					return nil, nil, apperr.Conflict("idempotency_key already used")
+				}
+				items, err := s.OrderItems(ctx, orderID)
+				if err != nil {
+					return nil, nil, err
+				}
+				return o, items, nil
+			}
+		}
 	}
 	if o.Status == domain.OrderStatusAcceptedFull {
 		items, err := s.OrderItems(ctx, orderID)
@@ -283,7 +395,7 @@ func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.U
 			return nil, nil, apperr.Validation("product_id is required")
 		}
 		if it.QtyAccepted < 0 || it.QtyDamaged < 0 || it.QtyRejected < 0 {
-			return nil, nil, apperr.Validation("qty_damaged and qty_rejected must not be negative")
+			return nil, nil, apperr.Validation("qty_accepted, qty_damaged and qty_rejected must not be negative")
 		}
 		if it.QtyAccepted+it.QtyDamaged+it.QtyRejected <= 1e-9 {
 			return nil, nil, apperr.Validation("at least one of qty_accepted, qty_damaged, qty_rejected must be positive")
@@ -293,7 +405,7 @@ func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.U
 			QtyDamaged: it.QtyDamaged, QtyRejected: it.QtyRejected,
 		})
 	}
-	outOrder, outItems, err := s.store.AcceptOrder(ctx, orderID, actor, items, s.now().UTC())
+	outOrder, outItems, err := s.store.AcceptOrder(ctx, orderID, actor, items, s.now().UTC(), key)
 	if err != nil {
 		if ae, ok := apperr.As(err); ok {
 			return nil, nil, ae

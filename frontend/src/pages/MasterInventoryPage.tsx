@@ -77,7 +77,7 @@ function MasterStockList() {
         </div>
         <div className="row">
           <Link className="btn btn-secondary btn-compact" to="/inventory/receipts">На приёмке</Link>
-          <Link className="btn btn-secondary btn-compact" to="/knowledge">База знаний</Link>
+          <Link className="btn btn-secondary btn-compact" to="/knowledge" data-testid="inventory-knowledge">База знаний</Link>
         </div>
       </div>
 
@@ -281,7 +281,7 @@ function ReceiptList() {
         </div>
         <div className="row">
           <Link className="btn btn-secondary btn-compact" to="/inventory">Мой склад</Link>
-          <Link className="btn btn-secondary btn-compact" to="/knowledge">База знаний</Link>
+          <Link className="btn btn-secondary btn-compact" to="/knowledge" data-testid="inventory-knowledge">База знаний</Link>
         </div>
       </div>
       <div className="row">

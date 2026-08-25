@@ -96,12 +96,16 @@ export function CosmeticsProductPage() {
         </div>
         {added && <div className="state-box success">Товар в корзине. Оформите заказ в каталоге поставщика.</div>}
       </section>
-      {(knowledge.data?.items?.length ?? 0) > 0 && (
-        <section className="stack-sm">
-          <h2>Материалы и инструкции</h2>
+      <section className="card stack" data-testid="product-knowledge">
+        <h2>Знания по этому продукту</h2>
+        {knowledge.isLoading && <p className="muted">Загрузка…</p>}
+        {!knowledge.isLoading && (knowledge.data?.items?.length ?? 0) === 0 && (
+          <p className="muted" data-testid="product-knowledge-empty">Сохранённых материалов по этому продукту пока нет.</p>
+        )}
+        {(knowledge.data?.items?.length ?? 0) > 0 && (
           <div className="kb-grid">
             {knowledge.data!.items.map((a) => (
-              <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`}>
+              <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`} data-testid="product-knowledge-item">
                 {a.cover_media_id ? (
                   <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} className="kb-cover" />
                 ) : (
@@ -112,8 +116,8 @@ export function CosmeticsProductPage() {
               </Link>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
     </main>
   )
 }

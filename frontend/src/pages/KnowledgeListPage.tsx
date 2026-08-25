@@ -220,6 +220,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
             <label htmlFor="kb-search">Поиск</label>
             <input
               id="kb-search"
+              data-testid="kb-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Статья, бренд, продукт или технология"

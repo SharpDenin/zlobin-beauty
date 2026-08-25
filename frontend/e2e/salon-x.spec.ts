@@ -467,7 +467,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.getByRole('heading', { name: 'Связанные товары' })).toBeVisible({ timeout: 15_000 })
     await test.info().attach(`knowledge-article-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
     await page.locator('a.product-card').first().click()
-    await expect(page.getByRole('heading', { name: 'Материалы и инструкции' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Знания по этому продукту' })).toBeVisible({ timeout: 15_000 })
   })
 
   test('supplier knowledge editor draft preview publish', async ({ page }, info) => {
@@ -3369,5 +3369,194 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
       await orderBtn.click()
       await expect(page).toHaveURL(new RegExp(`/cosmetics/products/${product.id}`), { timeout: 15_000 })
     }
+  })
+
+  test('phase9 knowledge recommendations integration', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    test.setTimeout(180_000)
+
+    function noLeak(raw: string) {
+      const low = raw.toLowerCase()
+      expect(low).not.toContain('qty_on_hand')
+      expect(low).not.toContain('qty_reserved')
+      expect(low).not.toContain('oxidizer')
+      expect(low).not.toContain('"components"')
+    }
+
+    async function buyerOrg(token: string) {
+      const res = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${token}` } })
+      expect(res.ok).toBeTruthy()
+      const body = await res.json() as { items?: Array<{ organization: { id: string; type: string }; branches?: Array<{ id: string }> }> }
+      const salon = (body.items ?? []).find((i) => i.organization.type !== 'supplier') ?? body.items?.[0]
+      expect(salon?.organization.id).toBeTruthy()
+      return { orgId: salon!.organization.id, branchId: salon!.branches?.[0]?.id ?? '' }
+    }
+
+    async function inventory(token: string, orgId: string) {
+      const res = await fetch(`${api}/v1/me/inventory?organization_id=${orgId}`, { headers: { Authorization: `Bearer ${token}` } })
+      expect(res.ok, await res.clone().text()).toBeTruthy()
+      return res.json() as Promise<{ items: Array<{ product_id: string; available: number }> }>
+    }
+
+    const master = await apiLogin('master2@demo.local')
+    const other = await apiLogin('master1@demo.local')
+    const supplier = await apiLogin('supplier1@demo.local')
+    const { orgId } = await buyerOrg(master.access_token)
+    const supOrgs = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${supplier.access_token}` } })
+    const supBody = await supOrgs.json() as { items?: Array<{ organization: { id: string; type: string } }> }
+    const supplierOrgId = (supBody.items ?? []).find((i) => i.organization.type === 'supplier')?.organization.id
+    expect(supplierOrgId).toBeTruthy()
+
+    // DEMO A — inventory → knowledge hub
+    await loginUI(page, 'master2@demo.local')
+    await page.goto('/inventory')
+    await expect(page.getByRole('heading', { name: 'Мой склад' })).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('inventory-knowledge').first().click()
+    await expect(page).toHaveURL(/\/knowledge/, { timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'База знаний' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Колористика' })).toBeVisible()
+    await page.getByTestId('kb-search').fill('Majirel')
+    await page.getByRole('button', { name: 'Найти' }).click()
+    const articleLink = page.getByRole('link', { name: /Majirel/i }).first()
+    await expect(articleLink).toBeVisible({ timeout: 15_000 })
+    await articleLink.click()
+    await expect(page.locator('.prose-article')).toBeVisible({ timeout: 15_000 })
+
+    const kbRes = await fetch(`${api}/v1/knowledge?q=${encodeURIComponent('Majirel')}&limit=5`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    expect(kbRes.ok).toBeTruthy()
+    const kb = await kbRes.json() as { items?: Array<{ id: string; product_id?: string | null; product_ids?: string[] }> }
+    expect((kb.items ?? []).length).toBeGreaterThan(0)
+    const linkedProduct = kb.items![0].product_id || kb.items![0].product_ids?.[0]
+    expect(linkedProduct).toBeTruthy()
+
+    const recRes = await fetch(`${api}/v1/me/knowledge/recommendations?product_id=${linkedProduct}`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    const recText = await recRes.text()
+    expect(recRes.status, recText).toBe(200)
+    noLeak(recText)
+    const rec = JSON.parse(recText) as { items?: Array<{ id: string; title: string }> }
+    expect((rec.items ?? []).length).toBeGreaterThan(0)
+
+    const emptyRes = await fetch(`${api}/v1/me/knowledge/recommendations?product_id=00000000-0000-0000-0000-000000000099`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    const emptyText = await emptyRes.text()
+    expect(emptyRes.status).toBe(200)
+    const emptyBody = JSON.parse(emptyText) as { items?: unknown[]; empty_reason?: string }
+    expect(emptyBody.items ?? []).toHaveLength(0)
+    expect(emptyBody.empty_reason).toContain('нет сохранённой рекомендации')
+
+    const otherRec = await fetch(`${api}/v1/me/knowledge/recommendations?product_id=${linkedProduct}`, {
+      headers: { Authorization: `Bearer ${other.access_token}` },
+    })
+    const otherText = await otherRec.text()
+    expect(otherRec.status).toBe(200)
+    noLeak(otherText)
+
+    const unauth = await fetch(`${api}/v1/me/knowledge/recommendations?product_id=${linkedProduct}`)
+    expect([401, 403]).toContain(unauth.status)
+
+    // DEMO B — product context
+    await page.goto(`/cosmetics/products/${linkedProduct}`)
+    await expect(page.getByTestId('product-knowledge')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Знания по этому продукту' })).toBeVisible()
+    await expect(page.getByTestId('product-knowledge-item').first()).toBeVisible()
+
+    const blankProduct = await fetch(`${api}/v1/commerce/products`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        organization_id: supplierOrgId, name: 'Phase9 Empty Knowledge Dye', brand: 'Test',
+        sku: `P9E-${Date.now()}`, unit: 'ml', price_minor: 9000, currency: 'RUB', published: true, for_sale: true,
+      }),
+    })
+    expect(blankProduct.status, await blankProduct.clone().text()).toBeLessThan(300)
+    const blank = await blankProduct.json() as { id: string }
+    await page.goto(`/cosmetics/products/${blank.id}`)
+    await expect(page.getByTestId('product-knowledge-empty')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Сохранённых материалов по этому продукту пока нет.')).toBeVisible()
+
+    // DEMO C/D/E/G — appointment availability → knowledge
+    const started = await ensureInProgressForClient('master2@demo.local', 'client1@demo.local', 'укладк')
+    const liveRes = await fetch(`${api}/v1/appointments/${started.appt.id}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const live = await liveRes.json() as { id: string; service_id: string; status: string; starts_at?: string }
+    const beforeStatus = live.status
+
+    const createdProduct = await fetch(`${api}/v1/commerce/products`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        organization_id: supplierOrgId, name: 'Phase9 Shortage Dye', brand: 'Test',
+        sku: `P9S-${Date.now()}`, unit: 'ml', price_minor: 11000, currency: 'RUB', published: true, for_sale: true,
+      }),
+    })
+    expect(createdProduct.status, await createdProduct.clone().text()).toBeLessThan(300)
+    const product = await createdProduct.json() as { id: string }
+    const norm = await fetch(`${api}/v1/commerce/norms`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization_id: orgId, service_id: live.service_id, product_id: product.id, qty: 30, required: true }),
+    })
+    expect(norm.status, await norm.clone().text()).toBeLessThan(300)
+
+    const stockOf = async () => (await inventory(master.access_token, orgId)).items.find((i) => i.product_id === product.id)?.available ?? 0
+    const cur = await stockOf()
+    if (cur !== 0) {
+      const adj = await fetch(`${api}/v1/me/inventory/adjust`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organization_id: orgId, product_id: product.id, qty: -cur, reason: 'phase9 e2e zero' }),
+      })
+      expect(adj.ok, await adj.text()).toBeTruthy()
+    }
+
+    const svcRec = await fetch(`${api}/v1/me/knowledge/recommendations?service_id=${live.service_id}&organization_id=${orgId}&appointment_id=${live.id}`, {
+      headers: { Authorization: `Bearer ${master.access_token}` },
+    })
+    const svcText = await svcRec.text()
+    expect([200, 403]).toContain(svcRec.status)
+    if (svcRec.status === 200) noLeak(svcText)
+
+    await page.goto(`/appointments/${live.id}`)
+    await expect(page.getByTestId('availability-indicator')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('knowledge-recommendations')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('availability-indicator').click()
+    await expect(page.getByTestId('availability-panel')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/Не хватает/i).first()).toBeVisible()
+    await expect(page.getByTestId('availability-order').first()).toBeVisible()
+    await expect(page.getByTestId('availability-knowledge').first()).toBeVisible()
+    await expect(page.getByTestId('availability-alternative')).toContainText(/Нет сохранённой альтернативы|Есть вариант в линейке/)
+
+    await page.getByTestId('availability-knowledge').first().click()
+    await expect(page).toHaveURL(/\/knowledge/, { timeout: 15_000 })
+    const afterRes = await fetch(`${api}/v1/appointments/${live.id}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const after = await afterRes.json() as { status: string }
+    expect(after.status).toBe(beforeStatus)
+
+    // DEMO F — calendar drawer uses the same availability + knowledge widget
+    await page.goto('/calendar')
+    await expect(page.getByRole('heading', { name: /календарь/i })).toBeVisible({ timeout: 15_000 })
+    if (live.starts_at) {
+      await openListWeekContaining(page, new Date(live.starts_at))
+      const row = page.locator('.fc-list-event').first()
+      if (await row.count()) {
+        await row.click({ force: true })
+        await expect(page.getByTestId('availability-indicator')).toBeVisible({ timeout: 15_000 })
+        await page.getByTestId('availability-indicator').click()
+        await expect(page.getByTestId('availability-panel')).toBeVisible()
+        await expect(page.getByTestId('knowledge-recommendations')).toBeVisible()
+      }
+    }
+
+    // DEMO H — other master / appointment context must not leak stock or formula
+    const foreign = await fetch(`${api}/v1/me/knowledge/recommendations?appointment_id=${live.id}`, {
+      headers: { Authorization: `Bearer ${other.access_token}` },
+    })
+    const foreignText = await foreign.text()
+    if (foreign.status === 200) noLeak(foreignText)
+    else expect([403, 404]).toContain(foreign.status)
   })
 })

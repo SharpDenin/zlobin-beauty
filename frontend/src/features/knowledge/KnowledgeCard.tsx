@@ -15,7 +15,7 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending }
 
   return (
     <article className="kb-card">
-      <Link to={`/knowledge/${a.id}`} className="kb-card-link">
+      <Link to={`/knowledge/${a.id}`} className="kb-card-link" data-testid="kb-article">
         <div className="kb-cover">
           {a.cover_media_id ? (
             <MediaImage mediaId={a.cover_media_id} token={token} alt="" className="product-photo" />

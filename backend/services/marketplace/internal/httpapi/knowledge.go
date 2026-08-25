@@ -26,6 +26,7 @@ func (a *API) registerKnowledgeRoutes(mux *http.ServeMux, authMw, optional func(
 	mux.Handle("POST /v1/knowledge/{id}/archive", authMw(http.HandlerFunc(a.archiveKnowledge)))
 	mux.Handle("POST /v1/knowledge/{id}/favorite", authMw(http.HandlerFunc(a.addKnowledgeFavorite)))
 	mux.Handle("DELETE /v1/knowledge/{id}/favorite", authMw(http.HandlerFunc(a.removeKnowledgeFavorite)))
+	mux.Handle("GET /v1/me/knowledge/recommendations", authMw(http.HandlerFunc(a.myKnowledgeRecommendations)))
 	mux.Handle("GET /v1/me/knowledge", authMw(http.HandlerFunc(a.listMyKnowledge)))
 }
 
@@ -75,6 +76,23 @@ func knowledgeListDTO(a domain.KnowledgeArticle) map[string]any {
 	delete(dto, "content")
 	dto["excerpt"] = knowledgeExcerpt(a)
 	return dto
+}
+
+func knowledgeRecommendationDTO(a domain.KnowledgeArticle, context string) map[string]any {
+	var productID any
+	if a.ProductID != nil {
+		productID = a.ProductID.String()
+	}
+	return map[string]any{
+		"id":          a.ID.String(),
+		"article_id":  a.ID.String(),
+		"title":       a.Title,
+		"excerpt":     knowledgeExcerpt(a),
+		"category":    a.Category,
+		"context":     context,
+		"product_id":  productID,
+		"product_ids": uuidStrings(a.ProductIDs),
+	}
 }
 
 func knowledgeExcerpt(a domain.KnowledgeArticle) string {
@@ -153,6 +171,63 @@ func (a *API) listMyKnowledge(w http.ResponseWriter, r *http.Request) {
 		out = append(out, knowledgeListDTO(item))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out, "total": itemsRes.Total, "limit": itemsRes.Limit, "offset": itemsRes.Offset})
+}
+
+func (a *API) myKnowledgeRecommendations(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	values := r.URL.Query()
+	products, err := parseRepeatUUIDs(values, "product_id")
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
+		return
+	}
+	serviceID, err := parseQueryUUID(values.Get("service_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
+		return
+	}
+	orgID, err := parseQueryUUID(values.Get("organization_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+		return
+	}
+	appointmentID, err := parseQueryUUID(values.Get("appointment_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid appointment_id"))
+		return
+	}
+	in := service.KnowledgeRecommendInput{
+		ViewerID:    claims.UserID,
+		AccessToken: strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")),
+		ProductIDs:  products,
+		Query:       values.Get("q"),
+	}
+	if serviceID != nil {
+		in.ServiceID = *serviceID
+	}
+	if orgID != nil {
+		in.OrganizationID = *orgID
+	}
+	if appointmentID != nil {
+		in.AppointmentID = *appointmentID
+	}
+	res, err := a.svc.RecommendKnowledge(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(res.Items))
+	for _, it := range res.Items {
+		items = append(items, knowledgeRecommendationDTO(it.Article, it.Context))
+	}
+	out := map[string]any{"items": items}
+	if res.ServiceID != uuid.Nil {
+		out["service_id"] = res.ServiceID.String()
+	}
+	if res.EmptyReason != "" {
+		out["empty_reason"] = res.EmptyReason
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 func (a *API) knowledgeFacets(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,7 @@ import {
   type AvailabilityAnalysis,
   type AvailabilityItem,
 } from '@/pages/availability-helpers'
+import { knowledgeProductPath } from '@/pages/knowledge-helpers'
 
 function unit(it: AvailabilityItem) {
   return it.unit ? ` ${it.unit}` : ''
@@ -50,11 +51,16 @@ export function AvailabilityPanel({
             {it.status === 'incoming' && (
               <p className="muted">После поставки хватит. Поставка ещё не на складе.</p>
             )}
-            {showOrderCta(it) && (
-              <Link className="btn btn-secondary btn-compact" to={cosmeticsProductPath(it.product_id)} data-testid="availability-order">
-                Заказать
+            <div className="row">
+              {showOrderCta(it) && (
+                <Link className="btn btn-secondary btn-compact" to={cosmeticsProductPath(it.product_id)} data-testid="availability-order">
+                  Заказать
+                </Link>
+              )}
+              <Link className="btn btn-secondary btn-compact" to={knowledgeProductPath(it.product_id)} data-testid="availability-knowledge">
+                База знаний
               </Link>
-            )}
+            </div>
           </article>
         ))}
       </div>

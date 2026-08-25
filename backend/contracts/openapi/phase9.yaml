@@ -1,0 +1,142 @@
+openapi: 3.0.3
+info:
+  title: Salon-X Phase 9 Knowledge recommendations
+  version: 0.9.0
+  description: |
+    Knowledge base stays in marketplace. Recommendations return saved articles only.
+    Availability stays in the Phase 8 analyzer. Stock quantities and private formulas
+    are never included in recommendation payloads.
+    Alternatives are never generated: missing links return an honest empty reason.
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: Knowledge
+paths:
+  /v1/knowledge:
+    get:
+      tags: [Knowledge]
+      summary: Search published knowledge articles
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Backend search over title, content, brand, category
+        - in: query
+          name: product_id
+          schema: { type: string, format: uuid }
+          description: Repeatable. Articles linked via knowledge_article_products
+        - in: query
+          name: category
+          schema: { type: string }
+        - in: query
+          name: brand
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: offset
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Article list with excerpts (no full content)
+  /v1/knowledge/{id}:
+    get:
+      tags: [Knowledge]
+      summary: Published article details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Article
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/me/knowledge/recommendations:
+    get:
+      tags: [Knowledge]
+      summary: Saved knowledge relevant to product, service, or appointment context
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: product_id
+          schema: { type: string, format: uuid }
+          description: Repeatable. Direct product context.
+        - in: query
+          name: service_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: organization_id
+          schema: { type: string, format: uuid }
+          description: Required with service_id to resolve consumption_norms → product_ids
+        - in: query
+          name: appointment_id
+          schema: { type: string, format: uuid }
+          description: Resolves service_id and organization_id from booking. Caller JWT only.
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        "200":
+          description: Recommendation list. Empty items include empty_reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeRecommendResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    KnowledgeRecommendResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/KnowledgeRecommendation" }
+        empty_reason:
+          type: string
+          description: Honest empty copy when no saved article is linked
+        service_id:
+          type: string
+          format: uuid
+    KnowledgeRecommendation:
+      type: object
+      description: Public article metadata only. No stock, formula, or scheme fields.
+      properties:
+        id: { type: string, format: uuid }
+        article_id: { type: string, format: uuid }
+        title: { type: string }
+        excerpt: { type: string }
+        category: { type: string }
+        context:
+          type: string
+          enum: [product, service, search, related]
+        product_id: { type: string, format: uuid }
+        product_ids:
+          type: array
+          items: { type: string, format: uuid }
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }

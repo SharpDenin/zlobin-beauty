@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { cosmeticsProductPath, showOrderCta } from '@/pages/availability-helpers'
+import { knowledgeProductPath } from '@/pages/knowledge-helpers'
+import { KnowledgeRecommendations } from '@/pages/KnowledgeRecommendations'
 import {
   formatRequirementLine,
   overallRepeatMessage,
@@ -121,9 +123,19 @@ export function RepeatOffer({
                     Заказать
                   </Link>
                 )}
+                <Link className="btn btn-secondary btn-compact" to={knowledgeProductPath(r.product_id)} data-testid="repeat-knowledge">
+                  Посмотреть рекомендации
+                </Link>
               </article>
             ))}
           </div>
+          <KnowledgeRecommendations
+            token={token}
+            serviceId={preview.service_id}
+            productIds={preview.requirements.map((r) => r.product_id)}
+            title="Посмотреть рекомендации"
+            emptyKind="service"
+          />
           {incomingDate && (
             <p className="muted" data-testid="repeat-incoming-date">Ожидается поставка: {new Date(incomingDate).toLocaleDateString('ru-RU')}</p>
           )}

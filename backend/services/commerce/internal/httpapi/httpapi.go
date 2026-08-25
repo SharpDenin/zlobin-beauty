@@ -51,6 +51,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/commerce/units/{id}", auth(http.HandlerFunc(a.updateUnit)))
 	mux.Handle("DELETE /v1/commerce/units/{id}", auth(http.HandlerFunc(a.deleteUnit)))
 	mux.Handle("POST /v1/internal/stock/consume-appointment", internal(http.HandlerFunc(a.consumeAppointment)))
+	mux.Handle("POST /v1/internal/inventory/repeat-availability", internal(http.HandlerFunc(a.internalRepeatAvailability)))
 	mux.Handle("GET /v1/internal/products/{id}", internal(http.HandlerFunc(a.internalGetProduct)))
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
 	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
@@ -586,6 +587,63 @@ func (a *API) consumeAppointment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *API) internalRepeatAvailability(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OwnerUserID         string `json:"owner_user_id"`
+		OrganizationID      string `json:"organization_id"`
+		ServiceID           string `json:"service_id"`
+		SourceAppointmentID string `json:"source_appointment_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	owner, err1 := uuid.Parse(req.OwnerUserID)
+	orgID, err2 := uuid.Parse(req.OrganizationID)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid owner_user_id or organization_id"))
+		return
+	}
+	var serviceID uuid.UUID
+	if strings.TrimSpace(req.ServiceID) != "" {
+		id, err := uuid.Parse(req.ServiceID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
+			return
+		}
+		serviceID = id
+	}
+	var source *uuid.UUID
+	if strings.TrimSpace(req.SourceAppointmentID) != "" {
+		id, err := uuid.Parse(req.SourceAppointmentID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid source_appointment_id"))
+			return
+		}
+		source = &id
+	}
+	items, err := a.svc.RepeatAvailability(r.Context(), service.RepeatAvailabilityInput{
+		OwnerUserID: owner, OrganizationID: orgID, ServiceID: serviceID, SourceAppointmentID: source,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		row := map[string]any{
+			"product_id": it.ProductID.String(), "product_name": it.Name, "brand": it.Brand, "unit": it.Unit,
+			"required_qty": it.RequiredQty, "available_qty": it.AvailableQty, "incoming_qty": it.IncomingQty,
+			"shortage_qty": it.ShortageQty, "status": it.Status,
+		}
+		if it.ExpectedAt != nil {
+			row["expected_at"] = it.ExpectedAt.UTC()
+		}
+		out = append(out, row)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func productCategoryDTO(c domain.ProductCategory) map[string]any {

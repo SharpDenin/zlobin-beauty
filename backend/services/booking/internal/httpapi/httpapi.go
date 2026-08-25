@@ -64,6 +64,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
 	mux.Handle("GET /v1/me/clients/{clientUserID}/blacklist", auth(http.HandlerFunc(a.getBlacklistStatus)))
 	mux.Handle("POST /v1/me/clients/{clientUserID}/unblock", auth(http.HandlerFunc(a.unblockClient)))
+	mux.Handle("GET /v1/me/clients/{clientUserID}/repeat-options", auth(http.HandlerFunc(a.repeatOptions)))
+	mux.Handle("GET /v1/appointments/{id}/repeat-preview", auth(http.HandlerFunc(a.repeatPreview)))
 	a.registerReportRoutes(mux, auth)
 	a.registerWorkModeRoutes(mux, auth)
 }
@@ -433,6 +435,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		StartsAt     time.Time `json:"starts_at"`
 		OccurrenceID string    `json:"occurrence_id"`
 		DistrictID   string    `json:"district_id"`
+		ClientUserID string    `json:"client_user_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -466,8 +469,17 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		}
 		districtID = &did
 	}
+	clientID := claims.UserID
+	if strings.TrimSpace(req.ClientUserID) != "" {
+		cid, err := uuid.Parse(req.ClientUserID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid client_user_id"))
+			return
+		}
+		clientID = cid
+	}
 	aapt, err := a.svc.Create(r.Context(), service.CreateInput{
-		ClientUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
+		ClientUserID: clientID, ActorUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
 		OccurrenceID: occurrenceID, IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
 		DistrictID: districtID,
 	})
@@ -616,6 +628,87 @@ func (a *API) getAutoConfirm(w http.ResponseWriter, r *http.Request) {
 		"client_user_id": clientID.String(),
 		"auto_confirm":   auto,
 	})
+}
+
+func (a *API) repeatOptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client user id"))
+		return
+	}
+	var preferred uuid.UUID
+	if v := strings.TrimSpace(r.URL.Query().Get("service_id")); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
+			return
+		}
+		preferred = id
+	}
+	item, err := a.svc.RepeatOptions(r.Context(), claims.UserID, clientID, preferred)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"item": repeatPreviewDTO(item)})
+}
+
+func (a *API) repeatPreview(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := a.svc.RepeatPreview(r.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, repeatPreviewDTO(item))
+}
+
+func repeatPreviewDTO(p *service.RepeatPreview) map[string]any {
+	if p == nil {
+		return nil
+	}
+	reqs := make([]map[string]any, 0, len(p.Requirements))
+	for _, r := range p.Requirements {
+		row := map[string]any{
+			"product_id": r.ProductID.String(), "product_name": r.ProductName, "brand": r.Brand, "unit": r.Unit,
+			"required_qty": r.RequiredQty, "available_qty": r.AvailableQty, "incoming_qty": r.IncomingQty,
+			"shortage_qty": r.ShortageQty, "status": r.Status,
+		}
+		if r.ExpectedAt != nil {
+			row["expected_at"] = *r.ExpectedAt
+		}
+		reqs = append(reqs, row)
+	}
+	comps := make([]map[string]any, 0, len(p.Components))
+	for _, c := range p.Components {
+		comps = append(comps, map[string]any{"name": c.Name, "brand": c.Brand, "qty": c.Qty, "unit": c.Unit})
+	}
+	out := map[string]any{
+		"can_repeat":            p.CanRepeat,
+		"availability_status":   p.AvailabilityStatus,
+		"source_appointment_id": p.SourceAppointmentID.String(),
+		"service_id":            p.ServiceID.String(),
+		"service":               p.ServiceName,
+		"date":                  p.StartsAt,
+		"formula_hidden":        p.FormulaHidden,
+		"scheme_hidden":         p.SchemeHidden,
+		"requirements":          reqs,
+		"components":            comps,
+	}
+	if p.HiddenReason != "" {
+		out["hidden_reason"] = p.HiddenReason
+	}
+	if !p.SchemeHidden {
+		out["technique"] = p.Technique
+		out["notes"] = p.Notes
+	}
+	return out
 }
 
 func (a *API) setAutoConfirm(w http.ResponseWriter, r *http.Request) {

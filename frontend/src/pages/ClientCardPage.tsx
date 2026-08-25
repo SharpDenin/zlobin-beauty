@@ -8,6 +8,7 @@ import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
+import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
 
 type ClientCard = {
@@ -307,6 +308,10 @@ export function ClientCardPage() {
           ))}
         </div>
       </section>
+
+      {canMaster && clientUserId && (
+        <RepeatOffer clientUserId={clientUserId} token={accessToken} />
+      )}
 
       <section className="card stack">
         <h2>Заметка</h2>

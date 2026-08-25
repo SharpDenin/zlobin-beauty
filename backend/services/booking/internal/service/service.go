@@ -454,6 +454,7 @@ type Slot struct {
 
 type CreateInput struct {
 	ClientUserID   uuid.UUID
+	ActorUserID    uuid.UUID
 	MasterID       uuid.UUID
 	ServiceID      uuid.UUID
 	StartsAt       time.Time
@@ -480,18 +481,18 @@ type masterPayload struct {
 }
 
 type occurrencePayload struct {
-	ID              string  `json:"id"`
-	ServiceID       string  `json:"service_id"`
-	MasterUserID    string  `json:"master_user_id"`
-	BranchID        *string `json:"branch_id"`
-	StartsAt        time.Time `json:"starts_at"`
-	EndsAt          time.Time `json:"ends_at"`
-	Timezone        string  `json:"timezone"`
-	Capacity        int     `json:"capacity"`
-	BookedCount     int     `json:"booked_count"`
-	Status          string  `json:"status"`
+	ID              string     `json:"id"`
+	ServiceID       string     `json:"service_id"`
+	MasterUserID    string     `json:"master_user_id"`
+	BranchID        *string    `json:"branch_id"`
+	StartsAt        time.Time  `json:"starts_at"`
+	EndsAt          time.Time  `json:"ends_at"`
+	Timezone        string     `json:"timezone"`
+	Capacity        int        `json:"capacity"`
+	BookedCount     int        `json:"booked_count"`
+	Status          string     `json:"status"`
 	BookingCutoffAt *time.Time `json:"booking_cutoff_at"`
-	Title           string  `json:"title"`
+	Title           string     `json:"title"`
 }
 
 const createAppointmentOp = "create_appointment"
@@ -524,6 +525,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	masterUserID, err := uuid.Parse(payload.Master.UserID)
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("bad master user id"))
+	}
+	if in.ActorUserID == uuid.Nil {
+		in.ActorUserID = in.ClientUserID
+	}
+	if in.ClientUserID != in.ActorUserID && in.ActorUserID != masterUserID {
+		return nil, apperr.Forbidden("only the assigned master can book for a client")
 	}
 	blocked, err := s.store.IsBlacklisted(ctx, masterUserID, in.ClientUserID)
 	if err != nil {

@@ -2766,4 +2766,314 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByTestId('receipts-history-tab').click()
     await expect(page.getByTestId('receipt-history-item').filter({ hasText: commentA }).first()).toBeVisible({ timeout: 15_000 })
   })
+
+  test('phase7 smart repeat booking resource availability', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    test.setTimeout(180_000)
+
+    async function buyerOrg(token: string) {
+      const res = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${token}` } })
+      expect(res.ok).toBeTruthy()
+      const body = await res.json() as { items?: Array<{ organization: { id: string; type: string }; branches?: Array<{ id: string }> }> }
+      const salon = (body.items ?? []).find((i) => i.organization.type !== 'supplier') ?? body.items?.[0]
+      expect(salon?.organization.id).toBeTruthy()
+      return { orgId: salon!.organization.id, branchId: salon!.branches?.[0]?.id ?? '' }
+    }
+
+    async function inventory(token: string, orgId: string) {
+      const res = await fetch(`${api}/v1/me/inventory?organization_id=${orgId}`, { headers: { Authorization: `Bearer ${token}` } })
+      expect(res.ok, await res.clone().text()).toBeTruthy()
+      return res.json() as Promise<{
+        location: { id: string; kind: string }
+        items: Array<{ product_id: string; available: number }>
+      }>
+    }
+
+    async function deliverOrder(masterToken: string, supplierToken: string, opts: {
+      buyerOrgId: string
+      locationId: string
+      branchId: string
+      supplierOrgId: string
+      productId: string
+      qty: number
+      comment: string
+    }) {
+      const created = await fetch(`${api}/v1/commerce/supplier-orders`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${masterToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buyer_org_id: opts.buyerOrgId,
+          supplier_org_id: opts.supplierOrgId,
+          location_id: opts.locationId,
+          destination_branch_id: opts.branchId,
+          payment_method: 'cash',
+          comment: opts.comment,
+          items: [{ product_id: opts.productId, qty: opts.qty }],
+        }),
+      })
+      expect(created.status, await created.clone().text()).toBeLessThan(300)
+      const order = await created.json() as { id: string }
+      await fetch(`${api}/v1/commerce/supplier-orders/${order.id}/transition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplierToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'confirmed' }),
+      })
+      const windowStart = new Date(Date.now() + 2 * 3600_000).toISOString()
+      await fetch(`${api}/v1/commerce/supplier-orders/${order.id}/delivery/schedule`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplierToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ window_start: windowStart, window_end: new Date(Date.now() + 5 * 3600_000).toISOString(), planned_delivery_at: windowStart }),
+      })
+      await fetch(`${api}/v1/commerce/supplier-orders/${order.id}/transition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplierToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'picking', estimated_delivery_at: new Date(Date.now() + 86400_000).toISOString() }),
+      })
+      await fetch(`${api}/v1/commerce/supplier-orders/${order.id}/transition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplierToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'ready_for_dispatch' }),
+      })
+      for (const step of ['in-transit', 'arrived', 'delivered']) {
+        const r = await fetch(`${api}/v1/commerce/supplier-orders/${order.id}/delivery/${step}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${supplierToken}`, 'Content-Type': 'application/json' },
+          body: '{}',
+        })
+        expect(r.ok, `${step} ${await r.text()}`).toBeTruthy()
+      }
+      return order.id
+    }
+
+    function toDatetimeLocal(iso: string) {
+      const d = new Date(iso)
+      const pad = (n: number) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    }
+
+    const master = await apiLogin('master2@demo.local')
+    const supplier = await apiLogin('supplier1@demo.local')
+    const other = await apiLogin('master1@demo.local')
+    const client = await apiLogin('client1@demo.local')
+    const clientId = await authUserId(client.access_token)
+    const { orgId, branchId } = await buyerOrg(master.access_token)
+
+    const supOrgs = await fetch(`${api}/v1/organizations/mine`, { headers: { Authorization: `Bearer ${supplier.access_token}` } })
+    const supBody = await supOrgs.json() as { items?: Array<{ organization: { id: string; type: string } }> }
+    const supplierOrgId = (supBody.items ?? []).find((i) => i.organization.type === 'supplier')?.organization.id
+    expect(supplierOrgId).toBeTruthy()
+
+    const createdProduct = await fetch(`${api}/v1/commerce/products`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        organization_id: supplierOrgId,
+        name: 'Phase7 Majirel 7.1',
+        brand: "L'Oreal",
+        sku: `P7-${Date.now()}`,
+        unit: 'ml',
+        price_minor: 12000,
+        currency: 'RUB',
+        published: true,
+      }),
+    })
+    expect(createdProduct.status, await createdProduct.clone().text()).toBeLessThan(300)
+    const product = await createdProduct.json() as { id: string; name?: string }
+
+    const locRes = await fetch(`${api}/v1/commerce/locations?organization_id=${supplierOrgId}`, { headers: { Authorization: `Bearer ${supplier.access_token}` } })
+    const locBody = await locRes.json() as { items?: Array<{ id: string; kind: string }> }
+    const supLoc = (locBody.items ?? []).find((l) => l.kind === 'supplier')?.id
+    expect(supLoc).toBeTruthy()
+    await fetch(`${api}/v1/commerce/stock/movements`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location_id: supLoc, product_id: product.id, kind: 'receipt', qty: 200, reason: 'e2e phase7 supplier stock' }),
+    })
+
+    const started = await ensureInProgressForClient('master2@demo.local', 'client1@demo.local', 'укладк')
+    const liveRes = await fetch(`${api}/v1/appointments/${started.appt.id}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(liveRes.ok).toBeTruthy()
+    const live = await liveRes.json() as { id: string; service_id: string }
+    const norm = await fetch(`${api}/v1/commerce/norms`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization_id: orgId, service_id: live.service_id, product_id: product.id, qty: 30, required: true }),
+    })
+    expect(norm.status, await norm.clone().text()).toBeLessThan(300)
+    await completeAppointmentApi(started.master.access_token, started.appt.id, {
+      technique: 'Phase7 окрашивание',
+      skipped: false,
+      omit_formula: false,
+      notes: 'phase7 repeat source',
+      category_fields: { dye: 'Majirel 7.1', oxidizer: '6%', proportions: '1:1.5' },
+      components: [{ name: 'Majirel 7.1', brand: "L'Oreal", qty: '30', unit: 'мл' }],
+    })
+    const sourceId = started.appt.id
+    const apptRes = await fetch(`${api}/v1/appointments/${sourceId}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(apptRes.ok).toBeTruthy()
+    const source = await apptRes.json() as { id: string; status: string; service_id: string; service_name: string; starts_at: string; price_minor: number }
+    expect(source.status).toBe('completed')
+
+    const inv = await inventory(master.access_token, orgId)
+    expect(inv.location.kind).toBe('master')
+    const stockOf = async (productId = product.id) => (await inventory(master.access_token, orgId)).items.find((i) => i.product_id === productId)?.available ?? 0
+    async function setStock(target: number, productId = product.id) {
+      const cur = await stockOf(productId)
+      const delta = target - cur
+      if (Math.abs(delta) < 0.001) return
+      const adj = await fetch(`${api}/v1/me/inventory/adjust`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organization_id: orgId, product_id: productId, qty: delta, reason: 'phase7 e2e stock' }),
+      })
+      expect(adj.ok, await adj.text()).toBeTruthy()
+    }
+    async function coverOtherNorms(serviceId: string) {
+      const res = await fetch(`${api}/v1/commerce/norms?organization_id=${orgId}&service_id=${serviceId}`, {
+        headers: { Authorization: `Bearer ${master.access_token}` },
+      })
+      expect(res.ok, await res.clone().text()).toBeTruthy()
+      const body = await res.json() as { items?: Array<{ product_id: string; qty: number }> }
+      for (const n of body.items ?? []) {
+        if (n.product_id === product.id) continue
+        await setStock((n.qty ?? 0) + 50, n.product_id)
+      }
+    }
+
+    type Preview = {
+      can_repeat: boolean
+      availability_status?: string
+      source_appointment_id: string
+      service: string
+      formula_hidden?: boolean
+      requirements: Array<{ product_id: string; required_qty: number; available_qty: number; incoming_qty: number; shortage_qty: number; status: string }>
+      components?: Array<{ name?: string }>
+    }
+    async function previewAs(token: string) {
+      const res = await fetch(`${api}/v1/appointments/${sourceId}/repeat-preview`, { headers: { Authorization: `Bearer ${token}` } })
+      return { status: res.status, text: await res.text() }
+    }
+    async function optionsAs(token: string, cid: string) {
+      const res = await fetch(`${api}/v1/me/clients/${cid}/repeat-options`, { headers: { Authorization: `Bearer ${token}` } })
+      const text = await res.text()
+      let body: { item: Preview | null } = { item: null }
+      try { body = JSON.parse(text) as typeof body } catch { /* ignore */ }
+      return { status: res.status, text, body }
+    }
+
+    await setStock(40)
+    await coverOtherNorms(source.service_id)
+    const beforeAvailable = await stockOf()
+    const avail = await previewAs(master.access_token)
+    expect(avail.status, avail.text).toBe(200)
+    const availBody = JSON.parse(avail.text) as Preview
+    expect(availBody.source_appointment_id).toBe(sourceId)
+    const reqLine = availBody.requirements.find((r) => r.product_id === product.id)
+    expect(reqLine?.required_qty).toBe(30)
+    expect(reqLine?.status).toBe('available')
+    expect(availBody.can_repeat).toBe(true)
+    expect(await stockOf()).toBe(beforeAvailable)
+    const opts = await optionsAs(master.access_token, clientId)
+    expect(opts.status).toBe(200)
+    expect(opts.body.item?.source_appointment_id).toBe(sourceId)
+
+    const schemeBefore = await fetchScheme(master.access_token, sourceId)
+    const sourceBefore = { ...source }
+
+    const cardRes = await fetch(`${api}/v1/clients/appointment/${sourceId}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(cardRes.ok, await cardRes.clone().text()).toBeTruthy()
+    const card = await cardRes.json() as { id: string }
+
+    const profile = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const prof = await profile.json() as { master?: { id: string; user_id?: string }; services?: Array<{ id: string; duration_minutes?: number }> }
+    const duration = prof.services?.find((s) => s.id === source.service_id)?.duration_minutes ?? 45
+    const masterUserId = await authUserId(master.access_token)
+    let slotIso = ''
+    for (let d = 2; d <= 16 && !slotIso; d++) {
+      const day = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10)
+      const slotsRes = await fetch(`${api}/v1/masters/${masterUserId}/slots?date=${day}&duration_minutes=${duration}`)
+      if (!slotsRes.ok) continue
+      const slots = await slotsRes.json() as { items?: Array<{ starts_at: string }> }
+      slotIso = slots.items?.[0]?.starts_at ?? ''
+    }
+    expect(slotIso).toBeTruthy()
+
+    await loginUI(page, 'master2@demo.local')
+    await page.goto(`/clients/${card.id}`)
+    await expect(page.getByTestId('repeat-offer')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('repeat-offer').scrollIntoViewIfNeeded()
+    await expect(page.getByRole('heading', { name: 'Как в прошлый раз' })).toBeVisible()
+    await expect(page.getByTestId('repeat-summary')).toContainText('наличии')
+    await page.getByTestId('repeat-open-preview').click()
+    await expect(page.getByTestId('repeat-preview')).toBeVisible()
+    await expect(page.getByTestId('repeat-requirement').first()).toBeVisible()
+    await page.getByTestId('repeat-starts').fill(toDatetimeLocal(slotIso))
+    await expect(page.getByTestId('repeat-use')).toBeEnabled({ timeout: 10_000 })
+    await page.getByTestId('repeat-use').click()
+    await expect(page.getByTestId('repeat-created')).toBeVisible({ timeout: 15_000 })
+    expect(await stockOf()).toBe(beforeAvailable)
+
+    const sourceAfter = await fetch(`${api}/v1/appointments/${sourceId}`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const afterBody = await sourceAfter.json() as { id: string; status: string; service_name: string; starts_at: string; price_minor: number }
+    expect(afterBody.status).toBe('completed')
+    expect(afterBody.service_name).toBe(sourceBefore.service_name)
+    expect(afterBody.price_minor).toBe(sourceBefore.price_minor)
+    expect(afterBody.starts_at).toBe(sourceBefore.starts_at)
+    const schemeAfter = await fetchScheme(master.access_token, sourceId)
+    expect(schemeAfter.text).toBe(schemeBefore.text)
+
+    await setStock(10)
+    const beforeShortage = await stockOf()
+    const short = await previewAs(master.access_token)
+    const shortBody = JSON.parse(short.text) as Preview
+    const shortLine = shortBody.requirements.find((r) => r.product_id === product.id)
+    expect(shortLine?.status).toBe('shortage')
+    expect(shortLine?.shortage_qty).toBe(20)
+    expect(shortLine?.available_qty).toBe(10)
+    expect(shortLine?.incoming_qty).toBe(0)
+    expect(shortBody.can_repeat).toBe(false)
+    expect(await stockOf()).toBe(beforeShortage)
+
+    await page.reload()
+    await expect(page.getByTestId('repeat-offer')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('repeat-summary')).toContainText('Не хватает')
+    await page.getByTestId('repeat-open-preview').click()
+    await expect(page.getByText(/нужно 30/)).toBeVisible()
+
+    const incomingId = await deliverOrder(master.access_token, supplier.access_token, {
+      buyerOrgId: orgId, locationId: inv.location.id, branchId, supplierOrgId: supplierOrgId!, productId: product.id, qty: 20, comment: `E2E phase7 incoming ${Date.now()}`,
+    })
+    expect(incomingId).toBeTruthy()
+    const beforeIncoming = await stockOf()
+    expect(beforeIncoming).toBe(10)
+    const incomingPrev = JSON.parse((await previewAs(master.access_token)).text) as Preview
+    const inLine = incomingPrev.requirements.find((r) => r.product_id === product.id)
+    expect(inLine?.available_qty).toBe(10)
+    expect(inLine?.incoming_qty).toBe(20)
+    expect(inLine?.required_qty).toBe(30)
+    expect(inLine?.status).toBe('incoming')
+    expect(incomingPrev.can_repeat).toBe(false)
+    expect(await stockOf()).toBe(10)
+
+    await page.reload()
+    await expect(page.getByTestId('repeat-offer')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('repeat-summary')).toContainText('поставк')
+
+    const asClient = await optionsAs(client.access_token, clientId)
+    expect(asClient.status).toBe(403)
+    expect(asClient.text.toLowerCase()).not.toContain('oxidizer')
+    expect(asClient.text.toLowerCase()).not.toContain('majirel')
+    const asOther = await previewAs(other.access_token)
+    expect(asOther.status).toBe(403)
+    expect(asOther.text.toLowerCase()).not.toContain('oxidizer')
+    expect(asOther.text.toLowerCase()).not.toContain('majirel')
+    expect(asOther.text).not.toContain('components')
+
+    const empty = await optionsAs(master.access_token, '00000000-0000-0000-0000-000000000099')
+    expect(empty.status).toBe(200)
+    expect(empty.body.item).toBeNull()
+
+    await page.goto('/appointments')
+    await expect(page.getByRole('heading', { name: /записи/i }).first()).toBeVisible({ timeout: 15_000 })
+  })
 })

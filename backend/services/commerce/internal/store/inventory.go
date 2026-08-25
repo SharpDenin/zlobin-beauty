@@ -149,6 +149,108 @@ func (s *Store) ListPendingBuyerOrders(ctx context.Context, buyerOrgID, location
 	return s.ListBuyerOrdersForLocation(ctx, buyerOrgID, locationID, true)
 }
 
+type IncomingLine struct {
+	ProductID  uuid.UUID
+	Qty        float64
+	ExpectedAt *time.Time
+}
+
+func (s *Store) IncomingRemainingByLocation(ctx context.Context, buyerOrgID, locationID uuid.UUID) ([]IncomingLine, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT i.product_id,
+       COALESCE(SUM(GREATEST(i.qty_ordered - i.qty_accepted - i.qty_damaged - i.qty_rejected, 0)), 0)::float8,
+       MIN(COALESCE(o.estimated_delivery_at, o.updated_at))
+FROM supplier_order_items i
+JOIN supplier_orders o ON o.id = i.order_id
+WHERE o.buyer_org_id=$1
+  AND o.location_id=$2
+  AND o.status IN ('confirmed','processing','picking','ready_for_dispatch','in_transit','delivered','completed','accepted_partial')
+GROUP BY i.product_id
+HAVING COALESCE(SUM(GREATEST(i.qty_ordered - i.qty_accepted - i.qty_damaged - i.qty_rejected, 0)), 0) > 0.0001`, buyerOrgID, locationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IncomingLine
+	for rows.Next() {
+		var line IncomingLine
+		if err := rows.Scan(&line.ProductID, &line.Qty, &line.ExpectedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, line)
+	}
+	if out == nil {
+		out = []IncomingLine{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AppointmentConsumption(ctx context.Context, appointmentID uuid.UUID) (map[uuid.UUID]float64, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT product_id, COALESCE(SUM(-qty), 0)::float8
+FROM stock_movements
+WHERE ref_type='appointment' AND ref_id=$1 AND kind='consumption'
+GROUP BY product_id
+HAVING COALESCE(SUM(-qty), 0) > 0.0001`, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]float64{}
+	for rows.Next() {
+		var pid uuid.UUID
+		var qty float64
+		if err := rows.Scan(&pid, &qty); err != nil {
+			return nil, err
+		}
+		out[pid] = qty
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AppointmentConsumptionByLocation(ctx context.Context, locationID, appointmentID uuid.UUID) (map[uuid.UUID]float64, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT product_id, COALESCE(SUM(-qty), 0)::float8
+FROM stock_movements
+WHERE location_id=$1 AND ref_type='appointment' AND ref_id=$2 AND kind='consumption'
+GROUP BY product_id
+HAVING COALESCE(SUM(-qty), 0) > 0.0001`, locationID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]float64{}
+	for rows.Next() {
+		var pid uuid.UUID
+		var qty float64
+		if err := rows.Scan(&pid, &qty); err != nil {
+			return nil, err
+		}
+		out[pid] = qty
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListProductsByIDs(ctx context.Context, ids []uuid.UUID) ([]domain.Product, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+productColumns+` FROM products WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Product
+	for rows.Next() {
+		p, err := scanProductRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"

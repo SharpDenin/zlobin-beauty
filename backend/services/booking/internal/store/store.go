@@ -211,6 +211,51 @@ SELECT EXISTS(
 	return ok, err
 }
 
+func (s *Store) ListCompletedForMasterClient(ctx context.Context, masterID, clientID uuid.UUID) ([]domain.Appointment, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT `+appointmentCols+`
+FROM appointments
+WHERE master_user_id=$1 AND client_user_id=$2 AND status='completed'
+ORDER BY updated_at DESC, starts_at DESC
+LIMIT 40`, masterID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAppointments(rows)
+}
+
+func (s *Store) SchemeFlagsByAppointmentIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]struct {
+	Exists  bool
+	Skipped bool
+}, error) {
+	out := map[uuid.UUID]struct {
+		Exists  bool
+		Skipped bool
+	}{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT appointment_id, skipped FROM appointment_service_schemes WHERE appointment_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var skipped bool
+		if err := rows.Scan(&id, &skipped); err != nil {
+			return nil, err
+		}
+		out[id] = struct {
+			Exists  bool
+			Skipped bool
+		}{Exists: true, Skipped: skipped}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) TransitionStatus(ctx context.Context, id uuid.UUID, from, to string, actor uuid.UUID, reason string, at time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

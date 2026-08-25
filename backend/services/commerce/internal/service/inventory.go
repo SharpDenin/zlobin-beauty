@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/commerce/internal/domain"
@@ -413,4 +415,101 @@ func (s *Service) AcceptSupplierOrder(ctx context.Context, actor, orderID uuid.U
 		return nil, nil, apperr.Internal(err)
 	}
 	return outOrder, outItems, nil
+}
+
+type RepeatAvailabilityInput struct {
+	OwnerUserID         uuid.UUID
+	OrganizationID      uuid.UUID
+	ServiceID           uuid.UUID
+	SourceAppointmentID *uuid.UUID
+}
+
+func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityInput) ([]domain.RequirementCheck, error) {
+	if in.OwnerUserID == uuid.Nil || in.OrganizationID == uuid.Nil {
+		return nil, apperr.Validation("owner_user_id and organization_id are required")
+	}
+	loc, err := s.EnsureMasterLocation(ctx, in.OwnerUserID, in.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	required := map[uuid.UUID]float64{}
+	if in.ServiceID != uuid.Nil {
+		norms, err := s.store.ListNorms(ctx, in.OrganizationID, &in.ServiceID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		for _, n := range norms {
+			if n.Qty > 1e-9 {
+				required[n.ProductID] = n.Qty
+			}
+		}
+	}
+	if in.SourceAppointmentID != nil && *in.SourceAppointmentID != uuid.Nil {
+		consumed, err := s.store.AppointmentConsumption(ctx, *in.SourceAppointmentID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		for pid, qty := range consumed {
+			if _, ok := required[pid]; ok {
+				required[pid] = qty
+			}
+		}
+	}
+	if len(required) == 0 {
+		return []domain.RequirementCheck{}, nil
+	}
+	ids := make([]uuid.UUID, 0, len(required))
+	for pid := range required {
+		ids = append(ids, pid)
+	}
+	balances, err := s.store.ListBalancesByLocation(ctx, loc.ID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	onHand := map[uuid.UUID]domain.StockBalanceView{}
+	for _, b := range balances {
+		onHand[b.ProductID] = b
+	}
+	incomingRows, err := s.store.IncomingRemainingByLocation(ctx, in.OrganizationID, loc.ID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	incomingQty := map[uuid.UUID]float64{}
+	incomingAt := map[uuid.UUID]*time.Time{}
+	for _, row := range incomingRows {
+		incomingQty[row.ProductID] = row.Qty
+		incomingAt[row.ProductID] = row.ExpectedAt
+	}
+	products, err := s.store.ListProductsByIDs(ctx, ids)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	byProduct := map[uuid.UUID]domain.Product{}
+	for _, p := range products {
+		byProduct[p.ID] = p
+	}
+	out := make([]domain.RequirementCheck, 0, len(required))
+	for pid, qty := range required {
+		bal := onHand[pid]
+		p := byProduct[pid]
+		name, brand, unit := p.Name, p.Brand, p.Unit
+		if name == "" {
+			name = bal.ProductName
+			brand = bal.ProductBrand
+			unit = bal.Unit
+		}
+		av, sh, st := domain.EvaluateRequirement(qty, bal.QtyOnHand, bal.QtyReserved, incomingQty[pid])
+		out = append(out, domain.RequirementCheck{
+			ProductID: pid, Name: name, Brand: brand, Unit: unit,
+			RequiredQty: qty, AvailableQty: av, IncomingQty: incomingQty[pid],
+			ShortageQty: sh, Status: st, ExpectedAt: incomingAt[pid],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ProductID.String() < out[j].ProductID.String()
+	})
+	return out, nil
 }

@@ -51,6 +51,9 @@ type SalonReport = {
 
 function notificationHref(n: Notification) {
   if (n.entity_type === 'appointment' && n.entity_id) return `/appointments/${n.entity_id}`
+  if (n.entity_type === 'conversation' && n.entity_id) return `/messages/${n.entity_id}`
+  if (n.entity_type === 'masterclass' && n.entity_id) return `/masterclasses/${n.entity_id}`
+  if (n.entity_type === 'model_request' && n.entity_id) return `/models/${n.entity_id}`
   return '/notifications'
 }
 

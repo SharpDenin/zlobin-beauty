@@ -54,6 +54,15 @@ export function NotificationsPage() {
             {n.entity_type === 'appointment' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/appointments/${n.entity_id}`}>Открыть запись</Link>
             )}
+            {n.entity_type === 'conversation' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/messages/${n.entity_id}`}>Открыть сообщение</Link>
+            )}
+            {n.entity_type === 'masterclass' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/masterclasses/${n.entity_id}`}>Открыть мастер-класс</Link>
+            )}
+            {n.entity_type === 'model_request' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/models/${n.entity_id}`}>Открыть запрос модели</Link>
+            )}
             {n.entity_type === 'client_order' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/orders/${n.entity_id}`}>Открыть заказ</Link>
             )}

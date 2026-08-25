@@ -36,6 +36,10 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/clients/id/{id}/disputes", auth(http.HandlerFunc(a.listDisputes)))
 	mux.Handle("POST /v1/clients/id/{id}/disputes", auth(http.HandlerFunc(a.createDispute)))
 	mux.Handle("POST /v1/clients/disputes/{disputeID}/resolve", auth(http.HandlerFunc(a.resolveDispute)))
+	mux.Handle("GET /v1/me/model-preferences", auth(http.HandlerFunc(a.getModelPrefs)))
+	mux.Handle("PATCH /v1/me/model-preferences", auth(http.HandlerFunc(a.patchModelPrefs)))
+	mux.HandleFunc("GET /v1/internal/model-preferences/matches", a.matchModelPrefs)
+	mux.HandleFunc("GET /v1/internal/model-preferences/{userID}", a.getModelPrefsInternal)
 	// Aliases under /v1/client-cards for the same handlers.
 	mux.Handle("GET /v1/client-cards/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/client-cards/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
@@ -442,4 +446,87 @@ func (a *API) resolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, disputeDTO(*d))
+}
+
+func (a *API) getModelPrefs(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	p, err := a.svc.GetModelPreferences(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, modelPrefDTO(*p))
+}
+
+func (a *API) patchModelPrefs(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Willing    *bool     `json:"willing"`
+		Notify     *bool     `json:"notify"`
+		Categories *[]string `json:"categories"`
+		City       *string   `json:"city"`
+		DateFrom   *string   `json:"date_from"`
+		DateTo     *string   `json:"date_to"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	p, err := a.svc.PatchModelPreferences(r.Context(), claims.UserID, service.PatchModelPreferencesInput{
+		Willing: req.Willing, Notify: req.Notify, Categories: req.Categories, City: req.City, DateFrom: req.DateFrom, DateTo: req.DateTo,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, modelPrefDTO(*p))
+}
+
+func (a *API) getModelPrefsInternal(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	p, err := a.svc.GetModelPreferences(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, modelPrefDTO(*p))
+}
+
+func (a *API) matchModelPrefs(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, err := a.svc.MatchingModelPreferences(r.Context(), r.URL.Query().Get("category"), r.URL.Query().Get("city"), r.URL.Query().Get("date"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, p := range items {
+		out = append(out, map[string]any{"user_id": p.UserID.String()})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func modelPrefDTO(p domain.ModelPreference) map[string]any {
+	var from, to any
+	if p.DateFrom != nil {
+		from = p.DateFrom.Format("2006-01-02")
+	}
+	if p.DateTo != nil {
+		to = p.DateTo.Format("2006-01-02")
+	}
+	return map[string]any{
+		"user_id": p.UserID.String(), "willing": p.Willing, "notify": p.Notify,
+		"categories": p.Categories, "city": p.City, "date_from": from, "date_to": to,
+	}
 }

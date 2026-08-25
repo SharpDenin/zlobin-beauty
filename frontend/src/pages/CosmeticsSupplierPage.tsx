@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '@/shared/api/client'
@@ -18,9 +18,11 @@ import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCart
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { openConversation } from '@/pages/MessagesPage'
 
 export function CosmeticsSupplierPage() {
   const { supplierId = '' } = useParams()
+  const navigate = useNavigate()
   const { accessToken } = useAuth()
   const qc = useQueryClient()
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
@@ -173,7 +175,27 @@ export function CosmeticsSupplierPage() {
           {supplier.data?.city && <p className="muted">{supplier.data.city}</p>}
           {supplier.data?.delivery_note && <p className="muted">Доставка: {supplier.data.delivery_note}</p>}
         </div>
-        <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Заказы</Link>
+        <div className="row">
+          <button
+            className="btn btn-secondary btn-compact"
+            type="button"
+            data-testid="write-supplier"
+            onClick={async () => {
+              try {
+                const c = await openConversation(accessToken, {
+                  type: 'master_supplier',
+                  supplier_organization_id: supplierId,
+                })
+                navigate(`/messages/${c.id}`)
+              } catch (e) {
+                setError(e instanceof ApiError ? e.message : 'Не удалось открыть переписку')
+              }
+            }}
+          >
+            Написать поставщику
+          </button>
+          <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Заказы</Link>
+        </div>
       </div>
 
       {error && <div className="state-box error">{error}</div>}

@@ -32,6 +32,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/reviews", auth(http.HandlerFunc(a.createReview)))
 	mux.Handle("GET /v1/reviews/mine", auth(http.HandlerFunc(a.myReviews)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/reviews", a.masterReviews)
+	a.registerMessengerRoutes(mux, auth)
 }
 
 func (a *API) createNotification(w http.ResponseWriter, r *http.Request) {

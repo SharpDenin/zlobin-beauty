@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -10,6 +10,7 @@ import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
+import { openConversation } from '@/pages/MessagesPage'
 
 type BookingMode = 'flexible' | 'fixed_window'
 
@@ -73,6 +74,7 @@ function bookingModeLabel(mode?: string) {
 
 export function MasterPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const { accessToken } = useAuth()
   const qc = useQueryClient()
   const toast = useToast()
@@ -242,6 +244,23 @@ export function MasterPage() {
             </div>
             <p>{masterProfessionLabel(master, 'Красота и уход')}</p>
             <p>{master.bio || 'Мастер ещё не добавил описание.'}</p>
+            {accessToken && (
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                data-testid="write-master"
+                onClick={async () => {
+                  try {
+                    const c = await openConversation(accessToken, { type: 'client_master', master_user_id: master.user_id })
+                    navigate(`/messages/${c.id}`)
+                  } catch (e) {
+                    setError(e instanceof ApiError ? e.message : 'Не удалось открыть переписку')
+                  }
+                }}
+              >
+                Написать
+              </button>
+            )}
           </div>
         </div>
       </section>

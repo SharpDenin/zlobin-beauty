@@ -44,6 +44,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("DELETE /v1/service-categories/{id}", auth(http.HandlerFunc(a.deleteServiceCategory)))
 	a.registerKnowledgeRoutes(mux, auth, optional)
 	a.registerPortfolioRoutes(mux, auth)
+	a.registerPhase4Routes(mux, auth)
 }
 
 func (a *API) search(w http.ResponseWriter, r *http.Request) {

@@ -19,13 +19,15 @@ import (
 )
 
 type Service struct {
-	store            *store.Store
-	organizationsURL string
-	bookingURL       string
-	commerceURL      string
-	internalToken    string
-	httpClient       *http.Client
-	now              func() time.Time
+	store              *store.Store
+	organizationsURL   string
+	bookingURL         string
+	commerceURL        string
+	clientsURL         string
+	communicationsURL  string
+	internalToken      string
+	httpClient         *http.Client
+	now                func() time.Time
 }
 
 func New(st *store.Store) *Service {

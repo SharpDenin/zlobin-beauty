@@ -44,6 +44,9 @@ import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
 import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
+import { MessagesPage } from '@/pages/MessagesPage'
+import { MasterclassCreatePage, MasterclassDetailPage, MasterclassListPage } from '@/pages/MasterclassPages'
+import { ModelRequestCreatePage, ModelRequestDetailPage, ModelsPage } from '@/pages/ModelPages'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
 
@@ -90,6 +93,10 @@ export function App() {
                 <Route path="/clients/by-appointment/:appointmentId" element={<ClientCardPage />} />
                 <Route path="/clients/:id" element={<ClientCardPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
+                <Route path="/messages" element={<MessagesPage />} />
+                <Route path="/messages/:id" element={<MessagesPage />} />
+                <Route path="/models" element={<ModelsPage />} />
+                <Route path="/models/:id" element={<ModelRequestDetailPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/subscription" element={<SubscriptionPage />} />
                 <Route path="/shop" element={<ShopPage />} />
@@ -116,6 +123,10 @@ export function App() {
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
+                  <Route path="/masterclasses" element={<MasterclassListPage />} />
+                  <Route path="/masterclasses/new" element={<MasterclassCreatePage />} />
+                  <Route path="/masterclasses/:id" element={<MasterclassDetailPage />} />
+                  <Route path="/models/new" element={<ModelRequestCreatePage />} />
                   <Route path="/schedule" element={<WorkSchedulePage />} />
                   <Route path="/chairs" element={<ChairMarketplacePage />} />
                   <Route path="/clients" element={<ClientsPage />} />

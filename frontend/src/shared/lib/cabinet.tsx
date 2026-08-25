@@ -168,6 +168,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
       { to: '/supplier/analytics', label: 'Аналитика' },
       { to: '/supplier/team', label: 'Команда' },
       { to: '/supplier/recurring', label: 'Регулярные' },
+      { to: '/messages', label: 'Сообщения' },
       { to: '/knowledge', label: 'База знаний' },
       { to: '/profile', label: 'Профиль' },
     ]
@@ -181,6 +182,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     ]
     const secondary: NavLink[] = [
       { to: '/calendar', label: 'Календарь' },
+      { to: '/messages', label: 'Сообщения' },
       { to: '/rep/analytics', label: 'Аналитика' },
       { to: '/warehouse', label: 'Склад' },
       { to: '/profile', label: 'Профиль' },
@@ -196,6 +198,8 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
       { to: '/profile', label: 'Профиль' },
     ]
     const secondary: NavLink[] = [
+      { to: '/messages', label: 'Сообщения' },
+      { to: '/models', label: 'Модели' },
       { to: '/orders', label: 'Мои заказы' },
       { to: '/shop/cart', label: 'Корзина' },
     ]
@@ -209,6 +213,9 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     { to: '/more', label: 'Ещё' },
   ]
   const secondary: NavLink[] = []
+  secondary.push({ to: '/messages', label: 'Сообщения' })
+  secondary.push({ to: '/masterclasses', label: 'Мастер-классы' })
+  secondary.push({ to: '/models', label: 'Модели' })
   if (canFeature(kind, 'clients')) secondary.push({ to: '/clients', label: 'Клиенты' })
   if (canFeature(kind, 'services')) secondary.push({ to: '/services', label: 'Услуги' })
   if (canFeature(kind, 'cosmetics')) secondary.push({ to: '/cosmetics', label: 'Косметика' })

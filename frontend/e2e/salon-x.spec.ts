@@ -2082,4 +2082,237 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(body.master?.work_type).toBeTruthy()
     expect(Array.isArray(body.master?.profession_types)).toBeTruthy()
   })
+
+  test('phase4 client-master messenger and unauthorized access', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const client = await apiLogin('client1@demo.local')
+    const master = await apiLogin('master1@demo.local')
+    const stranger = await apiLogin('client2@demo.local')
+    const masterMe = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const masterBody = await masterMe.json() as { id?: string }
+    const masterUserId = masterBody.id
+    expect(masterUserId).toBeTruthy()
+    const profile = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const prof = await profile.json() as { master?: { id: string } }
+    expect(prof.master?.id).toBeTruthy()
+
+    await loginUI(page, 'client1@demo.local')
+    await page.goto(`/masters/${prof.master!.id}`)
+    await expect(page.getByTestId('write-master')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('write-master').click()
+    await expect(page).toHaveURL(/\/messages\//, { timeout: 15_000 })
+    const hello = `Здравствуйте, хочу записаться ${Date.now()}`
+    await page.getByTestId('message-composer').fill(hello)
+    await page.getByTestId('send-message').click()
+    await expect(page.getByTestId('message-history').getByText(hello)).toBeVisible({ timeout: 10_000 })
+
+    const list = await fetch(`${api}/v1/conversations`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(list.ok).toBeTruthy()
+    const convs = await list.json() as { items?: Array<{ id: string; unread_count: number }> }
+    const conv = convs.items?.[0]
+    expect(conv?.id).toBeTruthy()
+    expect(conv!.unread_count).toBeGreaterThan(0)
+    const forbidden = await fetch(`${api}/v1/conversations/${conv!.id}`, { headers: { Authorization: `Bearer ${stranger.access_token}` } })
+    expect([403, 404]).toContain(forbidden.status)
+    const forbiddenPost = await fetch(`${api}/v1/conversations/${conv!.id}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${stranger.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'hack' }),
+    })
+    expect([403, 404]).toContain(forbiddenPost.status)
+
+    await page.goto('/profile')
+    await page.getByRole('main').getByRole('button', { name: 'Выйти' }).click()
+    await loginUI(page, 'master1@demo.local')
+    await page.goto(`/messages/${conv!.id}`)
+    await expect(page.getByTestId('message-history').getByText(hello)).toBeVisible({ timeout: 15_000 })
+    const replyText = `Добрый день, буду рад помочь ${Date.now()}`
+    await page.getByTestId('message-composer').fill(replyText)
+    await page.getByTestId('send-message').click()
+    await expect(page.getByTestId('message-history').getByText(replyText)).toBeVisible({ timeout: 10_000 })
+
+    const clientList = await fetch(`${api}/v1/conversations/${conv!.id}/messages`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    const msgs = await clientList.json() as { items?: Array<{ body: string }> }
+    expect(msgs.items?.some((m) => m.body.includes(replyText))).toBeTruthy()
+  })
+
+  test('phase4 master-supplier messenger', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const suppliers = await fetch(`${api}/v1/suppliers`)
+    expect(suppliers.ok).toBeTruthy()
+    const body = await suppliers.json() as { items?: Array<{ id: string; name: string }> }
+    const supplier = (body.items ?? []).find((s) => /профи/i.test(s.name)) ?? body.items?.[0]
+    expect(supplier?.id).toBeTruthy()
+    await loginUI(page, 'master1@demo.local')
+    await page.goto(`/cosmetics/${supplier!.id}`)
+    await expect(page.getByTestId('write-supplier')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('write-supplier').click()
+    await expect(page).toHaveURL(/\/messages\//, { timeout: 15_000 })
+    const ask = `Нужен прайс по красителям ${Date.now()}`
+    await page.getByTestId('message-composer').fill(ask)
+    await page.getByTestId('send-message').click()
+    await expect(page.getByTestId('message-history').getByText(ask)).toBeVisible({ timeout: 10_000 })
+
+    const supplierLogin = await apiLogin('supplier1@demo.local')
+    const list = await fetch(`${api}/v1/conversations`, { headers: { Authorization: `Bearer ${supplierLogin.access_token}` } })
+    const convs = await list.json() as { items?: Array<{ id: string }> }
+    expect(convs.items?.[0]?.id).toBeTruthy()
+    const replyBody = `Прайс отправим сегодня ${Date.now()}`
+    const reply = await fetch(`${api}/v1/conversations/${convs.items![0].id}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplierLogin.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: replyBody }),
+    })
+    expect(reply.status, await reply.clone().text()).toBe(201)
+    await page.goto(`/messages/${convs.items![0].id}`)
+    await expect(page.getByTestId('message-history').getByText(replyBody)).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('phase4 masterclass marketplace matching register and message', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const instructor = await apiLogin('master1@demo.local')
+    const other = await apiLogin('employee1@demo.local')
+    const created = await fetch(`${api}/v1/masterclasses`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${instructor.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Колористика / сложное окрашивание',
+        category: 'Колористика',
+        description: 'E2E мастер-класс',
+        city: 'Красноярск',
+        location_note: 'Салон',
+        starts_at: '2026-09-15T10:00:00+07:00',
+        ends_at: '2026-09-15T14:00:00+07:00',
+        timezone: 'Asia/Krasnoyarsk',
+        capacity: 2,
+      }),
+    })
+    expect(created.status, await created.clone().text()).toBe(201)
+    const event = await created.json() as { id: string }
+    const pub = await fetch(`${api}/v1/masterclasses/${event.id}/publish`, { method: 'POST', headers: { Authorization: `Bearer ${instructor.access_token}` } })
+    expect(pub.ok, await pub.text()).toBeTruthy()
+    const interest = await fetch(`${api}/v1/masterclass-interests`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${other.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: 'Колористика', city: 'Красноярск', date_from: '2026-09-15', date_to: '2026-09-15' }),
+    })
+    expect(interest.status, await interest.clone().text()).toBe(201)
+    const matches = await fetch(`${api}/v1/masterclasses/${event.id}/matches`, { headers: { Authorization: `Bearer ${instructor.access_token}` } })
+    const matchBody = await matches.json() as { items?: Array<{ category: string }> }
+    expect(matchBody.items?.length).toBeGreaterThan(0)
+    const afisha = await fetch(`${api}/v1/masterclasses`, { headers: { Authorization: `Bearer ${other.access_token}` } })
+    const afishaBody = await afisha.json() as { items?: Array<{ id: string; relevant?: boolean; available_seats: number }> }
+    const card = afishaBody.items?.find((i) => i.id === event.id)
+    expect(card?.relevant).toBeTruthy()
+    const seatsBefore = card!.available_seats
+    const reg = await fetch(`${api}/v1/masterclasses/${event.id}/register`, { method: 'POST', headers: { Authorization: `Bearer ${other.access_token}` } })
+    expect(reg.status, await reg.clone().text()).toBe(201)
+    const dup = await fetch(`${api}/v1/masterclasses/${event.id}/register`, { method: 'POST', headers: { Authorization: `Bearer ${other.access_token}` } })
+    expect(dup.status).toBe(409)
+    const after = await fetch(`${api}/v1/masterclasses/${event.id}`, { headers: { Authorization: `Bearer ${other.access_token}` } })
+    const afterBody = await after.json() as { available_seats: number; instructor_user_id: string }
+    expect(afterBody.available_seats).toBe(seatsBefore - 1)
+    const instructorMe = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${instructor.access_token}` } })
+    const instructorId = ((await instructorMe.json()) as { id: string }).id
+    const chat = await fetch(`${api}/v1/conversations`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${other.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'masterclass', event_id: event.id, peer_user_id: instructorId }),
+    })
+    expect(chat.status, await chat.clone().text()).toBe(201)
+    const regs = await fetch(`${api}/v1/masterclasses/${event.id}/registrations`, { headers: { Authorization: `Bearer ${instructor.access_token}` } })
+    const regsBody = await regs.json() as { items?: Array<{ status: string }> }
+    expect(regsBody.items?.some((r) => r.status === 'confirmed')).toBeTruthy()
+
+    await loginUI(page, 'employee1@demo.local')
+    await page.goto(`/masterclasses/${event.id}`)
+    await expect(page.getByRole('heading', { name: /Колористика/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/мест/i)).toBeVisible()
+  })
+
+  test('phase4 model marketplace matching notify preference respond and book', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    const client = await apiLogin('client1@demo.local')
+    const master = await apiLogin('master1@demo.local')
+    const save = await fetch(`${api}/v1/me/model-preferences`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        willing: true, notify: true, categories: ['Колористика'], city: 'Красноярск',
+        date_from: '2026-09-15', date_to: '2026-09-15',
+      }),
+    })
+    expect(save.ok, await save.text()).toBeTruthy()
+    const created = await fetch(`${api}/v1/model-requests`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Требуется модель на окрашивание',
+        category: 'Колористика',
+        description: 'E2E модель',
+        city: 'Красноярск',
+        location_note: 'Салон',
+        starts_at: '2026-09-15T11:00:00+07:00',
+        ends_at: '2026-09-15T13:00:00+07:00',
+        timezone: 'Asia/Krasnoyarsk',
+        capacity: 1,
+      }),
+    })
+    expect(created.status, await created.clone().text()).toBe(201)
+    const req = await created.json() as { id: string }
+    const pub = await fetch(`${api}/v1/model-requests/${req.id}/publish`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+    expect(pub.ok, await pub.text()).toBeTruthy()
+    const notes = await fetch(`${api}/v1/notifications`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    const notesBody = await notes.json() as { items?: Array<{ type: string; entity_id: string }> }
+    expect(notesBody.items?.some((n) => n.type === 'model_opportunity' && n.entity_id === req.id)).toBeTruthy()
+
+    const off = await fetch(`${api}/v1/me/model-preferences`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ willing: true, notify: false }),
+    })
+    expect(off.ok).toBeTruthy()
+    const created2 = await fetch(`${api}/v1/model-requests`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Модель без уведомления',
+        category: 'Колористика',
+        description: 'notify off',
+        city: 'Красноярск',
+        starts_at: '2026-09-15T15:00:00+07:00',
+        ends_at: '2026-09-15T16:00:00+07:00',
+        timezone: 'Asia/Krasnoyarsk',
+        capacity: 1,
+      }),
+    })
+    const req2 = await created2.json() as { id: string }
+    await fetch(`${api}/v1/model-requests/${req2.id}/publish`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+    const notesAfter = await fetch(`${api}/v1/notifications`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    const notesAfterBody = await notesAfter.json() as { items?: Array<{ type: string; entity_id: string }> }
+    expect(notesAfterBody.items?.some((n) => n.entity_id === req2.id)).toBeFalsy()
+
+    const respond = await fetch(`${api}/v1/model-requests/${req.id}/respond`, { method: 'POST', headers: { Authorization: `Bearer ${client.access_token}` } })
+    expect(respond.status, await respond.clone().text()).toBe(201)
+    const resp = await respond.json() as { id: string }
+    const masterMe = await fetch(`${api}/v1/auth/me`, { headers: { Authorization: `Bearer ${master.access_token}` } })
+    const masterId = ((await masterMe.json()) as { id: string }).id
+    const chat = await fetch(`${api}/v1/conversations`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'model_request', request_id: req.id, peer_user_id: masterId }),
+    })
+    expect(chat.status, await chat.clone().text()).toBe(201)
+    const accept = await fetch(`${api}/v1/model-responses/${resp.id}/accept`, { method: 'POST', headers: { Authorization: `Bearer ${client.access_token}` } })
+    expect(accept.ok, await accept.clone().text()).toBeTruthy()
+    const final = await fetch(`${api}/v1/model-requests/${req.id}`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    const finalBody = await final.json() as { status: string; available_slots: number; accepted_count: number }
+    expect(finalBody.status).toBe('closed')
+    expect(finalBody.available_slots).toBe(0)
+
+    await loginUI(page, 'client1@demo.local')
+    await page.goto('/models')
+    await expect(page.getByRole('heading', { name: 'Модели' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('model-willing')).toBeVisible()
+  })
 })

@@ -21,10 +21,13 @@ type RepeatRequirement struct {
 	Brand        string
 	Unit         string
 	RequiredQty  float64
+	OnHand       float64
+	Reserved     float64
 	AvailableQty float64
 	IncomingQty  float64
 	ShortageQty  float64
 	Status       string
+	Orderable    bool
 	ExpectedAt   *string
 }
 
@@ -180,7 +183,7 @@ func canRepeatStatuses(statuses []string) bool {
 }
 
 func worstAvailability(statuses []string) string {
-	rank := map[string]int{"available": 0, "incoming": 1, "shortage": 2, "unavailable": 3}
+	rank := map[string]int{"available": 0, "incoming": 1, "orderable": 2, "shortage": 3, "unavailable": 4}
 	worst := "available"
 	best := 0
 	if len(statuses) == 0 {
@@ -227,10 +230,13 @@ func (s *Service) fetchRepeatAvailability(ctx context.Context, owner, orgID, ser
 			Brand        string  `json:"brand"`
 			Unit         string  `json:"unit"`
 			RequiredQty  float64 `json:"required_qty"`
+			OnHand       float64 `json:"on_hand"`
+			Reserved     float64 `json:"reserved"`
 			AvailableQty float64 `json:"available_qty"`
 			IncomingQty  float64 `json:"incoming_qty"`
 			ShortageQty  float64 `json:"shortage_qty"`
 			Status       string  `json:"status"`
+			Orderable    bool    `json:"orderable"`
 			ExpectedAt   *string `json:"expected_at"`
 		} `json:"items"`
 	}
@@ -245,8 +251,9 @@ func (s *Service) fetchRepeatAvailability(ctx context.Context, owner, orgID, ser
 		}
 		out = append(out, RepeatRequirement{
 			ProductID: pid, ProductName: it.ProductName, Brand: it.Brand, Unit: it.Unit,
-			RequiredQty: it.RequiredQty, AvailableQty: it.AvailableQty, IncomingQty: it.IncomingQty,
-			ShortageQty: it.ShortageQty, Status: it.Status, ExpectedAt: it.ExpectedAt,
+			RequiredQty: it.RequiredQty, OnHand: it.OnHand, Reserved: it.Reserved,
+			AvailableQty: it.AvailableQty, IncomingQty: it.IncomingQty,
+			ShortageQty: it.ShortageQty, Status: it.Status, Orderable: it.Orderable, ExpectedAt: it.ExpectedAt,
 		})
 	}
 	return out, nil

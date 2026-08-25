@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { cosmeticsProductPath, showOrderCta } from '@/pages/availability-helpers'
 import {
   formatRequirementLine,
   overallRepeatMessage,
@@ -103,12 +105,21 @@ export function RepeatOffer({
               <article key={r.product_id} className="history-card" data-testid="repeat-requirement">
                 <div className="row between">
                   <strong>{formatRequirementLine(r)}</strong>
-                  <span className={`badge ${r.status === 'available' ? 'badge-success' : r.status === 'incoming' ? 'badge-warning' : 'badge-danger'}`}>
-                    {r.status === 'available' ? '✓' : '⚠'} {requirementStatusLabel(r.status)}
+                  <span className={`badge ${r.status === 'available' ? 'badge-success' : r.status === 'incoming' || r.status === 'orderable' ? 'badge-warning' : 'badge-danger'}`}>
+                    {r.status === 'available' ? '✓' : r.status === 'orderable' ? '→' : '⚠'} {requirementStatusLabel(r.status)}
                   </span>
                 </div>
+                <p className="muted">
+                  Нужно {r.required_qty}{r.unit ? ` ${r.unit}` : ''} · Есть {r.available_qty}{r.unit ? ` ${r.unit}` : ''} · В пути {r.incoming_qty}{r.unit ? ` ${r.unit}` : ''}
+                  {r.shortage_qty > 0 ? ` · Не хватает ${r.shortage_qty}${r.unit ? ` ${r.unit}` : ''}` : ''}
+                </p>
                 {r.incoming_qty > 0 && (
                   <p className="muted">В поставке: {r.incoming_qty}{r.unit ? ` ${r.unit}` : ''} · не на складе</p>
+                )}
+                {showOrderCta(r) && (
+                  <Link className="btn btn-secondary btn-compact" to={cosmeticsProductPath(r.product_id)} data-testid="availability-order">
+                    Заказать
+                  </Link>
                 )}
               </article>
             ))}

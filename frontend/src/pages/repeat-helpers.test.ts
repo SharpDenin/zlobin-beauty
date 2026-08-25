@@ -16,12 +16,14 @@ describe('repeat-helpers', () => {
     expect(requirementStatusLabel('available')).toBe('В наличии')
     expect(requirementStatusLabel('shortage')).toBe('Не хватает')
     expect(requirementStatusLabel('incoming')).toBe('Ожидается поставка')
+    expect(requirementStatusLabel('orderable')).toBe('Можно заказать')
   })
 
   it('summarizes available vs shortage vs incoming', () => {
     expect(overallRepeatMessage(base)).toBe('Материалы в наличии')
     expect(overallRepeatMessage({ ...base, can_repeat: false, availability_status: 'shortage' })).toContain('Не хватает')
     expect(overallRepeatMessage({ ...base, can_repeat: false, availability_status: 'incoming' })).toContain('поставк')
+    expect(overallRepeatMessage({ ...base, can_repeat: false, availability_status: 'orderable' })).toContain('Не хватает')
   })
 
   it('keeps material status when formula is hidden', () => {

@@ -105,7 +105,8 @@ components:
         shortage_qty: { type: number, description: Gap after incoming }
         status:
           type: string
-          enum: [available, incoming, shortage, unavailable]
+          enum: [available, incoming, shortage, unavailable, orderable]
+        orderable: { type: boolean }
         expected_at: { type: string, format: date-time }
     RepeatPreview:
       type: object
@@ -115,7 +116,7 @@ components:
           description: True only when every requirement is currently available on the master's warehouse
         availability_status:
           type: string
-          enum: [available, incoming, shortage, unavailable]
+          enum: [available, incoming, shortage, unavailable, orderable]
         source_appointment_id: { type: string, format: uuid }
         service_id: { type: string, format: uuid }
         service: { type: string }

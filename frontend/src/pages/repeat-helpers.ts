@@ -4,10 +4,13 @@ export type RepeatRequirement = {
   brand?: string
   unit?: string
   required_qty: number
+  on_hand?: number
+  reserved?: number
   available_qty: number
   incoming_qty: number
   shortage_qty: number
-  status: 'available' | 'incoming' | 'shortage' | 'unavailable' | string
+  status: 'available' | 'incoming' | 'shortage' | 'unavailable' | 'orderable' | string
+  orderable?: boolean
   expected_at?: string | null
 }
 
@@ -37,6 +40,8 @@ export function requirementStatusLabel(status: string) {
       return 'Не хватает'
     case 'unavailable':
       return 'Нет на складе'
+    case 'orderable':
+      return 'Можно заказать'
     default:
       return status
   }
@@ -50,6 +55,8 @@ export function overallRepeatMessage(preview: RepeatPreview) {
       return 'Не хватает сейчас, закрывается ожидаемой поставкой'
     case 'unavailable':
       return 'Не хватает материалов'
+    case 'orderable':
+      return 'Не хватает, можно заказать'
     default:
       return 'Не хватает материалов'
   }

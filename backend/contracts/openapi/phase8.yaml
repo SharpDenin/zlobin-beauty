@@ -1,0 +1,137 @@
+openapi: 3.0.3
+info:
+  title: Salon-X Phase 8 Smart Service Provisioning
+  version: 0.8.0
+  description: |
+    Canonical master-inventory availability analyzer.
+    Current stock is always on_hand − reserved on the caller's master location.
+    Incoming remaining from supplier orders is never added to stock until accept.
+    Formula fields are not returned. Alternative formulas are never generated.
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: Availability
+paths:
+  /v1/me/inventory/availability:
+    get:
+      tags: [Availability]
+      summary: Analyze materials for a service against the caller's master warehouse
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: organization_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: service_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: appointment_id
+          schema: { type: string, format: uuid }
+          description: When set, required qty is reduced by consumption movements for this appointment only
+      responses:
+        "200":
+          description: Availability analysis
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityAnalysis" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/me/inventory/consume:
+    post:
+      tags: [Availability]
+      summary: Consume from the caller's master warehouse (existing Phase 5 engine)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organization_id, product_id, qty]
+              properties:
+                organization_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid }
+                qty: { type: number }
+                appointment_id: { type: string, format: uuid }
+                service_id: { type: string, format: uuid }
+                idempotency_key: { type: string }
+                reason: { type: string }
+      responses:
+        "200":
+          description: Stock movement
+        "409":
+          description: Idempotency key already used for a different movement
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AvailabilityStatus:
+      type: string
+      enum: [available, incoming, shortage, unavailable, orderable]
+    AvailabilityItem:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        brand: { type: string }
+        unit: { type: string }
+        required_qty: { type: number }
+        on_hand: { type: number }
+        reserved: { type: number }
+        available:
+          type: number
+          description: on_hand − reserved. Incoming is not included.
+        incoming:
+          type: number
+          description: Remaining ordered qty not yet accepted. Not stock.
+        shortage: { type: number }
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        orderable:
+          type: boolean
+          description: Product can be bought through the existing supplier catalog/order flow
+        expected_at: { type: string, format: date-time }
+    AvailabilityAlternative:
+      type: object
+      description: Stored catalog-family variant only. Never a generated formula.
+      properties:
+        available: { type: boolean }
+        reason: { type: string }
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+    AvailabilityAnalysis:
+      type: object
+      properties:
+        service_id: { type: string, format: uuid }
+        can_perform_now:
+          type: boolean
+          description: True only when every line is currently available on the master warehouse
+        availability_status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityItem" }
+        alternative: { $ref: "#/components/schemas/AvailabilityAlternative" }
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }

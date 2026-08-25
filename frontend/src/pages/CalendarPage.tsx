@@ -18,13 +18,16 @@ import { statusLabel } from '@/shared/lib/status'
 import { datetimeLocalToIso, isoToDatetimeLocal } from '@/shared/lib/time'
 import { Hint } from '@/shared/ui/Hint'
 import { canDragAppointment, isTerminalStatus, minutesToTime, staffRoleLabel } from '@/pages/calendar-helpers'
+import { CalendarAvailability } from '@/pages/CalendarAvailability'
 
 type Appointment = {
   id: string
+  service_id?: string
   service_name: string
   status: string
   starts_at: string
   ends_at: string
+  organization_id?: string
   master_user_id: string
   client_user_id: string
   branch_id: string
@@ -60,6 +63,9 @@ type CalendarSelection = {
   location?: string
   master?: string
   color?: string
+  serviceId?: string
+  organizationId?: string
+  masterUserId?: string
 }
 
 const MASTER_CATEGORIES: Category[] = [
@@ -333,6 +339,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           secondary: [masterName, a.location_name].filter(Boolean).join(' · '),
           location: [a.location_name, a.location_address].filter(Boolean).join(', '),
           master: masterName,
+          serviceId: a.service_id,
+          organizationId: a.organization_id,
+          masterUserId: a.master_user_id,
         },
       })
     }
@@ -520,6 +529,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       location: p.location,
       master: p.master,
       color: p.color,
+      serviceId: p.serviceId,
+      organizationId: p.organizationId,
+      masterUserId: p.masterUserId,
     }
     setSelected(sel)
     if (sel.kind === 'block') {
@@ -696,6 +708,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 {selected.status && <span className="badge">{selected.status}</span>}
                 {selected.master && <p><strong>Мастер:</strong> {selected.master}</p>}
                 {selected.location && <p><strong>Место:</strong> {selected.location}</p>}
+                {user?.id === selected.masterUserId && selected.serviceId && selected.organizationId && (
+                  <CalendarAvailability
+                    token={accessToken}
+                    organizationId={selected.organizationId}
+                    serviceId={selected.serviceId}
+                    appointmentId={selected.id.startsWith('appt:') ? selected.id.slice(5) : selected.id}
+                  />
+                )}
                 <button className="btn btn-primary" type="button" onClick={() => navigate(`/appointments/${selected.id.slice(5)}`)}>Открыть запись</button>
               </>
             ) : (

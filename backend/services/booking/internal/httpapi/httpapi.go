@@ -677,8 +677,9 @@ func repeatPreviewDTO(p *service.RepeatPreview) map[string]any {
 	for _, r := range p.Requirements {
 		row := map[string]any{
 			"product_id": r.ProductID.String(), "product_name": r.ProductName, "brand": r.Brand, "unit": r.Unit,
-			"required_qty": r.RequiredQty, "available_qty": r.AvailableQty, "incoming_qty": r.IncomingQty,
-			"shortage_qty": r.ShortageQty, "status": r.Status,
+			"required_qty": r.RequiredQty, "on_hand": r.OnHand, "reserved": r.Reserved,
+			"available_qty": r.AvailableQty, "incoming_qty": r.IncomingQty,
+			"shortage_qty": r.ShortageQty, "status": r.Status, "orderable": r.Orderable,
 		}
 		if r.ExpectedAt != nil {
 			row["expected_at"] = *r.ExpectedAt

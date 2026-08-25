@@ -16,9 +16,11 @@ import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/Servic
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { hasColorFormulaInput } from '@/shared/lib/visit-visibility'
 import { AppointmentMaterialsForm } from '@/pages/MasterInventoryPage'
+import { CalendarAvailability } from '@/pages/CalendarAvailability'
 
 type Appointment = {
   id: string
+  service_id: string
   service_name: string
   status: string
   starts_at: string
@@ -191,6 +193,18 @@ export function AppointmentDetailPage() {
 
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
+
+      {isMaster && a.service_id && a.organization_id && (
+        <section className="card stack">
+          <h2>Наличие материалов</h2>
+          <CalendarAvailability
+            token={accessToken}
+            organizationId={a.organization_id}
+            serviceId={a.service_id}
+            appointmentId={a.id}
+          />
+        </section>
+      )}
 
       {a.status === 'completed' && isMaster && (
         <AppointmentMaterialsForm appointmentId={a.id} orgId={a.organization_id} />

@@ -251,6 +251,35 @@ func (s *Store) ListProductsByIDs(ctx context.Context, ids []uuid.UUID) ([]domai
 	return out, rows.Err()
 }
 
+func (s *Store) ListCatalogFamily(ctx context.Context, ids []uuid.UUID) ([]domain.Product, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+productColumns+`
+FROM products
+WHERE archived_at IS NULL
+  AND (
+    id = ANY($1)
+    OR parent_id = ANY($1)
+    OR parent_id IN (SELECT parent_id FROM products WHERE id = ANY($1) AND parent_id IS NOT NULL)
+    OR id IN (SELECT parent_id FROM products WHERE id = ANY($1) AND parent_id IS NOT NULL)
+  )`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Product
+	for rows.Next() {
+		p, err := scanProductRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"

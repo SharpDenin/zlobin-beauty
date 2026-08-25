@@ -12,6 +12,7 @@ import (
 
 func (a *API) registerInventoryRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler) {
 	mux.Handle("GET /v1/me/inventory", auth(http.HandlerFunc(a.myInventory)))
+	mux.Handle("GET /v1/me/inventory/availability", auth(http.HandlerFunc(a.myInventoryAvailability)))
 	mux.Handle("GET /v1/me/inventory/movements", auth(http.HandlerFunc(a.myInventoryMovements)))
 	mux.Handle("GET /v1/me/inventory/receipts", auth(http.HandlerFunc(a.myInventoryReceipts)))
 	mux.Handle("GET /v1/me/inventory/receipts/{orderID}", auth(http.HandlerFunc(a.myInventoryReceipt)))
@@ -26,6 +27,77 @@ func parseOrgID(r *http.Request) (uuid.UUID, error) {
 		return uuid.Nil, apperr.Validation("organization_id is required")
 	}
 	return orgID, nil
+}
+
+func (a *API) myInventoryAvailability(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := parseOrgID(r)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	serviceID, err := uuid.Parse(r.URL.Query().Get("service_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("service_id is required"))
+		return
+	}
+	var appointmentID *uuid.UUID
+	if v := r.URL.Query().Get("appointment_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid appointment_id"))
+			return
+		}
+		appointmentID = &id
+	}
+	out, err := a.svc.AnalyzeAvailability(r.Context(), service.AnalyzeAvailabilityInput{
+		OwnerUserID: claims.UserID, OrganizationID: orgID, ServiceID: serviceID, AppointmentID: appointmentID,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, availabilityAnalysisDTO(out))
+}
+
+func availabilityItemDTO(it domain.RequirementCheck) map[string]any {
+	row := map[string]any{
+		"product_id": it.ProductID.String(), "product_name": it.Name, "brand": it.Brand, "unit": it.Unit,
+		"required_qty": it.RequiredQty, "on_hand": it.OnHand, "reserved": it.Reserved,
+		"available": it.AvailableQty, "incoming": it.IncomingQty, "shortage": it.ShortageQty,
+		"available_qty": it.AvailableQty, "incoming_qty": it.IncomingQty, "shortage_qty": it.ShortageQty,
+		"status": it.Status, "orderable": it.Orderable,
+	}
+	if it.ExpectedAt != nil {
+		row["expected_at"] = it.ExpectedAt.UTC()
+	}
+	return row
+}
+
+func availabilityAnalysisDTO(out *domain.AvailabilityAnalysis) map[string]any {
+	if out == nil {
+		out = &domain.AvailabilityAnalysis{Items: []domain.RequirementCheck{}, Alternative: domain.AvailabilityAlternative{}}
+	}
+	items := make([]map[string]any, 0, len(out.Items))
+	for _, it := range out.Items {
+		items = append(items, availabilityItemDTO(it))
+	}
+	alt := map[string]any{"available": out.Alternative.Available}
+	if out.Alternative.Reason != "" {
+		alt["reason"] = out.Alternative.Reason
+	}
+	if out.Alternative.Available && out.Alternative.ProductID != uuid.Nil {
+		alt["product_id"] = out.Alternative.ProductID.String()
+		alt["product_name"] = out.Alternative.ProductName
+	}
+	dto := map[string]any{
+		"service_id":          out.ServiceID.String(),
+		"can_perform_now":     out.CanPerformNow,
+		"availability_status": out.Status,
+		"items":               items,
+		"alternative":         alt,
+	}
+	return dto
 }
 
 func (a *API) myInventory(w http.ResponseWriter, r *http.Request) {

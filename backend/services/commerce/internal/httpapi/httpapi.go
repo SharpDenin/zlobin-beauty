@@ -633,15 +633,7 @@ func (a *API) internalRepeatAvailability(w http.ResponseWriter, r *http.Request)
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		row := map[string]any{
-			"product_id": it.ProductID.String(), "product_name": it.Name, "brand": it.Brand, "unit": it.Unit,
-			"required_qty": it.RequiredQty, "available_qty": it.AvailableQty, "incoming_qty": it.IncomingQty,
-			"shortage_qty": it.ShortageQty, "status": it.Status,
-		}
-		if it.ExpectedAt != nil {
-			row["expected_at"] = it.ExpectedAt.UTC()
-		}
-		out = append(out, row)
+		out = append(out, availabilityItemDTO(it))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

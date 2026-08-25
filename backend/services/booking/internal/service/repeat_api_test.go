@@ -431,8 +431,14 @@ func TestPhase7RepeatResources(t *testing.T) {
 			t.Fatalf("incoming must not be counted as stock %+v", line)
 		}
 	default:
-		if line.Status != "shortage" && line.Status != "unavailable" {
-			t.Fatalf("want shortage %+v %s", p, raw)
+		if line.Status != "shortage" && line.Status != "unavailable" && line.Status != "orderable" {
+			t.Fatalf("want shortage/orderable %+v %s", p, raw)
+		}
+		if p.CanRepeat {
+			t.Fatal("can_repeat should be false")
+		}
+		if line.AvailableQty > 10.1 {
+			t.Fatalf("incoming must not be counted as stock %+v", line)
 		}
 		if p.CanRepeat {
 			t.Fatal("can_repeat should be false")

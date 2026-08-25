@@ -424,7 +424,29 @@ type RepeatAvailabilityInput struct {
 	SourceAppointmentID *uuid.UUID
 }
 
+type AnalyzeAvailabilityInput struct {
+	OwnerUserID         uuid.UUID
+	OrganizationID      uuid.UUID
+	ServiceID           uuid.UUID
+	AppointmentID       *uuid.UUID
+	SourceAppointmentID *uuid.UUID
+}
+
 func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityInput) ([]domain.RequirementCheck, error) {
+	out, err := s.AnalyzeAvailability(ctx, AnalyzeAvailabilityInput{
+		OwnerUserID: in.OwnerUserID, OrganizationID: in.OrganizationID, ServiceID: in.ServiceID,
+		SourceAppointmentID: in.SourceAppointmentID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return []domain.RequirementCheck{}, nil
+	}
+	return out.Items, nil
+}
+
+func (s *Service) AnalyzeAvailability(ctx context.Context, in AnalyzeAvailabilityInput) (*domain.AvailabilityAnalysis, error) {
 	if in.OwnerUserID == uuid.Nil || in.OrganizationID == uuid.Nil {
 		return nil, apperr.Validation("owner_user_id and organization_id are required")
 	}
@@ -432,18 +454,25 @@ func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityI
 	if err != nil {
 		return nil, err
 	}
-	required := map[uuid.UUID]float64{}
-	if in.ServiceID != uuid.Nil {
-		norms, err := s.store.ListNorms(ctx, in.OrganizationID, &in.ServiceID)
-		if err != nil {
-			return nil, apperr.Internal(err)
-		}
-		for _, n := range norms {
-			if n.Qty > 1e-9 {
-				required[n.ProductID] = n.Qty
-			}
-		}
+	result := &domain.AvailabilityAnalysis{
+		ServiceID:     in.ServiceID,
+		CanPerformNow: true,
+		Status:        domain.AvailabilityAvailable,
+		Items:         []domain.RequirementCheck{},
+		Alternative:   domain.AvailabilityAlternative{Available: false},
 	}
+	if in.ServiceID == uuid.Nil {
+		return result, nil
+	}
+	norms, err := s.store.ListNorms(ctx, in.OrganizationID, &in.ServiceID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	lines := make([]domain.QtyLine, 0, len(norms))
+	for _, n := range norms {
+		lines = append(lines, domain.QtyLine{ProductID: n.ProductID, Qty: n.Qty})
+	}
+	required := domain.AggregateRequirements(lines)
 	if in.SourceAppointmentID != nil && *in.SourceAppointmentID != uuid.Nil {
 		consumed, err := s.store.AppointmentConsumption(ctx, *in.SourceAppointmentID)
 		if err != nil {
@@ -455,8 +484,20 @@ func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityI
 			}
 		}
 	}
+	if in.AppointmentID != nil && *in.AppointmentID != uuid.Nil {
+		consumed, err := s.store.AppointmentConsumption(ctx, *in.AppointmentID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		for pid := range required {
+			required[pid] = domain.RemainingRequired(required[pid], consumed[pid])
+			if required[pid] <= 1e-9 {
+				delete(required, pid)
+			}
+		}
+	}
 	if len(required) == 0 {
-		return []domain.RequirementCheck{}, nil
+		return result, nil
 	}
 	ids := make([]uuid.UUID, 0, len(required))
 	for pid := range required {
@@ -467,8 +508,14 @@ func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityI
 		return nil, apperr.Internal(err)
 	}
 	onHand := map[uuid.UUID]domain.StockBalanceView{}
+	availableByProduct := map[uuid.UUID]float64{}
 	for _, b := range balances {
 		onHand[b.ProductID] = b
+		av := b.QtyOnHand - b.QtyReserved
+		if av < 0 {
+			av = 0
+		}
+		availableByProduct[b.ProductID] = av
 	}
 	incomingRows, err := s.store.IncomingRemainingByLocation(ctx, in.OrganizationID, loc.ID)
 	if err != nil {
@@ -488,7 +535,13 @@ func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityI
 	for _, p := range products {
 		byProduct[p.ID] = p
 	}
+	family, err := s.store.ListCatalogFamily(ctx, ids)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
 	out := make([]domain.RequirementCheck, 0, len(required))
+	statuses := make([]string, 0, len(required))
+	var alt *domain.FamilyAlternative
 	for pid, qty := range required {
 		bal := onHand[pid]
 		p := byProduct[pid]
@@ -499,11 +552,21 @@ func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityI
 			unit = bal.Unit
 		}
 		av, sh, st := domain.EvaluateRequirement(qty, bal.QtyOnHand, bal.QtyReserved, incomingQty[pid])
+		st, orderable := domain.ApplyOrderability(st, domain.CatalogOrderable(p, in.OrganizationID))
 		out = append(out, domain.RequirementCheck{
 			ProductID: pid, Name: name, Brand: brand, Unit: unit,
-			RequiredQty: qty, AvailableQty: av, IncomingQty: incomingQty[pid],
-			ShortageQty: sh, Status: st, ExpectedAt: incomingAt[pid],
+			RequiredQty: qty, OnHand: bal.QtyOnHand, Reserved: bal.QtyReserved,
+			AvailableQty: av, IncomingQty: incomingQty[pid], ShortageQty: sh,
+			Status: st, Orderable: orderable, ExpectedAt: incomingAt[pid],
 		})
+		statuses = append(statuses, st)
+		if alt == nil && (st == domain.AvailabilityShortage || st == domain.AvailabilityUnavailable || st == domain.AvailabilityOrderable) {
+			need := qty - av
+			if need < 1e-9 {
+				need = qty
+			}
+			alt = domain.PickStoredFamilyAlternative(pid, need, family, availableByProduct)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Name != out[j].Name {
@@ -511,5 +574,16 @@ func (s *Service) RepeatAvailability(ctx context.Context, in RepeatAvailabilityI
 		}
 		return out[i].ProductID.String() < out[j].ProductID.String()
 	})
-	return out, nil
+	result.Items = out
+	result.CanPerformNow = domain.CanRepeatFromStatuses(statuses)
+	result.Status = domain.WorstAvailability(statuses)
+	if alt != nil {
+		result.Alternative = domain.AvailabilityAlternative{
+			Available: true, ProductID: alt.ProductID, ProductName: alt.ProductName,
+			Reason: "В каталоге есть вариант той же линейки на складе",
+		}
+	} else if !result.CanPerformNow {
+		result.Alternative = domain.AvailabilityAlternative{Available: false, Reason: domain.NoStoredAlternativeReason}
+	}
+	return result, nil
 }

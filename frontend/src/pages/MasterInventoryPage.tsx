@@ -597,6 +597,7 @@ export function AppointmentMaterialsForm({
       setError(null)
       setQty('')
       await qc.invalidateQueries({ queryKey: ['me-inventory'] })
+      await qc.invalidateQueries({ queryKey: ['inventory-availability'] })
     },
     onError: (e) => {
       setOk(null)

@@ -6,6 +6,7 @@ export const CHART = {
   gold: tokens.color.primarySoft,
   clay: tokens.color.textSecondary,
   muted: '#6B7385',
+  info: tokens.color.info,
   success: tokens.color.success,
   warning: tokens.color.warning,
   danger: tokens.color.danger,

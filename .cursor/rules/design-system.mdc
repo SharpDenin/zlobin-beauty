@@ -7,12 +7,20 @@ alwaysApply: true
 
 Salon-X has one permanent design system. Read `docs/DESIGN_SYSTEM.md` before changing UI.
 
-- Dark-first canvas `#0B0D12`, surfaces `#141821` / `#1D2230`, text `#F5F7FA` / `#9EA6B5`.
+- Dark-first canvas `#0B0D12` with **atmospheric canvas gradient** (`--gradient-canvas`). Surfaces `#141821` / `#1D2230` / `#252B3B`. Text `#F5F7FA` / `#9EA6B5`.
 - Single accent `#7C82FF` (soft `#A8ACFF`). Do not purple entire screens.
-- Semantic `#5DC08B` / `#FFB020` / `#EF7777` only for success / warning / danger.
-- Font is Inter. 8px spacing. Radius 14px default, pills only for badges.
-- Primary button: bg `#7C82FF`, text `#0B0D12`.
+- Semantic `#5DC08B` / `#FFB020` / `#EF7777` for success / warning / danger. Informational `#8B9BC7` only.
+- Font is Inter. 8px spacing. Radius 14px default, pills only for badges/avatars.
+- Primary button: `--gradient-primary-button`, text `#0B0D12`.
 - Logo: `frontend/public/logo.png` via `BrandLogo`. Never recolor, stretch, or restyle.
-- Use CSS variables / `tokens.ts`. Do not introduce a second component kit, gradients, glass, neon, or a new palette.
+- Use CSS variables / `tokens.ts`. Do not introduce a second component kit or a new palette.
 
-New entities reuse card, badge, table, form, modal, and nav patterns already in the system.
+## Allowed depth (production)
+
+- Prescribed gradients only: canvas, hero, primary button, image fallback. Not on every card.
+- Soft accent glow (`--shadow-glow`) on selected cards and primary CTA — not neon, not idle chrome.
+- Image-first cards via `MediaImage` + `.media-frame*`. Never treat a 1×1 transparent PNG as content.
+- Motion tokens (`--motion-fast/normal/emphasized`) for hover, modal, drawer, toast. Respect `prefers-reduced-motion`.
+- Overlay architecture: `--overlay-scrim`, z-index scale `--z-sticky` → `--z-toast`. Shared Modal + body scroll-lock comes next; do not invent a fourth overlay stack.
+
+New entities reuse card, badge, table, form, overlay, media-frame, and nav patterns already in the system.

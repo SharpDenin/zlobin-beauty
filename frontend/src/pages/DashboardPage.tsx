@@ -13,6 +13,7 @@ import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { CHART } from '@/shared/ui/chart-theme'
 import { tokens } from '@/shared/ui/tokens'
+import { Drawer } from '@/shared/ui/Drawer'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { LIBRARY, makeLayouts, normalizeLayout, type Breakpoint, type WidgetId, type WidgetLayout } from '@/pages/dashboard-layout'
 import type { SupplierOrder } from '@/shared/lib/commerce'
@@ -381,10 +382,13 @@ export function DashboardPage() {
         )}
       </div>
 
-      {libraryOpen && (
-        <div className="more-drawer" role="dialog" aria-modal="true" onClick={() => setLibraryOpen(false)}>
-          <div className="more-panel stack dashboard-settings" onClick={(e) => e.stopPropagation()}>
-            <div className="row between"><div><p className="eyebrow">Рабочий стол</p><h2>Настроить dashboard</h2></div><button className="btn btn-secondary btn-compact" type="button" onClick={() => setLibraryOpen(false)}>Готово</button></div>
+      <Drawer
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        title={<div><p className="eyebrow">Рабочий стол</p><h2>Настроить dashboard</h2></div>}
+        closeLabel="Готово"
+        panelClassName="dashboard-settings"
+      >
             <p className="muted">Выберите нужные блоки. Порядок и размер также можно менять прямо на рабочем столе.</p>
             {relevant.map((def) => {
               const current = layout.find((x) => x.id === def.id)
@@ -411,9 +415,7 @@ export function DashboardPage() {
               )
             })}
             {save.isError && <div className="state-box error">{save.error instanceof ApiError ? save.error.message : 'Не удалось сохранить раскладку'}</div>}
-          </div>
-        </div>
-      )}
+      </Drawer>
     </main>
   )
 }

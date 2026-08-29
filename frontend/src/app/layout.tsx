@@ -4,6 +4,7 @@ import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess
 import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { Drawer } from '@/shared/ui/Drawer'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -118,17 +119,10 @@ function MoreDrawer({
   links: NavLink[]
   pathname: string
 }) {
-  if (!open) return null
   return (
-    <div className="more-drawer" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="more-panel stack-sm" onClick={(e) => e.stopPropagation()}>
-        <div className="row between">
-          <h2>Ещё</h2>
-          <button className="btn btn-secondary btn-compact" type="button" onClick={onClose}>Закрыть</button>
-        </div>
-        <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
-      </div>
-    </div>
+    <Drawer open={open} onClose={onClose} title="Ещё" panelClassName="stack-sm">
+      <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
+    </Drawer>
   )
 }
 

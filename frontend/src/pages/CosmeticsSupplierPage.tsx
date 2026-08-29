@@ -18,6 +18,7 @@ import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCart
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Modal } from '@/shared/ui/Modal'
 import { openConversation } from '@/pages/MessagesPage'
 
 export function CosmeticsSupplierPage() {
@@ -256,16 +257,7 @@ export function CosmeticsSupplierPage() {
         </div>
       )}
 
-      {checkoutOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCheckoutOpen(false)}>
-          <div className="modal-sheet stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between">
-              <h2>Оформление заказа</h2>
-              <button className="btn btn-secondary btn-compact" type="button" onClick={() => setCheckoutOpen(false)}>
-                Закрыть
-              </button>
-            </div>
-
+      <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Оформление заказа" size="lg">
             <div className="list">
               {cart.map((line) => (
                 <article key={line.product.id} className="list-item">
@@ -362,9 +354,7 @@ export function CosmeticsSupplierPage() {
             >
               {createOrder.isPending ? 'Отправляем…' : 'Подтвердить заказ'}
             </button>
-          </div>
-        </div>
-      )}
+      </Modal>
     </main>
   )
 }

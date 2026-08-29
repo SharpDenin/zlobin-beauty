@@ -3,6 +3,7 @@ import type { JSONContent } from '@tiptap/react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { API_BASE_URL } from '@/shared/api/client'
 import { sanitizeHref, sanitizeMediaSrc } from '@/shared/ui/richSanitize'
+import { Overlay } from '@/shared/ui/Overlay'
 
 type Props = {
   content: string
@@ -129,12 +130,18 @@ function ArticleImage({ node, token }: { node: JSONContent; token?: string | nul
         {img}
       </button>
       {caption ? <figcaption className="muted">{caption}</figcaption> : null}
-      {open && (
-        <div className="kb-lightbox" role="dialog" aria-modal="true" onClick={() => setOpen(false)}>
-          <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)}>Закрыть</button>
-          {mediaId ? <MediaImage mediaId={mediaId} token={token} alt={alt} /> : <img src={src} alt={alt} />}
-        </div>
-      )}
+      <Overlay
+        open={open}
+        onClose={() => setOpen(false)}
+        className="kb-lightbox overlay-scrim"
+        closeOnAnyClick
+        label="Просмотр изображения"
+      >
+        <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)} data-overlay-initial-focus>
+          Закрыть
+        </button>
+        {mediaId ? <MediaImage mediaId={mediaId} token={token} alt={alt} /> : <img src={src} alt={alt} />}
+      </Overlay>
     </figure>
   )
 }

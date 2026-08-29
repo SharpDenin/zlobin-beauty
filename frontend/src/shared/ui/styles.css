@@ -271,6 +271,18 @@ h4 { font-size: var(--text-lg); font-weight: 600; color: var(--color-text-primar
   animation: drawer-in var(--motion-emphasized) var(--ease-out);
 }
 .more-panel h2 { margin-bottom: var(--space-3); }
+.more-panel[data-overlay-scroll],
+.modal-sheet[data-overlay-scroll] {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+.overlay-panel--sm { width: min(100%, 400px); }
+.overlay-panel--md { width: min(100%, 560px); }
+.overlay-panel--lg { width: min(100%, 720px); }
+body.is-overlay-locked {
+  overscroll-behavior: none;
+}
 
 .card {
   background: var(--color-surface);
@@ -783,6 +795,9 @@ button.list-item:hover {
   min-width: 0;
   animation: modal-in var(--motion-emphasized) var(--ease-out);
 }
+.modal-sheet.overlay-panel--sm { width: min(100%, 400px); }
+.modal-sheet.overlay-panel--md { width: min(100%, 560px); }
+.modal-sheet.overlay-panel--lg { width: min(100%, 720px); }
 .drawer-backdrop { align-items: end; place-items: end center; }
 .drawer-panel {
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -1364,8 +1379,8 @@ button.list-item:hover {
 .article-video-wrap video { width: 100%; height: 100%; display: block; }
 .article-figure-btn { all: unset; cursor: zoom-in; display: block; width: 100%; }
 .kb-lightbox {
-  position: fixed; inset: 0; z-index: 80;
-  background: rgba(11, 13, 18, 0.84);
+  position: fixed; inset: 0;
+  background: var(--overlay-scrim);
   display: grid; place-items: center;
   padding: var(--space-5);
 }

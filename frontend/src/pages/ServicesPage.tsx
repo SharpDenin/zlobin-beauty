@@ -13,6 +13,7 @@ import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
+import { Modal } from '@/shared/ui/Modal'
 
 type Service = {
   id: string
@@ -334,13 +335,12 @@ export function ServicesPage() {
         })}
       </div>
 
-      {modalOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeModal}>
-          <div className="modal-sheet stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between">
-              <h2>{editing ? 'Редактировать услугу' : 'Новая услуга'}</h2>
-              <button className="btn btn-secondary btn-compact" type="button" onClick={closeModal}>Закрыть</button>
-            </div>
+      <Modal
+        open={modalOpen}
+        onClose={closeModal}
+        title={editing ? 'Редактировать услугу' : 'Новая услуга'}
+        size="lg"
+      >
             <form className="stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
               <div className="field">
                 <label>Фото услуги</label>
@@ -453,9 +453,7 @@ export function ServicesPage() {
                 </button>
               </section>
             )}
-          </div>
-        </div>
-      )}
+      </Modal>
     </main>
   )
 }

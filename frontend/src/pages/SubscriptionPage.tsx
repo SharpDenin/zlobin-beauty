@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { Modal } from '@/shared/ui/Modal'
 import { useState } from 'react'
 
 type Snapshot = {
@@ -102,15 +103,16 @@ export function SubscriptionPage() {
         <Link className="btn btn-secondary" to="/profile">К профилю</Link>
       </section>
 
-      {upgradeOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
-          <section className="card stack">
-            <h2 id="upgrade-title">Premium</h2>
-            <p>Онлайн-оплата будет подключена позже. Сейчас можно пользоваться trial или demo-переключателем в dev-окружении.</p>
-            <button className="btn btn-primary" type="button" onClick={() => setUpgradeOpen(false)}>Понятно</button>
-          </section>
-        </div>
-      )}
+      <Modal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        title="Premium"
+        footer={
+          <button className="btn btn-primary" type="button" onClick={() => setUpgradeOpen(false)}>Понятно</button>
+        }
+      >
+        <p>Онлайн-оплата будет подключена позже. Сейчас можно пользоваться trial или demo-переключателем в dev-окружении.</p>
+      </Modal>
 
       <section className="card stack">
         <h2>Free и Premium</h2>

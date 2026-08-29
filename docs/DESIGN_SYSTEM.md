@@ -156,7 +156,7 @@ No looping decorative motion. Always respect `prefers-reduced-motion`.
 | Modal | `--z-modal` | 50 |
 | Toast | `--z-toast` | 80 |
 
-Do not invent `z-index: 9999`. Shared Modal (next phase) must use this scale and lock `body` scroll while open.
+Do not invent `z-index: 9999`. Shared `Modal` / `Drawer` / `Overlay` use this scale. Nested overlays increment from `--z-modal` (50, 51, …) so the top layer stays above the one beneath. `--z-toast` (80) remains above overlays.
 
 ### Breakpoints
 
@@ -234,13 +234,22 @@ Loading: `.media-skeleton`. Missing/error: `.media-fallback` (initials or em das
 
 ### Overlays
 
-Until the shared Modal lands, existing `.modal-backdrop` / `.modal-sheet` / `.more-drawer` / `.drawer-backdrop` **must** use this architecture:
+Use shared primitives — do not add a new `.modal-backdrop` tree on a page:
 
-- Scrim: `--overlay-scrim`, fade in
+- `Modal` — centered / mobile bottom sheet (`frontend/src/shared/ui/Modal.tsx`)
+- `Drawer` — more-menu and side/bottom sheets (`frontend/src/shared/ui/Drawer.tsx`)
+- `Overlay` — portal + a11y shell for custom layers (lightbox)
+- `acquireOverlayLock` / `useOverlayLock` — nested-safe body scroll lock
+
+Behavior:
+
+- Scrim: `--overlay-scrim`, fade in (`overlay-in`)
 - Desktop modal: centered sheet, `modal-in`
-- Mobile modal / editor: full-width bottom sheet (already at &lt;480px; prefer full-screen editors on phone in later phases)
+- Mobile modal: full-width bottom sheet below `--bp-phone` (480px)
 - Drawer: bottom sheet, `drawer-in`
-- Scroll lock: required in the next implementation prompt (`document.body` overflow). CSS does not lock scroll by itself.
+- Scroll lock: reference-counted. `document.body` is `position: fixed` with `top: -scrollY` while any overlay is open; scroll position is restored on the final close. Overlay content marked `[data-overlay-scroll]` may scroll; the page behind must not.
+- Escape closes only the top overlay. `closeOnEscape={false}` opts out.
+- Reduced motion: existing global `prefers-reduced-motion` rule keeps enter/exit effectively instant.
 
 ### Navigation
 

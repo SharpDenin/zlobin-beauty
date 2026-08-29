@@ -17,6 +17,7 @@ import { tokens } from '@/shared/ui/tokens'
 import { statusLabel } from '@/shared/lib/status'
 import { datetimeLocalToIso, isoToDatetimeLocal } from '@/shared/lib/time'
 import { Hint } from '@/shared/ui/Hint'
+import { Drawer } from '@/shared/ui/Drawer'
 import { canDragAppointment, isTerminalStatus, minutesToTime, staffRoleLabel } from '@/pages/calendar-helpers'
 import { CalendarAvailability } from '@/pages/CalendarAvailability'
 
@@ -680,10 +681,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       </div>
 
-      {editorOpen && (
-        <div className="more-drawer" role="dialog" aria-modal="true" onClick={() => setEditorOpen(false)}>
-          <div className="more-panel stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between"><div><p className="eyebrow">Календарь</p><h2>Новое событие</h2></div><button className="btn btn-secondary btn-compact" type="button" onClick={() => setEditorOpen(false)}>Закрыть</button></div>
+      <Drawer
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        title={<div><p className="eyebrow">Календарь</p><h2>Новое событие</h2></div>}
+      >
             <div className="field"><label>Название</label><input value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} autoFocus /></div>
             <div className="field"><label>Категория</label><select value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
             <div className="field"><label>Цвет</label><input type="color" value={blockColor || category(blockCat).color} onChange={(e) => setBlockColor(e.target.value)} /></div>
@@ -693,15 +695,15 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               {createBlock.isPending ? 'Сохраняем…' : 'Добавить в календарь'}
             </button>
             {error && <div className="state-box error">{error}</div>}
-          </div>
-        </div>
-      )}
+      </Drawer>
 
-      {selected && (
-        <div className="more-drawer calendar-detail-drawer" role="dialog" aria-modal="true" onClick={() => setSelected(null)}>
-          <div className="more-panel stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between"><p className="eyebrow">{selected.category}</p><button className="btn btn-secondary btn-compact" type="button" onClick={() => setSelected(null)}>Закрыть</button></div>
-            {selected.kind === 'appointment' ? (
+      <Drawer
+        open={Boolean(selected)}
+        onClose={() => setSelected(null)}
+        label="Событие календаря"
+        title={selected ? <p className="eyebrow">{selected.category}</p> : undefined}
+      >
+            {selected?.kind === 'appointment' ? (
               <>
                 <h2>{selected.title}</h2>
                 <div className="calendar-detail-time">{selected.start?.toLocaleString('ru-RU')} — {selected.end?.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
@@ -718,7 +720,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 )}
                 <button className="btn btn-primary" type="button" onClick={() => navigate(`/appointments/${selected.id.slice(5)}`)}>Открыть запись</button>
               </>
-            ) : (
+            ) : selected ? (
               <>
                 <h2>Событие планера</h2>
                 <div className="field"><label>Название</label><input value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} /></div>
@@ -731,10 +733,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 </button>
                 <button className="btn btn-danger" type="button" disabled={removeBlock.isPending} onClick={() => removeBlock.mutate(selected.id.slice(6))}>Удалить событие</button>
               </>
-            )}
-          </div>
-        </div>
-      )}
+            ) : null}
+      </Drawer>
     </div>
   )
 

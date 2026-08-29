@@ -9,6 +9,7 @@ import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { Video } from '@/shared/ui/tiptapVideo'
 import { Callout } from '@/shared/ui/tiptapCallout'
 import { sanitizeHref } from '@/shared/ui/richSanitize'
+import { Modal } from '@/shared/ui/Modal'
 
 type Props = {
   value?: JSONContent | null
@@ -110,22 +111,23 @@ export function RichDocEditor({
         <button type="button" disabled={disabled || !token} onClick={() => setInsertKind('video')}>Видео</button>
       </div>
       <EditorContent editor={editor} className="rich-doc-surface" />
-      {insertKind && (
-        <div className="kb-media-modal" role="dialog" aria-modal="true" aria-label={insertKind === 'video' ? 'Вставить видео' : 'Вставить изображение'}>
-          <div className="card stack">
-            <h3>{insertKind === 'video' ? 'Вставить видео' : 'Вставить изображение'}</h3>
-            <p className="muted">Файл загрузится и встанет в текущую позицию текста.</p>
-            <MediaDropzone
-              purpose={insertKind === 'video' ? 'video' : imagePurpose}
-              value={null}
-              allowVideo={insertKind === 'video'}
-              onChange={(id) => insertUploaded(id, insertKind)}
-              label={insertKind === 'video' ? 'Перетащите видео или нажмите для выбора' : 'Перетащите изображение или нажмите для выбора'}
-            />
-            <button className="btn btn-secondary" type="button" onClick={() => setInsertKind(null)}>Отмена</button>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={Boolean(insertKind)}
+        onClose={() => setInsertKind(null)}
+        title={insertKind === 'video' ? 'Вставить видео' : 'Вставить изображение'}
+      >
+        <p className="muted">Файл загрузится и встанет в текущую позицию текста.</p>
+        {insertKind && (
+          <MediaDropzone
+            purpose={insertKind === 'video' ? 'video' : imagePurpose}
+            value={null}
+            allowVideo={insertKind === 'video'}
+            onChange={(id) => insertUploaded(id, insertKind)}
+            label={insertKind === 'video' ? 'Перетащите видео или нажмите для выбора' : 'Перетащите изображение или нажмите для выбора'}
+          />
+        )}
+        <button className="btn btn-secondary" type="button" onClick={() => setInsertKind(null)}>Отмена</button>
+      </Modal>
     </div>
   )
 }

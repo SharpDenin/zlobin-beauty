@@ -21,6 +21,6 @@ Salon-X has one permanent design system. Read `docs/DESIGN_SYSTEM.md` before cha
 - Soft accent glow (`--shadow-glow`) on selected cards and primary CTA — not neon, not idle chrome.
 - Image-first cards via `MediaImage` + `.media-frame*`. Never treat a 1×1 transparent PNG as content.
 - Motion tokens (`--motion-fast/normal/emphasized`) for hover, modal, drawer, toast. Respect `prefers-reduced-motion`.
-- Overlay architecture: `--overlay-scrim`, z-index scale `--z-sticky` → `--z-toast`. Shared Modal + body scroll-lock comes next; do not invent a fourth overlay stack.
+- Overlay architecture: `--overlay-scrim`, z-index scale `--z-sticky` → `--z-toast`. Use shared `Modal` / `Drawer` / `Overlay` (body scroll lock is built in). Do not invent a fourth overlay stack.
 
 New entities reuse card, badge, table, form, overlay, media-frame, and nav patterns already in the system.

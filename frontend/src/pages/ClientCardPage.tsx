@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
+import { Modal } from '@/shared/ui/Modal'
 
 type ClientCard = {
   id: string
@@ -390,21 +391,11 @@ export function ClientCardPage() {
         </form>
       </section>
 
-      {disputeOpen && (
-        <div
-          className="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="dispute-title"
-          onClick={() => setDisputeOpen(false)}
-        >
-          <div className="modal-sheet stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between">
-              <h2 id="dispute-title">Не соответствует действительности</h2>
-              <button className="btn btn-secondary btn-compact" type="button" onClick={() => setDisputeOpen(false)}>
-                Закрыть
-              </button>
-            </div>
+      <Modal
+        open={disputeOpen}
+        onClose={() => setDisputeOpen(false)}
+        title="Не соответствует действительности"
+      >
             {disputeDone ? (
               <div className="state-box success" data-testid="dispute-success">
                 {ok || 'Несоответствие зафиксировано'}
@@ -446,9 +437,7 @@ export function ClientCardPage() {
                 </button>
               </>
             )}
-          </div>
-        </div>
-      )}
+      </Modal>
     </main>
   )
 }

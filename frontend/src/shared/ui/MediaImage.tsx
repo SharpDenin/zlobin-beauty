@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { API_BASE_URL } from '@/shared/api/client'
 
 type Props = {
-  mediaId: string
+  mediaId?: string | null
   token?: string | null
   alt?: string
   className?: string
@@ -13,9 +13,10 @@ type Props = {
 export function MediaImage({ mediaId, token, alt, className, fallback }: Props) {
   const [src, setSrc] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
+  const resolvedId = mediaId?.trim() ?? ''
 
   useEffect(() => {
-    if (!mediaId) {
+    if (!resolvedId) {
       setSrc(null)
       setFailed(true)
       return
@@ -28,7 +29,7 @@ export function MediaImage({ mediaId, token, alt, className, fallback }: Props) 
     if (token) {
       headers.Authorization = `Bearer ${token}`
     }
-    void fetch(`${API_BASE_URL}/v1/media/${mediaId}/content`, { headers }).then(async (res) => {
+    void fetch(`${API_BASE_URL}/v1/media/${resolvedId}/content`, { headers }).then(async (res) => {
       if (!res.ok || cancelled) {
         if (!cancelled) setFailed(true)
         return
@@ -43,7 +44,7 @@ export function MediaImage({ mediaId, token, alt, className, fallback }: Props) 
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [mediaId, token])
+  }, [resolvedId, token])
 
   const label = fallback || (alt ? alt.slice(0, 2).toUpperCase() : '')
 

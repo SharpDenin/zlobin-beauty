@@ -4,10 +4,10 @@ import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess
 import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
-import { initials } from '@/shared/lib/initials'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 
 type Appointment = {
   id: string
@@ -25,6 +25,7 @@ type Master = {
   profession_types?: { id: string; slug: string; name: string }[]
   rating_avg: number
   rating_count: number
+  photo_media_id?: string | null
 }
 
 function ClientHome() {
@@ -90,7 +91,7 @@ function ClientHome() {
           {masters.isLoading && <div className="skeleton skeleton-card" />}
           {masters.data?.items.slice(0, 4).map((m) => (
             <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card">
-              <div className="avatar-circle">{initials(m.display_name)}</div>
+              <MasterPortrait mediaId={m.photo_media_id} name={m.display_name} />
               <div className="stack-sm">
                 <strong>{m.display_name}</strong>
                 <span className="meta">{masterProfessionLabel(m, 'Красота и уход')} · {m.city}</span>

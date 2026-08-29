@@ -560,10 +560,21 @@ button.list-item:hover {
   color: var(--color-primary);
   flex-shrink: 0;
 }
-.avatar-circle img {
+.avatar-circle img,
+.avatar-circle .media-fallback,
+.avatar-circle .media-skeleton {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.avatar-circle .media-fallback,
+.avatar-circle .media-skeleton {
+  min-height: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
 }
 .cards-grid.products {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -2037,6 +2048,7 @@ button.list-item:hover {
 
 .service-card--media {
   padding: 0;
+  gap: 0;
   overflow: hidden;
 }
 .service-card--media .media-frame {
@@ -2107,6 +2119,18 @@ button.list-item:hover {
 .home-master-card .avatar-circle {
   width: 48px;
   height: 48px;
+  font-size: var(--text-sm);
+}
+
+.search-master-card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+.search-master-card .avatar-circle {
+  width: 56px;
+  height: 56px;
   font-size: var(--text-sm);
 }
 

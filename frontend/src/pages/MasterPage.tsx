@@ -8,6 +8,8 @@ import { workTypeLabel } from '@/shared/lib/status'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { openConversation } from '@/pages/MessagesPage'
@@ -23,6 +25,7 @@ type Service = {
   price_display: string
   description?: string
   booking_mode?: BookingMode | string
+  photo_media_id?: string | null
 }
 
 type MasterDetails = {
@@ -188,7 +191,6 @@ export function MasterPage() {
   if (masterQuery.isError || !masterQuery.data) return <div className="page state-box error">Мастер не найден</div>
 
   const { master, services } = masterQuery.data
-  const initials = master.display_name.slice(0, 1).toUpperCase()
 
   const summaryStartsAt = isFixed ? selectedOccurrence?.starts_at : slot
   const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || ''
@@ -229,13 +231,7 @@ export function MasterPage() {
     <main className="page stack">
       <section className="hero">
         <div className="row" style={{ alignItems: 'flex-start' }}>
-          <div className="avatar-circle">
-            {master.photo_media_id ? (
-              <MediaImage mediaId={master.photo_media_id} token={accessToken} alt={master.display_name} />
-            ) : (
-              initials
-            )}
-          </div>
+          <MasterPortrait mediaId={master.photo_media_id} name={master.display_name} token={accessToken} />
           <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
             <h1>{master.display_name} <Hint id="client-booking" title="Запись">Выберите услугу и время. Если мастер включил автоподтверждение, запись сразу станет подтверждённой.</Hint></h1>
             <div className="row">
@@ -299,7 +295,7 @@ export function MasterPage() {
               <button
                 key={s.id}
                 type="button"
-                className={`service-card ${serviceId === s.id ? 'selected' : ''}`}
+                className={`service-card service-card--media ${serviceId === s.id ? 'selected' : ''}`}
                 onClick={() => {
                   setServiceId(s.id)
                   setSlot('')
@@ -307,13 +303,16 @@ export function MasterPage() {
                   setError(null)
                 }}
               >
-                <div className="row between">
-                  <strong>{s.name}</strong>
-                  <span>{s.price_display || formatMoney(s.price_minor)}</span>
+                <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
+                <div className="service-card-body">
+                  <div className="row between">
+                    <strong>{s.name}</strong>
+                    <span>{s.price_display || formatMoney(s.price_minor)}</span>
+                  </div>
+                  <p>{s.category} · {s.duration_minutes} мин</p>
+                  <p className="muted">{bookingModeLabel(s.booking_mode)}</p>
+                  {s.description && <p className="muted">{s.description}</p>}
                 </div>
-                <p>{s.category} · {s.duration_minutes} мин</p>
-                <p className="muted">{bookingModeLabel(s.booking_mode)}</p>
-                {s.description && <p className="muted">{s.description}</p>}
               </button>
             ))}
             <button

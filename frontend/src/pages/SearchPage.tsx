@@ -6,6 +6,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { Hint } from '@/shared/ui/Hint'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
+import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 
 type Master = {
   id: string
@@ -16,6 +17,7 @@ type Master = {
   profession_types?: { id: string; slug: string; name: string }[]
   rating_avg: number
   rating_count: number
+  photo_media_id?: string | null
   onsite_match?: { city: string; districts: string[]; badge: string }
 }
 
@@ -172,16 +174,19 @@ export function SearchPage() {
         {query.data?.items.map((m) => {
           const otherCity = m.city.trim().toLowerCase() !== selectedCity
           return (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item">
-              <div className="row between">
-                <strong>{m.display_name}</strong>
-                <span className={`city-badge${otherCity ? ' city-badge--other' : ''}`}>{m.city}</span>
+            <Link key={m.id} to={`/masters/${m.id}`} className="list-item search-master-card">
+              <MasterPortrait mediaId={m.photo_media_id} name={m.display_name} />
+              <div className="stack-sm">
+                <div className="row between">
+                  <strong>{m.display_name}</strong>
+                  <span className={`city-badge${otherCity ? ' city-badge--other' : ''}`}>{m.city}</span>
+                </div>
+                <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
+                <p className="muted">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</p>
+                {m.onsite_match && (
+                  <p className="badge badge-success" data-testid="onsite-badge">{m.onsite_match.badge || 'Выезд в вашем районе'}</p>
+                )}
               </div>
-              <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
-              <p className="muted">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</p>
-              {m.onsite_match && (
-                <p className="badge badge-success" data-testid="onsite-badge">{m.onsite_match.badge || 'Выезд в вашем районе'}</p>
-              )}
             </Link>
           )
         })}

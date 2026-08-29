@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -167,18 +168,18 @@ func (a *API) myMaster(w http.ResponseWriter, r *http.Request) {
 }
 
 type upsertMasterReq struct {
-	OrganizationID  string   `json:"organization_id"`
-	BranchID        string   `json:"branch_id"`
-	DisplayName     string   `json:"display_name"`
-	Bio             string   `json:"bio"`
-	Specializations []string `json:"specializations"`
-	City            string   `json:"city"`
-	ExperienceYears int      `json:"experience_years"`
-	Education       string   `json:"education"`
-	PhotoMediaID    string   `json:"photo_media_id"`
-	WorkType           string    `json:"work_type"`
-	Published          bool      `json:"published"`
-	ProfessionTypeIDs  *[]string `json:"profession_type_ids"`
+	OrganizationID    string    `json:"organization_id"`
+	BranchID          string    `json:"branch_id"`
+	DisplayName       string    `json:"display_name"`
+	Bio               string    `json:"bio"`
+	Specializations   []string  `json:"specializations"`
+	City              string    `json:"city"`
+	ExperienceYears   int       `json:"experience_years"`
+	Education         string    `json:"education"`
+	PhotoMediaID      string    `json:"photo_media_id"`
+	WorkType          string    `json:"work_type"`
+	Published         bool      `json:"published"`
+	ProfessionTypeIDs *[]string `json:"profession_type_ids"`
 }
 
 func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
@@ -326,16 +327,16 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name            *string `json:"name"`
-		Category        *string `json:"category"`
-		Description     *string `json:"description"`
-		Notes           *string `json:"notes"`
-		PhotoMediaID    *string `json:"photo_media_id"`
-		DurationMinutes *int    `json:"duration_minutes"`
-		PriceMinor      *int64  `json:"price_minor"`
-		BookingMode     *string `json:"booking_mode"`
-		Published       *bool   `json:"published"`
-		Archived        *bool   `json:"archived"`
+		Name            *string         `json:"name"`
+		Category        *string         `json:"category"`
+		Description     *string         `json:"description"`
+		Notes           *string         `json:"notes"`
+		PhotoMediaID    json.RawMessage `json:"photo_media_id"`
+		DurationMinutes *int            `json:"duration_minutes"`
+		PriceMinor      *int64          `json:"price_minor"`
+		BookingMode     *string         `json:"booking_mode"`
+		Published       *bool           `json:"published"`
+		Archived        *bool           `json:"archived"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -347,18 +348,13 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, BookingMode: req.BookingMode,
 		Published: req.Published, Archived: req.Archived,
 	}
-	if req.PhotoMediaID != nil {
-		if *req.PhotoMediaID == "" {
-			in.ClearPhoto = true
-		} else {
-			photoID, err := uuid.Parse(*req.PhotoMediaID)
-			if err != nil {
-				httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
-				return
-			}
-			in.PhotoMediaID = &photoID
-		}
+	photoPatch, err := applyPhotoMediaField(req.PhotoMediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+		return
 	}
+	in.ClearPhoto = photoPatch.ClearPhoto
+	in.PhotoMediaID = photoPatch.PhotoMediaID
 	item, err := a.svc.UpdateService(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -408,7 +404,7 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
 		"photo_media_id": photoMediaID, "work_type": workType,
 		"profession_types": types,
-		"rating_avg": m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
+		"rating_avg":       m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
 	}
 }
 

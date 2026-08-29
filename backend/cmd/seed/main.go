@@ -399,6 +399,7 @@ type accountSpec struct {
 type authUser struct {
 	Token string
 	ID    string
+	Email string
 	Roles []string
 }
 
@@ -416,6 +417,7 @@ type masterSeed struct {
 	ProfessionTypeIDs                                   []string
 	Experience                                          int
 	Services                                            []serviceSpec
+	PhotoMediaID                                        string
 }
 
 type prodSpec struct {
@@ -485,7 +487,7 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 		"email": a.Email, "password": password,
 	}, &loginResp)
 	if err == nil && status < 300 {
-		return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Roles: loginResp.User.Roles}, nil
+		return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles}, nil
 	}
 
 	reg := map[string]any{
@@ -511,7 +513,7 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 	if status >= 300 {
 		return authUser{}, &apiError{Status: status, Body: fmt.Sprintf("register failed for %s", a.Email)}
 	}
-	return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Roles: loginResp.User.Roles}, nil
+	return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles}, nil
 }
 
 func patchUserCity(c *http.Client, base string, user authUser, city string) error {
@@ -530,6 +532,7 @@ func patchUserCity(c *http.Client, base string, user authUser, city string) erro
 // --- master / org ---
 
 func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (orgID, branchID, profileID, firstServiceID string, err error) {
+	cfg = withOptionalPortrait(c, base, user, cfg)
 	orgID, branchID, err = ensureOrg(c, base, user, "salon", cfg.OrgName, cfg.BranchName, cfg.City, cfg.Address, cfg.Timezone)
 	if err != nil {
 		return "", "", "", "", err
@@ -612,6 +615,9 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 	}
 	if cfg.WorkType != "" {
 		body["work_type"] = cfg.WorkType
+	}
+	if cfg.PhotoMediaID != "" {
+		body["photo_media_id"] = cfg.PhotoMediaID
 	}
 	status, err := doJSON(c, http.MethodPut, base+"/v1/me/master", user.Token, body, &resp)
 	if err != nil {
@@ -733,48 +739,56 @@ func ensureOrg(c *http.Client, base string, user authUser, typ, name, branchName
 func ensureServices(c *http.Client, base string, user authUser, orgID string, specs []serviceSpec) ([]string, error) {
 	var me struct {
 		Services []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID           string  `json:"id"`
+			Name         string  `json:"name"`
+			PhotoMediaID *string `json:"photo_media_id"`
 		} `json:"services"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/me/master", user.Token, nil, &me)
 	byName := map[string]string{}
+	hasPhoto := map[string]bool{}
 	for _, s := range me.Services {
-		byName[strings.ToLower(s.Name)] = s.ID
+		key := strings.ToLower(s.Name)
+		byName[key] = s.ID
+		hasPhoto[key] = s.PhotoMediaID != nil && strings.TrimSpace(*s.PhotoMediaID) != ""
 	}
 
 	ids := make([]string, 0, len(specs))
 	for _, sp := range specs {
-		if id, ok := byName[strings.ToLower(sp.Name)]; ok {
-			ids = append(ids, id)
+		id, ok := byName[strings.ToLower(sp.Name)]
+		if !ok {
+			var created struct {
+				ID string `json:"id"`
+			}
+			payload := map[string]any{
+				"organization_id":  orgID,
+				"name":             sp.Name,
+				"category":         sp.Category,
+				"duration_minutes": sp.Duration,
+				"price_minor":      sp.Price,
+				"attach_to_me":     true,
+			}
+			if sp.Description != "" {
+				payload["description"] = sp.Description
+			}
+			if sp.BookingMode != "" {
+				payload["booking_mode"] = sp.BookingMode
+			}
+			status, err := doJSON(c, http.MethodPost, base+"/v1/services", user.Token, payload, &created)
+			if err != nil {
+				return nil, err
+			}
+			if status >= 300 {
+				log.Printf("warn create service %q status=%d", sp.Name, status)
+				continue
+			}
+			id = created.ID
+		}
+		if id == "" {
 			continue
 		}
-		var created struct {
-			ID string `json:"id"`
-		}
-		payload := map[string]any{
-			"organization_id":  orgID,
-			"name":             sp.Name,
-			"category":         sp.Category,
-			"duration_minutes": sp.Duration,
-			"price_minor":      sp.Price,
-			"attach_to_me":     true,
-		}
-		if sp.Description != "" {
-			payload["description"] = sp.Description
-		}
-		if sp.BookingMode != "" {
-			payload["booking_mode"] = sp.BookingMode
-		}
-		status, err := doJSON(c, http.MethodPost, base+"/v1/services", user.Token, payload, &created)
-		if err != nil {
-			return nil, err
-		}
-		if status >= 300 {
-			log.Printf("warn create service %q status=%d", sp.Name, status)
-			continue
-		}
-		ids = append(ids, created.ID)
+		ids = append(ids, id)
+		attachSeedServicePhoto(c, base, user, id, sp.Name, hasPhoto[strings.ToLower(sp.Name)])
 	}
 	return ids, nil
 }
@@ -954,7 +968,12 @@ func seedSupplier(c *http.Client, base string, user authUser, cfg supplierSeed) 
 		_, _ = doJSON(c, http.MethodPost, base+"/v1/commerce/stock/movements", user.Token, map[string]any{
 			"location_id": locID, "product_id": id, "kind": "receipt", "qty": qty, "reason": "seed stock",
 		}, nil)
-		if photoID, err := uploadSeedPNG(c, base, user.Token, "product", "product-"+w.SKU+".png"); err == nil && photoID != "" {
+		if photoID := uploadSeedAssetIfExists(c, base, user.Token, "product",
+			"products/"+w.SKU+".jpg",
+			"products/"+w.SKU+".jpeg",
+			"products/"+w.SKU+".png",
+			"products/"+w.SKU+".webp",
+		); photoID != "" {
 			_, _ = doJSON(c, http.MethodPut, base+"/v1/commerce/products/"+id, user.Token, map[string]any{
 				"photo_media_id": photoID,
 			}, nil)
@@ -1457,13 +1476,12 @@ type kbArt struct {
 
 func seedKnowledgeMedia(c *http.Client, base string, user authUser) (kbMedia, error) {
 	m := kbMedia{Base: base}
-	id, err := uploadSeedPNG(c, base, user.Token, "article", "kb-cover.png")
-	if err != nil {
-		return m, err
-	}
-	m.CoverID = id
-	m.InlineID, _ = uploadSeedPNG(c, base, user.Token, "article", "kb-inline.png")
-	m.VideoID, _ = uploadSeedWebM(c, base, user.Token)
+	m.CoverID = uploadSeedAssetIfExists(c, base, user.Token, "article",
+		"articles/cover.jpg", "articles/cover.jpeg", "articles/cover.png", "articles/cover.webp")
+	m.InlineID = uploadSeedAssetIfExists(c, base, user.Token, "article",
+		"articles/inline.jpg", "articles/inline.jpeg", "articles/inline.png", "articles/inline.webp")
+	m.VideoID = uploadSeedAssetIfExists(c, base, user.Token, "video",
+		"articles/demo.webm", "articles/demo.mp4")
 	return m, nil
 }
 
@@ -1624,30 +1642,6 @@ func firstN(ids []string, n int) []string {
 		return ids
 	}
 	return ids[:n]
-}
-
-// Minimal 1×1 PNG (transparent).
-var seedPNG = []byte{
-	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-	0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
-	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
-	0x42, 0x60, 0x82,
-}
-
-func uploadSeedPNG(c *http.Client, base, token, purpose, filename string) (string, error) {
-	return uploadSeedBytes(c, base, token, purpose, filename, "image/png", seedPNG)
-}
-
-// Tiny silent WebM (EBML header + empty Cluster) — enough for purpose=video acceptance demos.
-var seedWebM = []byte{
-	0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x42, 0x86, 0x81, 0x01,
-	0x42, 0xf7, 0x81, 0x01, 0x42, 0xf2, 0x81, 0x04, 0x42, 0xf3, 0x81, 0x08, 0x42, 0x82, 0x84, 0x77,
-	0x65, 0x62, 0x6d, 0x42, 0x87, 0x81, 0x02, 0x42, 0x85, 0x81, 0x02,
-}
-
-func uploadSeedWebM(c *http.Client, base, token string) (string, error) {
-	return uploadSeedBytes(c, base, token, "video", "kb-demo.webm", "video/webm", seedWebM)
 }
 
 func uploadSeedBytes(c *http.Client, base, token, purpose, filename, contentType string, data []byte) (string, error) {
@@ -2287,11 +2281,12 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	if status >= 300 && status != 409 {
 		return fmt.Errorf("invite employee status %d", status)
 	}
-	profileID, err := upsertMaster(c, base, employee, orgID, branchID, masterSeed{
+	elena := withOptionalPortrait(c, base, employee, masterSeed{
 		Display: "Елена Сотрудник", Bio: "Мастер салона Анны, без собственного салона.",
 		Specs: []string{"уход"}, Experience: 3, Education: "Salon Academy",
 		City: "Красноярск", WorkType: "employee",
-	}, false)
+	})
+	profileID, err := upsertMaster(c, base, employee, orgID, branchID, elena, false)
 	if err != nil {
 		return err
 	}
@@ -2310,11 +2305,7 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	} else if st >= 300 {
 		return fmt.Errorf("employee hours status %d", st)
 	}
-	if published, err := upsertMaster(c, base, employee, orgID, branchID, masterSeed{
-		Display: "Елена Сотрудник", Bio: "Мастер салона Анны, без собственного салона.",
-		Specs: []string{"уход"}, Experience: 3, Education: "Salon Academy",
-		City: "Красноярск", WorkType: "employee",
-	}, true); err == nil && published != "" {
+	if published, err := upsertMaster(c, base, employee, orgID, branchID, elena, true); err == nil && published != "" {
 		profileID = published
 	}
 	if len(services) == 0 || client.ID == "" {

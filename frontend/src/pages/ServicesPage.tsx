@@ -11,13 +11,13 @@ import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
 import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
-import { MediaImage } from '@/shared/ui/MediaImage'
+import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import { photoMediaIdForCreate, photoMediaIdForPatch } from '@/shared/lib/mediaPayload'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { Modal } from '@/shared/ui/Modal'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { PageHeader } from '@/app/layout'
-import { initials } from '@/shared/lib/initials'
 
 type Service = {
   id: string
@@ -157,13 +157,15 @@ export function ServicesPage() {
         price_minor: Math.round(values.price_rubles * 100),
         published: values.published,
         booking_mode: values.booking_mode,
-        photo_media_id: photoMediaId,
       }
       if (id && editing) {
         return apiRequest(`/v1/services/${id}`, {
           method: 'PATCH',
           token: accessToken,
-          body: payload,
+          body: {
+            ...payload,
+            photo_media_id: photoMediaIdForPatch(photoMediaId),
+          },
         })
       }
       return apiRequest('/v1/services', {
@@ -171,6 +173,7 @@ export function ServicesPage() {
         body: {
           organization_id: orgId,
           ...payload,
+          photo_media_id: photoMediaIdForCreate(photoMediaId),
           attach_to_me: true,
         },
       })
@@ -315,13 +318,7 @@ export function ServicesPage() {
           const state = s.archived_at ? 'archived' : s.published ? 'active' : 'inactive'
           return (
             <article key={s.id} className="service-card service-card--media">
-              <div className="media-frame media-frame--landscape">
-                {s.photo_media_id ? (
-                  <MediaImage mediaId={s.photo_media_id} token={accessToken} alt={s.name} fallback={initials(s.name)} />
-                ) : (
-                  <div className="media-fallback" role="img" aria-label="Нет фото">{initials(s.name)}</div>
-                )}
-              </div>
+              <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
               <div className="service-card-body">
                 <div className="row between">
                   <strong>{s.name}</strong>
@@ -363,12 +360,12 @@ export function ServicesPage() {
       >
             <form className="stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
               <div className="field">
-                <label>Фото услуги</label>
+                <label>Фото услуги (необязательно)</label>
                 <MediaDropzone
-                  purpose="portfolio"
+                  purpose="service"
                   value={photoMediaId}
                   onChange={setPhotoMediaId}
-                  label="Фото услуги"
+                  label="Загрузить фото — можно пропустить"
                 />
               </div>
               <div className="field">

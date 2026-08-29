@@ -29,3 +29,13 @@ Thumbs.db
 coverage.*
 *.coverprofile
 profile.cov
+
+# Realistic demo binaries for the next seed phase. Keep folder placeholders.
+seed/media/**/*.jpg
+seed/media/**/*.jpeg
+seed/media/**/*.png
+seed/media/**/*.webp
+seed/media/**/*.webm
+seed/media/**/*.mp4
+seed/media/**/*.mov
+

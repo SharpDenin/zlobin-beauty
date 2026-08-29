@@ -16,9 +16,10 @@ const (
 	PurposeDocument    = "document"
 	PurposeArticle     = "article"
 	PurposeVideo       = "video"
+	PurposeService     = "service"
 )
 
-const MaxUploadBytes = 5 << 20      // 5 MiB images/docs
+const MaxUploadBytes = 5 << 20       // 5 MiB images/docs
 const MaxVideoUploadBytes = 50 << 20 // 50 MiB videos
 
 type MediaObject struct {
@@ -36,7 +37,7 @@ type MediaObject struct {
 
 func ValidPurpose(p string) bool {
 	switch p {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService:
 		return true
 	default:
 		return false
@@ -84,7 +85,7 @@ func ExtensionForContentType(ct string) string {
 // IsSharedPurpose returns true for media that any authenticated user may read.
 func IsSharedPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeBeforeAfter, PurposeArticle, PurposeVideo:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeBeforeAfter, PurposeArticle, PurposeVideo, PurposeService:
 		return true
 	default:
 		return false
@@ -94,7 +95,7 @@ func IsSharedPurpose(purpose string) bool {
 // IsPublicPurpose returns true for media readable without login (published catalog/profile surfaces).
 func IsPublicPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeArticle, PurposeVideo:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeProduct, PurposeArticle, PurposeVideo, PurposeService:
 		return true
 	default:
 		return false

@@ -48,6 +48,7 @@ import { MessagesPage } from '@/pages/MessagesPage'
 import { MasterclassCreatePage, MasterclassDetailPage, MasterclassListPage } from '@/pages/MasterclassPages'
 import { ModelRequestCreatePage, ModelRequestDetailPage, ModelsPage } from '@/pages/ModelPages'
 import { MasterInventoryPage, MasterReceiptsPage } from '@/pages/MasterInventoryPage'
+import { ErrorBoundary } from '@/shared/ui/ErrorBoundary'
 import { ToastProvider } from '@/shared/ui/Toast'
 import type { ReactNode } from 'react'
 
@@ -77,6 +78,7 @@ function LoginRoute() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
         <CabinetProvider>
@@ -173,6 +175,7 @@ export function App() {
         </CabinetProvider>
         </ToastProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </QueryClientProvider>
   )
 }

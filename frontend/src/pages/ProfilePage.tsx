@@ -4,11 +4,13 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { initials } from '@/shared/lib/initials'
 import { PageHeader } from '@/app/layout'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 const profileSchema = z.object({
   display_name: z.string().min(2, 'Минимум 2 символа'),
@@ -64,7 +66,7 @@ export function ProfilePage() {
     },
     onError: (e) => {
       setOk(null)
-      setError(e instanceof ApiError ? e.message : 'Не удалось сохранить')
+      setError(userError(e, 'Не удалось сохранить профиль'))
     },
   })
 
@@ -90,7 +92,7 @@ export function ProfilePage() {
 
       <section className="card stack">
         <h2>Личные данные</h2>
-        {error && <div className="state-box error">{error}</div>}
+        {error && <ErrorBanner error={error} />}
         {ok && <div className="state-box success">{ok}</div>}
         <form className="stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
           <div className="field">

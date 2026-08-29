@@ -4,8 +4,9 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 const schema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
@@ -51,7 +52,7 @@ export function RegisterPage() {
               else if (values.role === 'supplier') navigate('/supplier')
               else navigate('/')
             } catch (e) {
-              setError(e instanceof ApiError ? e.message : 'Не удалось зарегистрироваться')
+              setError(userError(e, 'Не удалось зарегистрироваться'))
             }
           })}
         >
@@ -88,7 +89,7 @@ export function RegisterPage() {
             </div>
             {errors.role && <span className="error">{errors.role.message}</span>}
           </fieldset>
-          {error && <div className="state-box error">{error}</div>}
+          {error && <ErrorBanner error={error} />}
           <button className={`btn btn-primary btn-block${isSubmitting ? ' btn-loading' : ''}`} disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Создаём…' : 'Создать аккаунт'}
           </button>

@@ -3,12 +3,14 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, TileLayer } from 'react-leaflet'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { clientOrderLabel, paymentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { fetchPickupBranches, type BranchCard, type SupplierCard } from '@/shared/lib/commerce'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { Hint } from '@/shared/ui/Hint'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { CHART } from '@/shared/ui/chart-theme'
 import 'leaflet/dist/leaflet.css'
 
@@ -262,7 +264,7 @@ function CatalogView() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['shop-cart'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось добавить'),
+    onError: (e) => setError(userError(e, 'Не удалось добавить')),
   })
 
   const catName = useMemo(
@@ -345,7 +347,7 @@ function CatalogView() {
         ))}
       </div>
 
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {recs.length > 0 && !search && !brand && !categoryId && (
@@ -367,7 +369,7 @@ function CatalogView() {
       )}
 
       {products.isLoading && <div className="state-box">Загрузка каталога…</div>}
-      {products.isError && <div className="state-box error">Не удалось загрузить каталог</div>}
+      {products.isError && <ErrorBanner error={products.error} fallbackTitle="Не удалось загрузить каталог" />}
       {products.data && filtered.length === 0 && (
         <div className="state-box">Пока нет товаров по выбранным фильтрам.</div>
       )}
@@ -434,7 +436,7 @@ function ProductView({ id }: { id: string }) {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['shop-cart'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось добавить'),
+    onError: (e) => setError(userError(e, 'Не удалось добавить')),
   })
 
   const p = product.data
@@ -458,7 +460,7 @@ function ProductView({ id }: { id: string }) {
   return (
     <main className="page stack shop-page">
       <ShopChrome title={p.name} />
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
       <section className="shop-detail">
         <div className="shop-gallery">
@@ -563,7 +565,7 @@ function CartView() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['shop-cart'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка корзины'),
+    onError: (e) => setError(userError(e, 'Не удалось изменить корзину')),
   })
 
   const items = cart.data?.items ?? []
@@ -572,7 +574,7 @@ function CartView() {
   return (
     <main className="page stack shop-page">
       <ShopChrome title="Корзина" />
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {cart.isLoading && <div className="state-box">Загрузка корзины…</div>}
       {!cart.isLoading && items.length === 0 && (
         <div className="state-box">
@@ -709,14 +711,14 @@ function CheckoutView() {
       navigate('/shop/checkout/success', { state: { checkout: result } })
     },
     onError: async (e) => {
-      if (e instanceof ApiError && e.status === 409 && e.message.toLowerCase().includes('цена')) {
+      if (e instanceof ApiError && e.code === 'price_changed') {
         setPriceWarning(e.message)
         setConfirmPrices(true)
         await qc.invalidateQueries({ queryKey: ['shop-cart'] })
         setStep(3)
         return
       }
-      setError(e instanceof ApiError ? e.message : 'Ошибка оформления')
+      setError(userError(e, 'Не удалось оформить заказ'))
     },
   })
 
@@ -757,7 +759,7 @@ function CheckoutView() {
           </button>
         ))}
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {priceWarning && (
         <div className="state-box">
           <p>Цена одного или нескольких товаров изменилась. Проверьте сводку и подтвердите новую цену или вернитесь в корзину.</p>
@@ -936,7 +938,7 @@ function OrdersView() {
       await qc.invalidateQueries({ queryKey: ['shop-cart'] })
       navigate('/shop/cart')
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось повторить'),
+    onError: (e) => setError(userError(e, 'Не удалось повторить заказ')),
   })
 
   const salonName = (id?: string | null) => pickup.data?.find((b) => b.id === id)?.name
@@ -944,7 +946,7 @@ function OrdersView() {
   return (
     <main className="page stack shop-page">
       <ShopChrome title="Мои заказы" />
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
       {orders.isLoading && <div className="state-box">Загрузка заказов…</div>}
       {orders.data && orders.data.items.length === 0 && <div className="state-box">Заказов ещё нет</div>}

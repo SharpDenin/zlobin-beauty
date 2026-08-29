@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
+import { apiRequest, ApiError, API_BASE_URL, apiErrorFromResponse, networkApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
 import { fetchSuppliers } from '@/shared/lib/commerce'
 import { statusLabel } from '@/shared/lib/status'
@@ -202,7 +203,7 @@ export function WarehousePage() {
       await qc.invalidateQueries({ queryKey: ['commerce-locations'] })
       if (res.id) setLocationId(res.id)
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка склада'),
+    onError: (e) => setError(userError(e, 'Не удалось изменить склад')),
   })
 
   const createProduct = useMutation({
@@ -227,7 +228,7 @@ export function WarehousePage() {
       productForm.reset({ name: '', brand: '', sku: '', unit: 'pcs', volume_label: '', parent_id: '', price_rubles: 0, min_stock: 5 })
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка товара'),
+    onError: (e) => setError(userError(e, 'Не удалось сохранить товар')),
   })
 
   const receipt = useMutation({
@@ -242,7 +243,7 @@ export function WarehousePage() {
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
       await qc.invalidateQueries({ queryKey: ['commerce-movements'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка приёмки'),
+    onError: (e) => setError(userError(e, 'Не удалось принять поставку')),
   })
 
   const createSupplierOrder = useMutation({
@@ -262,7 +263,7 @@ export function WarehousePage() {
       supplierOrderForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка заказа'),
+    onError: (e) => setError(userError(e, 'Не удалось изменить заказ')),
   })
 
   const createNorm = useMutation({
@@ -282,7 +283,7 @@ export function WarehousePage() {
       normForm.reset({ required: true, qty: 1 })
       await qc.invalidateQueries({ queryKey: ['commerce-norms'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка нормы'),
+    onError: (e) => setError(userError(e, 'Не удалось сохранить норму')),
   })
 
   const criticalItems = stock.data?.items.filter((s) => s.status === 'critical' || s.status === 'out') ?? []
@@ -292,7 +293,9 @@ export function WarehousePage() {
 
   const validateImport = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/v1/commerce/imports/products/validate?organization_id=${orgId}`, {
+      let res: Response
+      try {
+        res = await fetch(`${API_BASE_URL}/v1/commerce/imports/products/validate?organization_id=${orgId}`, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -300,10 +303,13 @@ export function WarehousePage() {
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: csvText,
-      })
+        })
+      } catch (cause) {
+        throw networkApiError(cause)
+      }
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        throw new ApiError(data?.error?.message ?? 'Ошибка проверки импорта', data?.error?.code ?? 'error', res.status)
+        throw apiErrorFromResponse(data, res.status)
       }
       return data as { id: string; status: string; report: { errors?: unknown[]; preview?: unknown[]; row_count?: number } }
     },
@@ -313,7 +319,7 @@ export function WarehousePage() {
       setOk(`Импорт проверен (${data.report.row_count ?? 0} строк). Подтвердите применение.`)
       setError(null)
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка проверки'),
+    onError: (e) => setError(userError(e, 'Не удалось проверить файл')),
   })
 
   const applyImport = useMutation({
@@ -332,7 +338,7 @@ export function WarehousePage() {
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка применения'),
+    onError: (e) => setError(userError(e, 'Не удалось применить импорт')),
   })
 
   if (orgs.isLoading) return <div className="page state-box">Загрузка…</div>

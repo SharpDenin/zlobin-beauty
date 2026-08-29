@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
@@ -343,7 +344,7 @@ export function MasterCabinetPage() {
       toast.success('Фото профиля сохранено')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото'
+      const msg = userError(e, 'Не удалось загрузить фото')
       setError(msg)
       toast.error(msg)
       setProfilePhotoDraft(null)
@@ -368,7 +369,7 @@ export function MasterCabinetPage() {
       toast.success('Работа добавлена в портфолио')
       await qc.invalidateQueries({ queryKey: ['my-portfolio'] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки в портфолио'
+      const msg = userError(e, 'Не удалось загрузить в портфолио')
       setError(msg)
       toast.error(msg)
       setPortfolioDraft(null)
@@ -392,7 +393,7 @@ export function MasterCabinetPage() {
       toast.success('Фото салона добавлено')
       await qc.invalidateQueries({ queryKey: ['branch-photos', primaryBranch.id] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото салона'
+      const msg = userError(e, 'Не удалось загрузить фото салона')
       setError(msg)
       toast.error(msg)
       setSalonDraft(null)

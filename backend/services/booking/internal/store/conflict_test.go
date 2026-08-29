@@ -15,8 +15,8 @@ func TestMapAppointmentConflictExclusion(t *testing.T) {
 	if !ok {
 		t.Fatal("expected apperr")
 	}
-	if ae.Code != apperr.CodeConflict {
-		t.Fatalf("code=%v want conflict", ae.Code)
+	if ae.Code != apperr.CodeAppointmentTimeConflict {
+		t.Fatalf("code=%v want appointment_time_conflict", ae.Code)
 	}
 	if ae.Message != slotConflictMsg {
 		t.Fatalf("message=%q want %q", ae.Message, slotConflictMsg)

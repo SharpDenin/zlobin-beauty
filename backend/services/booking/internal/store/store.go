@@ -32,7 +32,7 @@ const slotConflictMsg = "Это время уже занято"
 func mapAppointmentConflict(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && (pgErr.Code == pgerrcode.ExclusionViolation || pgErr.Code == "23P01") {
-		return apperr.Conflict(slotConflictMsg)
+		return apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, slotConflictMsg)
 	}
 	return err
 }
@@ -269,7 +269,7 @@ WHERE id=$1 AND status=$2`, id, from, to, reason, at)
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.Conflict("appointment status changed concurrently")
+		return apperr.ConflictCode(apperr.CodeAppointmentConcurrent, "appointment status changed concurrently")
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)
@@ -292,7 +292,7 @@ WHERE id=$1 AND status=$2`, id, fromStatus, starts, ends, at)
 		return mapAppointmentConflict(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.Conflict("appointment status changed concurrently")
+		return apperr.ConflictCode(apperr.CodeAppointmentConcurrent, "appointment status changed concurrently")
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)

@@ -4,12 +4,14 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { datetimeLocalToIso } from '@/shared/lib/time'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/ServiceSchemeForm'
@@ -102,7 +104,7 @@ export function AppointmentDetailPage() {
       setOk('Фото удалено')
       await qc.invalidateQueries({ queryKey: ['appointment-photos', id] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
+    onError: (e) => setError(userError(e, 'Не удалось удалить')),
   })
 
   const cancelForm = useForm<z.infer<typeof cancelSchema>>({ resolver: zodResolver(cancelSchema) })
@@ -127,7 +129,7 @@ export function AppointmentDetailPage() {
     },
     onError: (e) => {
       setOk(null)
-      setError(e instanceof ApiError ? e.message : 'Операция не выполнена')
+      setError(userError(e, 'Операция не выполнена'))
     },
   })
 
@@ -167,7 +169,7 @@ export function AppointmentDetailPage() {
       else setAfterDraft(null)
       await qc.invalidateQueries({ queryKey: ['appointment-photos', id] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото'
+      const msg = userError(e, 'Не удалось загрузить фото')
       setError(msg)
       toast.error(msg)
       if (kind === 'before') setBeforeDraft(null)
@@ -191,7 +193,7 @@ export function AppointmentDetailPage() {
         {a.cancel_reason && <p>Причина отмены: {a.cancel_reason}</p>}
       </section>
 
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {isMaster && a.service_id && a.organization_id && (

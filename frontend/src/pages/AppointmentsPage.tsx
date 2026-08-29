@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Modal } from '@/shared/ui/Modal'
 import { PageHeader } from '@/app/layout'
 
@@ -42,7 +44,7 @@ export function AppointmentsPage() {
       setActionError(null)
       await qc.invalidateQueries({ queryKey: ['appointments'] })
     },
-    onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Не удалось подтвердить'),
+    onError: (e) => setActionError(userError(e, 'Не удалось подтвердить запись')),
   })
 
   const reject = useMutation({
@@ -57,7 +59,7 @@ export function AppointmentsPage() {
       setRejectId(null)
       await qc.invalidateQueries({ queryKey: ['appointments'] })
     },
-    onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Не удалось отклонить'),
+    onError: (e) => setActionError(userError(e, 'Не удалось отклонить запись')),
   })
 
   return (
@@ -78,7 +80,7 @@ export function AppointmentsPage() {
         ) : undefined}
       />
 
-      {actionError && <div className="state-box error">{actionError}</div>}
+      {actionError && <ErrorBanner error={actionError} />}
       {query.isLoading && (
         <div className="list">
           <div className="skeleton skeleton-card" />
@@ -87,11 +89,9 @@ export function AppointmentsPage() {
         </div>
       )}
       {query.isError && (
-        <div className="state-box error">
-          Не удалось загрузить записи
-          <div>
-            <button className="btn btn-secondary" type="button" onClick={() => void query.refetch()}>Повторить</button>
-          </div>
+        <div className="stack">
+          <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить записи" />
+          <button className="btn btn-secondary" type="button" onClick={() => void query.refetch()}>Повторить</button>
         </div>
       )}
       {query.data && query.data.items.length === 0 && (

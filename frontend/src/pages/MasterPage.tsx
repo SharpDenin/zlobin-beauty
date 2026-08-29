@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { workTypeLabel } from '@/shared/lib/status'
@@ -10,6 +11,7 @@ import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { openConversation } from '@/pages/MessagesPage'
@@ -176,11 +178,7 @@ export function MasterPage() {
       await qc.invalidateQueries({ queryKey: ['service-occurrences'] })
     },
     onError: (e) => {
-      const msg = e instanceof ApiError
-        ? e.message
-        : e instanceof Error
-          ? e.message
-          : 'Не удалось создать запись'
+      const msg = userError(e, 'Не удалось создать запись')
       setMessage(null)
       setError(msg)
       toast.error(msg)
@@ -250,7 +248,7 @@ export function MasterPage() {
                     const c = await openConversation(accessToken, { type: 'client_master', master_user_id: master.user_id })
                     navigate(`/messages/${c.id}`)
                   } catch (e) {
-                    setError(e instanceof ApiError ? e.message : 'Не удалось открыть переписку')
+                    setError(userError(e, 'Не удалось открыть переписку'))
                   }
                 }}
               >
@@ -348,7 +346,7 @@ export function MasterPage() {
         {!isFixed && step === 2 && (
           <div className="stack">
             {slotsQuery.isLoading && <div className="state-box">Загрузка слотов…</div>}
-            {slotsQuery.isError && <div className="state-box error">Не удалось получить свободное время</div>}
+            {slotsQuery.isError && <ErrorBanner error={slotsQuery.error} fallbackTitle="Не удалось получить свободное время" />}
             {slotsQuery.data && slotsQuery.data.items.length === 0 && (
               <div className="empty-state">
                 <h2>Нет свободных окон</h2>
@@ -383,7 +381,7 @@ export function MasterPage() {
         {isFixed && step === 1 && (
           <div className="stack">
             {occurrencesQuery.isLoading && <div className="skeleton skeleton-card" />}
-            {occurrencesQuery.isError && <div className="state-box error">Не удалось загрузить сеансы</div>}
+            {occurrencesQuery.isError && <ErrorBanner error={occurrencesQuery.error} fallbackTitle="Не удалось загрузить сеансы" />}
             {occurrencesQuery.data && occurrencesQuery.data.items.filter((o) => o.status === 'scheduled' && o.remaining > 0).length === 0 && (
               <div className="empty-state">
                 <h2>Нет доступных сеансов</h2>
@@ -469,7 +467,7 @@ export function MasterPage() {
                 </div>
               </dl>
             </article>
-            {error && <div className="state-box error">{error}</div>}
+            {error && <ErrorBanner error={error} />}
             <div className="row">
               <button className="btn btn-secondary" type="button" onClick={() => setStep(isFixed ? 1 : 2)}>Назад</button>
               <button

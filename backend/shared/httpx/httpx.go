@@ -26,9 +26,10 @@ type ErrorBody struct {
 }
 
 type ErrorDetail struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
+	Code      string         `json:"code"`
+	Message   string         `json:"message"`
+	RequestID string         `json:"request_id"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 func RequestID(r *http.Request) string {
@@ -71,10 +72,19 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 	rid := RequestID(r)
 	var ae *apperr.AppError
 	if errors.As(err, &ae) {
-		if ae.HTTPStatus >= 500 && log != nil {
-			log.Error("request failed", "error", ae.Err, "code", ae.Code, "request_id", rid)
+		if log != nil {
+			if ae.HTTPStatus >= 500 {
+				log.Error("request failed", "error", ae.Err, "code", ae.Code, "request_id", rid)
+			} else {
+				log.Info("request error", "code", ae.Code, "status", ae.HTTPStatus, "message", ae.Message, "request_id", rid)
+			}
 		}
-		JSON(w, ae.HTTPStatus, ErrorBody{Error: ErrorDetail{Code: string(ae.Code), Message: ae.Message, RequestID: rid}})
+		JSON(w, ae.HTTPStatus, ErrorBody{Error: ErrorDetail{
+			Code:      string(ae.Code),
+			Message:   ae.Message,
+			RequestID: rid,
+			Details:   ae.Details,
+		}})
 		return
 	}
 	if log != nil {
@@ -88,12 +98,12 @@ func BearerAuth(secret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
 			if !strings.HasPrefix(h, "Bearer ") {
-				WriteError(w, r, nil, apperr.Unauthorized("missing bearer token"))
+				WriteError(w, r, nil, apperr.SessionExpired())
 				return
 			}
 			claims, err := auth.ParseAccessToken(secret, strings.TrimPrefix(h, "Bearer "))
 			if err != nil {
-				WriteError(w, r, nil, apperr.Unauthorized("invalid access token"))
+				WriteError(w, r, nil, apperr.SessionExpired())
 				return
 			}
 			ctx := context.WithValue(r.Context(), KeyClaims, claims)

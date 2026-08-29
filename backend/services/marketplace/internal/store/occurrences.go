@@ -24,7 +24,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
-			return apperr.Conflict("occurrence overlaps another active occurrence for this master")
+			return apperr.ConflictCode(apperr.CodeOccurrenceOverlap, "occurrence overlaps another active occurrence for this master")
 		}
 		return err
 	}
@@ -74,7 +74,7 @@ WHERE id=$1`, o.ID, o.BranchID, o.StartsAt, o.EndsAt, o.Timezone, o.Capacity, o.
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
-			return apperr.Conflict("occurrence overlaps another active occurrence for this master")
+			return apperr.ConflictCode(apperr.CodeOccurrenceOverlap, "occurrence overlaps another active occurrence for this master")
 		}
 		return err
 	}
@@ -112,7 +112,7 @@ RETURNING `+occurrenceCols, id)
 		return nil, err
 	}
 	if o == nil {
-		return nil, apperr.Conflict("occurrence is full or unavailable")
+		return nil, apperr.ConflictCode(apperr.CodeOccurrenceFull, "occurrence is full or unavailable")
 	}
 	return o, nil
 }

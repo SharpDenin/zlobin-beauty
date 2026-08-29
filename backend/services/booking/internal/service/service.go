@@ -537,7 +537,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		return nil, apperr.Internal(err)
 	}
 	if blocked {
-		return nil, apperr.Forbidden("client is blacklisted for this master")
+		return nil, apperr.ForbiddenCode(apperr.CodeClientBlacklisted, "client is blacklisted for this master")
 	}
 	orgID, err := uuid.Parse(payload.Master.OrganizationID)
 	if err != nil {
@@ -588,11 +588,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 			return nil, apperr.Validation("occurrence does not match master")
 		}
 		if occ.Status != "scheduled" {
-			return nil, apperr.Conflict("occurrence is not available")
+			return nil, apperr.ConflictCode(apperr.CodeOccurrenceUnavailable, "occurrence is not available")
 		}
 		now := s.now().UTC()
 		if occ.BookingCutoffAt != nil && !now.Before(occ.BookingCutoffAt.UTC()) {
-			return nil, apperr.Conflict("booking cutoff has passed")
+			return nil, apperr.ConflictCode(apperr.CodeBookingCutoff, "booking cutoff has passed")
 		}
 		if !occ.StartsAt.After(now) {
 			return nil, apperr.Validation("occurrence has already started")
@@ -634,7 +634,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 			}
 		}
 		if !okSlot {
-			return nil, apperr.Conflict("selected time is not available")
+			return nil, apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, "selected time is not available")
 		}
 	}
 
@@ -753,7 +753,7 @@ func (s *Service) occurrenceCapacityCall(ctx context.Context, id uuid.UUID, acti
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
 	if resp.StatusCode == http.StatusConflict {
-		return apperr.Conflict("occurrence is not available")
+		return apperr.ConflictCode(apperr.CodeOccurrenceUnavailable, "occurrence is not available")
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return apperr.NotFound("occurrence not found")
@@ -899,7 +899,7 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 		return nil, apperr.Validation("fixed_window appointments cannot be rescheduled")
 	}
 	if a.Status != domain.StatusPendingConfirmation && a.Status != domain.StatusConfirmed {
-		return nil, apperr.Conflict("cannot reschedule in current status")
+		return nil, apperr.ConflictCode(apperr.CodeAppointmentStatusInvalid, "cannot reschedule in current status")
 	}
 	ends := startsAt.UTC().Add(time.Duration(a.DurationMinutes) * time.Minute)
 	tz := a.LocationTimezone
@@ -918,7 +918,7 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 		}
 	}
 	if !okSlot {
-		return nil, apperr.Conflict("selected time is not available")
+		return nil, apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, "selected time is not available")
 	}
 	now := s.now().UTC()
 	if err := s.store.Reschedule(ctx, a.ID, a.Status, startsAt.UTC(), ends, actorUserID, now); err != nil {

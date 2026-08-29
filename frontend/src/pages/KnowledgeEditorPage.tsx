@@ -2,12 +2,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { JSONContent } from '@tiptap/react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
 import type { KnowledgeArticle } from '@/features/knowledge/types'
 import { emptyDoc, estimateReadingMinutes, docHasText, RichDocEditor } from '@/shared/ui/RichDocEditor'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
@@ -150,7 +152,7 @@ export function KnowledgeEditorPage() {
       await qc.invalidateQueries({ queryKey: ['knowledge', item.id] })
       if (!id) navigate(`/knowledge/${item.id}/edit`, { replace: true })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+    onError: (e) => setError(userError(e, 'Не удалось сохранить материал')),
   })
 
   const setStatus = useMutation({
@@ -163,7 +165,7 @@ export function KnowledgeEditorPage() {
       setDraft((d) => ({ ...d, status: (item.status as Draft['status']) || 'draft' }))
       await qc.invalidateQueries({ queryKey: ['knowledge-mine'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось изменить статус'),
+    onError: (e) => setError(userError(e, 'Не удалось изменить статус')),
   })
 
   if (!hasSupplierAccess(user)) {
@@ -213,7 +215,7 @@ export function KnowledgeEditorPage() {
         </div>
         <Link className="btn btn-ghost" to="/knowledge">К списку</Link>
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">

@@ -245,7 +245,7 @@ WHERE id=$1 AND status=$2 AND master_user_id=$3`, appointmentID, fromStatus, act
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.Conflict("appointment status changed concurrently")
+		return apperr.ConflictCode(apperr.CodeAppointmentConcurrent, "appointment status changed concurrently")
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)

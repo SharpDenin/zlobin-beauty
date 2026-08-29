@@ -17,10 +17,10 @@ import (
 )
 
 type Service struct {
-	store          *store.Store
-	jwtSecret      string
+	store           *store.Store
+	jwtSecret       string
 	allowDevBilling bool
-	now            func() time.Time
+	now             func() time.Time
 }
 
 func New(st *store.Store, jwtSecret string) *Service {
@@ -37,14 +37,14 @@ func (s *Service) AllowDevBilling() bool {
 }
 
 type RegisterInput struct {
-	Email          string
-	Phone          string
-	Password       string
-	DisplayName    string
-	AsMaster       bool
-	AsSupplier     bool
-	AsSupplierRep  bool
-	AsSalonAdmin   bool
+	Email         string
+	Phone         string
+	Password      string
+	DisplayName   string
+	AsMaster      bool
+	AsSupplier    bool
+	AsSupplierRep bool
+	AsSalonAdmin  bool
 }
 
 type AuthResult struct {
@@ -77,7 +77,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 			return nil, apperr.Internal(err)
 		}
 		if existing != nil {
-			return nil, apperr.Conflict("email already registered")
+			return nil, apperr.EmailTaken()
 		}
 	}
 	hash, err := auth.HashPassword(in.Password)
@@ -167,10 +167,10 @@ func (s *Service) Login(ctx context.Context, email, password, ip, ua string) (*A
 	if user == nil || !auth.VerifyPassword(user.PasswordHash, password) {
 		_ = s.store.AddLoginAttempt(ctx, key, false, now)
 		_ = s.security(ctx, nil, "login.failed", map[string]any{"email_present": true})
-		return nil, apperr.Unauthorized("invalid credentials")
+		return nil, apperr.InvalidCredentials()
 	}
 	if user.Status != "active" {
-		return nil, apperr.Forbidden("account is blocked")
+		return nil, apperr.AccountBlocked()
 	}
 	_ = s.store.AddLoginAttempt(ctx, key, true, now)
 	_ = s.security(ctx, &user.ID, "login.success", map[string]any{})
@@ -197,15 +197,15 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthResult
 	}
 	now := s.now().UTC()
 	if sess == nil {
-		return nil, apperr.Unauthorized("invalid refresh token")
+		return nil, apperr.SessionExpired()
 	}
 	if sess.RevokedAt != nil {
 		_ = s.store.RevokeFamily(ctx, sess.FamilyID, now)
 		_ = s.security(ctx, &sess.UserID, "refresh.reuse_detected", map[string]any{})
-		return nil, apperr.Unauthorized("refresh token revoked")
+		return nil, apperr.SessionExpired()
 	}
 	if now.After(sess.ExpiresAt) {
-		return nil, apperr.Unauthorized("refresh token expired")
+		return nil, apperr.SessionExpired()
 	}
 	user, err := s.store.GetUserByID(ctx, sess.UserID)
 	if err != nil {

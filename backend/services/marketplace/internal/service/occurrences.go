@@ -96,7 +96,7 @@ func (s *Service) CreateOccurrence(ctx context.Context, in CreateOccurrenceInput
 		return nil, apperr.Internal(err)
 	}
 	if overlap {
-		return nil, apperr.Conflict("occurrence overlaps another active occurrence for this master")
+		return nil, apperr.ConflictCode(apperr.CodeOccurrenceOverlap, "occurrence overlaps another active occurrence for this master")
 	}
 	now := s.now().UTC()
 	o := domain.ServiceOccurrence{
@@ -239,7 +239,7 @@ func (s *Service) UpdateOccurrence(ctx context.Context, in UpdateOccurrenceInput
 		return nil, apperr.Internal(err)
 	}
 	if overlap {
-		return nil, apperr.Conflict("occurrence overlaps another active occurrence for this master")
+		return nil, apperr.ConflictCode(apperr.CodeOccurrenceOverlap, "occurrence overlaps another active occurrence for this master")
 	}
 	o.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateOccurrence(ctx, *o); err != nil {

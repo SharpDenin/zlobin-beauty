@@ -62,14 +62,14 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*UploadResult, er
 		ct = http.DetectContentType(head[:n])
 	}
 	if !domain.ValidContentType(ct) {
-		return nil, apperr.Validation("unsupported content type")
+		return nil, apperr.ValidationCode(apperr.CodeMediaUnsupportedType, "unsupported content type")
 	}
 	if strings.HasPrefix(ct, "video/") && purpose != domain.PurposeVideo {
 		return nil, apperr.Validation("video uploads require purpose=video")
 	}
 	ext := domain.ExtensionForContentType(ct)
 	if ext == "" {
-		return nil, apperr.Validation("unsupported content type")
+		return nil, apperr.ValidationCode(apperr.CodeMediaUnsupportedType, "unsupported content type")
 	}
 
 	combined := io.MultiReader(bytes.NewReader(head[:n]), limitReader)
@@ -80,7 +80,7 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*UploadResult, er
 		return nil, apperr.Internal(err)
 	}
 	if written > maxBytes {
-		return nil, apperr.Validation("file exceeds size limit")
+		return nil, apperr.ValidationCode(apperr.CodeMediaTooLarge, "file exceeds size limit")
 	}
 	if written == 0 {
 		return nil, apperr.Validation("empty file")

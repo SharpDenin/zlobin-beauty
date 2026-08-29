@@ -37,7 +37,7 @@ func (a *API) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		httpx.WriteError(w, r, a.log, apperr.Validation("file field is required"))
+		httpx.WriteError(w, r, a.log, apperr.ValidationCode(apperr.CodeMediaEmpty, "file field is required"))
 		return
 	}
 	defer file.Close()

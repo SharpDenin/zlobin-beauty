@@ -4,7 +4,8 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
@@ -16,6 +17,7 @@ import { photoMediaIdForCreate, photoMediaIdForPatch } from '@/shared/lib/mediaP
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { Modal } from '@/shared/ui/Modal'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { PageHeader } from '@/app/layout'
 
@@ -52,7 +54,7 @@ const schema = z.object({
   description: z.string().optional(),
   notes: z.string().optional(),
   duration_minutes: z.coerce.number().int().positive('Длительность должна быть больше 0'),
-  price_rubles: z.coerce.number().positive('Цена должна быть больше 0'),
+  price_rubles: z.coerce.number().positive('Стоимость должна быть больше 0.'),
   published: z.boolean(),
   booking_mode: z.enum(['flexible', 'fixed_window']),
 })
@@ -198,7 +200,7 @@ export function ServicesPage() {
       void navigate('/services')
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка сохранения услуги'
+      const msg = userError(e, 'Не удалось сохранить услугу')
       setError(msg)
       toast.error(msg)
     },
@@ -215,7 +217,7 @@ export function ServicesPage() {
       setOk('Услуга скрыта')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось архивировать'),
+    onError: (e) => setError(userError(e, 'Не удалось архивировать услугу')),
   })
 
   const addOccurrence = useMutation({
@@ -244,7 +246,7 @@ export function ServicesPage() {
       await qc.invalidateQueries({ queryKey: ['service-occurrences-manage', id] })
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Не удалось добавить сеанс'
+      const msg = userError(e, 'Не удалось добавить сеанс')
       setError(msg)
       toast.error(msg)
     },
@@ -257,7 +259,7 @@ export function ServicesPage() {
       setOk('Сеанс отменён')
       await qc.invalidateQueries({ queryKey: ['service-occurrences-manage', id] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось отменить сеанс'),
+    onError: (e) => setError(userError(e, 'Не удалось отменить сеанс')),
   })
 
   function openCreate() {
@@ -278,6 +280,7 @@ export function ServicesPage() {
 
   function closeModal() {
     setModalOpen(false)
+    setError(null)
     void navigate('/services')
   }
 
@@ -289,7 +292,7 @@ export function ServicesPage() {
         actions={<button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>}
       />
 
-      {error && <div className="state-box error">{error}</div>}
+      {!modalOpen && error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {master.isLoading && (
@@ -359,6 +362,7 @@ export function ServicesPage() {
         size="lg"
       >
             <form className="stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
+              {error && <ErrorBanner error={error} />}
               <div className="field">
                 <label>Фото услуги (необязательно)</label>
                 <MediaDropzone
@@ -395,11 +399,13 @@ export function ServicesPage() {
               <div className="row">
                 <div className="field" style={{ flex: 1 }}>
                   <label>Длительность, мин <Hint id="service-duration" title="Длительность">Длительность задаёт слоты в календаре.</Hint></label>
-                  <input type="number" {...form.register('duration_minutes')} />
+                  <input type="number" aria-invalid={Boolean(form.formState.errors.duration_minutes)} {...form.register('duration_minutes')} />
+                  {form.formState.errors.duration_minutes && <span className="error">{form.formState.errors.duration_minutes.message}</span>}
                 </div>
                 <div className="field" style={{ flex: 1 }}>
-                  <label>Цена, ₽</label>
-                  <input type="number" {...form.register('price_rubles')} />
+                  <label>Стоимость, ₽</label>
+                  <input type="number" aria-invalid={Boolean(form.formState.errors.price_rubles)} {...form.register('price_rubles')} />
+                  {form.formState.errors.price_rubles && <span className="error">{form.formState.errors.price_rubles.message}</span>}
                 </div>
               </div>
               <label className="field-check">

@@ -6,6 +6,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { Hint } from '@/shared/ui/Hint'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 
 type Master = {
@@ -166,7 +167,7 @@ export function SearchPage() {
       </form>
 
       {query.isLoading && <div className="state-box">Ищем мастеров…</div>}
-      {query.isError && <div className="state-box error">Не удалось загрузить список</div>}
+      {query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить список" />}
       {query.data && query.data.items.length === 0 && (
         <div className="state-box">Пока нет опубликованных мастеров в этом городе</div>
       )}

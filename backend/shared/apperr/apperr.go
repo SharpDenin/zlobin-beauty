@@ -19,6 +19,25 @@ const (
 	CodeProfessionTypesRequired Code = "profession_types_required"
 	CodeProfessionTypeLocked    Code = "profession_type_locked"
 	CodeInsufficientStock       Code = "insufficient_stock"
+
+	CodeInvalidCredentials       Code = "invalid_credentials"
+	CodeEmailTaken               Code = "email_already_registered"
+	CodeAccountBlocked           Code = "account_blocked"
+	CodeSessionExpired           Code = "session_expired"
+	CodeAppointmentTimeConflict  Code = "appointment_time_conflict"
+	CodeAppointmentStatusInvalid Code = "appointment_status_invalid"
+	CodeAppointmentConcurrent    Code = "appointment_concurrent_update"
+	CodeOccurrenceUnavailable    Code = "occurrence_unavailable"
+	CodeOccurrenceFull           Code = "occurrence_full"
+	CodeOccurrenceOverlap        Code = "occurrence_overlap"
+	CodeBookingCutoff            Code = "booking_cutoff_passed"
+	CodeClientBlacklisted        Code = "client_blacklisted"
+	CodePlannerOutsideHours      Code = "planner_outside_hours"
+	CodePlannerOverlap           Code = "planner_overlap"
+	CodeMediaUnsupportedType     Code = "media_unsupported_type"
+	CodeMediaTooLarge            Code = "media_too_large"
+	CodeMediaEmpty               Code = "media_empty"
+	CodePriceChanged             Code = "price_changed"
 )
 
 type AppError struct {
@@ -26,6 +45,7 @@ type AppError struct {
 	Message    string
 	HTTPStatus int
 	Err        error
+	Details    map[string]any
 }
 
 func (e *AppError) Error() string {
@@ -41,16 +61,36 @@ func New(code Code, status int, message string) *AppError {
 	return &AppError{Code: code, HTTPStatus: status, Message: message}
 }
 
+func (e *AppError) WithDetails(details map[string]any) *AppError {
+	if e == nil {
+		return nil
+	}
+	e.Details = details
+	return e
+}
+
 func Validation(msg string) *AppError {
 	return New(CodeValidation, http.StatusBadRequest, msg)
+}
+
+func ValidationCode(code Code, msg string) *AppError {
+	return New(code, http.StatusBadRequest, msg)
 }
 
 func Unauthorized(msg string) *AppError {
 	return New(CodeUnauthorized, http.StatusUnauthorized, msg)
 }
 
+func UnauthorizedCode(code Code, msg string) *AppError {
+	return New(code, http.StatusUnauthorized, msg)
+}
+
 func Forbidden(msg string) *AppError {
 	return New(CodeForbidden, http.StatusForbidden, msg)
+}
+
+func ForbiddenCode(code Code, msg string) *AppError {
+	return New(code, http.StatusForbidden, msg)
 }
 
 func NotFound(msg string) *AppError {
@@ -59,6 +99,10 @@ func NotFound(msg string) *AppError {
 
 func Conflict(msg string) *AppError {
 	return New(CodeConflict, http.StatusConflict, msg)
+}
+
+func ConflictCode(code Code, msg string) *AppError {
+	return New(code, http.StatusConflict, msg)
 }
 
 func Unprocessable(code Code, msg string) *AppError {
@@ -82,6 +126,22 @@ func InsufficientStock(msg string) *AppError {
 
 func RateLimited(msg string) *AppError {
 	return New(CodeRateLimited, http.StatusTooManyRequests, msg)
+}
+
+func InvalidCredentials() *AppError {
+	return UnauthorizedCode(CodeInvalidCredentials, "invalid credentials")
+}
+
+func EmailTaken() *AppError {
+	return ConflictCode(CodeEmailTaken, "email already registered")
+}
+
+func AccountBlocked() *AppError {
+	return ForbiddenCode(CodeAccountBlocked, "account is blocked")
+}
+
+func SessionExpired() *AppError {
+	return UnauthorizedCode(CodeSessionExpired, "session expired")
 }
 
 func Internal(err error) *AppError {

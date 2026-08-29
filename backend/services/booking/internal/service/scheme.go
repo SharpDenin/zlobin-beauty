@@ -475,7 +475,7 @@ func (s *Service) validatePlannerInterval(ctx context.Context, owner, excludeID 
 			}
 		}
 		if !inside {
-			return apperr.Conflict("planner block is outside working hours")
+			return apperr.ConflictCode(apperr.CodePlannerOutsideHours, "planner block is outside working hours")
 		}
 	}
 	blocks, err := s.store.PlannerBlockOverlaps(ctx, owner, excludeID, starts.UTC(), ends.UTC())
@@ -483,14 +483,14 @@ func (s *Service) validatePlannerInterval(ctx context.Context, owner, excludeID 
 		return apperr.Internal(err)
 	}
 	if blocks {
-		return apperr.Conflict("planner block overlaps another event")
+		return apperr.ConflictCode(apperr.CodePlannerOverlap, "planner block overlaps another event")
 	}
 	appointments, err := s.store.MasterAppointmentOverlaps(ctx, owner, uuid.Nil, starts.UTC(), ends.UTC())
 	if err != nil {
 		return apperr.Internal(err)
 	}
 	if appointments {
-		return apperr.Conflict("planner block overlaps an appointment")
+		return apperr.ConflictCode(apperr.CodePlannerOverlap, "planner block overlaps an appointment")
 	}
 	return nil
 }

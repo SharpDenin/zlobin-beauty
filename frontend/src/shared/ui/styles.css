@@ -393,7 +393,7 @@ p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
   color: var(--color-text-primary);
 }
 .field textarea { min-height: 96px; padding: var(--space-3); resize: vertical; }
-.field .error { color: var(--color-danger); font-size: var(--text-sm); }
+.field .error { color: var(--color-danger); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .field input[aria-invalid="true"], .field textarea[aria-invalid="true"] {
   border-color: var(--color-danger);
   box-shadow: 0 0 0 3px var(--color-danger-soft);
@@ -446,7 +446,27 @@ p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
 }
-.state-box.error { color: var(--color-danger); background: var(--color-danger-soft); }
+.state-box.error { color: var(--color-danger); background: var(--color-danger-soft); white-space: pre-line; overflow-wrap: anywhere; text-align: left; }
+.error-banner { display: grid; gap: var(--space-2); min-width: 0; }
+.error-banner__title { font-weight: 700; }
+.error-banner__hint, .error-banner__text { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.error-boundary {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+}
+.error-boundary__card {
+  width: min(100%, 420px);
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.error-boundary__card h1 { font-size: var(--text-xl); }
+.error-boundary__card p { color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .state-box.success { color: var(--color-success); background: var(--color-success-soft); }
 .state-box.forbidden { color: var(--color-warning); background: var(--color-warning-soft); }
 .empty-state {
@@ -933,6 +953,8 @@ button.list-item:hover {
   display: grid;
   gap: var(--space-2);
   width: min(100% - 2 * var(--space-4), 420px);
+  max-width: 100%;
+  overflow-x: hidden;
   pointer-events: none;
 }
 .toast {
@@ -949,6 +971,14 @@ button.list-item:hover {
   font-size: var(--text-sm);
   font-weight: 600;
   animation: toast-in var(--motion-emphasized) var(--ease-out);
+  min-width: 0;
+}
+.toast-body {
+  min-width: 0;
+  flex: 1;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  font-weight: 600;
 }
 .toast--success { background: var(--color-success); }
 .toast--error { background: var(--color-danger); }
@@ -960,6 +990,7 @@ button.list-item:hover {
   line-height: 1;
   min-width: 28px;
   min-height: 28px;
+  flex-shrink: 0;
 }
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(10px) scale(0.98); }

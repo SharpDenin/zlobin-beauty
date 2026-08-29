@@ -5,7 +5,7 @@ import { Responsive, useContainerWidth } from 'react-grid-layout'
 import type { Layout } from 'react-grid-layout'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import 'react-grid-layout/css/styles.css'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
@@ -14,6 +14,7 @@ import { CHART } from '@/shared/ui/chart-theme'
 import { tokens } from '@/shared/ui/tokens'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { Drawer } from '@/shared/ui/Drawer'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { LIBRARY, makeLayouts, normalizeLayout, type Breakpoint, type WidgetId, type WidgetLayout } from '@/pages/dashboard-layout'
 import type { SupplierOrder } from '@/shared/lib/commerce'
@@ -433,7 +434,7 @@ export function DashboardPage() {
                 </article>
               )
             })}
-            {save.isError && <div className="state-box error">{save.error instanceof ApiError ? save.error.message : 'Не удалось сохранить раскладку'}</div>}
+            {save.isError && <ErrorBanner error={save.error} fallbackTitle="Не удалось сохранить раскладку" />}
       </Drawer>
     </main>
   )

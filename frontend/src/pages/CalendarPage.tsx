@@ -10,7 +10,8 @@ import luxonPlugin from '@fullcalendar/luxon3'
 import ruLocale from '@fullcalendar/core/locales/ru'
 import type { DatesSetArg, EventClickArg, EventContentArg, EventDropArg, EventInput } from '@fullcalendar/core'
 import type { EventResizeDoneArg } from '@fullcalendar/interaction'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { tokens } from '@/shared/ui/tokens'
@@ -743,7 +744,5 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 }
 
 function calendarError(error: unknown, fallback: string) {
-  if (error instanceof ApiError && error.status === 409) return 'На это время уже запланировано другое событие'
-  if (error instanceof ApiError && error.status === 403) return 'У вас нет прав на изменение этого события'
-  return error instanceof ApiError ? error.message : fallback
+  return userError(error, fallback)
 }

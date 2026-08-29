@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { ApiError, API_BASE_URL } from '@/shared/api/client'
+import { API_BASE_URL } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import {
   MEDIA_ACCEPT_IMAGES,
@@ -116,7 +117,7 @@ export function MediaDropzone({
     } catch (e) {
       clearObjectUrl()
       setLocalPreview(null)
-      setError(e instanceof ApiError ? e.message : 'Не удалось загрузить файл')
+      setError(userError(e, 'Не удалось загрузить файл'))
       setState('error')
     }
   }

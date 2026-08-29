@@ -44,7 +44,7 @@ func CanTransition(from, to string) bool {
 
 func Transition(from, to string) error {
 	if !CanTransition(from, to) {
-		return apperr.Conflict("invalid appointment status transition")
+		return apperr.ConflictCode(apperr.CodeAppointmentStatusInvalid, "invalid appointment status transition")
 	}
 	return nil
 }

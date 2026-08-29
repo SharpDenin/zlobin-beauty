@@ -17,14 +17,34 @@ func TestSeedMediaSlug(t *testing.T) {
 	}
 }
 
-func TestContentTypeForExt(t *testing.T) {
-	if contentTypeForExt(".JPG") != "image/jpeg" {
-		t.Fatal("jpg")
+func TestCoverFileForArticle(t *testing.T) {
+	if got := coverFileForArticle("Уход", "Домашний уход после салона"); got != "articles/home.jpg" {
+		t.Fatalf("home: %q", got)
 	}
-	if contentTypeForExt(".webm") != "video/webm" {
-		t.Fatal("webm")
+	if got := coverFileForArticle("Стайлинг", "Фиксация"); got != "articles/styling.jpg" {
+		t.Fatalf("styling: %q", got)
 	}
-	if contentTypeForExt(".txt") != "" {
-		t.Fatal("unsupported should be empty")
+	if got := coverFileForArticle("Салон", "Санитарные нормы"); got != "articles/salon.jpg" {
+		t.Fatalf("salon: %q", got)
+	}
+	if got := coverFileForArticle("Уход", "Протокол уходовых процедур"); got != "articles/care.jpg" {
+		t.Fatalf("care: %q", got)
+	}
+	if got := coverFileForArticle("Колористика", "Majirel"); got != "articles/coloring.jpg" {
+		t.Fatalf("coloring: %q", got)
+	}
+}
+
+func TestApplyArticleCoversSkipsDraft(t *testing.T) {
+	arts := []kbArt{
+		{Title: "Домашний уход", Category: "Уход"},
+		{Title: "Черновик", Category: "Колористика", Draft: true},
+	}
+	applyArticleCovers(arts)
+	if arts[0].CoverFile != "articles/home.jpg" || !arts[0].WithCover {
+		t.Fatalf("published: %+v", arts[0])
+	}
+	if arts[1].CoverFile != "" || arts[1].WithCover {
+		t.Fatalf("draft should stay without cover: %+v", arts[1])
 	}
 }

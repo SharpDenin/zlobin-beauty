@@ -1,13 +1,18 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode"
 )
+
+var seedUploadMu sync.Mutex
+var seedUploadCache = map[string]string{}
 
 func emailLocalPart(email string) string {
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -93,6 +98,12 @@ func uploadSeedAssetIfExists(c *http.Client, base, token, purpose string, relPat
 			continue
 		}
 		p := filepath.Join(root, filepath.FromSlash(rel))
+		seedUploadMu.Lock()
+		if id, ok := seedUploadCache[p]; ok {
+			seedUploadMu.Unlock()
+			return id
+		}
+		seedUploadMu.Unlock()
 		data, err := os.ReadFile(p)
 		if err != nil || len(data) == 0 {
 			continue
@@ -108,13 +119,48 @@ func uploadSeedAssetIfExists(c *http.Client, base, token, purpose string, relPat
 			continue
 		}
 		if id != "" {
+			seedUploadMu.Lock()
+			seedUploadCache[p] = id
+			seedUploadMu.Unlock()
 			return id
 		}
 	}
 	return ""
 }
 
+func mediaLooksPlaceholder(c *http.Client, base, token, mediaID string) bool {
+	if mediaID == "" {
+		return true
+	}
+	var meta struct {
+		SizeBytes   int64  `json:"size_bytes"`
+		ContentType string `json:"content_type"`
+	}
+	status, err := doJSON(c, http.MethodGet, base+"/v1/media/"+mediaID, token, nil, &meta)
+	if err != nil || status >= 300 {
+		return false
+	}
+	if meta.SizeBytes > 0 && meta.SizeBytes < 2048 {
+		return true
+	}
+	return false
+}
+
 func withOptionalPortrait(c *http.Client, base string, user authUser, cfg masterSeed) masterSeed {
+	var me struct {
+		Master struct {
+			PhotoMediaID *string `json:"photo_media_id"`
+		} `json:"master"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/me/master", user.Token, nil, &me)
+	existing := ""
+	if me.Master.PhotoMediaID != nil {
+		existing = strings.TrimSpace(*me.Master.PhotoMediaID)
+	}
+	if existing != "" && !mediaLooksPlaceholder(c, base, user.Token, existing) {
+		cfg.PhotoMediaID = existing
+		return cfg
+	}
 	local := emailLocalPart(user.Email)
 	if local == "" {
 		return cfg
@@ -130,27 +176,100 @@ func withOptionalPortrait(c *http.Client, base string, user authUser, cfg master
 	return cfg
 }
 
-func attachSeedServicePhoto(c *http.Client, base string, user authUser, serviceID, name string, alreadyHasPhoto bool) {
-	if alreadyHasPhoto || serviceID == "" {
+func attachSeedServicePhoto(c *http.Client, base string, user authUser, serviceID, name, existingID string) {
+	if serviceID == "" {
+		return
+	}
+	if existingID != "" && !mediaLooksPlaceholder(c, base, user.Token, existingID) {
 		return
 	}
 	slug := seedMediaSlug(name)
-	if slug == "" {
+	id := ""
+	if slug != "" {
+		id = uploadSeedAssetIfExists(c, base, user.Token, "service",
+			"services/"+slug+".jpg",
+			"services/"+slug+".jpeg",
+			"services/"+slug+".png",
+			"services/"+slug+".webp",
+		)
+	}
+	if id != "" {
+		status, err := doJSON(c, http.MethodPatch, base+"/v1/services/"+serviceID, user.Token, map[string]any{
+			"photo_media_id": id,
+		}, nil)
+		if err != nil || status >= 300 {
+			log.Printf("warn attach service photo %s status=%d err=%v", name, status, err)
+		}
 		return
 	}
-	id := uploadSeedAssetIfExists(c, base, user.Token, "service",
-		"services/"+slug+".jpg",
-		"services/"+slug+".jpeg",
-		"services/"+slug+".png",
-		"services/"+slug+".webp",
-	)
-	if id == "" {
+	if existingID != "" {
+		status, err := doJSON(c, http.MethodPatch, base+"/v1/services/"+serviceID, user.Token, map[string]any{
+			"photo_media_id": "",
+		}, nil)
+		if err != nil || status >= 300 {
+			log.Printf("warn clear placeholder service photo %s status=%d err=%v", name, status, err)
+		}
+	}
+}
+
+func attachSalonPhotos(c *http.Client, base string, user authUser, branchID string, rels ...string) {
+	if branchID == "" || len(rels) == 0 {
 		return
 	}
-	status, err := doJSON(c, http.MethodPatch, base+"/v1/services/"+serviceID, user.Token, map[string]any{
-		"photo_media_id": id,
-	}, nil)
-	if err != nil || status >= 300 {
-		log.Printf("warn attach service photo %s status=%d err=%v", name, status, err)
+	var list struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/branches/"+branchID+"/photos", user.Token, nil, &list)
+	if len(list.Items) > 0 {
+		return
+	}
+	for i, rel := range rels {
+		id := uploadSeedAssetIfExists(c, base, user.Token, "salon", rel)
+		if id == "" {
+			continue
+		}
+		status, err := doJSON(c, http.MethodPost, base+"/v1/branches/"+branchID+"/photos", user.Token, map[string]any{
+			"media_id": id, "sort_order": i,
+		}, nil)
+		if err != nil || status >= 300 {
+			log.Printf("warn salon photo %s status=%d err=%v", rel, status, err)
+			continue
+		}
+		if i == 0 {
+			_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
+				"photo_media_id": id,
+			}, nil)
+		}
+	}
+}
+
+func attachSeedPortfolio(c *http.Client, base string, user authUser, rels []string, captions []string) {
+	if len(rels) == 0 {
+		return
+	}
+	var list struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/me/master/portfolio", user.Token, nil, &list)
+	if len(list.Items) > 0 {
+		return
+	}
+	for i, rel := range rels {
+		id := uploadSeedAssetIfExists(c, base, user.Token, "portfolio", rel)
+		if id == "" {
+			continue
+		}
+		caption := ""
+		if i < len(captions) {
+			caption = captions[i]
+		}
+		status, err := doJSON(c, http.MethodPost, base+"/v1/me/master/portfolio", user.Token, map[string]any{
+			"media_id": id, "caption": caption,
+		}, nil)
+		if err != nil || status >= 300 {
+			log.Printf("warn portfolio %s status=%d err=%v", rel, status, err)
+		}
 	}
 }

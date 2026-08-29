@@ -11,9 +11,13 @@ import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
 import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
+import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { Modal } from '@/shared/ui/Modal'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { PageHeader } from '@/app/layout'
+import { initials } from '@/shared/lib/initials'
 
 type Service = {
   id: string
@@ -276,58 +280,74 @@ export function ServicesPage() {
 
   return (
     <main className="page stack">
-      <div className="row between">
-        <div className="stack-sm">
-          <h1>Услуги <Hint id="service-duration" title="Длительность">Длительность услуги задаёт слоты в календаре. Клиент видит её на записи.</Hint></h1>
-          <p className="muted">Прайс и длительность для записи клиентов</p>
-        </div>
-        <button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>
-      </div>
+      <PageHeader
+        title="Услуги"
+        subtitle={<p className="muted">Прайс и длительность для записи</p>}
+        actions={<button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>}
+      />
 
       {error && <div className="state-box error">{error}</div>}
       {ok && <div className="state-box success">{ok}</div>}
 
-      {master.isLoading && <div className="state-box">Загрузка…</div>}
-      {master.isError && (
-        <div className="empty-state">
-          <h2>Профиль ещё не готов</h2>
-          <p>Создайте профиль мастера, затем добавьте услуги.</p>
-          <Link className="btn btn-primary" to="/master">Открыть кабинет</Link>
+      {master.isLoading && (
+        <div className="cards-grid services">
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
         </div>
       )}
+      {master.isError && (
+        <EmptyState
+          title="Профиль ещё не готов"
+          text="Создайте профиль мастера, затем добавьте услуги."
+          action={<Link className="btn btn-primary" to="/master">Открыть кабинет</Link>}
+        />
+      )}
       {!master.isLoading && !master.isError && services.length === 0 && (
-        <div className="empty-state">
-          <h2>Услуг пока нет</h2>
-          <p>Добавьте первую услугу — клиенты увидят её на вашей странице.</p>
-          <button className="btn btn-primary" type="button" onClick={openCreate}>Создать услугу</button>
-        </div>
+        <EmptyState
+          title="Услуг пока нет"
+          text="Первая услуга появится на вашей странице для клиентов."
+          action={<button className="btn btn-primary" type="button" onClick={openCreate}>Создать услугу</button>}
+        />
       )}
 
       <div className="cards-grid services">
         {services.map((s) => {
           const state = s.archived_at ? 'archived' : s.published ? 'active' : 'inactive'
           return (
-            <article key={s.id} className="service-card">
-              <div className="row between">
-                <strong>{s.name}</strong>
-                <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
+            <article key={s.id} className="service-card service-card--media">
+              <div className="media-frame media-frame--landscape">
+                {s.photo_media_id ? (
+                  <MediaImage mediaId={s.photo_media_id} token={accessToken} alt={s.name} fallback={initials(s.name)} />
+                ) : (
+                  <div className="media-fallback" role="img" aria-label="Нет фото">{initials(s.name)}</div>
+                )}
               </div>
-              <p className="muted">{s.category} · {s.duration_minutes} мин · {bookingModeLabel(s.booking_mode)}</p>
-              {s.description && <p>{s.description}</p>}
-              <div className="row between">
-                <strong>{s.price_display || formatMoney(s.price_minor)}</strong>
-                <div className="row">
-                  <Link className="btn btn-secondary btn-compact" to={`/services/${s.id}`}>Изменить</Link>
-                  {s.published && !s.archived_at && (
-                    <button
-                      className="btn btn-ghost btn-compact"
-                      type="button"
-                      disabled={archive.isPending}
-                      onClick={() => archive.mutate(s.id)}
-                    >
-                      В архив
-                    </button>
-                  )}
+              <div className="service-card-body">
+                <div className="row between">
+                  <strong>{s.name}</strong>
+                  <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
+                </div>
+                <div className="service-card-meta">
+                  <span className="chip">{s.category}</span>
+                  <span className="chip">{s.duration_minutes} мин</span>
+                  <span className="chip">{bookingModeLabel(s.booking_mode)}</span>
+                </div>
+                {s.description ? <p className="muted">{s.description}</p> : null}
+                <div className="row between">
+                  <strong className="service-card-price">{s.price_display || formatMoney(s.price_minor)}</strong>
+                  <div className="row">
+                    <Link className="btn btn-secondary btn-compact" to={`/services/${s.id}`}>Изменить</Link>
+                    {s.published && !s.archived_at && (
+                      <button
+                        className="btn btn-ghost btn-compact"
+                        type="button"
+                        disabled={archive.isPending}
+                        onClick={() => archive.mutate(s.id)}
+                      >
+                        В архив
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </article>
@@ -377,7 +397,7 @@ export function ServicesPage() {
               </div>
               <div className="row">
                 <div className="field" style={{ flex: 1 }}>
-                  <label>Длительность, мин</label>
+                  <label>Длительность, мин <Hint id="service-duration" title="Длительность">Длительность задаёт слоты в календаре.</Hint></label>
                   <input type="number" {...form.register('duration_minutes')} />
                 </div>
                 <div className="field" style={{ flex: 1 }}>

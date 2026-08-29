@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
-import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
+import { initials } from '@/shared/lib/initials'
+import { AppointmentCard } from '@/shared/ui/AppointmentCard'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 
 type Appointment = {
@@ -50,50 +51,51 @@ function ClientHome() {
       <section className="hero">
         <div className="stack">
           <BrandLogo size="md" />
-          <h1>Здравствуйте, {user?.display_name}</h1>
-          <p>Запишитесь к мастеру или откройте ближайшую запись.</p>
+          <h1>{user?.display_name}</h1>
+          <p>Запись к мастеру за пару шагов.</p>
           <div className="row">
             <Link className="btn btn-primary" to="/search">Найти мастера</Link>
-            <Link className="btn btn-secondary" to="/shop">Магазин</Link>
-            <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
+            <Link className="btn btn-secondary" to="/appointments">Записи</Link>
           </div>
         </div>
       </section>
 
       <section className="stack">
         <h2>Ближайшая запись</h2>
-        {appointments.isLoading && <div className="state-box">Загрузка…</div>}
+        {appointments.isLoading && <div className="skeleton skeleton-card" />}
         {!appointments.isLoading && !upcoming && (
-          <div className="empty-state">
-            <h2>Пока нет записей</h2>
-            <p>Выберите мастера и удобное время.</p>
-            <Link className="btn btn-primary" to="/search">Найти мастера</Link>
-          </div>
+          <EmptyState
+            title="Пока нет записей"
+            text="Выберите мастера и удобное время."
+            action={<Link className="btn btn-primary" to="/search">Найти мастера</Link>}
+          />
         )}
         {upcoming && (
-          <Link to={`/appointments/${upcoming.id}`} className="list-item">
-            <div className="row between">
-              <strong>{upcoming.service_name}</strong>
-              <span className={`badge ${statusBadgeClass(upcoming.status)}`}>{statusLabel(upcoming.status)}</span>
-            </div>
-            <p>{new Date(upcoming.starts_at).toLocaleString('ru-RU')} · {formatMoney(upcoming.price_minor)}</p>
-          </Link>
+          <AppointmentCard
+            to={`/appointments/${upcoming.id}`}
+            serviceName={upcoming.service_name}
+            status={upcoming.status}
+            startsAt={upcoming.starts_at}
+            priceMinor={upcoming.price_minor}
+          />
         )}
       </section>
 
       <section className="stack">
         <div className="row between">
           <h2>Мастера рядом</h2>
-          <Link to="/search">Все</Link>
+          <Link className="btn-link" to="/search">Все</Link>
         </div>
         <div className="list">
+          {masters.isLoading && <div className="skeleton skeleton-card" />}
           {masters.data?.items.slice(0, 4).map((m) => (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item">
-              <div className="row between">
+            <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card">
+              <div className="avatar-circle">{initials(m.display_name)}</div>
+              <div className="stack-sm">
                 <strong>{m.display_name}</strong>
-                <span className="badge badge-default">★ {m.rating_avg.toFixed(1)}</span>
+                <span className="meta">{masterProfessionLabel(m, 'Красота и уход')} · {m.city}</span>
               </div>
-              <p>{masterProfessionLabel(m, 'Красота и уход')} · {m.city}</p>
+              <span className="badge badge-default">{m.rating_avg.toFixed(1)}</span>
             </Link>
           ))}
         </div>

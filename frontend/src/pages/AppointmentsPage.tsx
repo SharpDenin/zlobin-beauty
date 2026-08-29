@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
-import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { AppointmentCard } from '@/shared/ui/AppointmentCard'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { Modal } from '@/shared/ui/Modal'
+import { PageHeader } from '@/app/layout'
 
 type Appointment = {
   id: string
@@ -22,6 +24,8 @@ export function AppointmentsPage() {
   const canMaster = hasMasterAccess(user)
   const [role, setRole] = useState<'client' | 'master'>(canMaster ? 'master' : 'client')
   const [actionError, setActionError] = useState<string | null>(null)
+  const [rejectId, setRejectId] = useState<string | null>(null)
+  const [rejectReason, setRejectReason] = useState('Не могу принять запись')
   const qc = useQueryClient()
 
   const query = useQuery({
@@ -50,6 +54,7 @@ export function AppointmentsPage() {
       }),
     onSuccess: async () => {
       setActionError(null)
+      setRejectId(null)
       await qc.invalidateQueries({ queryKey: ['appointments'] })
     },
     onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Не удалось отклонить'),
@@ -57,66 +62,102 @@ export function AppointmentsPage() {
 
   return (
     <main className="page stack">
-      <div className="row between">
-        <h1>Записи</h1>
-        {canMaster && (
-          <div className="row">
-            <button className={`btn btn-compact ${role === 'client' ? 'btn-primary' : 'btn-secondary'}`} type="button" onClick={() => setRole('client')}>Клиент</button>
-            <button className={`btn btn-compact ${role === 'master' ? 'btn-primary' : 'btn-secondary'}`} type="button" onClick={() => setRole('master')}>Мастер</button>
+      <PageHeader
+        title="Записи"
+        actions={canMaster ? (
+          <div className="segmented segmented--2" role="group" aria-label="Роль в записях">
+            <label className={role === 'client' ? 'is-active' : ''}>
+              <input type="radio" name="appt-role" checked={role === 'client'} onChange={() => setRole('client')} />
+              Клиент
+            </label>
+            <label className={role === 'master' ? 'is-active' : ''}>
+              <input type="radio" name="appt-role" checked={role === 'master'} onChange={() => setRole('master')} />
+              Мастер
+            </label>
           </div>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       {actionError && <div className="state-box error">{actionError}</div>}
-      {query.isLoading && <div className="state-box">Загрузка записей…</div>}
-      {query.isError && <div className="state-box error">Не удалось загрузить записи</div>}
-      {query.data && query.data.items.length === 0 && (
-        <div className="state-box">
-          Записей пока нет.
-          {role === 'client' && <> <Link to="/search">Найти мастера</Link></>}
+      {query.isLoading && (
+        <div className="list">
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
         </div>
+      )}
+      {query.isError && (
+        <div className="state-box error">
+          Не удалось загрузить записи
+          <div>
+            <button className="btn btn-secondary" type="button" onClick={() => void query.refetch()}>Повторить</button>
+          </div>
+        </div>
+      )}
+      {query.data && query.data.items.length === 0 && (
+        <EmptyState
+          title="Записей пока нет"
+          text={role === 'client' ? 'Выберите мастера и удобное время.' : 'Новые заявки появятся здесь.'}
+          action={role === 'client' ? <Link className="btn btn-primary" to="/search">Найти мастера</Link> : undefined}
+        />
       )}
 
       <div className="list">
         {query.data?.items.map((a) => (
-          <article key={a.id} className="list-item">
-            <div className="row between">
-              <strong>{a.service_name}</strong>
-              <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
-            </div>
-            <p>
-              {new Date(a.starts_at).toLocaleString('ru-RU')} · {formatMoney(a.price_minor)}
-            </p>
-            <div className="row">
-              <Link className="btn btn-secondary btn-compact" to={`/appointments/${a.id}`}>Открыть</Link>
-              {role === 'master' && a.status === 'pending_confirmation' && (
-                <>
-                  <button
-                    className="btn btn-primary btn-compact"
-                    type="button"
-                    disabled={confirm.isPending || reject.isPending}
-                    onClick={() => confirm.mutate(a.id)}
-                  >
-                    Подтвердить
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-compact"
-                    type="button"
-                    disabled={confirm.isPending || reject.isPending}
-                    onClick={() => {
-                      const reason = window.prompt('Причина отклонения', 'Не могу принять запись')
-                      if (reason === null) return
-                      reject.mutate({ id: a.id, reason: reason.trim() || 'Отклонено мастером' })
-                    }}
-                  >
-                    Отклонить
-                  </button>
-                </>
-              )}
-            </div>
-          </article>
+          <AppointmentCard
+            key={a.id}
+            to={`/appointments/${a.id}`}
+            serviceName={a.service_name}
+            status={a.status}
+            startsAt={a.starts_at}
+            priceMinor={a.price_minor}
+            actions={role === 'master' && a.status === 'pending_confirmation' ? (
+              <>
+                <button
+                  className="btn btn-primary btn-compact"
+                  type="button"
+                  disabled={confirm.isPending || reject.isPending}
+                  onClick={() => confirm.mutate(a.id)}
+                >
+                  Подтвердить
+                </button>
+                <button
+                  className="btn btn-secondary btn-compact"
+                  type="button"
+                  disabled={confirm.isPending || reject.isPending}
+                  onClick={() => {
+                    setRejectReason('Не могу принять запись')
+                    setRejectId(a.id)
+                  }}
+                >
+                  Отклонить
+                </button>
+              </>
+            ) : undefined}
+          />
         ))}
       </div>
+
+      <Modal
+        open={Boolean(rejectId)}
+        onClose={() => setRejectId(null)}
+        title="Отклонить запись"
+        footer={
+          <button
+            className="btn btn-primary btn-block"
+            type="button"
+            disabled={reject.isPending || !rejectId}
+            onClick={() => rejectId && reject.mutate({ id: rejectId, reason: rejectReason.trim() || 'Отклонено мастером' })}
+          >
+            {reject.isPending ? 'Отправляем…' : 'Отклонить'}
+          </button>
+        }
+      >
+        <div className="field">
+          <label htmlFor="reject-reason">Причина</label>
+          <textarea id="reject-reason" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} />
+        </div>
+      </Modal>
     </main>
   )
 }

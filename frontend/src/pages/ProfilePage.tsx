@@ -7,11 +7,25 @@ import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { initials } from '@/shared/lib/initials'
+import { PageHeader } from '@/app/layout'
 
 const profileSchema = z.object({
   display_name: z.string().min(2, 'Минимум 2 символа'),
   city: z.string().optional(),
 })
+
+const ROLE_LABEL: Record<string, string> = {
+  client: 'Клиент',
+  master: 'Мастер',
+  supplier: 'Поставщик',
+  salon_admin: 'Администратор',
+  system_admin: 'Системный админ',
+}
+
+function roleLabel(role: string) {
+  return ROLE_LABEL[role] ?? role
+}
 
 export function ProfilePage() {
   const { user, accessToken, updateUser, logout } = useAuth()
@@ -59,10 +73,23 @@ export function ProfilePage() {
 
   return (
     <main className="page stack">
-      <h1>Профиль</h1>
+      <PageHeader title="Профиль" />
+
+      <section className="card profile-hero">
+        <div className="avatar-circle" aria-hidden="true">{initials(user?.display_name)}</div>
+        <div className="stack-sm">
+          <h2>{user?.display_name}</h2>
+          <p className="muted">{user?.email ?? 'Email не указан'}</p>
+          <div className="appt-card-meta">
+            {(user?.roles ?? []).map((r) => (
+              <span key={r} className="badge badge-default">{roleLabel(r)}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section className="card stack">
-        <p className="muted">{user?.email ?? 'Email не указан'}</p>
-        <p className="muted">Роли: {user?.roles.join(', ') || '—'}</p>
+        <h2>Личные данные</h2>
         {error && <div className="state-box error">{error}</div>}
         {ok && <div className="state-box success">{ok}</div>}
         <form className="stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
@@ -76,14 +103,19 @@ export function ProfilePage() {
           <div className="field">
             <label htmlFor="city">Город</label>
             <input id="city" {...form.register('city')} placeholder="Москва" />
-            <p className="muted">Используется на главной и в поиске мастеров.</p>
+            <span className="hint">Нужен для поиска мастеров рядом</span>
           </div>
-          <button className="btn btn-primary" type="submit" disabled={save.isPending}>
-            Сохранить
+          <button className={`btn btn-primary${save.isPending ? ' btn-loading' : ''}`} type="submit" disabled={save.isPending}>
+            {save.isPending ? 'Сохраняем…' : 'Сохранить'}
           </button>
         </form>
-        <SubscriptionHints />
-        <div className="row">
+      </section>
+
+      <SubscriptionHints />
+
+      <section className="card stack">
+        <h2>Действия</h2>
+        <div className="profile-actions">
           <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
           {showSubscription && <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>}
           <Link className="btn btn-secondary" to="/messages">Сообщения</Link>
@@ -122,17 +154,16 @@ function SubscriptionHints() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['me-hints'] }),
   })
   const plan = sub.data?.effective_plan === 'premium' ? 'Premium' : 'Free'
-  const trial = sub.data?.status === 'trial' && sub.data.trial_ends_at
-    ? `Пробный период до ${new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}`
+  const trialUntil = sub.data?.status === 'trial' && sub.data.trial_ends_at
+    ? new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')
     : null
   return (
-    <section className="stack-sm">
+    <section className="card stack-sm">
       <h2>Подписка</h2>
-      {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
-        <p><strong>Premium активирован бесплатно на 3 месяца</strong></p>
-      )}
-      <p>{plan}{trial ? ` · ${trial}` : ''}</p>
-      <p className="muted">Новым пользователям — 3 месяца Premium. После trial без оплаты включается Free.</p>
+      <p>
+        <strong>{plan}</strong>
+        {trialUntil ? ` · пробный период до ${trialUntil}` : ''}
+      </p>
       <label className="field-check">
         <input
           type="checkbox"

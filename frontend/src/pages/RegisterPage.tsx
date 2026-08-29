@@ -20,17 +20,18 @@ export function RegisterPage() {
   const { register: registerUser } = useAuth()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: { role: 'client' },
   })
+  const role = watch('role')
 
   return (
     <div className="app-shell app-shell--auth">
       <div className="page page-narrow stack auth-screen">
         <BrandLogo size="lg" />
         <h1>Регистрация</h1>
-        <p>Создайте аккаунт клиента, мастера или поставщика.</p>
+        <p className="auth-lead">Создайте кабинет за минуту.</p>
         <form
           className="card stack"
           onSubmit={handleSubmit(async (values) => {
@@ -61,32 +62,34 @@ export function RegisterPage() {
           </div>
           <div className="field">
             <label htmlFor="email">Email</label>
-            <input id="email" type="email" {...register('email')} />
+            <input id="email" type="email" autoComplete="email" {...register('email')} />
             {errors.email && <span className="error">{errors.email.message}</span>}
           </div>
           <div className="field">
             <label htmlFor="password">Пароль</label>
-            <input id="password" type="password" {...register('password')} />
+            <input id="password" type="password" autoComplete="new-password" {...register('password')} />
             {errors.password && <span className="error">{errors.password.message}</span>}
           </div>
           <fieldset className="stack-sm">
-            <legend>Роль</legend>
-            <label className="row">
-              <input type="radio" value="client" {...register('role')} />
-              <span>Клиент</span>
-            </label>
-            <label className="row">
-              <input type="radio" value="master" {...register('role')} />
-              <span>Мастер</span>
-            </label>
-            <label className="row">
-              <input type="radio" value="supplier" {...register('role')} />
-              <span>Поставщик</span>
-            </label>
+            <legend className="label-text">Роль</legend>
+            <div className="segmented" role="radiogroup" aria-label="Роль">
+              <label className={role === 'client' ? 'is-active' : ''}>
+                <input type="radio" value="client" {...register('role')} />
+                Клиент
+              </label>
+              <label className={role === 'master' ? 'is-active' : ''}>
+                <input type="radio" value="master" {...register('role')} />
+                Мастер
+              </label>
+              <label className={role === 'supplier' ? 'is-active' : ''}>
+                <input type="radio" value="supplier" {...register('role')} />
+                Поставщик
+              </label>
+            </div>
             {errors.role && <span className="error">{errors.role.message}</span>}
           </fieldset>
           {error && <div className="state-box error">{error}</div>}
-          <button className="btn btn-primary btn-block" disabled={isSubmitting} type="submit">
+          <button className={`btn btn-primary btn-block${isSubmitting ? ' btn-loading' : ''}`} disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Создаём…' : 'Создать аккаунт'}
           </button>
         </form>

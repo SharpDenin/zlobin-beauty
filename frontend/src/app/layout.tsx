@@ -5,6 +5,7 @@ import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabi
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { Drawer } from '@/shared/ui/Drawer'
+import { NavIcon } from '@/shared/ui/NavIcon'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -101,7 +102,8 @@ function NavLinks({
             onNavigate?.()
           }}
         >
-          {l.label}
+          <NavIcon to={l.to} />
+          <span>{l.label}</span>
         </Link>
       ))}
     </>
@@ -220,7 +222,8 @@ export function AppShell() {
                 className={`nav-tab ${moreOpen ? 'active' : ''}`}
                 onClick={() => setMoreOpen(true)}
               >
-                {l.label}
+                <NavIcon to="/more" />
+                <span>{l.label}</span>
               </button>
             )
           }
@@ -230,7 +233,8 @@ export function AppShell() {
               to={l.to}
               className={linkActive(location.pathname, l.to, l.end) ? 'active' : ''}
             >
-              {l.label}
+              <NavIcon to={l.to} />
+              <span>{l.label}</span>
             </Link>
           )
         })}
@@ -255,7 +259,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <div className="row between">
+    <div className="page-toolbar">
       <div className="stack-sm">
         <h1>{title}</h1>
         {subtitle}

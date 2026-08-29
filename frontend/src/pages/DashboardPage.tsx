@@ -9,10 +9,10 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { CHART } from '@/shared/ui/chart-theme'
 import { tokens } from '@/shared/ui/tokens'
+import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { Drawer } from '@/shared/ui/Drawer'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { LIBRARY, makeLayouts, normalizeLayout, type Breakpoint, type WidgetId, type WidgetLayout } from '@/pages/dashboard-layout'
@@ -232,16 +232,14 @@ export function DashboardPage() {
 
   return (
     <main className="page stack dashboard-page">
-      <div className="dashboard-head">
+      <section className="hero dashboard-hero">
         <div className="stack-sm">
           <p className="eyebrow">{cabinet.label}</p>
-          <h1>Сегодня, {user?.display_name}</h1>
+          <h1>{user?.display_name}</h1>
           <p className="muted">
             {cabinet.kind === 'chain_owner' && cabinet.selectedBranch
-              ? `${cabinet.selectedOrg?.organization.name ?? 'Сеть'} · ${cabinet.selectedBranch.name}. `
-              : ''}
-            Важное и расписание на одном экране.
-            <Hint id="dash-layout" title="Ваш рабочий стол">Перетаскивайте карточки за заголовок и меняйте их размер за угол. Раскладка сохраняется автоматически.</Hint>
+              ? `${cabinet.selectedOrg?.organization.name ?? 'Сеть'} · ${cabinet.selectedBranch.name}`
+              : `${today.length} записей сегодня`}
           </p>
           {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
             <label className="field" style={{ maxWidth: 280 }}>
@@ -258,13 +256,31 @@ export function DashboardPage() {
             </label>
           )}
         </div>
-        <button className="btn btn-secondary" type="button" onClick={() => setLibraryOpen(true)}>Настроить</button>
-      </div>
+        <div className="stack-sm">
+          <div className="dashboard-quick">
+            {cabinet.can('calendar') && <Link className="btn btn-secondary btn-compact" to="/calendar">Календарь</Link>}
+            <Link className="btn btn-secondary btn-compact" to="/appointments">Записи</Link>
+            {cabinet.can('services') && <Link className="btn btn-secondary btn-compact" to="/services">Услуги</Link>}
+          </div>
+          <div className="row">
+            <button className="btn btn-secondary" type="button" onClick={() => setLibraryOpen(true)}>Настроить</button>
+            <Hint id="dash-layout" title="Рабочий стол">Перетаскивайте карточки за заголовок. Раскладка сохраняется сама.</Hint>
+          </div>
+        </div>
+      </section>
       {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
         <section className="card stack-sm trial-banner">
-          <h2>Premium активирован бесплатно на 3 месяца</h2>
-          <p>До {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')} · <Link to="/profile/subscription">Подписка</Link></p>
+          <p className="eyebrow">Premium</p>
+          <h2>Пробный период до {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}</h2>
+          <Link className="btn-link" to="/profile/subscription">Подписка</Link>
         </section>
+      )}
+
+      {layoutQ.isLoading && (
+        <div className="list">
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
+        </div>
       )}
 
       <div ref={containerRef} className="dashboard-grid-container">
@@ -318,11 +334,14 @@ export function DashboardPage() {
                       <div className="row between"><h2>Ближайшие записи</h2><Link to="/appointments">Все</Link></div>
                       {upcoming.length === 0 && <p className="muted">Нет ближайших записей</p>}
                       {upcoming.map((a) => (
-                        <Link key={a.id} to={`/appointments/${a.id}`} className="appointment-row">
-                          <time>{new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>
-                          <div><strong>{a.service_name}</strong><span>{new Date(a.starts_at).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })}</span></div>
-                          <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
-                        </Link>
+                        <AppointmentCard
+                          key={a.id}
+                          to={`/appointments/${a.id}`}
+                          serviceName={a.service_name}
+                          status={a.status}
+                          startsAt={a.starts_at}
+                          priceMinor={a.price_minor}
+                        />
                       ))}
                     </div>
                   )}

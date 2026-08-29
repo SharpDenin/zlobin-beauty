@@ -23,10 +23,11 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   })
 
   return (
-    <div className="page page-narrow stack auth-screen">
+    <div className="app-shell app-shell--auth">
+      <div className="page page-narrow stack auth-screen">
         <BrandLogo size="lg" />
         <h1>Вход</h1>
-        <p>Войдите, чтобы искать мастеров и управлять записями.</p>
+        <p className="auth-lead">Записи, мастера и салон — в одном кабинете.</p>
         <form
           className="card stack"
           onSubmit={handleSubmit(async (values) => {
@@ -53,11 +54,12 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
             {errors.password && <span className="error">{errors.password.message}</span>}
           </div>
           {error && <div className="state-box error">{error}</div>}
-          <button className="btn btn-primary btn-block" disabled={isSubmitting} type="submit">
+          <button className={`btn btn-primary btn-block${isSubmitting ? ' btn-loading' : ''}`} disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Входим…' : 'Войти'}
           </button>
         </form>
         <p>Нет аккаунта? <Link to="/register">Зарегистрироваться</Link></p>
+      </div>
     </div>
   )
 }

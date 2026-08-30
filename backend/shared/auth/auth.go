@@ -118,6 +118,19 @@ func HasRole(claims *Claims, role string) bool {
 	return false
 }
 
+func HasProfessionalRole(claims *Claims) bool {
+	if claims == nil {
+		return false
+	}
+	for _, role := range claims.Roles {
+		switch role {
+		case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
+			return true
+		}
+	}
+	return false
+}
+
 func ParseAccessToken(secret, token string) (*Claims, error) {
 	parsed, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodHS256 {

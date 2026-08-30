@@ -51,6 +51,7 @@ export type CommerceProduct = {
   category?: string
   category_id?: string | null
   available?: boolean
+  audience?: 'all' | 'professional_only'
 }
 
 export type SupplierCard = {

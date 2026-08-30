@@ -67,6 +67,7 @@ func knowledgeDTO(a domain.KnowledgeArticle) map[string]any {
 		"author_user_id": a.AuthorUserID.String(), "author_org_id": orgID, "author_name": a.AuthorName,
 		"status": status, "published": status == domain.KnowledgeStatusPublished,
 		"view_count": a.ViewCount, "favorite": a.Favorite,
+		"home_care": a.HomeCare, "professional": a.Professional, "audience_kind": knowledgeAudienceKind(a),
 		"published_at": publishedAt, "created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
 }
@@ -93,6 +94,27 @@ func knowledgeRecommendationDTO(a domain.KnowledgeArticle, context string) map[s
 		"product_id":  productID,
 		"product_ids": uuidStrings(a.ProductIDs),
 	}
+}
+
+func knowledgeAudienceKind(a domain.KnowledgeArticle) string {
+	if a.AudienceKind != "" {
+		return a.AudienceKind
+	}
+	if a.HomeCare && a.Professional {
+		return service.AudienceKindMixed
+	}
+	if a.HomeCare {
+		return service.AudienceKindHome
+	}
+	return service.AudienceKindProfessional
+}
+
+func knowledgeHomeCareOnly(r *http.Request) bool {
+	claims, ok := httpx.ClaimsFrom(r.Context())
+	if !ok {
+		return true
+	}
+	return !auth.HasProfessionalRole(claims)
 }
 
 func knowledgeExcerpt(a domain.KnowledgeArticle) string {
@@ -139,6 +161,7 @@ func (a *API) listKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q.PublishedOnly = true
+	q.HomeCareOnly = knowledgeHomeCareOnly(r)
 	if claims, ok := httpx.ClaimsFrom(r.Context()); ok {
 		q.ViewerID = &claims.UserID
 	}
@@ -197,10 +220,11 @@ func (a *API) myKnowledgeRecommendations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	in := service.KnowledgeRecommendInput{
-		ViewerID:    claims.UserID,
-		AccessToken: strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")),
-		ProductIDs:  products,
-		Query:       values.Get("q"),
+		ViewerID:     claims.UserID,
+		AccessToken:  strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")),
+		HomeCareOnly: !auth.HasProfessionalRole(claims),
+		ProductIDs:   products,
+		Query:        values.Get("q"),
 	}
 	if serviceID != nil {
 		in.ServiceID = *serviceID
@@ -231,7 +255,7 @@ func (a *API) myKnowledgeRecommendations(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *API) knowledgeFacets(w http.ResponseWriter, r *http.Request) {
-	f, err := a.svc.KnowledgeFacets(r.Context())
+	f, err := a.svc.KnowledgeFacets(r.Context(), knowledgeHomeCareOnly(r))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -260,7 +284,7 @@ func (a *API) getKnowledge(w http.ResponseWriter, r *http.Request) {
 	if claims, ok := httpx.ClaimsFrom(r.Context()); ok {
 		viewerID = &claims.UserID
 	}
-	item, err := a.svc.GetKnowledge(r.Context(), id, viewerID)
+	item, err := a.svc.GetKnowledge(r.Context(), id, viewerID, knowledgeHomeCareOnly(r))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

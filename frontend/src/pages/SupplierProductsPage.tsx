@@ -8,6 +8,7 @@ import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { Hint } from '@/shared/ui/Hint'
+import { productAudienceLabel } from '@/pages/knowledge-helpers'
 
 export function SupplierProductsPage() {
   const { accessToken } = useAuth()
@@ -40,7 +41,7 @@ export function SupplierProductsPage() {
     <main className="page stack">
       <div className="row between">
         <div className="stack-sm">
-          <h1>Товары <Hint id="product-audience" title="Аудитория товара">PROFESSIONAL_ONLY виден салонам. Розница — клиентам в магазине.</Hint></h1>
+          <h1>Товары <Hint id="product-audience" title="Аудитория товара">Для домашнего ухода — клиенты и мастера. Только для салонов — профессионалы.</Hint></h1>
           <p className="muted">{supplierOrg?.organization.name}</p>
         </div>
         <Link className="btn btn-primary" to="/supplier/products/new">Добавить</Link>
@@ -81,6 +82,7 @@ export function SupplierProductsPage() {
                   <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
                 </div>
                 <span className="muted">{availabilityLabel(p.for_sale, p.published)}</span>
+                <span className="badge badge-default">{productAudienceLabel(p.audience)}</span>
               </div>
             </Link>
           )

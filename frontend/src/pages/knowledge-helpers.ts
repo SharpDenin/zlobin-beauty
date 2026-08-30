@@ -64,3 +64,37 @@ export function shortageKnowledgeLabel(status: string) {
   if (status === 'unavailable') return 'Невозможно получить'
   return status
 }
+
+export function productAudienceLabel(audience?: string | null) {
+  if (audience === 'professional_only') return 'Только для салонов'
+  return 'Для домашнего ухода'
+}
+
+export function articleAudienceBadges(article: {
+  home_care?: boolean
+  professional?: boolean
+  audience_kind?: string
+}) {
+  const kind = article.audience_kind
+  if (kind === 'mixed' || (article.home_care && article.professional)) {
+    return [
+      { id: 'home', label: 'Для домашнего ухода' },
+      { id: 'pro', label: 'Профессиональный материал' },
+    ]
+  }
+  if (kind === 'home' || article.home_care) {
+    return [{ id: 'home', label: 'Для домашнего ухода' }]
+  }
+  return [{ id: 'pro', label: 'Профессиональный материал' }]
+}
+
+export function knowledgeEmptyTitle(professional: boolean, filtered: boolean) {
+  if (professional) return 'Материалы не найдены.'
+  if (filtered) return 'По выбранным фильтрам нет материалов для домашнего ухода.'
+  return 'В базе знаний пока нет материалов для домашнего ухода.'
+}
+
+export function clientVisibleProducts<T extends { audience?: string }>(items: T[], professional: boolean): T[] {
+  if (professional) return items
+  return items.filter((p) => p.audience !== 'professional_only')
+}

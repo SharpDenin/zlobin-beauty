@@ -52,6 +52,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("DELETE /v1/commerce/units/{id}", auth(http.HandlerFunc(a.deleteUnit)))
 	mux.Handle("POST /v1/internal/stock/consume-appointment", internal(http.HandlerFunc(a.consumeAppointment)))
 	mux.Handle("POST /v1/internal/inventory/repeat-availability", internal(http.HandlerFunc(a.internalRepeatAvailability)))
+	mux.Handle("GET /v1/internal/products/audiences", internal(http.HandlerFunc(a.internalListProductAudiences)))
 	mux.Handle("GET /v1/internal/products/{id}", internal(http.HandlerFunc(a.internalGetProduct)))
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
 	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
@@ -213,7 +214,11 @@ func (a *API) listProducts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
 		return
 	}
-	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -232,20 +237,16 @@ func (a *API) listCatalogProducts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization id"))
 		return
 	}
-	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	prof := false
-	if claims != nil {
-		for _, r := range claims.Roles {
-			switch r {
-			case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
-				prof = true
-			}
-		}
-	}
+	prof := hasProfessionalRole(roles)
 	out := make([]map[string]any, 0, len(items))
 	for _, p := range items {
 		if !domain.ProductVisibleTo(p.Audience, prof) {
@@ -263,7 +264,11 @@ func (a *API) getProduct(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
 		return
 	}
-	p, err := a.svc.GetProduct(r.Context(), claims.UserID, id)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	p, err := a.svc.GetProduct(r.Context(), claims.UserID, id, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -288,8 +293,39 @@ func (a *API) internalGetProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"id": p.ID.String(), "organization_id": p.OrganizationID.String(),
-		"name": p.Name, "brand": p.Brand, "category_id": categoryID,
+		"name": p.Name, "brand": p.Brand, "category_id": categoryID, "audience": p.Audience,
 	})
+}
+
+func (a *API) internalListProductAudiences(w http.ResponseWriter, r *http.Request) {
+	raw := strings.Split(r.URL.Query().Get("ids"), ",")
+	ids := make([]uuid.UUID, 0, len(raw))
+	for _, part := range raw {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := uuid.Parse(part)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+			return
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) > 500 {
+		httpx.WriteError(w, r, a.log, apperr.Validation("too many ids"))
+		return
+	}
+	items, err := a.svc.ListProductAudiencesInternal(r.Context(), ids)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{"id": it.ID.String(), "audience": it.Audience})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {

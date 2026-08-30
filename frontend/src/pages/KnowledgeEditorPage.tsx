@@ -7,6 +7,7 @@ import { userError } from '@/shared/lib/app-error'
 import { hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
+import { productAudienceLabel } from '@/pages/knowledge-helpers'
 import type { KnowledgeArticle } from '@/features/knowledge/types'
 import { emptyDoc, estimateReadingMinutes, docHasText, RichDocEditor } from '@/shared/ui/RichDocEditor'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
@@ -14,7 +15,7 @@ import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 
-type SupplierProduct = { id: string; brand?: string; name: string; category?: string }
+type SupplierProduct = { id: string; brand?: string; name: string; category?: string; audience?: string }
 type ProductCategory = { id: string; name: string }
 
 type Draft = {
@@ -250,7 +251,7 @@ export function KnowledgeEditorPage() {
 
       <section className="card stack">
         <h2>Связи</h2>
-        <p className="muted">Можно привязать категорию каталога без конкретного товара — или выбрать свои продукты.</p>
+        <p className="muted">Клиенты увидят статью только если среди товаров есть косметика для домашнего ухода. Статья без товаров или только с салонными средствами останется профессиональной.</p>
         <SearchableMultiSelect
           id="kb-rel-cats"
           label="Категории товаров"
@@ -265,8 +266,10 @@ export function KnowledgeEditorPage() {
               {draft.productIds.map((pid) => {
                 const p = productItems.find((x) => x.id === pid)
                 return (
-                  <button key={pid} type="button" className="chip active" onClick={() => setDraft((d) => ({ ...d, productIds: d.productIds.filter((x) => x !== pid) }))}>
-                    {p ? [p.brand, p.name].filter(Boolean).join(' · ') : 'Товар'} ×
+                  <button key={pid} type="button" className="chip active kb-product-chip" onClick={() => setDraft((d) => ({ ...d, productIds: d.productIds.filter((x) => x !== pid) }))}>
+                    <span>{p ? [p.brand, p.name].filter(Boolean).join(' · ') : 'Товар'}</span>
+                    <span className="badge badge-default">{productAudienceLabel(p?.audience)}</span>
+                    ×
                   </button>
                 )
               })}
@@ -278,6 +281,7 @@ export function KnowledgeEditorPage() {
               <li key={p.id}>
                 <button type="button" onClick={() => { setDraft((d) => ({ ...d, productIds: [...d.productIds, p.id] })); setProductQ('') }}>
                   {[p.brand, p.name].filter(Boolean).join(' · ')}
+                  <span className="muted"> · {productAudienceLabel(p.audience)}</span>
                 </button>
               </li>
             ))}

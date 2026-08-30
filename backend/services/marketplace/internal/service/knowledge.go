@@ -58,6 +58,7 @@ type KnowledgeListQuery struct {
 	ExcludeID          *uuid.UUID
 	FavoritesOnly      bool
 	PublishedOnly      bool
+	HomeCareOnly       bool
 	Sort               string
 	Limit              int
 	Offset             int
@@ -228,10 +229,13 @@ func (s *Service) ListKnowledge(ctx context.Context, q KnowledgeListQuery) (Know
 		Limit:              limit,
 		Offset:             offset,
 	}
-	if shouldRankKnowledge(q) {
+	fetchAll := shouldRankKnowledge(q) || q.HomeCareOnly
+	if fetchAll {
 		f.Limit = knowledgeRankFetchLimit
 		f.Offset = 0
-		f.Sort = ""
+		if shouldRankKnowledge(q) {
+			f.Sort = ""
+		}
 	}
 	items, err := s.store.ListKnowledgeArticles(ctx, f)
 	if err != nil {
@@ -240,19 +244,16 @@ func (s *Service) ListKnowledge(ctx context.Context, q KnowledgeListQuery) (Know
 	if items == nil {
 		items = []domain.KnowledgeArticle{}
 	}
-	total := len(items)
+	items, err = s.applyArticleAudience(ctx, items, q.HomeCareOnly)
+	if err != nil {
+		return empty, err
+	}
 	if shouldRankKnowledge(q) {
 		items = rankKnowledgeArticles(items, q, s.now().UTC())
-		total = len(items)
-		if offset > len(items) {
-			items = []domain.KnowledgeArticle{}
-		} else {
-			end := offset + limit
-			if end > len(items) {
-				end = len(items)
-			}
-			items = items[offset:end]
-		}
+	}
+	total := len(items)
+	if fetchAll {
+		items = paginateArticles(items, offset, limit)
 	} else {
 		n, err := s.store.CountKnowledgeArticles(ctx, f)
 		if err != nil {
@@ -272,18 +273,33 @@ func (s *Service) ListMyKnowledge(ctx context.Context, authorUserID uuid.UUID, q
 	return s.ListKnowledge(ctx, q)
 }
 
-func (s *Service) KnowledgeFacets(ctx context.Context) (*store.KnowledgeFacets, error) {
-	f, err := s.store.ListKnowledgeFacets(ctx)
+func (s *Service) KnowledgeFacets(ctx context.Context, homeCareOnly bool) (*store.KnowledgeFacets, error) {
+	if !homeCareOnly {
+		f, err := s.store.ListKnowledgeFacets(ctx)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if f == nil {
+			f = &store.KnowledgeFacets{}
+		}
+		return f, nil
+	}
+	items, err := s.store.ListKnowledgeArticles(ctx, store.KnowledgeListFilter{
+		PublishedOnly: true,
+		Limit:         knowledgeRankFetchLimit,
+		Offset:        0,
+	})
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if f == nil {
-		f = &store.KnowledgeFacets{}
+	items, err = s.applyArticleAudience(ctx, items, true)
+	if err != nil {
+		return nil, err
 	}
-	return f, nil
+	return facetsFromArticles(items), nil
 }
 
-func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID, viewerID *uuid.UUID) (*domain.KnowledgeArticle, error) {
+func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID, viewerID *uuid.UUID, homeCareOnly bool) (*domain.KnowledgeArticle, error) {
 	a, err := s.store.GetKnowledgeArticleForViewer(ctx, id, viewerID)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -292,25 +308,34 @@ func (s *Service) GetKnowledge(ctx context.Context, id uuid.UUID, viewerID *uuid
 		return nil, apperr.NotFound("article not found")
 	}
 	published := a.Status == domain.KnowledgeStatusPublished && a.Published
-	if published {
-		isAuthor := viewerID != nil && *viewerID == a.AuthorUserID
-		if !isAuthor {
-			n, incErr := s.store.IncrementKnowledgeViewCount(ctx, a.ID)
-			if incErr != nil {
-				return nil, apperr.Internal(incErr)
-			}
-			if n > 0 {
-				a.ViewCount = n
-			}
+	if !published {
+		ok, err := s.canPreviewKnowledge(ctx, a, viewerID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, apperr.NotFound("article not found")
+		}
+		if err := s.classifyOneArticle(ctx, a, false); err != nil {
+			return nil, err
 		}
 		return a, nil
 	}
-	ok, err := s.canPreviewKnowledge(ctx, a, viewerID)
-	if err != nil {
+	if err := s.classifyOneArticle(ctx, a, homeCareOnly); err != nil {
 		return nil, err
 	}
-	if !ok {
+	if homeCareOnly && !a.HomeCare {
 		return nil, apperr.NotFound("article not found")
+	}
+	isAuthor := viewerID != nil && *viewerID == a.AuthorUserID
+	if !isAuthor {
+		n, incErr := s.store.IncrementKnowledgeViewCount(ctx, a.ID)
+		if incErr != nil {
+			return nil, apperr.Internal(incErr)
+		}
+		if n > 0 {
+			a.ViewCount = n
+		}
 	}
 	return a, nil
 }

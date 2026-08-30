@@ -2,8 +2,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
-import { hasMasterAccess, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
-import { KnowledgeCard } from '@/features/knowledge/KnowledgeCard'
+import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
+import { KnowledgeCard, KnowledgeCardSkeleton } from '@/features/knowledge/KnowledgeCard'
 import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
 import {
   emptyFilters,
@@ -16,7 +16,9 @@ import {
   type KnowledgeFilters,
   type KnowledgeListResponse,
 } from '@/features/knowledge/types'
+import { articleAudienceBadges, knowledgeEmptyTitle } from '@/pages/knowledge-helpers'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type Facets = {
   categories: KnowledgeFacet[]
@@ -33,10 +35,11 @@ export function KnowledgeListPage() {
   const { accessToken, user } = useAuth()
   const isSupplier = hasSupplierAccess(user) && !hasMasterAccess(user)
   if (isSupplier) return <SupplierKnowledgeHome />
-  return <KnowledgeHub token={accessToken} />
+  const professional = hasMasterAccess(user) || hasSalonAdmin(user)
+  return <KnowledgeHub token={accessToken} professional={professional} />
 }
 
-function KnowledgeHub({ token }: { token: string | null }) {
+function KnowledgeHub({ token, professional }: { token: string | null; professional: boolean }) {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const filters = useMemo(() => filtersFromSearch(params), [params])
@@ -208,7 +211,11 @@ function KnowledgeHub({ token }: { token: string | null }) {
       <section className="kb-hero card stack">
         <p className="eyebrow">Salon-X</p>
         <h1>База знаний</h1>
-        <p className="muted">профессиональные материалы, технологии, инструкции и рекомендации поставщиков.</p>
+        <p className="muted">
+          {professional
+            ? 'Материалы для салона и домашнего ухода: технологии, инструкции и рекомендации поставщиков.'
+            : 'Рекомендации по домашнему уходу и косметика, которую можно использовать дома.'}
+        </p>
         <form
           className="kb-search-form"
           onSubmit={(e) => {
@@ -327,8 +334,14 @@ function KnowledgeHub({ token }: { token: string | null }) {
         </section>
       )}
 
-      {list.isLoading && <div className="state-box">Загрузка материалов…</div>}
-      {list.isError && <div className="state-box error">Не удалось загрузить базу знаний</div>}
+      {list.isLoading && (
+        <div className="kb-grid" aria-busy="true" aria-label="Загрузка материалов">
+          <KnowledgeCardSkeleton />
+          <KnowledgeCardSkeleton />
+          <KnowledgeCardSkeleton />
+        </div>
+      )}
+      {list.isError && <ErrorBanner error={list.error} fallbackTitle="Не удалось загрузить базу знаний" />}
 
       {browseHome && (recommended.data?.items?.length ?? 0) > 0 && (
         <section className="stack kb-section">
@@ -336,7 +349,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
           <p className="muted">Подобрано по связанным товарам, бренду и актуальности материалов</p>
           <div className="kb-grid">
             {recommended.data!.items.map((a) => (
-              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+              <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
             ))}
           </div>
         </section>
@@ -347,7 +360,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
           <h2>Избранное</h2>
           <div className="kb-grid">
             {favoritesSec.data!.items.map((a) => (
-              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+              <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
             ))}
           </div>
         </section>
@@ -358,7 +371,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
           <h2>Новое</h2>
           <div className="kb-grid">
             {newest.data!.items.map((a) => (
-              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+              <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
             ))}
           </div>
         </section>
@@ -368,21 +381,31 @@ function KnowledgeHub({ token }: { token: string | null }) {
         <h2>{browseHome ? 'Все материалы' : 'Результаты'}</h2>
         {!list.isLoading && items.length === 0 && (
           <div className="empty-state">
-            <h3>По выбранным фильтрам материалов нет</h3>
-            <p className="muted">Снимите один из фильтров или сбросьте все условия поиска.</p>
-            <div className="chip-row">
-              {activeChips.map((c) => (
-                <button key={c.key} type="button" className="chip active" onClick={c.clear}>{c.label} ×</button>
-              ))}
-            </div>
-            <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
-              Сбросить фильтры
-            </button>
+            <h3>{knowledgeEmptyTitle(professional, filtersActive(filters))}</h3>
+            <p className="muted">
+              {filtersActive(filters)
+                ? 'Снимите один из фильтров или сбросьте все условия поиска.'
+                : professional
+                  ? 'Попробуйте изменить поиск или сбросить фильтры.'
+                  : 'Когда поставщики опубликуют рекомендации по домашней косметике, они появятся здесь.'}
+            </p>
+            {filtersActive(filters) && (
+              <>
+                <div className="chip-row">
+                  {activeChips.map((c) => (
+                    <button key={c.key} type="button" className="chip active" onClick={c.clear}>{c.label} ×</button>
+                  ))}
+                </div>
+                <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
+                  Сбросить фильтры
+                </button>
+              </>
+            )}
           </div>
         )}
         <div className="kb-grid">
           {items.map((a) => (
-            <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+            <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
           ))}
         </div>
         {hasMore && (
@@ -411,8 +434,8 @@ function SupplierKnowledgeHome() {
         </div>
         <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
       </div>
-      {mine.isLoading && <div className="state-box">Загрузка…</div>}
-      {mine.isError && <div className="state-box error">Не удалось загрузить материалы</div>}
+      {mine.isLoading && <div className="kb-grid" aria-busy="true"><KnowledgeCardSkeleton /><KnowledgeCardSkeleton /></div>}
+      {mine.isError && <ErrorBanner error={mine.error} fallbackTitle="Не удалось загрузить материалы" />}
       {!mine.isLoading && items.length === 0 && (
         <div className="empty-state">
           <h2>Материалов пока нет</h2>
@@ -430,6 +453,11 @@ function SupplierKnowledgeHome() {
               </span>
             </div>
             <p className="muted">{[a.category, a.brand, a.author_name].filter(Boolean).join(' · ')}</p>
+            <div className="chip-row">
+              {articleAudienceBadges(a).map((b) => (
+                <span key={b.id} className={`badge ${b.id === 'home' ? 'badge-success' : 'badge-default'}`}>{b.label}</span>
+              ))}
+            </div>
             <div className="row">
               <Link className="btn btn-secondary btn-compact" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
               <Link className="btn btn-ghost btn-compact" to={`/knowledge/${a.id}`}>Предпросмотр</Link>

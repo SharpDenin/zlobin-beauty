@@ -26,24 +26,24 @@ type MasterProfileType struct {
 }
 
 type MasterProfile struct {
-	ID               uuid.UUID
-	UserID           uuid.UUID
-	OrganizationID   uuid.UUID
-	BranchID         *uuid.UUID
-	DisplayName      string
-	Bio              string
-	Specializations  []string
-	City             string
-	ExperienceYears  int
-	Education        string
-	PhotoMediaID     *uuid.UUID
-	WorkType         string
-	RatingAvg        float64
-	RatingCount      int
-	Published        bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	ProfessionTypes  []ProfessionType
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	OrganizationID  uuid.UUID
+	BranchID        *uuid.UUID
+	DisplayName     string
+	Bio             string
+	Specializations []string
+	City            string
+	ExperienceYears int
+	Education       string
+	PhotoMediaID    *uuid.UUID
+	WorkType        string
+	RatingAvg       float64
+	RatingCount     int
+	Published       bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ProfessionTypes []ProfessionType
 }
 
 type ServiceCategory struct {
@@ -142,4 +142,8 @@ type KnowledgeArticle struct {
 	ArchivedAt         *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	// Computed from linked product.audience; not stored.
+	HomeCare     bool
+	Professional bool
+	AudienceKind string
 }

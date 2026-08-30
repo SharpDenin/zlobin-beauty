@@ -6,8 +6,10 @@ import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
-import { KnowledgeCard } from '@/features/knowledge/KnowledgeCard'
+import { articleAudienceBadges, clientVisibleProducts, productAudienceLabel } from '@/pages/knowledge-helpers'
+import { KnowledgeCard, KnowledgeCardSkeleton } from '@/features/knowledge/KnowledgeCard'
 import type { KnowledgeArticle, KnowledgeListResponse } from '@/features/knowledge/types'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type RelatedProduct = {
   id: string
@@ -96,11 +98,25 @@ export function KnowledgeArticlePage() {
     },
   })
 
-  if (query.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  const relatedProducts = clientVisibleProducts(related.data ?? [], professional)
+
+  if (query.isLoading) {
+    return (
+      <main className="page stack kb-article" aria-busy="true">
+        <div className="article-cover"><div className="skeleton skeleton-card kb-skel-cover" /></div>
+        <div className="kb-article-column stack">
+          <div className="skeleton skeleton-line" />
+          <div className="skeleton skeleton-line" />
+          <div className="skeleton skeleton-card" />
+        </div>
+        <KnowledgeCardSkeleton />
+      </main>
+    )
+  }
   if (query.isError || !query.data) {
     return (
       <main className="page stack">
-        <div className="state-box error">Статья не найдена</div>
+        <ErrorBanner error={query.error ?? 'Статья не найдена'} fallbackTitle="Статья не найдена" />
         <Link className="btn btn-secondary" to="/knowledge">К списку</Link>
       </main>
     )
@@ -124,15 +140,22 @@ export function KnowledgeArticlePage() {
         )}
       </div>
       {isPreview && <div className="state-box">Предпросмотр</div>}
-      {a.cover_media_id && (
+      {a.cover_media_id ? (
         <div className="article-cover">
           <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} />
+        </div>
+      ) : (
+        <div className="article-cover article-cover-fallback">
+          <div className="product-photo placeholder">{(a.category || a.title).slice(0, 2)}</div>
         </div>
       )}
       <article className="kb-article-column stack">
         <div className="stack-sm">
           <h1>{a.title}</h1>
-          <div className="row">
+          <div className="row wrap">
+            {articleAudienceBadges(a).map((b) => (
+              <span key={b.id} className={`badge ${b.id === 'home' ? 'badge-success' : 'badge-default'}`}>{b.label}</span>
+            ))}
             {a.brand && <span className="badge badge-default">{a.brand}</span>}
             {a.category && <span className="badge badge-default">{a.category}</span>}
             {typeof a.published === 'boolean' && supplier && (
@@ -147,9 +170,9 @@ export function KnowledgeArticlePage() {
             {new Date(publishedOn).toLocaleDateString('ru-RU')}
             {reading ? ` · ${reading}` : ''}
           </p>
-          {productIds.length > 0 && related.data && related.data.length > 0 && (
+          {relatedProducts.length > 0 && (
             <div className="chip-row">
-              {related.data.slice(0, 6).map((p) => (
+              {relatedProducts.slice(0, 6).map((p) => (
                 <Link key={p.id} className="chip" to={productHref(p.id)}>{[p.brand, p.name].filter(Boolean).join(' · ')}</Link>
               ))}
             </div>
@@ -161,11 +184,11 @@ export function KnowledgeArticlePage() {
         <RichDocRenderer content={a.content ?? ''} contentFormat={a.content_format} token={accessToken} />
       </article>
 
-      {(related.data?.length ?? 0) > 0 && (
+      {relatedProducts.length > 0 && (
         <section className="stack-sm">
           <h2>Связанные товары</h2>
           <div className="product-grid">
-            {related.data!.map((p) => (
+            {relatedProducts.map((p) => (
               <Link key={p.id} className="product-card" to={productHref(p.id)}>
                 {p.photo_media_id ? (
                   <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} className="product-photo" />
@@ -175,9 +198,7 @@ export function KnowledgeArticlePage() {
                 <p className="muted">{[p.brand, p.volume_label].filter(Boolean).join(' · ')}</p>
                 <strong>{p.name}</strong>
                 <span>{formatMoney(p.price_minor)}</span>
-                <span className="muted">
-                  {p.audience === 'professional_only' ? 'Для мастеров' : 'Доступен в каталоге'}
-                </span>
+                <span className="muted">{productAudienceLabel(p.audience)}</span>
                 <span className="btn btn-secondary btn-compact">Открыть товар</span>
               </Link>
             ))}
@@ -190,7 +211,7 @@ export function KnowledgeArticlePage() {
           <h2>Ещё материалы по этому продукту</h2>
           <div className="kb-grid">
             {relatedArticles.data!.items.map((item) => (
-              <KnowledgeCard key={item.id} article={item} token={accessToken} />
+              <KnowledgeCard key={item.id} article={item} token={accessToken} showAudience={professional} />
             ))}
           </div>
         </section>

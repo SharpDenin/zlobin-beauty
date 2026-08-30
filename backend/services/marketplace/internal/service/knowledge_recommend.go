@@ -27,6 +27,7 @@ const (
 type KnowledgeRecommendInput struct {
 	ViewerID       uuid.UUID
 	AccessToken    string
+	HomeCareOnly   bool
 	OrganizationID uuid.UUID
 	ServiceID      uuid.UUID
 	AppointmentID  uuid.UUID
@@ -136,6 +137,7 @@ func (s *Service) RecommendKnowledge(ctx context.Context, in KnowledgeRecommendI
 		ProductIDs:    productIDs,
 		ViewerID:      &in.ViewerID,
 		PublishedOnly: true,
+		HomeCareOnly:  in.HomeCareOnly,
 		Sort:          "recommended",
 		Limit:         12,
 	})

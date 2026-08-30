@@ -264,7 +264,7 @@ func (s *Service) GetProductInternal(ctx context.Context, id uuid.UUID) (*domain
 	return s.getProductOrErr(ctx, id)
 }
 
-func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.Product, error) {
+func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID, professional bool) (*domain.Product, error) {
 	p, err := s.getProductOrErr(ctx, id)
 	if err != nil {
 		return nil, err
@@ -272,16 +272,36 @@ func (s *Service) GetProduct(ctx context.Context, actor, id uuid.UUID) (*domain.
 	if err := s.requireAnyMembership(ctx, p.OrganizationID, actor); err == nil {
 		return p, nil
 	}
-	if p.Published && p.ForSale {
-		return p, nil
+	if !p.Published {
+		return nil, apperr.NotFound("product not found")
 	}
-	if p.Published {
-		return p, nil
+	if !domain.ProductVisibleTo(p.Audience, professional) {
+		return nil, apperr.NotFound("product not found")
 	}
-	return nil, apperr.NotFound("product not found")
+	return p, nil
 }
 
-func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]domain.Product, error) {
+type ProductAudienceItem struct {
+	ID       uuid.UUID
+	Audience string
+}
+
+func (s *Service) ListProductAudiencesInternal(ctx context.Context, ids []uuid.UUID) ([]ProductAudienceItem, error) {
+	if len(ids) == 0 {
+		return []ProductAudienceItem{}, nil
+	}
+	items, err := s.store.ListProductsByIDs(ctx, ids)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	out := make([]ProductAudienceItem, 0, len(items))
+	for _, p := range items {
+		out = append(out, ProductAudienceItem{ID: p.ID, Audience: p.Audience})
+	}
+	return out, nil
+}
+
+func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID, professional bool) ([]domain.Product, error) {
 	memberErr := s.requireAnyMembership(ctx, orgID, actor)
 	items, err := s.store.ListProducts(ctx, orgID)
 	if err != nil {
@@ -290,11 +310,10 @@ func (s *Service) ListProducts(ctx context.Context, actor, orgID uuid.UUID) ([]d
 	if items == nil {
 		items = []domain.Product{}
 	}
-	// Non-members may browse published for-sale catalog.
 	if memberErr != nil {
 		out := make([]domain.Product, 0, len(items))
 		for _, p := range items {
-			if p.Published && p.ForSale && p.ArchivedAt == nil {
+			if p.Published && p.ForSale && p.ArchivedAt == nil && domain.ProductVisibleTo(p.Audience, professional) {
 				out = append(out, p)
 			}
 		}

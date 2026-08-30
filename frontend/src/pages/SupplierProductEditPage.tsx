@@ -87,7 +87,7 @@ export function SupplierProductEditPage() {
       delivery_days: p.delivery_days ?? 3,
       for_sale: p.for_sale !== false,
       published: p.published !== false,
-      audience: (p as { audience?: string }).audience === 'professional_only' ? 'professional_only' : 'all',
+      audience: p.audience === 'professional_only' ? 'professional_only' : 'all',
     })
     setPhotoMediaId(p.photo_media_id ?? null)
   }, [existing.data, form])
@@ -235,11 +235,18 @@ export function SupplierProductEditPage() {
           <span>Опубликован в каталоге</span>
         </label>
         <div className="field">
-          <label>Кто видит товар</label>
-          <select {...form.register('audience')}>
-            <option value="all">Все: клиенты и мастера</option>
-            <option value="professional_only">Только профессионалы</option>
-          </select>
+          <fieldset className="stack-sm">
+            <legend>Кому доступен товар</legend>
+            <label className="field-check">
+              <input type="radio" value="all" {...form.register('audience')} />
+              <span>Для домашнего ухода</span>
+            </label>
+            <label className="field-check">
+              <input type="radio" value="professional_only" {...form.register('audience')} />
+              <span>Только для салонов</span>
+            </label>
+          </fieldset>
+          <span className="hint">Клиенты видят товар и связанные статьи базы знаний только при выборе домашнего ухода.</span>
         </div>
         <button className="btn btn-primary btn-block" type="submit" disabled={save.isPending}>
           {save.isPending ? 'Сохраняем…' : 'Сохранить'}

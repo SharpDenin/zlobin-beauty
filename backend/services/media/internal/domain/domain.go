@@ -17,6 +17,7 @@ const (
 	PurposeArticle     = "article"
 	PurposeVideo       = "video"
 	PurposeService     = "service"
+	PurposeMessage     = "message"
 )
 
 const MaxUploadBytes = 5 << 20       // 5 MiB images/docs
@@ -37,7 +38,7 @@ type MediaObject struct {
 
 func ValidPurpose(p string) bool {
 	switch p {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService, PurposeMessage:
 		return true
 	default:
 		return false
@@ -55,10 +56,26 @@ func ValidContentType(ct string) bool {
 }
 
 func MaxBytesForPurpose(purpose string) int64 {
-	if purpose == PurposeVideo {
+	if purpose == PurposeVideo || purpose == PurposeMessage {
 		return MaxVideoUploadBytes
 	}
 	return MaxUploadBytes
+}
+
+func AllowsVideo(purpose string) bool {
+	return purpose == PurposeVideo || purpose == PurposeMessage
+}
+
+func ContentAllowedForPurpose(purpose, ct string) bool {
+	if purpose == PurposeMessage {
+		switch ct {
+		case "image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime":
+			return true
+		default:
+			return false
+		}
+	}
+	return ValidContentType(ct)
 }
 
 func ExtensionForContentType(ct string) string {

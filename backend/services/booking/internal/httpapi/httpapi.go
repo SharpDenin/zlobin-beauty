@@ -29,6 +29,7 @@ func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
+	mux.HandleFunc("GET /v1/internal/client-master-relationship", a.internalClientMasterRelationship)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("PUT /v1/calendar/working-hours", auth(http.HandlerFunc(a.setStaffHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
@@ -111,6 +112,29 @@ func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
 		out = append(out, appointmentDTO(item))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) internalClientMasterRelationship(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	masterID, err := uuid.Parse(r.URL.Query().Get("master_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("master_user_id is required"))
+		return
+	}
+	clientID, err := uuid.Parse(r.URL.Query().Get("client_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("client_user_id is required"))
+		return
+	}
+	ok, err := a.svc.HasClientMasterAppointment(r.Context(), masterID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"related": ok})
 }
 
 func (a *API) setHours(w http.ResponseWriter, r *http.Request) {

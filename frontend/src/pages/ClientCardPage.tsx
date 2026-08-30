@@ -11,6 +11,8 @@ import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
 import { Modal } from '@/shared/ui/Modal'
+import { userError } from '@/shared/lib/app-error'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type ClientCard = {
   id: string
@@ -78,6 +80,7 @@ function formulaComponents(f: Formula): string[] {
 export function ClientCardPage() {
   const { id, appointmentId } = useParams()
   const { accessToken, user } = useAuth()
+  const messenger = useMessenger()
   const canMaster = hasMasterAccess(user)
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -236,6 +239,20 @@ export function ClientCardPage() {
             <p data-testid="client-contacts">{card.phone || card.email || 'Контакты не указаны'}</p>
           )}
           {card.preferences && <p className="muted" data-testid="client-preferences">Предпочтения: {card.preferences}</p>}
+          <button
+            className="btn btn-secondary"
+            type="button"
+            data-testid="write-client"
+            onClick={async () => {
+              try {
+                await messenger.start({ type: 'client_master', client_user_id: card.user_id })
+              } catch (e) {
+                setError(userError(e, 'Не удалось открыть переписку'))
+              }
+            }}
+          >
+            Написать
+          </button>
           <button
             className="btn btn-secondary"
             type="button"

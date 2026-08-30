@@ -41,6 +41,7 @@ func (a *API) createConversation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type                   string  `json:"type"`
 		MasterUserID           *string `json:"master_user_id"`
+		ClientUserID           *string `json:"client_user_id"`
 		SupplierOrganizationID *string `json:"supplier_organization_id"`
 		EventID                *string `json:"event_id"`
 		RequestID              *string `json:"request_id"`
@@ -54,6 +55,10 @@ func (a *API) createConversation(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if in.MasterUserID, err = parseOptionalUUID(req.MasterUserID); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+		return
+	}
+	if in.ClientUserID, err = parseOptionalUUID(req.ClientUserID); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client_user_id"))
 		return
 	}
 	if in.SupplierOrganizationID, err = parseOptionalUUID(req.SupplierOrganizationID); err != nil {
@@ -112,7 +117,7 @@ func (a *API) listMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		before = &t
 	}
-	items, err := a.svc.ListMessages(r.Context(), id, claims.UserID, limit, before)
+	items, hasMore, err := a.svc.ListMessages(r.Context(), id, claims.UserID, limit, before)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -121,7 +126,7 @@ func (a *API) listMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range items {
 		out = append(out, messageDTO(m))
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out, "limit": limit})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out, "limit": limit, "has_more": hasMore})
 }
 
 func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
@@ -132,13 +137,19 @@ func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Body string `json:"body"`
+		Body    string  `json:"body"`
+		MediaID *string `json:"media_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	m, err := a.svc.SendMessage(r.Context(), id, claims.UserID, req.Body)
+	mediaID, err := parseOptionalUUID(req.MediaID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid media_id"))
+		return
+	}
+	m, err := a.svc.SendMessage(r.Context(), id, claims.UserID, service.SendMessageInput{Body: req.Body, MediaID: mediaID})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -158,6 +169,25 @@ func (a *API) readConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) mediaAccess(w http.ResponseWriter, r *http.Request) {
+	mediaID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	userID, err := uuid.Parse(r.URL.Query().Get("user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_id"))
+		return
+	}
+	ok, err := a.svc.MediaAccessible(r.Context(), mediaID, userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"allowed": ok})
 }
 
 func parseOptionalUUID(raw *string) (*uuid.UUID, error) {
@@ -221,9 +251,17 @@ func messageDTO(m domain.Message) map[string]any {
 	if m.DeletedAt != nil {
 		body = ""
 	}
+	kind := m.Kind
+	if kind == "" {
+		kind = domain.MessageKindText
+	}
+	var mediaID any
+	if m.MediaID != nil {
+		mediaID = m.MediaID.String()
+	}
 	return map[string]any{
 		"id": m.ID.String(), "conversation_id": m.ConversationID.String(),
-		"sender_user_id": m.SenderUserID.String(), "body": body,
+		"sender_user_id": m.SenderUserID.String(), "kind": kind, "body": body, "media_id": mediaID,
 		"created_at": m.CreatedAt, "edited_at": m.EditedAt, "deleted_at": m.DeletedAt,
 	}
 }

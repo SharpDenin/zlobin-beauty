@@ -23,6 +23,7 @@ type MessengerDeps struct {
 	IdentityURL      string
 	OrganizationsURL string
 	MarketplaceURL   string
+	MediaURL         string
 	InternalToken    string
 }
 
@@ -30,6 +31,7 @@ func (s *Service) WithMessenger(d MessengerDeps) *Service {
 	s.identityURL = strings.TrimRight(d.IdentityURL, "/")
 	s.organizationsURL = strings.TrimRight(d.OrganizationsURL, "/")
 	s.marketplaceURL = strings.TrimRight(d.MarketplaceURL, "/")
+	s.mediaURL = strings.TrimRight(d.MediaURL, "/")
 	s.internalToken = d.InternalToken
 	return s
 }
@@ -64,6 +66,7 @@ type CreateConversationInput struct {
 	ActorID                uuid.UUID
 	Type                   string
 	MasterUserID           *uuid.UUID
+	ClientUserID           *uuid.UUID
 	SupplierOrganizationID *uuid.UUID
 	EventID                *uuid.UUID
 	RequestID              *uuid.UUID
@@ -74,7 +77,7 @@ func (s *Service) CreateConversation(ctx context.Context, in CreateConversationI
 	typ := strings.TrimSpace(in.Type)
 	switch typ {
 	case domain.ConversationClientMaster:
-		return s.createClientMaster(ctx, in.ActorID, in.MasterUserID)
+		return s.createClientMaster(ctx, in)
 	case domain.ConversationMasterSupplier:
 		return s.createMasterSupplier(ctx, in.ActorID, in.MasterUserID, in.SupplierOrganizationID)
 	case domain.ConversationMasterclass:
@@ -86,29 +89,55 @@ func (s *Service) CreateConversation(ctx context.Context, in CreateConversationI
 	}
 }
 
-func (s *Service) createClientMaster(ctx context.Context, actor uuid.UUID, masterUserID *uuid.UUID) (*domain.Conversation, error) {
-	if masterUserID == nil {
-		return nil, apperr.Validation("master_user_id is required")
+func (s *Service) createClientMaster(ctx context.Context, in CreateConversationInput) (*domain.Conversation, error) {
+	actor := in.ActorID
+	var clientID, masterID uuid.UUID
+	if in.ClientUserID != nil {
+		clientID = *in.ClientUserID
+		masterID = actor
+		if clientID == actor {
+			return nil, apperr.Validation("cannot message yourself")
+		}
+		published, err := s.fetchPublishedMaster(ctx, masterID)
+		if err != nil {
+			return nil, err
+		}
+		if !published {
+			return nil, apperr.Forbidden("only a published master can message a client")
+		}
+		related, err := s.fetchBookingRelationship(ctx, masterID, clientID)
+		if err != nil {
+			return nil, err
+		}
+		if !related {
+			return nil, apperr.Forbidden("no booking relationship with this client")
+		}
+	} else {
+		if in.MasterUserID == nil {
+			return nil, apperr.Validation("master_user_id is required")
+		}
+		masterID = *in.MasterUserID
+		clientID = actor
+		if masterID == actor {
+			return nil, apperr.Validation("cannot message yourself")
+		}
+		published, err := s.fetchPublishedMaster(ctx, masterID)
+		if err != nil {
+			return nil, err
+		}
+		if !published {
+			return nil, apperr.Forbidden("master is not available")
+		}
 	}
-	if *masterUserID == actor {
-		return nil, apperr.Validation("cannot message yourself")
-	}
-	master, err := s.fetchPublishedMaster(ctx, *masterUserID)
-	if err != nil {
-		return nil, err
-	}
-	if !master {
-		return nil, apperr.Forbidden("master is not available")
-	}
-	key := ContextKeyClientMaster(actor, *masterUserID)
+	key := ContextKeyClientMaster(clientID, masterID)
 	now := s.now().UTC()
 	c := domain.Conversation{
 		ID: ids.New(), Type: domain.ConversationClientMaster, ContextKey: key,
-		ContextType: "master_user", ContextID: masterUserID, CreatedAt: now, UpdatedAt: now,
+		ContextType: "master_user", ContextID: &masterID, CreatedAt: now, UpdatedAt: now,
 	}
 	parts := []domain.Participant{
-		{ConversationID: c.ID, UserID: actor, ParticipantRole: "client", JoinedAt: now},
-		{ConversationID: c.ID, UserID: *masterUserID, ParticipantRole: "master", JoinedAt: now},
+		{ConversationID: c.ID, UserID: clientID, ParticipantRole: "client", JoinedAt: now},
+		{ConversationID: c.ID, UserID: masterID, ParticipantRole: "master", JoinedAt: now},
 	}
 	return s.findOrInsert(ctx, c, parts, actor)
 }
@@ -305,40 +334,94 @@ func (s *Service) hydrate(ctx context.Context, c domain.Conversation, actor uuid
 	return &c, nil
 }
 
-func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.UUID, limit int, before *time.Time) ([]domain.Message, error) {
+func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.UUID, limit int, before *time.Time) ([]domain.Message, bool, error) {
 	if err := s.requireParticipant(ctx, conversationID, actor); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	items, err := s.store.ListMessages(ctx, conversationID, limit, before)
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	items, err := s.store.ListMessages(ctx, conversationID, limit+1, before)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return nil, false, apperr.Internal(err)
 	}
 	if items == nil {
 		items = []domain.Message{}
 	}
-	return items, nil
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[1:]
+	}
+	return items, hasMore, nil
 }
 
-func (s *Service) SendMessage(ctx context.Context, conversationID, actor uuid.UUID, body string) (*domain.Message, error) {
+type SendMessageInput struct {
+	Body    string
+	MediaID *uuid.UUID
+}
+
+func ValidateMessageContent(body string, hasMedia bool) error {
+	body = store.NormalizeBody(body)
+	if body == "" && !hasMedia {
+		return apperr.Validation("message text or attachment is required")
+	}
+	if len([]rune(body)) > domain.MaxMessageRunes {
+		return apperr.Validation("body is too long")
+	}
+	return nil
+}
+
+func MessageKindFromContentType(ct string, hasMedia bool) string {
+	if !hasMedia {
+		return domain.MessageKindText
+	}
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if strings.HasPrefix(ct, "video/") {
+		return domain.MessageKindVideo
+	}
+	return domain.MessageKindImage
+}
+
+func (s *Service) SendMessage(ctx context.Context, conversationID, actor uuid.UUID, in SendMessageInput) (*domain.Message, error) {
 	if err := s.requireParticipant(ctx, conversationID, actor); err != nil {
 		return nil, err
 	}
-	body = store.NormalizeBody(body)
-	if body == "" {
-		return nil, apperr.Validation("body is required")
+	body := store.NormalizeBody(in.Body)
+	if err := ValidateMessageContent(body, in.MediaID != nil); err != nil {
+		return nil, err
 	}
-	if len([]rune(body)) > 4000 {
-		return nil, apperr.Validation("body is too long")
+	kind := domain.MessageKindText
+	if in.MediaID != nil {
+		meta, err := s.fetchMedia(ctx, *in.MediaID)
+		if err != nil {
+			return nil, err
+		}
+		if meta.OwnerUserID != actor {
+			return nil, apperr.Forbidden("attachment does not belong to you")
+		}
+		if meta.Purpose != "message" {
+			return nil, apperr.Validation("attachment must be uploaded with purpose=message")
+		}
+		kind = MessageKindFromContentType(meta.ContentType, true)
 	}
 	now := s.now().UTC()
 	m := domain.Message{
-		ID: ids.New(), ConversationID: conversationID, SenderUserID: actor, Body: body, CreatedAt: now,
+		ID: ids.New(), ConversationID: conversationID, SenderUserID: actor,
+		Kind: kind, Body: body, MediaID: in.MediaID, CreatedAt: now,
 	}
 	if err := s.store.InsertMessage(ctx, m); err != nil {
 		return nil, apperr.Internal(err)
 	}
-	s.notifyNewMessage(ctx, conversationID, actor, body)
+	s.notifyNewMessage(ctx, conversationID, actor, messagePreview(m))
 	return &m, nil
+}
+
+func (s *Service) MediaAccessible(ctx context.Context, mediaID, userID uuid.UUID) (bool, error) {
+	ok, err := s.store.UserCanAccessMedia(ctx, mediaID, userID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ok, nil
 }
 
 func (s *Service) MarkConversationRead(ctx context.Context, conversationID, actor uuid.UUID) error {
@@ -372,17 +455,31 @@ func (s *Service) requireParticipant(ctx context.Context, conversationID, actor 
 	return nil
 }
 
-func (s *Service) notifyNewMessage(ctx context.Context, conversationID, sender uuid.UUID, body string) {
+func messagePreview(m domain.Message) string {
+	body := strings.TrimSpace(m.Body)
+	if body != "" {
+		runes := []rune(body)
+		if len(runes) > 80 {
+			return string(runes[:80]) + "…"
+		}
+		return body
+	}
+	switch m.Kind {
+	case domain.MessageKindVideo:
+		return "Видео"
+	case domain.MessageKindImage:
+		return "Фото"
+	default:
+		return "Сообщение"
+	}
+}
+
+func (s *Service) notifyNewMessage(ctx context.Context, conversationID, sender uuid.UUID, preview string) {
 	parts, err := s.store.ListParticipants(ctx, conversationID)
 	if err != nil {
 		return
 	}
 	from := s.displayName(ctx, sender)
-	preview := body
-	runes := []rune(preview)
-	if len(runes) > 80 {
-		preview = string(runes[:80]) + "…"
-	}
 	for _, p := range parts {
 		if p.UserID == sender {
 			continue
@@ -418,6 +515,81 @@ func (s *Service) displayName(ctx context.Context, userID uuid.UUID) string {
 		return "Пользователь"
 	}
 	return strings.TrimSpace(u.DisplayName)
+}
+
+type mediaMeta struct {
+	OwnerUserID uuid.UUID
+	Purpose     string
+	ContentType string
+}
+
+func (s *Service) fetchMedia(ctx context.Context, id uuid.UUID) (*mediaMeta, error) {
+	if s.mediaURL == "" || s.internalToken == "" {
+		return nil, apperr.Internal(fmt.Errorf("media is not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.mediaURL+"/v1/internal/media/"+id.String(), nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, apperr.NotFound("attachment not found")
+	}
+	if resp.StatusCode >= 300 {
+		return nil, apperr.Internal(fmt.Errorf("media status %d", resp.StatusCode))
+	}
+	var body struct {
+		OwnerUserID string `json:"owner_user_id"`
+		Purpose     string `json:"purpose"`
+		ContentType string `json:"content_type"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	owner, err := uuid.Parse(body.OwnerUserID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &mediaMeta{OwnerUserID: owner, Purpose: body.Purpose, ContentType: body.ContentType}, nil
+}
+
+func (s *Service) fetchBookingRelationship(ctx context.Context, masterUserID, clientUserID uuid.UUID) (bool, error) {
+	if s.bookingURL == "" || s.internalToken == "" {
+		return false, apperr.Internal(fmt.Errorf("booking is not configured"))
+	}
+	u, err := url.Parse(s.bookingURL + "/v1/internal/client-master-relationship")
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	q := u.Query()
+	q.Set("master_user_id", masterUserID.String())
+	q.Set("client_user_id", clientUserID.String())
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return false, apperr.Internal(fmt.Errorf("booking status %d", resp.StatusCode))
+	}
+	var body struct {
+		Related bool `json:"related"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return false, apperr.Internal(err)
+	}
+	return body.Related, nil
 }
 
 func (s *Service) fetchPublishedMaster(ctx context.Context, userID uuid.UUID) (bool, error) {
@@ -574,4 +746,3 @@ func (s *Service) fetchModelRequestAccess(ctx context.Context, requestID, actor,
 	}
 	return body.Allowed, nil
 }
-

@@ -268,6 +268,12 @@ func main() {
 		log.Printf("ok appointment=%s", apptID)
 	}
 
+	if err := seedMessenger(client, base, client1, master1, supplier1, sup1Org); err != nil {
+		log.Printf("warn messenger: %v", err)
+	} else {
+		log.Printf("ok messenger demo conversations")
+	}
+
 	if err := seedOrders(client, base, master1, supplier1, m1Org, m1Branch, products1); err != nil {
 		log.Printf("warn orders: %v", err)
 	} else {
@@ -2405,6 +2411,130 @@ func seedMaster2Inventory(c *http.Client, base string, master, supplier authUser
 			return fmt.Errorf("accept demo order status %d %v", stAcc, err)
 		}
 		log.Printf("ok master2 demo stock order=%s", id)
+	}
+	return nil
+}
+
+func seedMessenger(c *http.Client, base string, clientUser, master, supplier authUser, supplierOrgID string) error {
+	if err := seedClientMasterChat(c, base, clientUser, master); err != nil {
+		return err
+	}
+	return seedMasterSupplierChat(c, base, master, supplier, supplierOrgID)
+}
+
+func conversationHasPhrase(c *http.Client, base, token, conversationID, phrase string) bool {
+	var msgs struct {
+		Items []struct {
+			Body string `json:"body"`
+		} `json:"items"`
+	}
+	_, _ = doJSON(c, http.MethodGet, base+"/v1/conversations/"+conversationID+"/messages?limit=50", token, nil, &msgs)
+	for _, m := range msgs.Items {
+		if strings.Contains(m.Body, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func postSeedMessage(c *http.Client, base, token, conversationID, body, mediaID string) error {
+	payload := map[string]any{"body": body}
+	if mediaID != "" {
+		payload["media_id"] = mediaID
+	}
+	st, err := doJSON(c, http.MethodPost, base+"/v1/conversations/"+conversationID+"/messages", token, payload, nil)
+	if err != nil {
+		return err
+	}
+	if st >= 300 {
+		return fmt.Errorf("send message status %d", st)
+	}
+	return nil
+}
+
+func seedClientMasterChat(c *http.Client, base string, clientUser, master authUser) error {
+	var conv struct {
+		ID string `json:"id"`
+	}
+	st, err := doJSON(c, http.MethodPost, base+"/v1/conversations", clientUser.Token, map[string]any{
+		"type": "client_master", "master_user_id": master.ID,
+	}, &conv)
+	if err != nil {
+		return err
+	}
+	if st >= 300 || conv.ID == "" {
+		return fmt.Errorf("create client-master conversation status %d", st)
+	}
+	if conversationHasPhrase(c, base, clientUser.Token, conv.ID, "слот на этой неделе") {
+		log.Printf("skip client-master messenger — already seeded")
+		return nil
+	}
+	photo := uploadSeedAssetIfExists(c, base, clientUser.Token, "message", "articles/home.jpg", "articles/care.jpg")
+	if !conversationHasPhrase(c, base, clientUser.Token, conv.ID, "тонирован") {
+		if err := postSeedMessage(c, base, clientUser.Token, conv.ID, "Здравствуйте! Хотела бы уточнить по тонированию.", ""); err != nil {
+			return err
+		}
+	}
+	if !conversationHasPhrase(c, base, clientUser.Token, conv.ID, "какой результат") {
+		if err := postSeedMessage(c, base, master.Token, conv.ID, "Добрый день, Екатерина. Конечно, расскажите, какой результат хотите.", ""); err != nil {
+			return err
+		}
+	}
+	if photo != "" && !conversationHasPhrase(c, base, clientUser.Token, conv.ID, "текущего оттенка") {
+		if err := postSeedMessage(c, base, clientUser.Token, conv.ID, "Вот фото текущего оттенка.", photo); err != nil {
+			return err
+		}
+	} else if photo == "" && !conversationHasPhrase(c, base, clientUser.Token, conv.ID, "тёплый блонд") {
+		if err := postSeedMessage(c, base, clientUser.Token, conv.ID, "Сейчас тёплый блонд, хочу чуть спокойнее.", ""); err != nil {
+			return err
+		}
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/conversations/"+conv.ID+"/read", master.Token, map[string]any{}, nil)
+	if err := postSeedMessage(c, base, master.Token, conv.ID, "Отлично, подберём мягкое тонирование без агрессии. Могу предложить слот на этой неделе.", ""); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedMasterSupplierChat(c *http.Client, base string, master, supplier authUser, supplierOrgID string) error {
+	if supplierOrgID == "" {
+		return fmt.Errorf("supplier org missing")
+	}
+	var conv struct {
+		ID string `json:"id"`
+	}
+	st, err := doJSON(c, http.MethodPost, base+"/v1/conversations", master.Token, map[string]any{
+		"type": "master_supplier", "supplier_organization_id": supplierOrgID,
+	}, &conv)
+	if err != nil {
+		return err
+	}
+	if st >= 300 || conv.ID == "" {
+		return fmt.Errorf("create master-supplier conversation status %d", st)
+	}
+	if conversationHasPhrase(c, base, master.Token, conv.ID, "маски в тот же заказ") {
+		log.Printf("skip master-supplier messenger — already seeded")
+		return nil
+	}
+	photo := uploadSeedAssetIfExists(c, base, master.Token, "message", "products/S1-OLA-N3.jpg", "articles/salon.jpg")
+	if !conversationHasPhrase(c, base, master.Token, conv.ID, "наличии позиции") {
+		if err := postSeedMessage(c, base, master.Token, conv.ID, "Добрый день. Подскажите наличие позиции Olaplex No.3 на ближайшую поставку.", ""); err != nil {
+			return err
+		}
+	}
+	if !conversationHasPhrase(c, base, master.Token, conv.ID, "Позиция в наличии") {
+		if err := postSeedMessage(c, base, supplier.Token, conv.ID, "Здравствуйте, Анна. Позиция в наличии, можем отгрузить завтра.", ""); err != nil {
+			return err
+		}
+	}
+	if photo != "" && !conversationHasPhrase(c, base, master.Token, conv.ID, "именно этот объём") {
+		if err := postSeedMessage(c, base, master.Token, conv.ID, "Нужен именно этот объём.", photo); err != nil {
+			return err
+		}
+	}
+	_, _ = doJSON(c, http.MethodPost, base+"/v1/conversations/"+conv.ID+"/read", supplier.Token, map[string]any{}, nil)
+	if err := postSeedMessage(c, base, supplier.Token, conv.ID, "Зафиксировали. Напишите, если добавить маски в тот же заказ.", ""); err != nil {
+		return err
 	}
 	return nil
 }

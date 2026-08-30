@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { openConversation } from '@/pages/MessagesPage'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type Masterclass = {
   id: string
@@ -233,8 +234,8 @@ export function MasterclassCreatePage() {
 export function MasterclassDetailPage() {
   const { id } = useParams()
   const { accessToken, user } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
-  const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const event = useQuery({
     queryKey: ['masterclass', id],
@@ -290,12 +291,11 @@ export function MasterclassDetailPage() {
                 data-testid="message-instructor"
                 onClick={async () => {
                   try {
-                    const c = await openConversation(accessToken, {
+                    await messenger.start({
                       type: 'masterclass', event_id: e.id, peer_user_id: e.instructor_user_id,
                     })
-                    navigate(`/messages/${c.id}`)
                   } catch (err) {
-                    setError(err instanceof ApiError ? err.message : 'Сначала запишитесь, чтобы написать инструктору')
+                    setError(userError(err, 'Сначала запишитесь, чтобы написать инструктору'))
                   }
                 }}
               >

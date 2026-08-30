@@ -119,9 +119,14 @@ func (s *Store) InsertMessage(ctx context.Context, m domain.Message) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	kind := m.Kind
+	if kind == "" {
+		kind = domain.MessageKindText
+	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO messages(id, conversation_id, sender_user_id, body, created_at)
-VALUES ($1,$2,$3,$4,$5)`, m.ID, m.ConversationID, m.SenderUserID, m.Body, m.CreatedAt); err != nil {
+INSERT INTO messages(id, conversation_id, sender_user_id, kind, body, media_id, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		m.ID, m.ConversationID, m.SenderUserID, kind, m.Body, m.MediaID, m.CreatedAt); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE conversations SET updated_at=$2 WHERE id=$1`, m.ConversationID, m.CreatedAt); err != nil {
@@ -131,21 +136,24 @@ VALUES ($1,$2,$3,$4,$5)`, m.ID, m.ConversationID, m.SenderUserID, m.Body, m.Crea
 }
 
 func (s *Store) ListMessages(ctx context.Context, conversationID uuid.UUID, limit int, before *time.Time) ([]domain.Message, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 101 {
+		limit = 101
 	}
 	var rows pgx.Rows
 	var err error
 	if before != nil {
 		rows, err = s.pool.Query(ctx, `
-SELECT id, conversation_id, sender_user_id, body, created_at, edited_at, deleted_at
+SELECT id, conversation_id, sender_user_id, kind, body, media_id, created_at, edited_at, deleted_at
 FROM messages
 WHERE conversation_id=$1 AND created_at < $2
 ORDER BY created_at DESC, id DESC
 LIMIT $3`, conversationID, *before, limit)
 	} else {
 		rows, err = s.pool.Query(ctx, `
-SELECT id, conversation_id, sender_user_id, body, created_at, edited_at, deleted_at
+SELECT id, conversation_id, sender_user_id, kind, body, media_id, created_at, edited_at, deleted_at
 FROM messages
 WHERE conversation_id=$1
 ORDER BY created_at DESC, id DESC
@@ -157,11 +165,11 @@ LIMIT $2`, conversationID, limit)
 	defer rows.Close()
 	var desc []domain.Message
 	for rows.Next() {
-		var m domain.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.SenderUserID, &m.Body, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		desc = append(desc, m)
+		desc = append(desc, *m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -175,16 +183,28 @@ LIMIT $2`, conversationID, limit)
 
 func (s *Store) LastMessage(ctx context.Context, conversationID uuid.UUID) (*domain.Message, error) {
 	row := s.pool.QueryRow(ctx, `
-SELECT id, conversation_id, sender_user_id, body, created_at, edited_at, deleted_at
+SELECT id, conversation_id, sender_user_id, kind, body, media_id, created_at, edited_at, deleted_at
 FROM messages WHERE conversation_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1`, conversationID)
-	var m domain.Message
-	if err := row.Scan(&m.ID, &m.ConversationID, &m.SenderUserID, &m.Body, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+	m, err := scanMessage(row)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &m, nil
+	return m, nil
+}
+
+func (s *Store) UserCanAccessMedia(ctx context.Context, mediaID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1
+  FROM messages m
+  JOIN conversation_participants p ON p.conversation_id = m.conversation_id
+  WHERE m.media_id=$1 AND p.user_id=$2 AND m.deleted_at IS NULL
+)`, mediaID, userID).Scan(&ok)
+	return ok, err
 }
 
 func (s *Store) UnreadCount(ctx context.Context, conversationID, userID uuid.UUID, lastRead *time.Time) (int, error) {
@@ -221,6 +241,17 @@ func scanConversation(row interface{ Scan(dest ...any) error }) (*domain.Convers
 		return nil, err
 	}
 	return &c, nil
+}
+
+func scanMessage(row interface{ Scan(dest ...any) error }) (*domain.Message, error) {
+	var m domain.Message
+	if err := row.Scan(&m.ID, &m.ConversationID, &m.SenderUserID, &m.Kind, &m.Body, &m.MediaID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+		return nil, err
+	}
+	if m.Kind == "" {
+		m.Kind = domain.MessageKindText
+	}
+	return &m, nil
 }
 
 func NewConversationID() uuid.UUID { return ids.New() }

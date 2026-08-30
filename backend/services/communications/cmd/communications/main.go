@@ -48,6 +48,7 @@ func main() {
 		IdentityURL:      getenv("IDENTITY_URL", "http://identity:8080"),
 		OrganizationsURL: getenv("ORGANIZATIONS_URL", "http://organizations:8080"),
 		MarketplaceURL:   getenv("MARKETPLACE_URL", "http://marketplace:8080"),
+		MediaURL:         getenv("MEDIA_URL", "http://media:8080"),
 		InternalToken:    os.Getenv("INTERNAL_TOKEN"),
 	})
 	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))

@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
-import { openConversation } from '@/pages/MessagesPage'
+import { userError } from '@/shared/lib/app-error'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type Prefs = {
   willing: boolean
@@ -223,8 +224,8 @@ export function ModelRequestCreatePage() {
 export function ModelRequestDetailPage() {
   const { id } = useParams()
   const { accessToken, user } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
-  const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const item = useQuery({
     queryKey: ['model-request', id],
@@ -272,12 +273,11 @@ export function ModelRequestDetailPage() {
                 data-testid="message-model-master"
                 onClick={async () => {
                   try {
-                    const c = await openConversation(accessToken, {
+                    await messenger.start({
                       type: 'model_request', request_id: e.id, peer_user_id: e.master_user_id,
                     })
-                    navigate(`/messages/${c.id}`)
                   } catch (err) {
-                    setError(err instanceof ApiError ? err.message : 'Сначала откликнитесь, чтобы написать мастеру')
+                    setError(userError(err, 'Сначала откликнитесь, чтобы написать мастеру'))
                   }
                 }}
               >

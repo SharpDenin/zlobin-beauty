@@ -6,6 +6,7 @@ import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { Drawer } from '@/shared/ui/Drawer'
 import { NavIcon } from '@/shared/ui/NavIcon'
+import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -86,16 +87,25 @@ function NavLinks({
   onNavigate?: () => void
   className?: string
 }) {
+  const messenger = useMessengerOptional()
   return (
     <>
-      {links.map((l) => (
+      {links.map((l) => {
+        const messagesActive = l.to === '/messages' && Boolean(messenger?.overlayOpen)
+        return (
         <Link
           key={l.to}
           to={l.to === '/more' ? '#' : l.to}
-          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) ? 'active' : ''}`.trim()}
+          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) || messagesActive ? 'active' : ''}`.trim()}
           onClick={(e) => {
             if (l.to === '/more') {
               e.preventDefault()
+              onNavigate?.()
+              return
+            }
+            if (l.to === '/messages' && messenger?.isDesktop) {
+              e.preventDefault()
+              messenger.openList()
               onNavigate?.()
               return
             }
@@ -104,8 +114,14 @@ function NavLinks({
         >
           <NavIcon to={l.to} />
           <span>{l.label}</span>
+          {l.to === '/messages' && (messenger?.unreadTotal ?? 0) > 0 && (
+            <span className="nav-unread" aria-label={`${messenger!.unreadTotal} непрочитанных`}>
+              {messenger!.unreadTotal > 99 ? '99+' : messenger!.unreadTotal}
+            </span>
+          )}
         </Link>
-      ))}
+        )
+      })}
     </>
   )
 }
@@ -129,6 +145,14 @@ function MoreDrawer({
 }
 
 export function AppShell() {
+  return (
+    <MessengerProvider>
+      <AppShellInner />
+    </MessengerProvider>
+  )
+}
+
+function AppShellInner() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)

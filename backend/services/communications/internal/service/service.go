@@ -22,6 +22,7 @@ type Service struct {
 	identityURL      string
 	organizationsURL string
 	marketplaceURL   string
+	mediaURL         string
 	internalToken    string
 	httpClient       *http.Client
 	now              func() time.Time

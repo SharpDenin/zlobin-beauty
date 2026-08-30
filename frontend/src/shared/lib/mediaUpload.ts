@@ -57,16 +57,16 @@ export function uploadMedia(
   purpose: string,
   token: string | null | undefined,
   onProgress?: UploadProgressHandler,
-  opts?: { allowVideo?: boolean },
+  opts?: { allowVideo?: boolean; preservePurpose?: boolean },
 ): Promise<UploadMediaResult> {
-  const allowVideo = opts?.allowVideo || purpose === 'video'
+  const allowVideo = opts?.allowVideo || purpose === 'video' || purpose === 'message'
   const mimeError = validateMediaFile(file, { allowVideo })
   if (mimeError) {
     const knownType = IMAGE_MIME.has(file.type) || VIDEO_MIME.has(file.type)
     const code = knownType ? 'media_too_large' : 'media_unsupported_type'
     return Promise.reject(new ApiError(mimeError, code, 400))
   }
-  const resolvedPurpose = isVideoFile(file) ? 'video' : purpose
+  const resolvedPurpose = opts?.preservePurpose || purpose === 'message' ? purpose : isVideoFile(file) ? 'video' : purpose
 
   const form = new FormData()
   form.append('file', file)

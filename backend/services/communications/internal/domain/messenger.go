@@ -7,10 +7,16 @@ import (
 )
 
 const (
-	ConversationClientMaster    = "client_master"
-	ConversationMasterSupplier  = "master_supplier"
-	ConversationMasterclass     = "masterclass"
-	ConversationModelRequest    = "model_request"
+	ConversationClientMaster   = "client_master"
+	ConversationMasterSupplier = "master_supplier"
+	ConversationMasterclass    = "masterclass"
+	ConversationModelRequest   = "model_request"
+
+	MessageKindText  = "text"
+	MessageKindImage = "image"
+	MessageKindVideo = "video"
+
+	MaxMessageRunes = 4000
 )
 
 type Conversation struct {
@@ -39,7 +45,9 @@ type Message struct {
 	ID             uuid.UUID
 	ConversationID uuid.UUID
 	SenderUserID   uuid.UUID
+	Kind           string
 	Body           string
+	MediaID        *uuid.UUID
 	CreatedAt      time.Time
 	EditedAt       *time.Time
 	DeletedAt      *time.Time

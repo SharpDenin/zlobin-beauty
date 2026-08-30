@@ -7,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
@@ -52,6 +53,7 @@ const reviewSchema = z.object({
 export function AppointmentDetailPage() {
   const { id } = useParams()
   const { accessToken, user } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
@@ -195,7 +197,29 @@ export function AppointmentDetailPage() {
     <main className="page stack">
       <div className="row between">
         <h1>Запись</h1>
-        <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
+        <div className="row">
+          {(isClient || isMaster) && (
+            <button
+              className="btn btn-secondary btn-compact"
+              type="button"
+              data-testid="write-appointment"
+              onClick={async () => {
+                try {
+                  if (isClient) {
+                    await messenger.start({ type: 'client_master', master_user_id: a.master_user_id })
+                  } else {
+                    await messenger.start({ type: 'client_master', client_user_id: a.client_user_id })
+                  }
+                } catch (e) {
+                  setError(userError(e, 'Не удалось открыть переписку'))
+                }
+              }}
+            >
+              Написать
+            </button>
+          )}
+          <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
+        </div>
       </div>
 
       <section className="card stack-sm">

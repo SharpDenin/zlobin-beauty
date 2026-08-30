@@ -11,7 +11,9 @@ describe('navForCabinet', () => {
 
   it('exposes messenger and marketplaces without replacing notifications', () => {
     const client = navForCabinet('client')
+    expect(client.primary.some((l) => l.to === '/more')).toBe(true)
     expect(client.secondary.some((l) => l.to === '/messages' && l.label === 'Сообщения')).toBe(true)
+    expect(client.secondary.some((l) => l.to === '/profile')).toBe(true)
     expect(client.secondary.some((l) => l.to === '/models')).toBe(true)
     const master = navForCabinet('private_master')
     expect(master.secondary.some((l) => l.to === '/messages')).toBe(true)

@@ -2,10 +2,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 import type { CommerceProduct } from '@/shared/lib/commerce'
 import { addToCart, loadCart, saveCart } from '@/shared/lib/cart'
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
+import { userError } from '@/shared/lib/app-error'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useState } from 'react'
 
@@ -20,8 +22,10 @@ type KnowledgeItem = {
 export function CosmeticsProductPage() {
   const { productId = '' } = useParams()
   const { accessToken } = useAuth()
+  const messenger = useMessenger()
   const navigate = useNavigate()
   const [added, setAdded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const product = useQuery({
     queryKey: ['commerce-product', productId],
@@ -93,7 +97,25 @@ export function CosmeticsProductPage() {
           >
             В каталог с корзиной
           </button>
+          <button
+            className="btn btn-secondary"
+            type="button"
+            data-testid="write-supplier-product"
+            onClick={async () => {
+              try {
+                await messenger.start({
+                  type: 'master_supplier',
+                  supplier_organization_id: supplierId,
+                })
+              } catch (e) {
+                setError(userError(e, 'Не удалось открыть переписку'))
+              }
+            }}
+          >
+            Написать поставщику
+          </button>
         </div>
+        {error && <p className="muted">{error}</p>}
         {added && <div className="state-box success">Товар в корзине. Оформите заказ в каталоге поставщика.</div>}
       </section>
       <section className="card stack" data-testid="product-knowledge">

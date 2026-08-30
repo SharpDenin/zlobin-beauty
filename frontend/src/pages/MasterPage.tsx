@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
@@ -14,7 +14,7 @@ import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
-import { openConversation } from '@/pages/MessagesPage'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { MultiServiceBookingDialog } from '@/pages/MultiServiceBookingDialog'
 import { canJoinMultiService } from '@/pages/visit-plan-helpers'
 
@@ -82,8 +82,8 @@ function bookingModeLabel(mode?: string) {
 
 export function MasterPage() {
   const { id } = useParams()
-  const navigate = useNavigate()
   const { accessToken } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
   const toast = useToast()
   const [step, setStep] = useState(0)
@@ -249,8 +249,7 @@ export function MasterPage() {
                 data-testid="write-master"
                 onClick={async () => {
                   try {
-                    const c = await openConversation(accessToken, { type: 'client_master', master_user_id: master.user_id })
-                    navigate(`/messages/${c.id}`)
+                    await messenger.start({ type: 'client_master', master_user_id: master.user_id })
                   } catch (e) {
                     setError(userError(e, 'Не удалось открыть переписку'))
                   }

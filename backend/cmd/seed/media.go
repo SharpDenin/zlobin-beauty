@@ -98,8 +98,9 @@ func uploadSeedAssetIfExists(c *http.Client, base, token, purpose string, relPat
 			continue
 		}
 		p := filepath.Join(root, filepath.FromSlash(rel))
+		key := purpose + "|" + p
 		seedUploadMu.Lock()
-		if id, ok := seedUploadCache[p]; ok {
+		if id, ok := seedUploadCache[key]; ok {
 			seedUploadMu.Unlock()
 			return id
 		}
@@ -120,7 +121,7 @@ func uploadSeedAssetIfExists(c *http.Client, base, token, purpose string, relPat
 		}
 		if id != "" {
 			seedUploadMu.Lock()
-			seedUploadCache[p] = id
+			seedUploadCache[key] = id
 			seedUploadMu.Unlock()
 			return id
 		}

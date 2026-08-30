@@ -54,8 +54,8 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	svc := service.New(st, storage)
-	api := httpapi.New(svc, log)
+	svc := service.New(st, storage).WithCommunications(getenv("COMMUNICATIONS_URL", "http://communications:8080"), os.Getenv("INTERNAL_TOKEN"))
+	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

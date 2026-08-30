@@ -1101,6 +1101,14 @@ func (s *Service) consumeStockForAppointment(ctx context.Context, a *domain.Appo
 	}
 }
 
+func (s *Service) HasClientMasterAppointment(ctx context.Context, masterID, clientID uuid.UUID) (bool, error) {
+	ok, err := s.store.HasClientMasterAppointment(ctx, masterID, clientID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ok, nil
+}
+
 func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appointment, error) {
 	a, err := s.store.GetAppointment(ctx, id)
 	if err != nil {

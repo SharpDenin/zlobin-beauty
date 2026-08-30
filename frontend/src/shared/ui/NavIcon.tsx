@@ -9,6 +9,7 @@ const ICONS: Record<string, string> = {
   box: 'M4 8h16v11H4zm0 0 8-4 8 4M12 8v11',
   warehouse: 'M3 20V9l9-5 9 5v11H3zm5-4h8',
   money: 'M4 8h16v10H4zm4 5h8M8 8V6h8v2',
+  chat: 'M5 6h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z',
 }
 
 function iconFor(to: string) {
@@ -18,6 +19,7 @@ function iconFor(to: string) {
   if (to.startsWith('/appointments')) return 'clock'
   if (to.startsWith('/search')) return 'search'
   if (to.startsWith('/shop')) return 'bag'
+  if (to.startsWith('/messages')) return 'chat'
   if (to.startsWith('/profile')) return 'user'
   if (to.startsWith('/supplier/products')) return 'box'
   if (to.startsWith('/warehouse')) return 'warehouse'

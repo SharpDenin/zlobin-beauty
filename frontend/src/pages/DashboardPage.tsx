@@ -329,7 +329,7 @@ export function DashboardPage() {
                   {w.id === 'today' && <MetricTile label="Сегодня" value={today.length} caption="записей" to="/calendar" />}
                   {w.id === 'pending' && <MetricTile label="Ожидают" value={pending.length} caption="подтверждения" to="/appointments" />}
                   {w.id === 'clients_today' && <MetricTile label="Клиенты сегодня" value={new Set(today.map((a) => a.client_user_id).filter(Boolean)).size || today.length} caption="человек" to="/clients" />}
-                  {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/notifications" />}
+                  {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/messages" />}
                   {w.id === 'upcoming' && (
                     <div className="stack">
                       <div className="row between"><h2>Ближайшие записи</h2><Link to="/appointments">Все</Link></div>

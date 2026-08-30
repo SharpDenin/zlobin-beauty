@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '@/shared/api/client'
@@ -17,14 +17,15 @@ import {
 import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCartQty, type CartLine } from '@/shared/lib/cart'
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
+import { userError } from '@/shared/lib/app-error'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { Modal } from '@/shared/ui/Modal'
-import { openConversation } from '@/pages/MessagesPage'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 export function CosmeticsSupplierPage() {
   const { supplierId = '' } = useParams()
-  const navigate = useNavigate()
   const { accessToken } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
   const { locations, ensure, locationId } = useEnsureLocation(buyerOrgId)
@@ -183,13 +184,12 @@ export function CosmeticsSupplierPage() {
             data-testid="write-supplier"
             onClick={async () => {
               try {
-                const c = await openConversation(accessToken, {
+                await messenger.start({
                   type: 'master_supplier',
                   supplier_organization_id: supplierId,
                 })
-                navigate(`/messages/${c.id}`)
               } catch (e) {
-                setError(e instanceof ApiError ? e.message : 'Не удалось открыть переписку')
+                setError(userError(e, 'Не удалось открыть переписку'))
               }
             }}
           >

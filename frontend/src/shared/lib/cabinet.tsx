@@ -195,15 +195,16 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
       { to: '/search', label: 'Мастера' },
       { to: '/shop', label: 'Магазин' },
       { to: '/appointments', label: 'Записи' },
-      { to: '/profile', label: 'Профиль' },
+      { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
       { to: '/messages', label: 'Сообщения' },
+      { to: '/profile', label: 'Профиль' },
       { to: '/models', label: 'Модели' },
       { to: '/orders', label: 'Мои заказы' },
       { to: '/shop/cart', label: 'Корзина' },
     ]
-    return { primary, secondary, side: [...primary, ...secondary] }
+    return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
 
   const primary: NavLink[] = [

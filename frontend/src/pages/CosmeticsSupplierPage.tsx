@@ -215,12 +215,8 @@ export function CosmeticsSupplierPage() {
         {published.map((p) => (
           <article key={p.id} className="product-card">
             <Link to={`/cosmetics/products/${p.id}`}>
-              <div className="product-media">
-                {p.photo_media_id ? (
-                  <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} />
-                ) : (
-                  <span>{p.brand || 'Фото'}</span>
-                )}
+              <div className="media-frame media-frame--product">
+                <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} fallback={(p.brand || p.name).slice(0, 2).toUpperCase()} />
               </div>
             </Link>
             <div className="stack-sm">

@@ -9,6 +9,8 @@ import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
 import { userError } from '@/shared/lib/app-error'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useState } from 'react'
 
 type KnowledgeItem = {
@@ -40,12 +42,16 @@ export function CosmeticsProductPage() {
     enabled: Boolean(accessToken && productId),
   })
 
-  if (product.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  if (product.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   if (product.isError || !product.data) {
     return (
       <main className="page stack">
-        <div className="state-box error">Товар не найден</div>
-        <Link className="btn btn-secondary" to="/cosmetics">К поставщикам</Link>
+        <ErrorBanner error={product.error} fallbackTitle="Товар не найден" />
+        <EmptyState
+          title="Товар не найден"
+          text="Этой позиции нет в каталоге поставщика."
+          action={<Link className="btn btn-secondary" to="/cosmetics">К поставщикам</Link>}
+        />
       </main>
     )
   }
@@ -63,12 +69,8 @@ export function CosmeticsProductPage() {
     <main className="page stack">
       <Link className="btn btn-ghost btn-compact" to={`/cosmetics/${supplierId}`}>← К каталогу</Link>
       <section className="product-card">
-        <div className="product-media" style={{ aspectRatio: '1 / 1' }}>
-          {p.photo_media_id ? (
-            <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} />
-          ) : (
-            <span>Нет фото</span>
-          )}
+        <div className="media-frame media-frame--product">
+          <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} fallback={(p.brand || p.name).slice(0, 2).toUpperCase()} />
         </div>
         <div className="stack-sm">
           {p.brand && <span className="chip badge-default">{p.brand}</span>}
@@ -128,11 +130,13 @@ export function CosmeticsProductPage() {
           <div className="kb-grid">
             {knowledge.data!.items.map((a) => (
               <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`} data-testid="product-knowledge-item">
-                {a.cover_media_id ? (
-                  <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} className="kb-cover" />
-                ) : (
-                  <div className="kb-cover" />
-                )}
+                <MediaImage
+                  mediaId={a.cover_media_id}
+                  token={accessToken}
+                  alt={a.title}
+                  className="kb-cover"
+                  fallback={a.title.slice(0, 2).toUpperCase()}
+                />
                 <strong>{a.title}</strong>
                 <p className="muted">{[a.category, a.reading_time_minutes ? `${a.reading_time_minutes} мин` : ''].filter(Boolean).join(' · ')}</p>
               </Link>

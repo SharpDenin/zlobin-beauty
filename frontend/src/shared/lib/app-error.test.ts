@@ -98,6 +98,25 @@ describe('normalizeError', () => {
     expect(text).not.toMatch(/invalid credentials/i)
   })
 
+  it('maps shop checkout conflicts without HTTP or SQL', () => {
+    const price = normalizeError({
+      code: 'price_changed',
+      status: 409,
+      message: 'цена изменилась: Estel Essex. Обновите корзину и подтвердите оформление.',
+    })
+    expect(price.title).toBe('Цена товара изменилась')
+    expect(price.hint).toContain('подтвердите новую цену')
+    expect(formatUserError(price)).not.toMatch(/409|SQL|error\.response/i)
+
+    const stock = normalizeError({
+      code: 'insufficient_stock',
+      status: 409,
+      message: 'Недостаточно товара на складе',
+    })
+    expect(stock.title).toBe('Товара недостаточно на складе')
+    expect(formatUserError(stock)).toContain('Уменьшите количество')
+  })
+
   it('uses unknown copy when nothing matches', () => {
     const text = formatUserError(undefined, 'Не удалось сохранить услугу')
     expect(text).toContain('Не удалось сохранить услугу')

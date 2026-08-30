@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { fetchSuppliers, useBuyerOrg } from '@/shared/lib/commerce'
 import { Hint } from '@/shared/ui/Hint'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 export function CosmeticsPage() {
   const { accessToken } = useAuth()
@@ -15,17 +17,17 @@ export function CosmeticsPage() {
   })
 
   if (orgs.isLoading) {
-    return <main className="page"><div className="state-box">Загрузка…</div></main>
+    return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   }
 
   if (!buyerOrgId) {
     return (
       <main className="page stack">
-        <div className="empty-state">
-          <h2>Нужен салон</h2>
-          <p>Создайте салон в кабинете мастера, чтобы заказывать косметику.</p>
-          <Link className="btn btn-primary" to="/master">Открыть кабинет</Link>
-        </div>
+        <EmptyState
+          title="Нужен салон"
+          text="Создайте салон в кабинете мастера, чтобы заказывать косметику."
+          action={<Link className="btn btn-primary" to="/master">Открыть кабинет</Link>}
+        />
       </main>
     )
   }
@@ -45,16 +47,14 @@ export function CosmeticsPage() {
         </div>
       </div>
 
-      {suppliers.isLoading && <div className="state-box">Загрузка поставщиков…</div>}
-      {suppliers.isError && (
-        <div className="state-box error">Не удалось загрузить поставщиков. Попробуйте позже.</div>
-      )}
+      {suppliers.isLoading && <div className="skeleton skeleton-card" aria-busy="true" />}
+      {suppliers.isError && <ErrorBanner error={suppliers.error} fallbackTitle="Не удалось загрузить поставщиков" />}
       {!suppliers.isLoading && !suppliers.isError && items.length === 0 && (
-        <div className="empty-state">
-          <h2>Поставщиков пока нет</h2>
-          <p>Каталог появится, когда поставщики опубликуют профили.</p>
-          <Link className="btn btn-secondary" to="/cosmetics/orders">Открыть заказы</Link>
-        </div>
+        <EmptyState
+          title="Поставщиков пока нет"
+          text="Каталог появится, когда поставщики опубликуют профили."
+          action={<Link className="btn btn-secondary" to="/cosmetics/orders">Открыть заказы</Link>}
+        />
       )}
 
       <div className="cards-grid">

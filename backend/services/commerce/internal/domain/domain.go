@@ -389,6 +389,7 @@ type ClientCartItem struct {
 	CurrentPriceMinor int64
 	Currency          string
 	Available         float64
+	PhotoMediaID      *uuid.UUID
 	OrganizationID    uuid.UUID
 }
 

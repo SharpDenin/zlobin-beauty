@@ -152,12 +152,12 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   price_changed: {
     kind: 'conflict',
-    title: 'Цена товаров изменилась',
-    hint: 'Обновите корзину и подтвердите оформление.',
+    title: 'Цена товара изменилась',
+    hint: 'Проверьте корзину и подтвердите новую цену, чтобы продолжить оформление.',
   },
   insufficient_stock: {
     kind: 'conflict',
-    title: 'Недостаточно товара на складе',
+    title: 'Товара недостаточно на складе',
     hint: 'Уменьшите количество или выберите другой товар.',
   },
   profession_types_required: {

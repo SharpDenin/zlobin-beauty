@@ -48,6 +48,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/reject", auth(http.HandlerFunc(a.reject)))
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
+	mux.Handle("GET /v1/appointments/{id}/reschedule-options", auth(http.HandlerFunc(a.rescheduleOptions)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
 	mux.Handle("GET /v1/appointments/{id}/scheme", auth(http.HandlerFunc(a.getScheme)))
@@ -811,6 +812,43 @@ func (a *API) reschedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) rescheduleOptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	limit := service.DefaultRescheduleLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if _, err := parseInt(&limit, v); err != nil || limit <= 0 {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid limit"))
+			return
+		}
+	}
+	out, err := a.svc.RescheduleOptions(r.Context(), id, claims.UserID, limit)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(out.Items))
+	for _, slot := range out.Items {
+		items = append(items, map[string]any{
+			"starts_at": slot.StartsAt,
+			"ends_at":   slot.EndsAt,
+			"work_mode": slot.WorkMode,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"timezone":            out.Timezone,
+		"horizon_days":        out.HorizonDays,
+		"has_more":            out.HasMore,
+		"master_display_name": out.MasterDisplayName,
+		"appointment":         appointmentDTO(*out.Appointment),
+		"items":               items,
+	})
 }
 
 func (a *API) start(w http.ResponseWriter, r *http.Request) {

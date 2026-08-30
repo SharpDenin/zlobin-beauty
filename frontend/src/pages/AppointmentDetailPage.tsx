@@ -9,7 +9,6 @@ import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
-import { datetimeLocalToIso } from '@/shared/lib/time'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaImage } from '@/shared/ui/MediaImage'
@@ -19,6 +18,8 @@ import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { hasColorFormulaInput } from '@/shared/lib/visit-visibility'
 import { AppointmentMaterialsForm } from '@/pages/MasterInventoryPage'
 import { CalendarAvailability } from '@/pages/CalendarAvailability'
+import { RescheduleDialog } from '@/pages/RescheduleDialog'
+import { canRescheduleAppointment } from '@/pages/reschedule-helpers'
 
 type Appointment = {
   id: string
@@ -34,10 +35,12 @@ type Appointment = {
   organization_id: string
   cancel_reason?: string
   location_timezone?: string
+  location_name?: string
+  location_city?: string
+  booking_mode?: string
 }
 
 const cancelSchema = z.object({ reason: z.string().min(2, 'Укажите причину') })
-const rescheduleSchema = z.object({ starts_at: z.string().min(1, 'Выберите время') })
 const reviewSchema = z.object({
   master_rating: z.coerce.number().min(1).max(5),
   result_rating: z.coerce.number().min(1).max(5),
@@ -63,6 +66,7 @@ export function AppointmentDetailPage() {
   const [skipScheme, setSkipScheme] = useState(false)
   const [skipConfirmed, setSkipConfirmed] = useState(false)
   const [omitFormula, setOmitFormula] = useState(false)
+  const [rescheduleOpen, setRescheduleOpen] = useState(false)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -108,7 +112,6 @@ export function AppointmentDetailPage() {
   })
 
   const cancelForm = useForm<z.infer<typeof cancelSchema>>({ resolver: zodResolver(cancelSchema) })
-  const rescheduleForm = useForm<z.infer<typeof rescheduleSchema>>({ resolver: zodResolver(rescheduleSchema) })
   const reviewForm = useForm<z.infer<typeof reviewSchema>>({
     resolver: zodResolver(reviewSchema),
     defaultValues: { master_rating: 5, result_rating: 5, publish_allowed: true },
@@ -140,6 +143,7 @@ export function AppointmentDetailPage() {
   const isMaster = user?.id === a.master_user_id
   const isClient = user?.id === a.client_user_id
   const cancellable = ['pending_confirmation', 'confirmed'].includes(a.status)
+  const canReschedule = canRescheduleAppointment(a.status, a.booking_mode)
   const canStart = isMaster && a.status === 'confirmed'
   const canComplete = isMaster && a.status === 'in_progress'
   const canNoShow = isMaster && a.status === 'confirmed'
@@ -330,20 +334,21 @@ export function AppointmentDetailPage() {
           </form>
         )}
 
-        {cancellable && (
-          <form className="stack" onSubmit={rescheduleForm.handleSubmit((v) => act.mutate({
-            path: `/v1/appointments/${a.id}/reschedule`,
-            body: { starts_at: datetimeLocalToIso(v.starts_at, a.location_timezone || 'Europe/Moscow') },
-          }))}>
-            <div className="field">
-              <label htmlFor="starts_at">Перенос · новое время (часовой пояс салона: {a.location_timezone || 'Europe/Moscow'})</label>
-              <input id="starts_at" type="datetime-local" aria-invalid={Boolean(rescheduleForm.formState.errors.starts_at)} {...rescheduleForm.register('starts_at')} />
-              {rescheduleForm.formState.errors.starts_at && <span className="error">{rescheduleForm.formState.errors.starts_at.message}</span>}
-            </div>
-            <button className="btn btn-secondary btn-block" type="submit" disabled={act.isPending}>Перенести</button>
-          </form>
+        {canReschedule && (
+          <button className="btn btn-secondary btn-block" type="button" onClick={() => setRescheduleOpen(true)}>
+            Перенести
+          </button>
         )}
       </section>
+
+      <RescheduleDialog
+        open={rescheduleOpen}
+        onClose={() => setRescheduleOpen(false)}
+        appointment={a}
+        token={accessToken}
+        canOpenCalendar={isMaster}
+        onSuccess={() => setOk('Запись перенесена')}
+      />
 
       <section className="card stack">
         <h2>Фото до / после</h2>

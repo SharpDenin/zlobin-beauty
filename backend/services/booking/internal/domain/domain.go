@@ -49,6 +49,15 @@ func Transition(from, to string) error {
 	return nil
 }
 
+// CanReschedule reports whether a live appointment may change date/time.
+// Fixed-window occurrences keep their published interval; terminal statuses cannot move.
+func CanReschedule(status, bookingMode string) bool {
+	if bookingMode == BookingModeFixedWindow {
+		return false
+	}
+	return status == StatusPendingConfirmation || status == StatusConfirmed
+}
+
 type WorkingHours struct {
 	ID           uuid.UUID
 	MasterUserID uuid.UUID

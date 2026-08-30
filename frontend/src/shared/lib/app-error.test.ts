@@ -14,6 +14,16 @@ describe('normalizeError', () => {
     expect(formatUserError(n)).toContain('Это время уже занято')
   })
 
+  it('maps appointment_not_reschedulable without leaking booking_mode', () => {
+    const n = normalizeError({
+      code: 'appointment_not_reschedulable',
+      status: 409,
+      message: 'fixed_window appointments cannot be rescheduled',
+    })
+    expect(n.title).toBe('Эту запись нельзя перенести')
+    expect(formatUserError(n)).not.toMatch(/fixed_window/i)
+  })
+
   it('does not show an unknown technical code to the user', () => {
     const n = normalizeError({
       code: 'PARSE_ERROR',

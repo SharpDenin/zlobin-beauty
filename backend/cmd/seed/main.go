@@ -1954,10 +1954,12 @@ func findSlot(c *http.Client, base, masterUserID string, durationMin int) (time.
 }
 
 type clientAppt struct {
-	ID           string `json:"id"`
-	Status       string `json:"status"`
-	MasterUserID string `json:"master_user_id"`
-	ServiceName  string `json:"service_name"`
+	ID           string    `json:"id"`
+	Status       string    `json:"status"`
+	MasterUserID string    `json:"master_user_id"`
+	ServiceName  string    `json:"service_name"`
+	StartsAt     time.Time `json:"starts_at"`
+	BookingMode  string    `json:"booking_mode"`
 }
 
 func listClientAppointments(c *http.Client, base string, client authUser) []clientAppt {
@@ -1975,6 +1977,29 @@ func clientHasAppointmentStatus(items []clientAppt, masterUserID string, statuse
 	}
 	for _, it := range items {
 		if it.MasterUserID == masterUserID && want[it.Status] {
+			return true
+		}
+	}
+	return false
+}
+
+func clientHasUpcomingReschedulable(items []clientAppt, masterUserID, serviceNeedle string) bool {
+	needle := strings.ToLower(serviceNeedle)
+	now := time.Now().UTC()
+	for _, it := range items {
+		if it.MasterUserID != masterUserID {
+			continue
+		}
+		if it.BookingMode == "fixed_window" {
+			continue
+		}
+		if it.Status != "confirmed" && it.Status != "pending_confirmation" && it.Status != "pending" {
+			continue
+		}
+		if !it.StartsAt.After(now) {
+			continue
+		}
+		if needle == "" || strings.Contains(strings.ToLower(it.ServiceName), needle) {
 			return true
 		}
 	}
@@ -2014,7 +2039,7 @@ func seedExtraClientBookings(c *http.Client, base string, client, master1 authUs
 	}
 	existing := listClientAppointments(c, base, client)
 
-	if !clientHasAppointment(existing, master4.ID, "коррекция бровей", "confirmed", "pending_confirmation", "pending") {
+	if !clientHasUpcomingReschedulable(existing, master4.ID, "коррекция бровей") {
 		svcID, err := lookupMasterServiceByName(c, base, master4, "Коррекция бровей")
 		if err != nil {
 			return fmt.Errorf("dmitry brows: %w", err)

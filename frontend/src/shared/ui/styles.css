@@ -1130,7 +1130,41 @@ button.list-item:hover {
 }
 .occurrence-card.selected {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  box-shadow: var(--shadow-glow);
+}
+.reschedule-current {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.reschedule-current__service { overflow-wrap: anywhere; }
+.reschedule-day h3 {
+  font-size: var(--text-md);
+  font-weight: 700;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+.reschedule-slots {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+.reschedule-slots .occurrence-card {
+  min-height: var(--control-h);
+  place-items: center;
+  font-weight: 700;
+  padding: var(--space-3);
+}
+.reschedule-confirm { min-width: 0; }
+.reschedule-confirm p { overflow-wrap: anywhere; }
+.reschedule-confirm .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.reschedule-confirm .row .btn { flex: 1 1 8rem; }
+.reschedule-drawer-panel {
+  max-height: min(92vh, 100dvh);
 }
 .occurrence-card:disabled {
   opacity: 0.55;

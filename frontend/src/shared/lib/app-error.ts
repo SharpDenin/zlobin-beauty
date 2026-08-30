@@ -90,6 +90,11 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Запись только что изменилась',
     hint: 'Обновите страницу и повторите действие.',
   },
+  appointment_not_reschedulable: {
+    kind: 'business',
+    title: 'Эту запись нельзя перенести',
+    hint: 'Фиксированный сеанс переносится отменой и новой записью.',
+  },
   occurrence_unavailable: {
     kind: 'conflict',
     title: 'Этот сеанс недоступен',

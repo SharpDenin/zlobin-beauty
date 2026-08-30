@@ -895,29 +895,25 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	if a.ClientUserID != actorUserID && a.MasterUserID != actorUserID && !s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actorUserID) {
 		return nil, apperr.Forbidden("access denied")
 	}
-	if a.BookingMode == domain.BookingModeFixedWindow {
-		return nil, apperr.Validation("fixed_window appointments cannot be rescheduled")
-	}
-	if a.Status != domain.StatusPendingConfirmation && a.Status != domain.StatusConfirmed {
-		return nil, apperr.ConflictCode(apperr.CodeAppointmentStatusInvalid, "cannot reschedule in current status")
+	if err := rescheduleEligibility(a); err != nil {
+		return nil, err
 	}
 	ends := startsAt.UTC().Add(time.Duration(a.DurationMinutes) * time.Minute)
 	tz := a.LocationTimezone
 	if tz == "" {
 		tz = s.timezoneForBranch(ctx, a.BranchID)
 	}
-	slots, err := s.FreeSlots(ctx, a.MasterUserID, startsAt, a.DurationMinutes, tz, a.ID)
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, apperr.Validation("invalid timezone")
+	}
+	// FreeSlots treats Year/Month/Day of `day` as the salon calendar date in `tz`.
+	localStart := startsAt.In(loc)
+	slots, err := s.FreeSlots(ctx, a.MasterUserID, localStart, a.DurationMinutes, tz, a.ID)
 	if err != nil {
 		return nil, err
 	}
-	okSlot := false
-	for _, slot := range slots {
-		if slot.StartsAt.Equal(startsAt.UTC()) {
-			okSlot = true
-			break
-		}
-	}
-	if !okSlot {
+	if !ContainsSlotStart(slots, startsAt) {
 		return nil, apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, "selected time is not available")
 	}
 	now := s.now().UTC()

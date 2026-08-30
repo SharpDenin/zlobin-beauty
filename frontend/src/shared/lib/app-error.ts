@@ -95,6 +95,21 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Эту запись нельзя перенести',
     hint: 'Фиксированный сеанс переносится отменой и новой записью.',
   },
+  services_different_salon: {
+    kind: 'business',
+    title: 'Нельзя объединить услуги в одну запись',
+    hint: 'Выберите услуги одного салона.',
+  },
+  procedure_order_invalid: {
+    kind: 'business',
+    title: 'Такой порядок процедур недоступен',
+    hint: 'Для этих услуг сначала рекомендуется другой порядок.',
+  },
+  booking_plan_unavailable: {
+    kind: 'conflict',
+    title: 'Не удалось подобрать общее время',
+    hint: 'Попробуйте другую услугу или другую дату.',
+  },
   occurrence_unavailable: {
     kind: 'conflict',
     title: 'Этот сеанс недоступен',
@@ -290,6 +305,12 @@ function statusFallback(status: number): CatalogEntry {
   return UNKNOWN
 }
 
+function hintFromDetails(details?: Record<string, unknown>): string {
+  if (!details) return ''
+  const hint = details.hint
+  return typeof hint === 'string' && isSafeUserMessage(hint) ? hint.trim() : ''
+}
+
 function extractFields(details?: Record<string, unknown>): Record<string, string> | undefined {
   if (!details) return undefined
   const raw = details.fields
@@ -342,6 +363,21 @@ export function normalizeError(error: unknown): NormalizedError {
     const requestId = error.requestId || error.request_id
     const catalog = CATALOG[code] && code !== 'error' ? CATALOG[code] : statusFallback(status)
     const fieldHint = fields ? formatFieldHint(fields) : ''
+    const detailHint = hintFromDetails(error.details)
+
+    if (code === 'procedure_order_invalid') {
+      const reason = detailHint || (isSafeUserMessage(technical) ? technical : '')
+      return {
+        kind: catalog.kind,
+        title: catalog.title,
+        hint: reason ? `Для этих услуг ${reason}.` : catalog.hint,
+        code,
+        status,
+        fields,
+        requestId,
+        technicalMessage: technical,
+      }
+    }
 
     if (GENERIC_CODES.has(code) && isSafeUserMessage(technical)) {
       return {

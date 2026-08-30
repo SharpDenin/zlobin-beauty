@@ -8,6 +8,7 @@ import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { groupAppointmentsByVisit, visitGroupTitle } from '@/pages/visit-plan-helpers'
 
 type Appointment = {
   id: string
@@ -15,6 +16,7 @@ type Appointment = {
   status: string
   starts_at: string
   price_minor: number
+  visit_group_id?: string | null
 }
 
 type Master = {
@@ -43,9 +45,11 @@ function ClientHome() {
     queryFn: () => apiRequest<{ items: Master[] }>(`/v1/masters?city=${encodeURIComponent(city)}`),
   })
 
-  const upcoming = (appointments.data?.items ?? [])
-    .filter((a) => ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status))
-    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0]
+  const upcoming = groupAppointmentsByVisit(
+    (appointments.data?.items ?? []).filter((a) =>
+      ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status),
+    ),
+  ).sort((a, b) => a.items[0].starts_at.localeCompare(b.items[0].starts_at))[0]
 
   return (
     <main className="page stack">
@@ -73,11 +77,12 @@ function ClientHome() {
         )}
         {upcoming && (
           <AppointmentCard
-            to={`/appointments/${upcoming.id}`}
-            serviceName={upcoming.service_name}
-            status={upcoming.status}
-            startsAt={upcoming.starts_at}
-            priceMinor={upcoming.price_minor}
+            to={`/appointments/${upcoming.items[0].id}`}
+            serviceName={visitGroupTitle(upcoming)}
+            subtitle={upcoming.combined ? 'Визит из двух услуг' : undefined}
+            status={upcoming.items[0].status}
+            startsAt={upcoming.items[0].starts_at}
+            priceMinor={upcoming.items.reduce((n, item) => n + item.price_minor, 0)}
           />
         )}
       </section>

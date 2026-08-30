@@ -9,6 +9,7 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Modal } from '@/shared/ui/Modal'
 import { PageHeader } from '@/app/layout'
+import { groupAppointmentsByVisit, visitGroupPrice, visitGroupTitle } from '@/pages/visit-plan-helpers'
 
 type Appointment = {
   id: string
@@ -19,6 +20,7 @@ type Appointment = {
   price_minor: number
   master_user_id: string
   client_user_id: string
+  visit_group_id?: string | null
 }
 
 export function AppointmentsPage() {
@@ -103,14 +105,20 @@ export function AppointmentsPage() {
       )}
 
       <div className="list">
-        {query.data?.items.map((a) => (
+        {(role === 'client'
+          ? groupAppointmentsByVisit(query.data?.items ?? [])
+          : (query.data?.items ?? []).map((a) => ({ key: a.id, combined: false, items: [a] }))
+        ).map((group) => {
+          const a = group.items[0]
+          return (
           <AppointmentCard
-            key={a.id}
+            key={group.key}
             to={`/appointments/${a.id}`}
-            serviceName={a.service_name}
+            serviceName={visitGroupTitle(group)}
+            subtitle={group.combined ? 'Визит из двух услуг' : undefined}
             status={a.status}
             startsAt={a.starts_at}
-            priceMinor={a.price_minor}
+            priceMinor={visitGroupPrice(group)}
             actions={role === 'master' && a.status === 'pending_confirmation' ? (
               <>
                 <button
@@ -135,7 +143,8 @@ export function AppointmentsPage() {
               </>
             ) : undefined}
           />
-        ))}
+          )
+        })}
       </div>
 
       <Modal

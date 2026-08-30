@@ -268,6 +268,55 @@ func (s *Store) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceIt
 	return &item, nil
 }
 
+func (s *Store) ListPublishedServicesByOrg(ctx context.Context, orgID uuid.UUID) ([]domain.ServiceItem, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT `+serviceCols+`
+FROM services
+WHERE organization_id=$1 AND published=TRUE AND archived_at IS NULL
+ORDER BY name`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ServiceItem
+	for rows.Next() {
+		var item domain.ServiceItem
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Name, &item.Category, &item.Description, &item.Notes,
+			&item.DurationMinutes, &item.PriceMinor, &item.Currency, &item.PhotoMediaID, &item.BookingMode, &item.Published, &item.ArchivedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if item.BookingMode == "" {
+			item.BookingMode = "flexible"
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListMastersOfferingService(ctx context.Context, serviceID uuid.UUID) ([]domain.MasterProfile, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT `+masterCols+`
+FROM master_profiles mp
+JOIN master_services ms ON ms.master_id = mp.id
+WHERE ms.service_id=$1 AND mp.published=TRUE
+ORDER BY mp.display_name`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.MasterProfile
+	for rows.Next() {
+		m, err := s.scanMaster(rows)
+		if err != nil {
+			return nil, err
+		}
+		if m != nil {
+			out = append(out, *m)
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) IsServiceAttachedToMaster(ctx context.Context, masterID, serviceID uuid.UUID) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `

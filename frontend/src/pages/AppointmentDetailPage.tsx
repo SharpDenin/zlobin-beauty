@@ -38,6 +38,7 @@ type Appointment = {
   location_name?: string
   location_city?: string
   booking_mode?: string
+  visit_group_id?: string | null
 }
 
 const cancelSchema = z.object({ reason: z.string().min(2, 'Укажите причину') })
@@ -89,6 +90,13 @@ export function AppointmentDetailPage() {
         { token: accessToken },
       ),
     enabled: Boolean(id && accessToken),
+  })
+
+  const visitGroup = useQuery({
+    queryKey: ['appointment-group', id],
+    queryFn: () => apiRequest<{ items: Appointment[] }>(`/v1/appointments/${id}/group`, { token: accessToken }),
+    enabled: Boolean(id && accessToken && query.data?.visit_group_id),
+    retry: false,
   })
 
   const subscription = useQuery({
@@ -196,6 +204,21 @@ export function AppointmentDetailPage() {
         <p>{formatMoney(a.price_minor)} · {a.duration_minutes} мин</p>
         {a.cancel_reason && <p>Причина отмены: {a.cancel_reason}</p>}
       </section>
+
+      {(visitGroup.data?.items.length ?? 0) > 1 && (
+        <section className="card stack-sm">
+          <h2>Визит</h2>
+          <p className="muted">Связанные процедуры одной записи</p>
+          <div className="list">
+            {visitGroup.data!.items.map((leg) => (
+              <Link key={leg.id} className="list-item" to={`/appointments/${leg.id}`}>
+                <strong>{leg.service_name}</strong>
+                <p className="muted">{new Date(leg.starts_at).toLocaleString('ru-RU')} · {formatMoney(leg.price_minor)}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
@@ -335,9 +358,14 @@ export function AppointmentDetailPage() {
         )}
 
         {canReschedule && (
-          <button className="btn btn-secondary btn-block" type="button" onClick={() => setRescheduleOpen(true)}>
-            Перенести
-          </button>
+          <div className="stack">
+            {(visitGroup.data?.items.length ?? 0) > 1 && (
+              <p className="muted">Это часть визита из двух услуг. Переносится только эта процедура.</p>
+            )}
+            <button className="btn btn-secondary btn-block" type="button" onClick={() => setRescheduleOpen(true)}>
+              Перенести
+            </button>
+          </div>
         )}
       </section>
 

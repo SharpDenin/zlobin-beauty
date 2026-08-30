@@ -15,6 +15,8 @@ import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { openConversation } from '@/pages/MessagesPage'
+import { MultiServiceBookingDialog } from '@/pages/MultiServiceBookingDialog'
+import { canJoinMultiService } from '@/pages/visit-plan-helpers'
 
 type BookingMode = 'flexible' | 'fixed_window'
 
@@ -41,6 +43,7 @@ type MasterDetails = {
     work_type?: string
     profession_types?: { id: string; slug: string; name: string }[]
     photo_media_id?: string | null
+    organization_id?: string
   }
   services: Service[]
 }
@@ -92,6 +95,7 @@ export function MasterPage() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [booked, setBooked] = useState<BookedAppointment | null>(null)
+  const [multiOpen, setMultiOpen] = useState(false)
 
   const masterQuery = useQuery({
     queryKey: ['master', id],
@@ -321,6 +325,16 @@ export function MasterPage() {
             >
               Далее
             </button>
+            {accessToken && selectedService && canJoinMultiService(selectedService) && master.organization_id && (
+              <button
+                className="btn btn-secondary"
+                type="button"
+                data-testid="add-second-service"
+                onClick={() => setMultiOpen(true)}
+              >
+                Добавить вторую услугу
+              </button>
+            )}
           </div>
         )}
 
@@ -482,6 +496,20 @@ export function MasterPage() {
           </div>
         )}
       </section>
+
+      {selectedService && master.organization_id && (
+        <MultiServiceBookingDialog
+          open={multiOpen}
+          onClose={() => setMultiOpen(false)}
+          token={accessToken}
+          organizationId={master.organization_id}
+          firstService={selectedService}
+          onSuccess={() => {
+            setDone(true)
+            setMessage('Визит из двух услуг создан')
+          }}
+        />
+      )}
 
       <section className="stack">
         <h2>Отзывы</h2>

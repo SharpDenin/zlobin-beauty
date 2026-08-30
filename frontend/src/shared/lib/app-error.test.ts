@@ -14,6 +14,24 @@ describe('normalizeError', () => {
     expect(formatUserError(n)).toContain('Это время уже занято')
   })
 
+  it('maps procedure_order_invalid with a Russian reason', () => {
+    const n = normalizeError({
+      code: 'procedure_order_invalid',
+      status: 409,
+      message: 'сначала стрижка, затем окрашивание',
+      details: { hint: 'сначала стрижка, затем окрашивание' },
+    })
+    expect(n.title).toBe('Такой порядок процедур недоступен')
+    expect(n.hint).toContain('сначала стрижка')
+    expect(formatUserError(n)).not.toMatch(/procedure_order/i)
+  })
+
+  it('maps services_different_salon', () => {
+    const n = normalizeError({ code: 'services_different_salon', status: 409, message: 'services belong to different salons' })
+    expect(n.title).toBe('Нельзя объединить услуги в одну запись')
+    expect(formatUserError(n)).toContain('одного салона')
+  })
+
   it('maps appointment_not_reschedulable without leaking booking_mode', () => {
     const n = normalizeError({
       code: 'appointment_not_reschedulable',

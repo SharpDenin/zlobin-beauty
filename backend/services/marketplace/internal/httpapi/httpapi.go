@@ -36,9 +36,11 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/me/master", auth(http.HandlerFunc(a.myMaster)))
 	mux.Handle("GET /v1/me/master/readiness", auth(http.HandlerFunc(a.readiness)))
 	mux.Handle("PUT /v1/me/master", auth(http.HandlerFunc(a.upsertMaster)))
+	mux.HandleFunc("GET /v1/services", a.listOrgServices)
 	mux.Handle("POST /v1/services", auth(http.HandlerFunc(a.createService)))
 	mux.Handle("PATCH /v1/services/{id}", auth(http.HandlerFunc(a.updateService)))
 	mux.HandleFunc("GET /v1/services/{id}", a.getService)
+	mux.HandleFunc("GET /v1/services/{id}/masters", a.serviceMasters)
 	mux.HandleFunc("GET /v1/service-categories", a.listServiceCategories)
 	mux.Handle("POST /v1/service-categories", auth(http.HandlerFunc(a.createServiceCategory)))
 	mux.Handle("PUT /v1/service-categories/{id}", auth(http.HandlerFunc(a.updateServiceCategory)))
@@ -375,6 +377,47 @@ func (a *API) getService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, serviceDTO(*item))
+}
+
+func (a *API) listOrgServices(w http.ResponseWriter, r *http.Request) {
+	orgRaw := strings.TrimSpace(r.URL.Query().Get("organization_id"))
+	if orgRaw == "" {
+		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
+		return
+	}
+	orgID, err := uuid.Parse(orgRaw)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+		return
+	}
+	items, err := a.svc.ListPublishedServicesByOrg(r.Context(), orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, serviceDTO(it))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) serviceMasters(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListMastersOfferingService(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, m := range items {
+		out = append(out, masterDTO(m))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func masterDTO(m domain.MasterProfile) map[string]any {

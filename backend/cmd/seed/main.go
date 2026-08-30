@@ -2594,6 +2594,7 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	}
 	services, err := ensureServices(c, base, employee, orgID, []serviceSpec{
 		{Name: "Уход сотрудника", Category: "уход", Description: "Уход мастера-сотрудника салона.", Duration: 60, Price: 250000},
+		{Name: "Окрашивание колориста", Category: "колористика", Description: "Окрашивание сотрудника салона. Можно комбинировать со стрижкой другого мастера того же салона.", Duration: 90, Price: 520000},
 	})
 	if err != nil {
 		return err

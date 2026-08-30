@@ -104,6 +104,7 @@ type Appointment struct {
 	ChairID            *uuid.UUID
 	OnsiteCityID       *uuid.UUID
 	OnsiteDistrictID   *uuid.UUID
+	VisitGroupID       *uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }

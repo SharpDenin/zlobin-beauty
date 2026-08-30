@@ -27,6 +27,7 @@ export function AppointmentCard({
   status,
   startsAt,
   priceMinor,
+  subtitle,
   actions,
 }: {
   to?: string
@@ -34,6 +35,7 @@ export function AppointmentCard({
   status: string
   startsAt: string
   priceMinor?: number
+  subtitle?: string
   actions?: ReactNode
 }) {
   const tone = appointmentTone(status)
@@ -46,6 +48,7 @@ export function AppointmentCard({
       </div>
       <div className="appt-card-body">
         <strong className="appt-card-title">{serviceName}</strong>
+        {subtitle ? <p className="appt-card-sub muted">{subtitle}</p> : null}
         <div className="appt-card-meta">
           <span className={`badge ${statusBadgeClass(status)}`}>{statusLabel(status)}</span>
           {typeof priceMinor === 'number' ? <span className="meta">{formatMoney(priceMinor)}</span> : null}

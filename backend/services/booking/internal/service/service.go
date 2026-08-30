@@ -470,6 +470,7 @@ type masterPayload struct {
 		OrganizationID string  `json:"organization_id"`
 		BranchID       *string `json:"branch_id"`
 		Published      bool    `json:"published"`
+		DisplayName    string  `json:"display_name"`
 	} `json:"master"`
 	Services []struct {
 		ID              string `json:"id"`

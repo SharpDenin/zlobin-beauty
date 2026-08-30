@@ -19,15 +19,15 @@ import (
 )
 
 type Service struct {
-	store              *store.Store
-	organizationsURL   string
-	bookingURL         string
-	commerceURL        string
-	clientsURL         string
-	communicationsURL  string
-	internalToken      string
-	httpClient         *http.Client
-	now                func() time.Time
+	store             *store.Store
+	organizationsURL  string
+	bookingURL        string
+	commerceURL       string
+	clientsURL        string
+	communicationsURL string
+	internalToken     string
+	httpClient        *http.Client
+	now               func() time.Time
 }
 
 func New(st *store.Store) *Service {
@@ -51,20 +51,20 @@ func (s *Service) WithCommerce(commerceURL string) *Service {
 }
 
 type UpsertMasterInput struct {
-	UserID          uuid.UUID
-	OrganizationID  uuid.UUID
-	BranchID        *uuid.UUID
-	DisplayName     string
-	Bio             string
-	Specializations []string
-	City            string
-	ExperienceYears int
-	Education       string
-	PhotoMediaID    *uuid.UUID
-	WorkType           string
-	Published          bool
-	AccessToken        string
-	ProfessionTypeIDs  *[]uuid.UUID
+	UserID            uuid.UUID
+	OrganizationID    uuid.UUID
+	BranchID          *uuid.UUID
+	DisplayName       string
+	Bio               string
+	Specializations   []string
+	City              string
+	ExperienceYears   int
+	Education         string
+	PhotoMediaID      *uuid.UUID
+	WorkType          string
+	Published         bool
+	AccessToken       string
+	ProfessionTypeIDs *[]uuid.UUID
 }
 
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
@@ -643,6 +643,31 @@ func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*do
 		return nil, apperr.Internal(err)
 	}
 	return item, nil
+}
+
+func (s *Service) ListPublishedServicesByOrg(ctx context.Context, orgID uuid.UUID) ([]domain.ServiceItem, error) {
+	items, err := s.store.ListPublishedServicesByOrg(ctx, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.ServiceItem{}
+	}
+	return items, nil
+}
+
+func (s *Service) ListMastersOfferingService(ctx context.Context, serviceID uuid.UUID) ([]domain.MasterProfile, error) {
+	if _, err := s.GetService(ctx, serviceID); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListMastersOfferingService(ctx, serviceID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.MasterProfile{}
+	}
+	return items, nil
 }
 
 func (s *Service) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceItem, error) {

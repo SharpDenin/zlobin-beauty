@@ -1166,6 +1166,24 @@ button.list-item:hover {
 .reschedule-drawer-panel {
   max-height: min(92vh, 100dvh);
 }
+.visit-plan-dialog { min-width: 0; }
+.visit-plan-current { display: grid; gap: var(--space-1); min-width: 0; }
+.visit-plan-card { gap: var(--space-3); }
+.visit-plan-leg {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.visit-plan-leg strong { font-size: var(--text-lg); }
+.visit-plan-confirm { min-width: 0; }
+.visit-plan-confirm p { overflow-wrap: anywhere; }
+.visit-plan-confirm .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.visit-plan-confirm .row .btn { flex: 1 1 8rem; }
+.appt-card-sub { margin: 0; font-size: var(--text-sm); }
 .occurrence-card:disabled {
   opacity: 0.55;
   cursor: not-allowed;

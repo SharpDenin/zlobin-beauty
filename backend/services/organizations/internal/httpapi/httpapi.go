@@ -62,6 +62,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}", a.internalOrg)
+	a.registerAdminRoutes(mux, auth)
 }
 
 func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {

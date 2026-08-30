@@ -73,6 +73,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/appointments/{id}/repeat-preview", auth(http.HandlerFunc(a.repeatPreview)))
 	a.registerReportRoutes(mux, auth)
 	a.registerWorkModeRoutes(mux, auth)
+	a.registerAdminRoutes(mux, auth)
 }
 
 func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {

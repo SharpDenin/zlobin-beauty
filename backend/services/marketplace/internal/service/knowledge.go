@@ -59,6 +59,8 @@ type KnowledgeListQuery struct {
 	FavoritesOnly      bool
 	PublishedOnly      bool
 	HomeCareOnly       bool
+	Status             string
+	AudienceKind       string
 	Sort               string
 	Limit              int
 	Offset             int
@@ -225,11 +227,12 @@ func (s *Service) ListKnowledge(ctx context.Context, q KnowledgeListQuery) (Know
 		ExcludeID:          q.ExcludeID,
 		FavoritesOnly:      q.FavoritesOnly,
 		PublishedOnly:      q.PublishedOnly,
+		Status:             q.Status,
 		Sort:               q.Sort,
 		Limit:              limit,
 		Offset:             offset,
 	}
-	fetchAll := shouldRankKnowledge(q) || q.HomeCareOnly
+	fetchAll := shouldRankKnowledge(q) || q.HomeCareOnly || strings.TrimSpace(q.AudienceKind) != ""
 	if fetchAll {
 		f.Limit = knowledgeRankFetchLimit
 		f.Offset = 0
@@ -250,6 +253,21 @@ func (s *Service) ListKnowledge(ctx context.Context, q KnowledgeListQuery) (Know
 	}
 	if shouldRankKnowledge(q) {
 		items = rankKnowledgeArticles(items, q, s.now().UTC())
+	}
+	if kind := strings.TrimSpace(strings.ToLower(q.AudienceKind)); kind != "" {
+		filtered := make([]domain.KnowledgeArticle, 0, len(items))
+		for _, it := range items {
+			if kind == "unlinked" {
+				if len(it.ProductIDs) == 0 {
+					filtered = append(filtered, it)
+				}
+				continue
+			}
+			if it.AudienceKind == kind {
+				filtered = append(filtered, it)
+			}
+		}
+		items = filtered
 	}
 	total := len(items)
 	if fetchAll {

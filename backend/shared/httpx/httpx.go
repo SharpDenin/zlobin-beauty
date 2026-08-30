@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,6 +92,60 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 		log.Error("unhandled error", "error", err, "request_id", rid)
 	}
 	JSON(w, http.StatusInternalServerError, ErrorBody{Error: ErrorDetail{Code: string(apperr.CodeInternal), Message: "internal error", RequestID: rid}})
+}
+
+func RequireSystemAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := ClaimsFrom(r.Context())
+		if !ok || !auth.HasRole(claims, "system_admin") {
+			WriteError(w, r, nil, apperr.Forbidden("system_admin role required"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func ParsePage(limitRaw, offsetRaw string) (limit, offset int) {
+	limit = 20
+	if n, err := strconv.Atoi(strings.TrimSpace(limitRaw)); err == nil && n > 0 {
+		limit = n
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(offsetRaw)); err == nil && n > 0 {
+		offset = n
+	}
+	return limit, offset
+}
+
+func ParseOptionalUUID(raw string) (*uuid.UUID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func ParseOptionalBool(raw string) (*bool, error) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return nil, nil
+	}
+	switch raw {
+	case "true", "1", "yes":
+		v := true
+		return &v, nil
+	case "false", "0", "no":
+		v := false
+		return &v, nil
+	default:
+		return nil, errors.New("invalid boolean")
+	}
 }
 
 func BearerAuth(secret string) func(http.Handler) http.Handler {

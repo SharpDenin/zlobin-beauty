@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -79,6 +80,77 @@ FROM client_card_disputes WHERE client_card_id=$1 ORDER BY created_at DESC`, car
 	}
 	if out == nil {
 		out = []domain.CardDispute{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListDisputesAdmin(ctx context.Context, status string, limit, offset int) ([]domain.CardDispute, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, client_card_id, reporter_user_id, field_key, comment, status, created_at, resolved_at, resolved_by
+FROM client_card_disputes
+WHERE ($1 = '' OR status = $1)
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3`, strings.TrimSpace(status), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.CardDispute
+	for rows.Next() {
+		d, err := scanDispute(rows)
+		if err != nil {
+			return nil, err
+		}
+		if d != nil {
+			out = append(out, *d)
+		}
+	}
+	if out == nil {
+		out = []domain.CardDispute{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountDisputesAdmin(ctx context.Context, status string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+SELECT COUNT(*) FROM client_card_disputes WHERE ($1 = '' OR status = $1)`, strings.TrimSpace(status)).Scan(&n)
+	return n, err
+}
+
+func (s *Store) DisputeStats(ctx context.Context) (open int, total int, err error) {
+	err = s.pool.QueryRow(ctx, `
+SELECT COUNT(*) FILTER (WHERE status = 'open')::int, COUNT(*)::int FROM client_card_disputes`).Scan(&open, &total)
+	return open, total, err
+}
+
+func (s *Store) ListDisputeEvents(ctx context.Context, disputeID uuid.UUID) ([]domain.DisputeEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, dispute_id, actor_user_id, action, from_status, to_status, meta, created_at
+FROM client_card_dispute_events WHERE dispute_id=$1 ORDER BY created_at`, disputeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.DisputeEvent
+	for rows.Next() {
+		var ev domain.DisputeEvent
+		if err := rows.Scan(&ev.ID, &ev.DisputeID, &ev.ActorUserID, &ev.Action, &ev.FromStatus, &ev.ToStatus, &ev.Meta, &ev.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	if out == nil {
+		out = []domain.DisputeEvent{}
 	}
 	return out, rows.Err()
 }

@@ -5,6 +5,7 @@ import {
   hasSalonAdmin,
   hasSupplierAccess,
   hasSupplierRepAccess,
+  hasSystemAdmin,
   useAuth,
   type User,
 } from '@/features/auth/AuthProvider'
@@ -23,6 +24,7 @@ export type CabinetKind =
   | 'salon_admin'
   | 'supplier'
   | 'supplier_rep'
+  | 'platform_admin'
 
 export type NavLink = { to: string; label: string; end?: boolean }
 
@@ -75,6 +77,7 @@ const BRANCH_KEY = 'sx.selectedBranch'
 
 export function resolveCabinetKind(user: User | null | undefined, workType?: string): CabinetKind {
   if (!user) return 'client'
+  if (hasSystemAdmin(user)) return 'platform_admin'
   if (hasSupplierAccess(user) && !hasMasterAccess(user)) return 'supplier'
   if (hasSupplierRepAccess(user) && !hasMasterAccess(user) && !hasSupplierAccess(user)) return 'supplier_rep'
   if (hasMasterAccess(user) || hasSalonAdmin(user)) {
@@ -95,6 +98,8 @@ export function resolveCabinetKind(user: User | null | undefined, workType?: str
 
 export function cabinetLabel(kind: CabinetKind) {
   switch (kind) {
+    case 'platform_admin':
+      return 'Администрирование платформы'
     case 'supplier':
       return 'Кабинет поставщика'
     case 'supplier_rep':
@@ -155,6 +160,28 @@ function canFeature(kind: CabinetKind, feature: CabinetFeature) {
 }
 
 export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondary: NavLink[]; side: NavLink[] } {
+  if (kind === 'platform_admin') {
+    const primary: NavLink[] = [
+      { to: '/admin', label: 'Сводка', end: true },
+      { to: '/admin/users', label: 'Пользователи' },
+      { to: '/admin/organizations', label: 'Организации' },
+      { to: '/more', label: 'Ещё' },
+    ]
+    const secondary: NavLink[] = [
+      { to: '/admin/masters', label: 'Мастера' },
+      { to: '/admin/suppliers', label: 'Поставщики' },
+      { to: '/admin/products', label: 'Товары' },
+      { to: '/admin/services', label: 'Услуги' },
+      { to: '/admin/knowledge', label: 'База знаний' },
+      { to: '/admin/appointments', label: 'Записи' },
+      { to: '/admin/orders', label: 'Заказы' },
+      { to: '/admin/disputes', label: 'Споры' },
+      { to: '/admin/audit', label: 'Журнал' },
+      { to: '/admin/catalogs', label: 'Справочники' },
+      { to: '/profile', label: 'Профиль' },
+    ]
+    return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
+  }
   if (kind === 'supplier') {
     const primary: NavLink[] = [
       { to: '/supplier', label: 'Главная', end: true },

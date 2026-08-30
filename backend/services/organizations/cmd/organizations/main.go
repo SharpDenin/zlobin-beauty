@@ -43,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	api := httpapi.New(service.New(st), log, os.Getenv("INTERNAL_TOKEN"))
+	api := httpapi.New(service.New(st).WithAudit(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")), log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

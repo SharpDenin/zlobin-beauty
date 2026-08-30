@@ -81,6 +81,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	a.registerRecommendationRoutes(mux, auth)
 	a.registerRecurringRoutes(mux, auth)
 	a.registerInventoryRoutes(mux, auth)
+	a.registerAdminRoutes(mux, auth)
 }
 
 // --- locations ---

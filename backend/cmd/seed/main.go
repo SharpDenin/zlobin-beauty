@@ -1926,6 +1926,14 @@ func seedAppointments(c *http.Client, base string, client, master authUser, mast
 			"oxidizer": "6%", "ratio": "1:1.5",
 			"comment": "Создано seed-скриптом",
 		}, nil)
+		if dst, _ := doJSON(c, http.MethodPost, base+"/v1/client-cards/id/"+card.ID+"/disputes", master.Token, map[string]any{
+			"field_key": "preferences",
+			"comment":   "Клиент указал неверные предпочтения по цвету — требуется проверка карточки",
+		}, nil); dst < 300 {
+			log.Printf("ok open dispute on card=%s", card.ID)
+		} else {
+			log.Printf("warn dispute not created for card=%s status=%d", card.ID, dst)
+		}
 		log.Printf("ok formula on card=%s", card.ID)
 	} else {
 		log.Printf("warn client card not found for appointment %s", appt.ID)

@@ -14,7 +14,16 @@ const ICONS: Record<string, string> = {
 
 function iconFor(to: string) {
   if (to === '/more') return 'more'
-  if (to === '/' || to === '/supplier' || to === '/rep') return 'home'
+  if (to === '/' || to === '/supplier' || to === '/rep' || to === '/admin') return 'home'
+  if (to.startsWith('/admin/users')) return 'user'
+  if (to.startsWith('/admin/organizations') || to.startsWith('/admin/suppliers')) return 'warehouse'
+  if (to.startsWith('/admin/masters') || to.startsWith('/admin/services')) return 'clock'
+  if (to.startsWith('/admin/products')) return 'bag'
+  if (to.startsWith('/admin/knowledge') || to.startsWith('/admin/catalogs')) return 'search'
+  if (to.startsWith('/admin/appointments')) return 'calendar'
+  if (to.startsWith('/admin/orders')) return 'money'
+  if (to.startsWith('/admin/disputes')) return 'chat'
+  if (to.startsWith('/admin/audit')) return 'more'
   if (to.startsWith('/calendar')) return 'calendar'
   if (to.startsWith('/appointments')) return 'clock'
   if (to.startsWith('/search')) return 'search'

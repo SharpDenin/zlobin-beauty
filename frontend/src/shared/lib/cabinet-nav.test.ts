@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { navForCabinet } from './cabinet'
+import { navForCabinet, resolveCabinetKind } from './cabinet'
 
 describe('navForCabinet', () => {
   it('does not expose /rep/map to sales reps', () => {
@@ -28,5 +28,17 @@ describe('navForCabinet', () => {
     const nav = navForCabinet('supplier')
     const all = [...nav.primary, ...nav.secondary, ...nav.side]
     expect(all.some((l) => l.to === '/inventory')).toBe(false)
+  })
+
+  it('exposes platform admin information architecture', () => {
+    const nav = navForCabinet('platform_admin')
+    const all = [...nav.primary, ...nav.secondary, ...nav.side]
+    expect(nav.primary.some((l) => l.to === '/admin' && l.end)).toBe(true)
+    expect(all.some((l) => l.to === '/admin/users')).toBe(true)
+    expect(all.some((l) => l.to === '/admin/disputes')).toBe(true)
+    expect(all.some((l) => l.to === '/admin/audit')).toBe(true)
+    expect(all.some((l) => l.to === '/admin/catalogs')).toBe(true)
+    expect(all.some((l) => l.to === '/calendar')).toBe(false)
+    expect(resolveCabinetKind({ id: '1', email: 'a@x', phone: null, display_name: 'A', city: '', roles: ['system_admin', 'master'], status: 'active' })).toBe('platform_admin')
   })
 })

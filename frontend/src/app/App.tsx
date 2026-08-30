@@ -26,6 +26,29 @@ import { SalonPickupPage } from '@/pages/SalonPickupPage'
 import { SupplierClientOrdersPage } from '@/pages/SupplierClientOrdersPage'
 import { RepPage } from '@/pages/RepPage'
 import { AdminCatalogsPage } from '@/pages/AdminCatalogsPage'
+import { AdminDashboardPage } from '@/features/admin/AdminDashboardPage'
+import { AdminUserDetailPage, AdminUsersPage } from '@/features/admin/AdminUsersPage'
+import {
+  AdminAppointmentDetailPage,
+  AdminAppointmentsPage,
+  AdminAuditPage,
+  AdminDisputeDetailPage,
+  AdminDisputesPage,
+  AdminKnowledgeDetailPage,
+  AdminKnowledgePage,
+  AdminMasterDetailPage,
+  AdminMastersPage,
+  AdminOrderDetailPage,
+  AdminOrdersPage,
+  AdminOrganizationDetailPage,
+  AdminOrganizationsPage,
+  AdminProductDetailPage,
+  AdminProductsPage,
+  AdminServiceDetailPage,
+  AdminServicesPage,
+  AdminSupplierDetailPage,
+  AdminSuppliersPage,
+} from '@/features/admin/AdminResources'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { CosmeticsPage } from '@/pages/CosmeticsPage'
 import { CosmeticsSupplierPage } from '@/pages/CosmeticsSupplierPage'
@@ -122,6 +145,28 @@ export function App() {
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/warehouse" element={<WarehousePage />} />
                 <Route element={<RequireAdmin />}>
+                  <Route path="/admin" element={<AdminDashboardPage />} />
+                  <Route path="/admin/users" element={<AdminUsersPage />} />
+                  <Route path="/admin/users/:id" element={<AdminUserDetailPage />} />
+                  <Route path="/admin/organizations" element={<AdminOrganizationsPage />} />
+                  <Route path="/admin/organizations/:id" element={<AdminOrganizationDetailPage />} />
+                  <Route path="/admin/masters" element={<AdminMastersPage />} />
+                  <Route path="/admin/masters/:id" element={<AdminMasterDetailPage />} />
+                  <Route path="/admin/suppliers" element={<AdminSuppliersPage />} />
+                  <Route path="/admin/suppliers/:id" element={<AdminSupplierDetailPage />} />
+                  <Route path="/admin/products" element={<AdminProductsPage />} />
+                  <Route path="/admin/products/:id" element={<AdminProductDetailPage />} />
+                  <Route path="/admin/services" element={<AdminServicesPage />} />
+                  <Route path="/admin/services/:id" element={<AdminServiceDetailPage />} />
+                  <Route path="/admin/knowledge" element={<AdminKnowledgePage />} />
+                  <Route path="/admin/knowledge/:id" element={<AdminKnowledgeDetailPage />} />
+                  <Route path="/admin/appointments" element={<AdminAppointmentsPage />} />
+                  <Route path="/admin/appointments/:id" element={<AdminAppointmentDetailPage />} />
+                  <Route path="/admin/orders" element={<AdminOrdersPage />} />
+                  <Route path="/admin/orders/:id" element={<AdminOrderDetailPage />} />
+                  <Route path="/admin/disputes" element={<AdminDisputesPage />} />
+                  <Route path="/admin/disputes/:id" element={<AdminDisputeDetailPage />} />
+                  <Route path="/admin/audit" element={<AdminAuditPage />} />
                   <Route path="/admin/catalogs" element={<AdminCatalogsPage />} />
                 </Route>
                 <Route element={<RequireMaster />}>

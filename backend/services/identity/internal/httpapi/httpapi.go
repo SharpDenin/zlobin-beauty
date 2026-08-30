@@ -40,6 +40,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/me/dashboard", authMW(http.HandlerFunc(a.putDashboard)))
 	mux.Handle("GET /v1/me/hints", authMW(http.HandlerFunc(a.getHints)))
 	mux.Handle("PATCH /v1/me/hints", authMW(http.HandlerFunc(a.patchHints)))
+	a.registerAdminRoutes(mux, authMW)
 }
 
 func (a *API) InternalRoutes(mux *http.ServeMux, internalToken string) {
@@ -47,6 +48,7 @@ func (a *API) InternalRoutes(mux *http.ServeMux, internalToken string) {
 	mux.Handle("GET /v1/internal/entitlements/{userID}", internal(http.HandlerFunc(a.internalEntitlements)))
 	mux.Handle("GET /v1/internal/users/{userID}", internal(http.HandlerFunc(a.internalUser)))
 	mux.Handle("POST /v1/internal/users/grant-role", internal(http.HandlerFunc(a.grantRole)))
+	mux.Handle("POST /v1/internal/audit", internal(http.HandlerFunc(a.ingestAudit)))
 }
 
 func (a *API) internalUser(w http.ResponseWriter, r *http.Request) {

@@ -28,6 +28,7 @@ type Service struct {
 	organizationsURL  string
 	bookingURL        string
 	communicationsURL string
+	identityURL       string
 	internalToken     string
 	httpClient        *http.Client
 	now               func() time.Time

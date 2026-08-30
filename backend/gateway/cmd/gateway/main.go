@@ -47,6 +47,26 @@ func main() {
 	mux.Handle("/v1/me/hints", identity)
 	mux.Handle("/v1/internal/entitlements/", identity)
 	mux.Handle("/v1/internal/users/", identity)
+	mux.Handle("/v1/internal/audit", identity)
+	mux.Handle("/v1/admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case p == "/v1/admin/stats" || strings.HasPrefix(p, "/v1/admin/users") || strings.HasPrefix(p, "/v1/admin/audit-log"):
+			identity.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/organizations") || strings.HasPrefix(p, "/v1/admin/suppliers"):
+			organizations.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/masters") || strings.HasPrefix(p, "/v1/admin/services") || strings.HasPrefix(p, "/v1/admin/knowledge"):
+			marketplace.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/products") || strings.HasPrefix(p, "/v1/admin/orders"):
+			commerce.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/appointments") || strings.HasPrefix(p, "/v1/admin/working-hours"):
+			booking.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/disputes"):
+			clients.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 	mux.Handle("/v1/me/representative", organizations)
 	mux.Handle("/v1/tasks/", organizations)
 	mux.Handle("/v1/organizations", organizations)

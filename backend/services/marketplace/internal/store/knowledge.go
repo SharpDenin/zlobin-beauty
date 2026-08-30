@@ -26,6 +26,7 @@ type KnowledgeListFilter struct {
 	ExcludeID          *uuid.UUID
 	FavoritesOnly      bool
 	PublishedOnly      bool
+	Status             string
 	Sort               string
 	Limit              int
 	Offset             int
@@ -230,6 +231,11 @@ func knowledgeWhere(f KnowledgeListFilter) (string, []any, int) {
 	b.WriteString(`1=1`)
 	if f.PublishedOnly {
 		b.WriteString(` AND ka.status = 'published' AND ka.published = TRUE`)
+	}
+	if status := strings.TrimSpace(f.Status); status != "" {
+		b.WriteString(fmt.Sprintf(` AND ka.status=$%d`, n))
+		args = append(args, status)
+		n++
 	}
 	if f.AuthorUserID != nil {
 		b.WriteString(fmt.Sprintf(` AND ka.author_user_id=$%d`, n))

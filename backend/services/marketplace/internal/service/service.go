@@ -25,6 +25,7 @@ type Service struct {
 	commerceURL       string
 	clientsURL        string
 	communicationsURL string
+	identityURL       string
 	internalToken     string
 	httpClient        *http.Client
 	now               func() time.Time

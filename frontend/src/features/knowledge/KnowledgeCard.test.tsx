@@ -27,6 +27,7 @@ describe('KnowledgeCard', () => {
     expect(screen.getByText('No.3 два раза в неделю')).toBeTruthy()
     expect(screen.queryByText('Профессиональный материал')).toBeNull()
     expect(screen.getByText('Уход')).toBeTruthy()
+    expect(screen.getByRole('img', { name: 'Нет изображения' })).toBeTruthy()
   })
 
   it('shows home and professional badges for masters', () => {

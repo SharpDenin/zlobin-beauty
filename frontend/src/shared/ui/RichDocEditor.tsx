@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, type JSONContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
@@ -31,7 +31,9 @@ export function RichDocEditor({
   disabled,
 }: Props) {
   const [insertKind, setInsertKind] = useState<InsertKind>(null)
+  const hydrated = useRef(false)
   const editor = useEditor({
+    immediatelyRender: false,
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
@@ -47,7 +49,10 @@ export function RichDocEditor({
     ],
     content: value ?? { type: 'doc', content: [{ type: 'paragraph' }] },
     editable: !disabled,
-    onUpdate: ({ editor: ed }) => onChange(ed.getJSON()),
+    onUpdate: ({ editor: ed }) => {
+      if (!hydrated.current) return
+      onChange(ed.getJSON())
+    },
   })
 
   useEffect(() => {
@@ -62,6 +67,7 @@ export function RichDocEditor({
     if (current !== next) {
       editor.commands.setContent(value, { emitUpdate: false })
     }
+    hydrated.current = true
   }, [editor, value])
 
   function setLink() {
@@ -91,24 +97,24 @@ export function RichDocEditor({
     setInsertKind(null)
   }
 
-  if (!editor) return <div className="state-box">Загрузка редактора…</div>
+  if (!editor) return <div className="skeleton skeleton-card" aria-busy="true" aria-label="Загрузка редактора" />
 
   return (
     <div className={`rich-doc-editor${disabled ? ' is-disabled' : ''}`}>
       <div className="editor-toolbar" role="toolbar" aria-label="Форматирование">
-        <button type="button" className={editor.isActive('heading', { level: 1 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>H1</button>
-        <button type="button" className={editor.isActive('heading', { level: 2 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
-        <button type="button" className={editor.isActive('heading', { level: 3 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>H3</button>
-        <button type="button" className={editor.isActive('bold') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBold().run()}>Ж</button>
-        <button type="button" className={editor.isActive('italic') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleItalic().run()}>К</button>
-        <button type="button" className={editor.isActive('bulletList') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBulletList().run()}>Список</button>
-        <button type="button" className={editor.isActive('blockquote') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBlockquote().run()}>Цитата</button>
-        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setCallout('tip').run()}>Совет</button>
-        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setCallout('warning').run()}>Важно</button>
-        <button type="button" disabled={disabled} onClick={() => editor.chain().focus().setHorizontalRule().run()}>Разделитель</button>
-        <button type="button" className={editor.isActive('link') ? 'active' : ''} disabled={disabled} onClick={setLink}>Ссылка</button>
-        <button type="button" disabled={disabled || !token} onClick={() => setInsertKind('image')}>Изображение</button>
-        <button type="button" disabled={disabled || !token} onClick={() => setInsertKind('video')}>Видео</button>
+        <button type="button" aria-label="Заголовок 1" aria-pressed={editor.isActive('heading', { level: 1 })} className={editor.isActive('heading', { level: 1 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>H1</button>
+        <button type="button" aria-label="Заголовок 2" aria-pressed={editor.isActive('heading', { level: 2 })} className={editor.isActive('heading', { level: 2 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
+        <button type="button" aria-label="Заголовок 3" aria-pressed={editor.isActive('heading', { level: 3 })} className={editor.isActive('heading', { level: 3 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>H3</button>
+        <button type="button" aria-label="Жирный" aria-pressed={editor.isActive('bold')} className={editor.isActive('bold') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBold().run()}>Ж</button>
+        <button type="button" aria-label="Курсив" aria-pressed={editor.isActive('italic')} className={editor.isActive('italic') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleItalic().run()}>К</button>
+        <button type="button" aria-label="Маркированный список" aria-pressed={editor.isActive('bulletList')} className={editor.isActive('bulletList') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBulletList().run()}>Список</button>
+        <button type="button" aria-label="Цитата" aria-pressed={editor.isActive('blockquote')} className={editor.isActive('blockquote') ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleBlockquote().run()}>Цитата</button>
+        <button type="button" aria-label="Совет" disabled={disabled} onClick={() => editor.chain().focus().setCallout('tip').run()}>Совет</button>
+        <button type="button" aria-label="Важно" disabled={disabled} onClick={() => editor.chain().focus().setCallout('warning').run()}>Важно</button>
+        <button type="button" aria-label="Разделитель" disabled={disabled} onClick={() => editor.chain().focus().setHorizontalRule().run()}>Разделитель</button>
+        <button type="button" aria-label="Ссылка" aria-pressed={editor.isActive('link')} className={editor.isActive('link') ? 'active' : ''} disabled={disabled} onClick={setLink}>Ссылка</button>
+        <button type="button" aria-label="Вставить изображение" disabled={disabled || !token} onClick={() => setInsertKind('image')}>Изображение</button>
+        <button type="button" aria-label="Вставить видео" disabled={disabled || !token} onClick={() => setInsertKind('video')}>Видео</button>
       </div>
       <EditorContent editor={editor} className="rich-doc-surface" />
       <Modal

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import type { KnowledgeArticle } from '@/features/knowledge/types'
 import { articleAudienceBadges } from '@/pages/knowledge-helpers'
@@ -9,9 +10,10 @@ type Props = {
   onFavorite?: (article: KnowledgeArticle) => void
   favoritePending?: boolean
   showAudience?: boolean
+  actions?: ReactNode
 }
 
-export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, showAudience }: Props) {
+export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, showAudience, actions }: Props) {
   const reading = a.reading_time_minutes && a.reading_time_minutes > 0 ? `${a.reading_time_minutes} мин` : null
   const chips = [a.brand, a.category].filter(Boolean).slice(0, 2)
   const audience = showAudience ? articleAudienceBadges(a) : []
@@ -20,11 +22,13 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, 
     <article className="kb-card">
       <Link to={`/knowledge/${a.id}`} className="kb-card-link" data-testid="kb-article">
         <div className="kb-cover">
-          {a.cover_media_id ? (
-            <MediaImage mediaId={a.cover_media_id} token={token} alt="" className="product-photo" />
-          ) : (
-            <div className="product-photo placeholder">{(a.category || a.title || 'KB').slice(0, 2)}</div>
-          )}
+          <MediaImage
+            mediaId={a.cover_media_id}
+            token={token}
+            alt=""
+            className="product-photo"
+            fallback={(a.category || a.title || 'KB').slice(0, 2)}
+          />
         </div>
         <strong>{a.title}</strong>
         {a.excerpt ? <p className="muted kb-card-excerpt">{a.excerpt}</p> : null}
@@ -55,6 +59,7 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, 
           {a.favorite ? '★' : '☆'}
         </button>
       )}
+      {actions ? <div className="kb-card-actions">{actions}</div> : null}
     </article>
   )
 }

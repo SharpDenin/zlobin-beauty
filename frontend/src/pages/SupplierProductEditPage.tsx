@@ -9,11 +9,15 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg, type CommerceProduct } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { useToast } from '@/shared/ui/Toast'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { fieldErrors, formatUserError } from '@/shared/lib/app-error'
+import { supplierProductWriteBody } from '@/pages/supplier-helpers'
 
 const schema = z.object({
   name: z.string().min(2, 'Укажите название'),
   brand: z.string().optional(),
-  category: z.string().optional(),
+  category_id: z.string().optional(),
   description: z.string().optional(),
   price_rubles: z.coerce.number().min(0, 'Цена не может быть отрицательной'),
   volume_label: z.string().optional(),
@@ -35,7 +39,7 @@ export function SupplierProductEditPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const toast = useToast()
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [photoMediaId, setPhotoMediaId] = useState<string | null>(null)
 
   const existing = useQuery({
@@ -54,12 +58,18 @@ export function SupplierProductEditPage() {
     enabled: Boolean(accessToken && !isNew && id),
   })
 
+  const categories = useQuery({
+    queryKey: ['commerce-product-categories'],
+    queryFn: () => apiRequest<{ items: Array<{ id: string; name: string }> }>('/v1/commerce/product-categories', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
       brand: '',
-      category: '',
+      category_id: '',
       description: '',
       price_rubles: 0,
       volume_label: '',
@@ -78,7 +88,7 @@ export function SupplierProductEditPage() {
     form.reset({
       name: p.name,
       brand: p.brand ?? '',
-      category: p.category ?? '',
+      category_id: p.category_id ?? '',
       description: p.description ?? '',
       price_rubles: p.price_minor / 100,
       volume_label: p.volume_label ?? '',
@@ -90,28 +100,17 @@ export function SupplierProductEditPage() {
       audience: p.audience === 'professional_only' ? 'professional_only' : 'all',
     })
     setPhotoMediaId(p.photo_media_id ?? null)
-  }, [existing.data, form])
+  }, [existing.data, categories.data, form.reset])
 
   const save = useMutation({
     mutationFn: async (values: FormValues) => {
       if (!supplierOrgId) throw new ApiError('Нет организации поставщика', 'validation_error', 400)
-      const payload = {
-        organization_id: supplierOrgId,
-        name: values.name,
-        brand: values.brand ?? '',
-        category: values.category ?? '',
-        description: values.description ?? '',
-        price_minor: Math.round(values.price_rubles * 100),
-        volume_label: values.volume_label ?? '',
-        unit: values.unit,
-        sku: values.sku ?? '',
-        delivery_days: values.delivery_days,
-        for_sale: values.for_sale,
-        published: values.published,
-        audience: values.audience,
-        photo_media_id: photoMediaId,
-        min_stock: 0,
-      }
+      const payload = supplierProductWriteBody({
+        isNew,
+        organizationId: supplierOrgId,
+        values,
+        photoMediaId,
+      })
       if (isNew) {
         return apiRequest<CommerceProduct>('/v1/commerce/products', {
           token: accessToken,
@@ -133,23 +132,31 @@ export function SupplierProductEditPage() {
       void navigate(res?.id ? `/supplier/products/${res.id}` : '/supplier/products')
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Не удалось сохранить товар'
-      setError(msg)
-      toast.error(msg)
+      setError(e)
+      const fields = fieldErrors(e)
+      if (fields) {
+        for (const [key, value] of Object.entries(fields)) {
+          if (key in form.getValues()) {
+            form.setError(key as keyof FormValues, { type: 'server', message: value })
+          }
+        }
+      }
+      toast.error(formatUserError(e, 'Не удалось сохранить товар'))
     },
   })
 
   if (orgs.isLoading || (!isNew && existing.isLoading)) {
-    return <main className="page"><div className="state-box">Загрузка…</div></main>
+    return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   }
 
   if (!supplierOrgId) {
     return (
       <main className="page">
-        <div className="empty-state">
-          <h2>Сначала создайте поставщика</h2>
-          <Link className="btn btn-primary" to="/supplier">Онбординг</Link>
-        </div>
+        <EmptyState
+          title="Сначала создайте поставщика"
+          text="Онбординг откроет каталог и редактор товаров."
+          action={<Link className="btn btn-primary" to="/supplier">Онбординг</Link>}
+        />
       </main>
     )
   }
@@ -163,10 +170,19 @@ export function SupplierProductEditPage() {
         </div>
       </div>
 
-      {error && <div className="state-box error">{error}</div>}
-      {!isNew && existing.isError && <div className="state-box error">Товар не найден</div>}
+      <ErrorBanner error={error} fallbackTitle="Не удалось сохранить товар" />
+      {!isNew && existing.isError && (
+        <>
+          <ErrorBanner error={existing.error} fallbackTitle="Товар не найден" />
+          <EmptyState
+            title="Товар не найден"
+            text="Проверьте ссылку или вернитесь к каталогу."
+            action={<Link className="btn btn-secondary" to="/supplier/products">К списку</Link>}
+          />
+        </>
+      )}
 
-      <form className="card stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
+      <form className="card stack supplier-product-form" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
         <div className="field">
           <label>Фото</label>
           <MediaDropzone
@@ -188,25 +204,29 @@ export function SupplierProductEditPage() {
           <input {...form.register('brand')} />
         </div>
         <div className="field">
-          <label>Категория</label>
-          <input {...form.register('category')} placeholder="Краска, уход, инструменты…" />
+          <label htmlFor="sp-category">Категория</label>
+          <select id="sp-category" {...form.register('category_id')}>
+            <option value="">Без категории</option>
+            {(categories.data?.items ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
         <div className="field">
           <label>Описание</label>
           <textarea {...form.register('description')} />
         </div>
-        <div className="row">
-          <div className="field" style={{ flex: 1 }}>
+        <div className="supplier-form-grid">
+          <div className="field">
             <label>Цена, ₽</label>
-            <input type="number" step="0.01" {...form.register('price_rubles')} />
+            <input type="number" step="0.01" aria-invalid={Boolean(form.formState.errors.price_rubles)} {...form.register('price_rubles')} />
+            {form.formState.errors.price_rubles && <span className="error">{form.formState.errors.price_rubles.message}</span>}
           </div>
-          <div className="field" style={{ flex: 1 }}>
+          <div className="field">
             <label>Объём</label>
             <input {...form.register('volume_label')} placeholder="100 мл" />
           </div>
-        </div>
-        <div className="row">
-          <div className="field" style={{ flex: 1 }}>
+          <div className="field">
             <label>Ед. изм.</label>
             <select {...form.register('unit')}>
               <option value="pcs">шт</option>
@@ -217,7 +237,7 @@ export function SupplierProductEditPage() {
               <option value="pack">уп</option>
             </select>
           </div>
-          <div className="field" style={{ flex: 1 }}>
+          <div className="field">
             <label>Артикул</label>
             <input {...form.register('sku')} />
           </div>
@@ -256,7 +276,7 @@ export function SupplierProductEditPage() {
         <section className="card stack-sm">
           <h2>Материалы по товару</h2>
           {(productKnowledge.data?.items?.length ?? 0) === 0 && (
-            <p className="muted">Пока нет опубликованных статей. Создайте материал в Базе знаний и привяжите этот товар.</p>
+            <p className="muted">Связанных материалов пока нет. Создайте статью в базе знаний и привяжите этот товар.</p>
           )}
           {(productKnowledge.data?.items ?? []).map((a) => (
             <Link key={a.id} to={`/knowledge/${a.id}/edit`}>{a.title}</Link>

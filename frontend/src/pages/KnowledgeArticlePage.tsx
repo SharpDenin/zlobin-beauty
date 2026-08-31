@@ -140,15 +140,9 @@ export function KnowledgeArticlePage() {
         )}
       </div>
       {isPreview && <div className="state-box">Предпросмотр</div>}
-      {a.cover_media_id ? (
-        <div className="article-cover">
-          <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} />
-        </div>
-      ) : (
-        <div className="article-cover article-cover-fallback">
-          <div className="product-photo placeholder">{(a.category || a.title).slice(0, 2)}</div>
-        </div>
-      )}
+      <div className="article-cover">
+        <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} fallback={(a.category || a.title).slice(0, 2)} />
+      </div>
       <article className="kb-article-column stack">
         <div className="stack-sm">
           <h1>{a.title}</h1>
@@ -190,11 +184,9 @@ export function KnowledgeArticlePage() {
           <div className="product-grid">
             {relatedProducts.map((p) => (
               <Link key={p.id} className="product-card" to={productHref(p.id)}>
-                {p.photo_media_id ? (
-                  <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} className="product-photo" />
-                ) : (
-                  <div className="product-photo placeholder">{p.brand || 'Salon-X'}</div>
-                )}
+                <div className="media-frame media-frame--product">
+                  <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} fallback={(p.brand || p.name).slice(0, 2).toUpperCase()} />
+                </div>
                 <p className="muted">{[p.brand, p.volume_label].filter(Boolean).join(' · ')}</p>
                 <strong>{p.name}</strong>
                 <span>{formatMoney(p.price_minor)}</span>

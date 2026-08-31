@@ -9,6 +9,8 @@ import {
   articleAudienceBadges,
   clientVisibleProducts,
   knowledgeEmptyTitle,
+  knowledgeCoverClearValue,
+  parseKnowledgeDoc,
 } from './knowledge-helpers'
 
 describe('knowledge-helpers', () => {
@@ -65,5 +67,20 @@ describe('knowledge-helpers', () => {
   it('uses role-aware empty copy', () => {
     expect(knowledgeEmptyTitle(false, false)).toBe('В базе знаний пока нет материалов для домашнего ухода.')
     expect(knowledgeEmptyTitle(true, false)).toBe('Материалы не найдены.')
+  })
+
+  it('clears article cover with empty string, not a placeholder id', () => {
+    expect(knowledgeCoverClearValue('abc')).toBe('abc')
+    expect(knowledgeCoverClearValue(null)).toBe('')
+    expect(knowledgeCoverClearValue(undefined)).toBe('')
+  })
+
+  it('loads article docs from JSON objects or strings', () => {
+    const obj = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Majirel' }] }] }
+    expect(parseKnowledgeDoc(obj, 'doc_json')).toEqual(obj)
+    expect(parseKnowledgeDoc(JSON.stringify(obj), 'doc_json')).toEqual(obj)
+    expect(parseKnowledgeDoc({ content: obj.content }, 'doc_json')).toEqual(obj)
+    expect(parseKnowledgeDoc([obj], 'doc_json')).toEqual(obj)
+    expect(parseKnowledgeDoc(undefined, 'doc_json').type).toBe('doc')
   })
 })

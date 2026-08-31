@@ -16,9 +16,11 @@ import {
   type KnowledgeFilters,
   type KnowledgeListResponse,
 } from '@/features/knowledge/types'
-import { articleAudienceBadges, knowledgeEmptyTitle } from '@/pages/knowledge-helpers'
+import { knowledgeEmptyTitle } from '@/pages/knowledge-helpers'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { Drawer } from '@/shared/ui/Drawer'
 
 type Facets = {
   categories: KnowledgeFacet[]
@@ -235,7 +237,9 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
           </div>
           <div className="row kb-search-actions">
             <button className="btn btn-primary" type="submit">Найти</button>
-            <button className="btn btn-secondary" type="button" onClick={() => setDrawer((v) => !v)}>Фильтры</button>
+            <button className="btn btn-secondary" type="button" onClick={() => setDrawer(true)}>
+              Фильтры{filtersActive(filters) ? ' · выбраны' : ''}
+            </button>
           </div>
         </form>
         <div className="chip-row kb-quick-chips">
@@ -257,12 +261,8 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
         )}
       </section>
 
-      {drawer && (
-        <section className="card stack kb-filter-panel" aria-label="Расширенные фильтры">
-          <div className="row between">
-            <h2>Фильтры</h2>
-            <button className="btn btn-ghost btn-compact" type="button" onClick={() => setDrawer(false)}>Закрыть</button>
-          </div>
+      <Drawer open={drawer} onClose={() => setDrawer(false)} title="Фильтры" label="Фильтры базы знаний">
+          <div className="stack kb-filter-panel">
           <SearchableMultiSelect
             id="kb-f-supplier"
             label="Поставщик"
@@ -331,8 +331,16 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
               </button>
             ))}
           </div>
-        </section>
-      )}
+          <div className="row wrap">
+            <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
+              Сбросить
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setDrawer(false)}>
+              Применить
+            </button>
+          </div>
+          </div>
+        </Drawer>
 
       {list.isLoading && (
         <div className="kb-grid" aria-busy="true" aria-label="Загрузка материалов">
@@ -380,28 +388,23 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
       <section className="stack kb-section">
         <h2>{browseHome ? 'Все материалы' : 'Результаты'}</h2>
         {!list.isLoading && items.length === 0 && (
-          <div className="empty-state">
-            <h3>{knowledgeEmptyTitle(professional, filtersActive(filters))}</h3>
-            <p className="muted">
-              {filtersActive(filters)
+          <EmptyState
+            title={knowledgeEmptyTitle(professional, filtersActive(filters))}
+            text={
+              filtersActive(filters)
                 ? 'Снимите один из фильтров или сбросьте все условия поиска.'
                 : professional
                   ? 'Попробуйте изменить поиск или сбросить фильтры.'
-                  : 'Когда поставщики опубликуют рекомендации по домашней косметике, они появятся здесь.'}
-            </p>
-            {filtersActive(filters) && (
-              <>
-                <div className="chip-row">
-                  {activeChips.map((c) => (
-                    <button key={c.key} type="button" className="chip active" onClick={c.clear}>{c.label} ×</button>
-                  ))}
-                </div>
+                  : 'Когда поставщики опубликуют рекомендации по домашней косметике, они появятся здесь.'
+            }
+            action={
+              filtersActive(filters) ? (
                 <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
                   Сбросить фильтры
                 </button>
-              </>
-            )}
-          </div>
+              ) : undefined
+            }
+          />
         )}
         <div className="kb-grid">
           {items.map((a) => (
@@ -437,32 +440,29 @@ function SupplierKnowledgeHome() {
       {mine.isLoading && <div className="kb-grid" aria-busy="true"><KnowledgeCardSkeleton /><KnowledgeCardSkeleton /></div>}
       {mine.isError && <ErrorBanner error={mine.error} fallbackTitle="Не удалось загрузить материалы" />}
       {!mine.isLoading && items.length === 0 && (
-        <div className="empty-state">
-          <h2>Материалов пока нет</h2>
-          <p>Создайте инструкцию или технологию и свяжите её со своими товарами.</p>
-          <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
-        </div>
+        <EmptyState
+          title="Статей пока нет"
+          text="Создайте инструкцию или технологию и свяжите её со своими товарами."
+          action={<Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>}
+        />
       )}
-      <div className="list">
+      <div className="kb-grid">
         {items.map((a) => (
-          <article key={a.id} className="list-item">
-            <div className="row between">
-              <Link to={`/knowledge/${a.id}`}><strong>{a.title}</strong></Link>
-              <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
-                {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}
-              </span>
-            </div>
-            <p className="muted">{[a.category, a.brand, a.author_name].filter(Boolean).join(' · ')}</p>
-            <div className="chip-row">
-              {articleAudienceBadges(a).map((b) => (
-                <span key={b.id} className={`badge ${b.id === 'home' ? 'badge-success' : 'badge-default'}`}>{b.label}</span>
-              ))}
-            </div>
-            <div className="row">
-              <Link className="btn btn-secondary btn-compact" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
-              <Link className="btn btn-ghost btn-compact" to={`/knowledge/${a.id}`}>Предпросмотр</Link>
-            </div>
-          </article>
+          <KnowledgeCard
+            key={a.id}
+            article={a}
+            token={accessToken}
+            showAudience
+            actions={
+              <div className="row wrap">
+                <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
+                  {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}
+                </span>
+                <Link className="btn btn-secondary" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
+                <Link className="btn btn-ghost" to={`/knowledge/${a.id}`}>Предпросмотр</Link>
+              </div>
+            }
+          />
         ))}
       </div>
     </main>

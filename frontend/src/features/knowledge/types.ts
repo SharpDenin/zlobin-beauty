@@ -2,7 +2,7 @@ export type KnowledgeArticle = {
   id: string
   title: string
   category: string
-  content?: string
+  content?: string | Record<string, unknown>
   excerpt?: string
   content_format?: string
   cover_media_id?: string | null

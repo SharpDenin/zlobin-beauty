@@ -17,9 +17,11 @@ import {
 import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCartQty, type CartLine } from '@/shared/lib/cart'
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
-import { userError } from '@/shared/lib/app-error'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { Modal } from '@/shared/ui/Modal'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { productAudienceLabel } from '@/pages/knowledge-helpers'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 export function CosmeticsSupplierPage() {
@@ -35,7 +37,7 @@ export function CosmeticsSupplierPage() {
   const [branchQuery, setBranchQuery] = useState('')
   const [destinationBranchId, setDestinationBranchId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<string>('cash')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
 
   useEffect(() => {
@@ -141,7 +143,7 @@ export function CosmeticsSupplierPage() {
       setBranchQuery('')
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось оформить заказ'),
+    onError: (e) => setError(e),
   })
 
   const published = useMemo(
@@ -149,15 +151,15 @@ export function CosmeticsSupplierPage() {
     [products.data],
   )
 
-  if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  if (orgs.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   if (!buyerOrgId) {
     return (
       <main className="page">
-        <div className="empty-state">
-          <h2>Нужен салон</h2>
-          <p>Создайте салон в кабинете мастера.</p>
-          <Link className="btn btn-primary" to="/master">Кабинет</Link>
-        </div>
+        <EmptyState
+          title="Нужен салон"
+          text="Создайте салон в кабинете мастера."
+          action={<Link className="btn btn-primary" to="/master">Кабинет</Link>}
+        />
       </main>
     )
   }
@@ -189,7 +191,7 @@ export function CosmeticsSupplierPage() {
                   supplier_organization_id: supplierId,
                 })
               } catch (e) {
-                setError(userError(e, 'Не удалось открыть переписку'))
+                setError(e)
               }
             }}
           >
@@ -199,16 +201,22 @@ export function CosmeticsSupplierPage() {
         </div>
       </div>
 
-      {error && <div className="state-box error">{error}</div>}
-      {ok && <div className="state-box success">{ok}</div>}
+      <ErrorBanner error={error} fallbackTitle="Не удалось оформить заказ" />
+      {ok && <p className="muted" role="status">{ok}</p>}
 
-      {products.isLoading && <div className="state-box">Загрузка товаров…</div>}
-      {products.isError && <div className="state-box error">Не удалось загрузить каталог</div>}
-      {!products.isLoading && published.length === 0 && (
-        <div className="empty-state">
-          <h2>Товаров пока нет</h2>
-          <p>Поставщик ещё не опубликовал продукцию.</p>
+      {products.isLoading && (
+        <div className="cards-grid products" aria-busy="true">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="product-card">
+              <div className="media-frame media-frame--product"><div className="media-skeleton" /></div>
+              <div className="skeleton skeleton-line" />
+            </div>
+          ))}
         </div>
+      )}
+      {products.isError && <ErrorBanner error={products.error} fallbackTitle="Не удалось загрузить каталог" />}
+      {!products.isLoading && published.length === 0 && (
+        <EmptyState title="Товаров пока нет" text="Поставщик ещё не опубликовал продукцию." />
       )}
 
       <div className="cards-grid products">
@@ -222,6 +230,7 @@ export function CosmeticsSupplierPage() {
             <div className="stack-sm">
               <Link to={`/cosmetics/products/${p.id}`}><strong>{p.name}</strong></Link>
               <p className="muted">{[p.brand, p.volume_label || unitLabel(p.unit)].filter(Boolean).join(' · ')}</p>
+              <span className="badge badge-default">{productAudienceLabel(p.audience)}</span>
               <div className="row between">
                 <strong>{formatMoney(p.price_minor)}</strong>
                 <span className="chip badge-default">{availabilityLabel(p.for_sale, p.published)}</span>

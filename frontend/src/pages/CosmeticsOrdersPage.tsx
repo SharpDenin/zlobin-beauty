@@ -10,6 +10,9 @@ import {
 } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { paymentStatusLabel, statusBadgeClass, supplierOrderLabel } from '@/shared/lib/status'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { supplierOrderIsTerminal } from '@/pages/supplier-helpers'
 
 export function CosmeticsOrdersPage() {
   const { accessToken } = useAuth()
@@ -25,15 +28,12 @@ export function CosmeticsOrdersPage() {
     enabled: Boolean(accessToken && buyerOrgId),
   })
 
-  if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  if (orgs.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
 
   if (!buyerOrgId) {
     return (
       <main className="page">
-        <div className="empty-state">
-          <h2>Нужен салон</h2>
-          <Link className="btn btn-primary" to="/master">Кабинет</Link>
-        </div>
+        <EmptyState title="Нужен салон" action={<Link className="btn btn-primary" to="/master">Кабинет</Link>} />
       </main>
     )
   }
@@ -49,19 +49,19 @@ export function CosmeticsOrdersPage() {
         <Link className="btn btn-secondary btn-compact" to="/inventory/receipts">На приёмке</Link>
       </div>
 
-      {orders.isLoading && <div className="state-box">Загрузка…</div>}
-      {orders.isError && <div className="state-box error">Не удалось загрузить заказы</div>}
+      {orders.isLoading && <div className="skeleton skeleton-card" aria-busy="true" />}
+      {orders.isError && <ErrorBanner error={orders.error} fallbackTitle="Не удалось загрузить заказы" />}
       {orders.data && orders.data.items.length === 0 && (
-        <div className="empty-state">
-          <h2>Заказов пока нет</h2>
-          <p>Выберите поставщика и соберите корзину.</p>
-          <Link className="btn btn-primary" to="/cosmetics">Открыть каталог</Link>
-        </div>
+        <EmptyState
+          title="Заказов пока нет"
+          text="Выберите поставщика и соберите корзину."
+          action={<Link className="btn btn-primary" to="/cosmetics">Открыть каталог</Link>}
+        />
       )}
 
       <div className="list">
         {orders.data?.items.map((o) => (
-          <article key={o.id} className="history-card">
+          <article key={o.id} className={`history-card${supplierOrderIsTerminal(o.status) ? ' is-terminal' : ''}`}>
             <div className="row between">
               <strong>{formatMoney(o.total_minor)}</strong>
               <span className={`badge ${statusBadgeClass(o.status)}`}>{supplierOrderLabel(o.status)}</span>

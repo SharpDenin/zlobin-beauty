@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import {
   emptyRecommendationMessage,
   knowledgeServiceQuery,
@@ -42,7 +43,7 @@ export function KnowledgeRecommendations({
     <section className="stack" data-testid="knowledge-recommendations">
       <h3>{title}</h3>
       {query.isLoading && <p className="muted">Ищем сохранённые материалы…</p>}
-      {query.isError && <div className="state-box error">Не удалось загрузить базу знаний</div>}
+      {query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить базу знаний" />}
       {query.data && query.data.items.length === 0 && (
         <p className="muted" data-testid="knowledge-empty">
           {emptyRecommendationMessage(query.data.empty_reason, emptyKind)}

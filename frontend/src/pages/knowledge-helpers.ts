@@ -1,3 +1,5 @@
+import type { JSONContent } from '@tiptap/react'
+
 export type KnowledgeRecommendation = {
   id: string
   article_id?: string
@@ -63,6 +65,50 @@ export function shortageKnowledgeLabel(status: string) {
   if (status === 'orderable' || status === 'shortage') return 'Не хватает'
   if (status === 'unavailable') return 'Невозможно получить'
   return status
+}
+
+export function knowledgeCoverClearValue(mediaId: string | null | undefined) {
+  return mediaId ?? ''
+}
+
+function asDoc(value: unknown): JSONContent | null {
+  if (!value) return null
+  if (Array.isArray(value)) {
+    const first = value[0] as JSONContent | undefined
+    if (first?.type === 'doc') return first
+    return { type: 'doc', content: value as JSONContent[] }
+  }
+  if (typeof value !== 'object') return null
+  const node = value as JSONContent
+  if (node.type === 'doc') return node
+  if (!node.type && Array.isArray(node.content)) {
+    return { type: 'doc', content: node.content }
+  }
+  return null
+}
+
+export function parseKnowledgeDoc(content: unknown, format?: string | null): JSONContent {
+  const direct = asDoc(content)
+  if (direct) return direct
+  const raw = typeof content === 'string' ? content : ''
+  if ((format || 'plain') === 'doc_json' && raw) {
+    try {
+      const parsed = asDoc(JSON.parse(raw))
+      if (parsed) return parsed
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!raw.trim()) {
+    return { type: 'doc', content: [{ type: 'paragraph' }] }
+  }
+  return {
+    type: 'doc',
+    content: raw.split(/\n+/).map((line) => ({
+      type: 'paragraph',
+      content: line ? [{ type: 'text', text: line }] : [],
+    })),
+  }
 }
 
 export function productAudienceLabel(audience?: string | null) {

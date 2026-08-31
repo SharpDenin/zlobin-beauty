@@ -13,6 +13,19 @@ export function isVideoFile(file: File): boolean {
   return VIDEO_MIME.has(file.type)
 }
 
+export function mediaFileApiError(
+  file: File,
+  opts?: { allowVideo?: boolean; maxImageBytes?: number; maxVideoBytes?: number },
+): ApiError | null {
+  if (!file || file.size === 0) {
+    return new ApiError('empty file', 'media_empty', 400)
+  }
+  const mimeError = validateMediaFile(file, opts)
+  if (!mimeError) return null
+  const knownType = IMAGE_MIME.has(file.type) || VIDEO_MIME.has(file.type)
+  return new ApiError(mimeError, knownType ? 'media_too_large' : 'media_unsupported_type', 400)
+}
+
 export function validateMediaFile(
   file: File,
   opts?: { allowVideo?: boolean; maxImageBytes?: number; maxVideoBytes?: number },

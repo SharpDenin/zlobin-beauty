@@ -67,7 +67,8 @@ describe('normalizeError', () => {
     const n = normalizeError(new TypeError('Failed to fetch'))
     expect(n.kind).toBe('network')
     expect(n.code).toBe('network_error')
-    expect(formatUserError(n)).toContain('Не удалось подключиться к серверу')
+    expect(formatUserError(n)).toContain('Нет подключения')
+    expect(formatUserError(n)).toContain('Проверьте интернет')
     expect(formatUserError(n)).not.toMatch(/Failed to fetch/i)
   })
 

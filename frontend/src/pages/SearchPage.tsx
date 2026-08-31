@@ -7,6 +7,7 @@ import { Hint } from '@/shared/ui/Hint'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 
 type Master = {
@@ -169,7 +170,7 @@ export function SearchPage() {
       {query.isLoading && <div className="state-box">Ищем мастеров…</div>}
       {query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить список" />}
       {query.data && query.data.items.length === 0 && (
-        <div className="state-box">Пока нет опубликованных мастеров в этом городе</div>
+        <EmptyState title="Мастера не найдены" text="Пока нет опубликованных мастеров в этом городе." />
       )}
       <div className="list">
         {query.data?.items.map((m) => {

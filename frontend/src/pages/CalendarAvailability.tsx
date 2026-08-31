@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { AvailabilityPanel } from '@/pages/AvailabilityPanel'
 import { KnowledgeRecommendations } from '@/pages/KnowledgeRecommendations'
 import { availabilityBadgeClass, availabilityStatusMark, type AvailabilityAnalysis } from '@/pages/availability-helpers'
@@ -45,7 +46,7 @@ export function CalendarAvailability({
         )}
       </div>
       {open && query.isLoading && <p className="muted">Проверяем склад…</p>}
-      {open && query.isError && <div className="state-box error">Не удалось проверить наличие</div>}
+      {open && query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось проверить наличие" />}
       {open && query.data && <AvailabilityPanel analysis={query.data} />}
       <KnowledgeRecommendations
         token={token}

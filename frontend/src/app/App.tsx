@@ -73,6 +73,8 @@ import { ModelRequestCreatePage, ModelRequestDetailPage, ModelsPage } from '@/pa
 import { MasterInventoryPage, MasterReceiptsPage } from '@/pages/MasterInventoryPage'
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary'
 import { ToastProvider } from '@/shared/ui/Toast'
+import { PwaProvider } from '@/features/pwa/PwaProvider'
+import { PageLoading } from '@/shared/ui/PageLoading'
 import type { ReactNode } from 'react'
 
 const queryClient = new QueryClient({
@@ -83,7 +85,7 @@ const queryClient = new QueryClient({
 
 function PublicOnly({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading label="Загрузка сессии" />
   if (user) return <Navigate to={homePathForUser(user)} replace />
   return children
 }
@@ -104,6 +106,7 @@ export function App() {
       <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
+        <PwaProvider>
         <CabinetProvider>
         <BrowserRouter>
           <Routes>
@@ -218,6 +221,7 @@ export function App() {
           </Routes>
         </BrowserRouter>
         </CabinetProvider>
+        </PwaProvider>
         </ToastProvider>
       </AuthProvider>
       </ErrorBoundary>

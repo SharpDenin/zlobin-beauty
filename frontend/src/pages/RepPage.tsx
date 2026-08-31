@@ -3,13 +3,15 @@ import { useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Polyline, Popup } from 'react-leaflet'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, BarChart, Bar } from 'recharts'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { clientOrderLabel, statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { CHART } from '@/shared/ui/chart-theme'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import 'leaflet/dist/leaflet.css'
 
@@ -140,7 +142,7 @@ export function RepPage() {
       setOk('Рекомендованный маршрут построен')
       await qc.invalidateQueries({ queryKey: ['rep-routes'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось построить маршрут'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось построить маршрут')),
   })
 
   const stopStatus = useMutation({
@@ -150,7 +152,7 @@ export function RepPage() {
       setOk('Статус остановки обновлён')
       await qc.invalidateQueries({ queryKey: ['rep-routes'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить остановку'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось обновить остановку')),
   })
 
   const complete = useMutation({
@@ -170,7 +172,7 @@ export function RepPage() {
       await qc.invalidateQueries({ queryKey: ['rep-deliveries'] })
       await qc.invalidateQueries({ queryKey: ['rep-analytics'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка доставки'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка доставки')),
   })
 
   const pending = (deliveries.data?.items ?? []).filter((d) => d.status === 'in_delivery' || d.status === 'confirmed' || d.status === 'picking')
@@ -220,7 +222,7 @@ export function RepPage() {
           <Link key={t.to} to={t.to} className={loc.pathname === t.to ? 'active' : ''}>{t.label}</Link>
         ))}
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {section === 'home' && (

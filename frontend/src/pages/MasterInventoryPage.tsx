@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg, type SupplierOrder } from '@/shared/lib/commerce'
 import { statusBadgeClass, supplierOrderLabel } from '@/shared/lib/status'
@@ -81,7 +83,7 @@ function MasterStockList() {
         </div>
       </div>
 
-      {inventory.isError && <div className="state-box error">Не удалось загрузить склад</div>}
+      {inventory.isError && <ErrorBanner error={inventory.error} fallbackTitle="Не удалось загрузить склад" />}
 
       <section className="card stack-sm">
         <div className="field">
@@ -164,7 +166,7 @@ function MasterStockDetail({ productId }: { productId: string }) {
     },
     onError: (e) => {
       setOk(null)
-      setError(e instanceof ApiError ? e.message : 'Не удалось скорректировать')
+      setError(formatUserError(e, 'Не удалось скорректировать'))
     },
   })
 
@@ -178,7 +180,7 @@ function MasterStockDetail({ productId }: { productId: string }) {
         <Link className="btn btn-secondary btn-compact" to="/inventory">К складу</Link>
       </div>
       {details.isLoading && <div className="state-box">Загрузка…</div>}
-      {details.isError && <div className="state-box error">Товар не найден</div>}
+      {details.isError && <ErrorBanner error={details.error} fallbackTitle="Товар не найден" />}
       {item && (
         <section className="card stack-sm" data-testid="stock-detail">
           <p className="muted">Текущий остаток</p>
@@ -186,7 +188,7 @@ function MasterStockDetail({ productId }: { productId: string }) {
           <p className="muted">На руках {formatQty(item.qty_on_hand, item.unit)}{item.qty_reserved ? ` · резерв ${formatQty(item.qty_reserved, item.unit)}` : ''}</p>
         </section>
       )}
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">
@@ -292,7 +294,7 @@ function ReceiptList() {
           История поставок
         </button>
       </div>
-      {receipts.isError && <div className="state-box error">Не удалось загрузить поставки</div>}
+      {receipts.isError && <ErrorBanner error={receipts.error} fallbackTitle="Не удалось загрузить поставки" />}
       {items.length === 0 && (
         <div className="empty-state" data-testid="receipts-empty">
           <h2>{tab === 'pending' ? 'Нет поставок на приёмке' : 'История пока пустая'}</h2>
@@ -347,7 +349,7 @@ function ReceiptDetail({ orderId }: { orderId: string }) {
         <Link className="btn btn-secondary btn-compact" to="/inventory/receipts">К поставкам</Link>
       </div>
       {receipt.isLoading && <div className="state-box">Загрузка…</div>}
-      {receipt.isError && <div className="state-box error">Не удалось открыть поставку. Склад не изменён.</div>}
+      {receipt.isError && <ErrorBanner error={receipt.error} fallbackTitle="Не удалось открыть поставку. Склад не изменён." />}
       {order && (
         <>
           <section className="card stack-sm" data-testid="receipt-header">
@@ -449,13 +451,13 @@ function ReceiptAcceptForm({
     },
     onError: (e) => {
       setReviewing(false)
-      setError(e instanceof ApiError ? e.message : 'Не удалось принять поставку. Склад не изменён.')
+      setError(formatUserError(e, 'Не удалось принять поставку. Склад не изменён.'))
     },
   })
 
   return (
     <div className="stack" data-testid="receipt-form">
-      {error && <div className="state-box error" data-testid="receipt-error">{error}</div>}
+      {error && <div data-testid="receipt-error"><ErrorBanner error={error} /></div>}
       {lines.map((it) => {
         const remaining = it.remaining_qty ?? remainingToAccept(it.qty_ordered, it.qty_accepted ?? 0, it.qty_damaged ?? 0, it.qty_rejected ?? 0)
         const delivered = it.qty_delivered ?? 0
@@ -601,7 +603,7 @@ export function AppointmentMaterialsForm({
     },
     onError: (e) => {
       setOk(null)
-      setError(e instanceof ApiError ? e.message : 'Недостаточно товара на складе')
+      setError(formatUserError(e, 'Недостаточно товара на складе'))
     },
   })
 
@@ -611,7 +613,7 @@ export function AppointmentMaterialsForm({
     <section className="card stack" data-testid="used-materials">
       <h2>Использованные материалы</h2>
       <p className="muted">Списание только после подтверждения. Формула не рассчитывается автоматически.</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
       {items.length === 0 && <p className="muted">На складе пока ничего нет</p>}
       {items.length > 0 && (

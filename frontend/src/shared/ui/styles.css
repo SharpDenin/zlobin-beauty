@@ -467,6 +467,22 @@ p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
 }
 .error-boundary__card h1 { font-size: var(--text-xl); }
 .error-boundary__card p { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.page-loading { min-height: 40vh; }
+.page-loading__skeleton { gap: var(--space-4); padding: var(--space-5) 0; }
+.pwa-offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  padding-top: max(var(--space-3), env(safe-area-inset-top));
+  background: var(--color-warning-soft);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border);
+}
+.pwa-offline-banner strong { font-size: var(--text-sm); }
+.pwa-offline-banner span { color: var(--color-text-secondary); font-size: var(--text-sm); }
 .state-box.success { color: var(--color-success); background: var(--color-success-soft); }
 .state-box.forbidden { color: var(--color-warning); background: var(--color-warning-soft); }
 .empty-state {
@@ -2270,8 +2286,20 @@ button.list-item:hover {
 }
 .bottomnav .nav-icon { width: 22px; height: 22px; }
 
-.app-shell--auth .page,
-.auth-screen {
+.app-shell.app-shell--auth {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.app-shell--auth .page.page-narrow,
+.app-shell--auth .auth-screen {
+  width: min(100% - 2 * var(--space-4), 480px);
+  margin-inline: auto;
   padding-bottom: var(--space-7);
 }
 .auth-screen {
@@ -2281,6 +2309,25 @@ button.list-item:hover {
 .auth-lead {
   max-width: 32ch;
   font-size: var(--text-sm);
+}
+
+@media (min-width: 768px) {
+  .app-shell.app-shell--auth {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-8) var(--space-6);
+  }
+  .app-shell--auth .page.page-narrow.auth-screen {
+    width: min(100%, 480px);
+    min-height: 0;
+    padding: 0;
+    align-content: start;
+  }
+  .auth-screen > p,
+  .auth-lead {
+    max-width: 42ch;
+  }
 }
 .auth-screen fieldset {
   border: 0;

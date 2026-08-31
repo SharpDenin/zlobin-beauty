@@ -1,5 +1,8 @@
 import { createContext, useContext, useMemo, useState, useEffect, useRef, type ReactNode } from 'react'
 import { apiRequest, bindAuthBridge } from '@/shared/api/client'
+import { decideHydrateFailure, isUnauthorizedSessionError } from '@/features/auth/session-hydrate'
+import { markSessionEnded } from '@/features/pwa/pwa'
+import { isNetworkError } from '@/shared/lib/app-error'
 
 export type User = {
   id: string
@@ -118,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
       clearSession: () => {
+        markSessionEnded()
         setUser(null)
         setAccessToken(null)
         setRefreshToken(null)
@@ -142,15 +146,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRefreshToken(snap.refreshToken)
           localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...snap, user: me }))
         }
-      } catch {
+      } catch (meErr) {
+        if (isNetworkError(meErr)) {
+          return
+        }
         try {
           const next = await apiRequest<AuthResponse>('/v1/auth/refresh', {
             body: { refresh_token: snap.refreshToken },
             skipAuthRefresh: true,
           })
           if (!cancelled) applyAuth(next)
-        } catch {
-          if (!cancelled) clear()
+        } catch (refreshErr) {
+          if (!cancelled && decideHydrateFailure(meErr, refreshErr) === 'expire') {
+            if (isUnauthorizedSessionError(refreshErr) || isUnauthorizedSessionError(meErr)) {
+              markSessionEnded()
+            }
+            clear()
+          }
         }
       } finally {
         if (!cancelled) setLoading(false)

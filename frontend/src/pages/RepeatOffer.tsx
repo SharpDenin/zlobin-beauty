@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { cosmeticsProductPath, showOrderCta } from '@/pages/availability-helpers'
 import { knowledgeProductPath } from '@/pages/knowledge-helpers'
 import { KnowledgeRecommendations } from '@/pages/KnowledgeRecommendations'
@@ -64,7 +66,7 @@ export function RepeatOffer({
     },
     onError: (e) => {
       setOk(null)
-      setError(e instanceof ApiError ? e.message : 'Не удалось создать запись')
+      setError(formatUserError(e, 'Не удалось создать запись'))
     },
   })
 
@@ -142,7 +144,7 @@ export function RepeatOffer({
           {!preview.can_repeat && preview.availability_status !== 'incoming' && (
             <p className="muted">Запись можно создать, но материалов сейчас не хватает.</p>
           )}
-          {error && <div className="state-box error">{error}</div>}
+          {error && <ErrorBanner error={error} />}
           {ok && <div className="state-box success" data-testid="repeat-created">{ok}</div>}
           <div className="field">
             <label htmlFor="repeat-starts">Дата и время новой записи</label>

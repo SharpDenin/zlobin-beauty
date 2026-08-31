@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useState } from 'react'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
-import { userError } from '@/shared/lib/app-error'
+import { userError, formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type Prefs = {
@@ -101,7 +102,7 @@ export function ModelsPage() {
         },
       }),
     onSuccess: () => { setOk('Настройки модели сохранены'); setError(null); void qc.invalidateQueries({ queryKey: ['model-prefs'] }) },
-    onError: (e) => { setOk(null); setError(e instanceof ApiError ? e.message : 'Не удалось сохранить') },
+    onError: (e) => { setOk(null); setError(formatUserError(e, 'Не удалось сохранить')) },
   })
 
   return (
@@ -110,7 +111,7 @@ export function ModelsPage() {
         <h1>{isMaster ? 'Требуются модели' : 'Модели'}</h1>
         {isMaster && <Link className="btn btn-primary" to="/models/new">Нужна модель</Link>}
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {!isMaster && (
@@ -198,14 +199,14 @@ export function ModelRequestCreatePage() {
       return apiRequest<ModelRequest>(`/v1/model-requests/${created.id}/publish`, { method: 'POST', token: accessToken })
     },
     onSuccess: (e) => navigate(`/models/${e.id}`),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось опубликовать'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось опубликовать')),
   })
 
   return (
     <main className="page stack">
       <Link className="btn btn-ghost btn-compact" to="/models">← К запросам</Link>
       <h1>Нужна модель</h1>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate() }}>
         <div className="field"><label htmlFor="mr-title">Название</label><input id="mr-title" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
         <div className="field"><label htmlFor="mr-cat">Услуга / категория</label><input id="mr-cat" value={category} onChange={(e) => setCategory(e.target.value)} /></div>
@@ -236,12 +237,12 @@ export function ModelRequestDetailPage() {
   const respond = useMutation({
     mutationFn: () => apiRequest(`/v1/model-requests/${id}/respond`, { method: 'POST', token: accessToken }),
     onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['model-request', id] }) },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось откликнуться'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось откликнуться')),
   })
   const accept = useMutation({
     mutationFn: () => apiRequest(`/v1/model-responses/${item.data?.my_response?.id}/accept`, { method: 'POST', token: accessToken }),
     onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['model-request', id] }) },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось записаться'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось записаться')),
   })
 
   const e = item.data
@@ -252,8 +253,8 @@ export function ModelRequestDetailPage() {
     <main className="page stack">
       <Link className="btn btn-ghost btn-compact" to="/models">← К запросам</Link>
       {item.isLoading && <div className="state-box">Загрузка…</div>}
-      {item.isError && <div className="state-box error">Запрос недоступен</div>}
-      {error && <div className="state-box error">{error}</div>}
+      {item.isError && <ErrorBanner error={item.error} fallbackTitle="Запрос недоступен" />}
+      {error && <ErrorBanner error={error} />}
       {e && (
         <section className="card stack">
           <h1>{e.title}</h1>

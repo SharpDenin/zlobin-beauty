@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { datetimeLocalToIso } from '@/shared/lib/time'
 import { LEASE_LABELS, type ChairLease, type SalonChair } from '@/shared/lib/work-mode'
@@ -36,14 +38,14 @@ export function ChairMarketplacePage() {
       setSelected(null)
       void qc.invalidateQueries({ queryKey: ['my-chair-leases'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось отправить запрос'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось отправить запрос')),
   })
 
   return (
     <main className="page stack">
       <h1>Аренда кресел</h1>
       <p className="muted">Доступные кресла салонов. После одобрения владельцем кресло появится в вашем графике.</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {(chairs.data?.items ?? []).map((c) => (
         <article key={c.id} className="card stack" data-testid="marketplace-chair">
           <strong>{c.name}</strong>

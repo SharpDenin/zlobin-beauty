@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg } from '@/shared/lib/commerce'
 import { Hint } from '@/shared/ui/Hint'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { LEASE_LABELS, type ChairLease, type SalonChair } from '@/shared/lib/work-mode'
 
 export function SalonSettingsPage() {
@@ -31,7 +33,7 @@ export function SalonSettingsPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось сохранить')),
   })
 
   if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
@@ -41,7 +43,7 @@ export function SalonSettingsPage() {
     <main className="page stack">
       <h1>Настройки салона</h1>
       <p className="muted">{buyerOrg?.organization.name}</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
       <section className="card stack">
         <h2>
@@ -94,7 +96,7 @@ function ChairManagement({ orgId, branchId, token }: { orgId?: string; branchId?
       setError(null)
       void qc.invalidateQueries({ queryKey: ['org-chairs'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось создать кресло'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось создать кресло')),
   })
   const approve = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/approve`, { method: 'POST', token }),
@@ -111,7 +113,7 @@ function ChairManagement({ orgId, branchId, token }: { orgId?: string; branchId?
     <>
       <section className="card stack" data-testid="chair-admin">
         <h2>Кресла салона</h2>
-        {error && <div className="state-box error">{error}</div>}
+        {error && <ErrorBanner error={error} />}
         <div className="field">
           <label htmlFor="chair-name">Название</label>
           <input id="chair-name" value={name} onChange={(e) => setName(e.target.value)} />

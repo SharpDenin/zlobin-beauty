@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { datetimeLocalToIso } from '@/shared/lib/time'
@@ -94,7 +96,7 @@ export function WorkSchedulePage() {
       setEnd('')
       void qc.invalidateQueries({ queryKey: ['work-mode-intervals'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить интервал'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось сохранить интервал')),
   })
 
   const remove = useMutation({
@@ -106,7 +108,7 @@ export function WorkSchedulePage() {
     <main className="page stack">
       <h1>График режимов работы</h1>
       <p className="muted">Время сохраняется в часовом поясе салона или города выезда, не в поясе браузера. Сейчас: {tz}.</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       <section className="card stack" data-testid="work-mode-form">
         <div className="field">
           <label htmlFor="work-mode">Режим</label>

@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
-import { userError } from '@/shared/lib/app-error'
+import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
@@ -14,6 +14,7 @@ import { selectedProfessionIds } from '@/shared/lib/profession-types'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string; published: boolean; description: string }
@@ -211,7 +212,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка создания салона'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка создания салона')),
   })
 
   const saveBranch = useMutation({
@@ -231,7 +232,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка сохранения филиала'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка сохранения филиала')),
   })
 
   const publishBranch = useMutation({
@@ -251,7 +252,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось опубликовать филиал'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось опубликовать филиал')),
   })
 
   const saveMaster = useMutation({
@@ -282,7 +283,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['my-master'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка профиля'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка профиля')),
   })
 
   const saveHours = useMutation({
@@ -304,7 +305,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['working-hours'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка расписания'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка расписания')),
   })
 
   async function attachProfilePhoto(mediaId: string | null) {
@@ -407,7 +408,7 @@ export function MasterCabinetPage() {
       setOk('Фото салона удалено')
       await qc.invalidateQueries({ queryKey: ['branch-photos'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить')),
   })
 
   const deletePortfolioItem = useMutation({
@@ -417,7 +418,7 @@ export function MasterCabinetPage() {
       setOk('Работа удалена из портфолио')
       await qc.invalidateQueries({ queryKey: ['my-portfolio'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить')),
   })
 
   const createRecommendation = useMutation({
@@ -432,7 +433,7 @@ export function MasterCabinetPage() {
       setRecoProductId('')
       await qc.invalidateQueries({ queryKey: ['my-recommendations'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось создать рекомендацию'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось создать рекомендацию')),
   })
 
   const deleteRecommendation = useMutation({
@@ -441,20 +442,20 @@ export function MasterCabinetPage() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['my-recommendations'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить рекомендацию'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить рекомендацию')),
   })
 
   return (
     <main className="page stack">
       <h1>Кабинет мастера</h1>
       <p>Настройте салон, профиль и расписание — затем покажитесь клиентам в поиске.</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">
         <h2>Что ещё заполнить</h2>
         {readiness.isLoading && <div className="state-box">Проверяем профиль…</div>}
-        {readiness.isError && <div className="state-box error">Не удалось проверить готовность</div>}
+        {readiness.isError && <ErrorBanner error={readiness.error} fallbackTitle="Не удалось проверить готовность" />}
         {readiness.data && (
           <>
             <p>
@@ -482,7 +483,7 @@ export function MasterCabinetPage() {
       <section className="card stack">
         <h2>1. Салон</h2>
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
-        {orgs.isError && <div className="state-box error">Не удалось загрузить организации</div>}
+        {orgs.isError && <ErrorBanner error={orgs.error} fallbackTitle="Не удалось загрузить организации" />}
         {orgs.data && orgs.data.items.length > 0 ? (
           <div className="stack-sm">
             {orgs.data.items.map((item) => (
@@ -690,7 +691,7 @@ export function MasterCabinetPage() {
         <h2>Портфолио</h2>
         <p className="muted">Загрузите фото работ — они будут видны клиентам на странице мастера.</p>
         {portfolio.isLoading && <div className="state-box">Загрузка портфолио…</div>}
-        {portfolio.isError && <div className="state-box error">Не удалось загрузить портфолио</div>}
+        {portfolio.isError && <ErrorBanner error={portfolio.error} fallbackTitle="Не удалось загрузить портфолио" />}
         <div className="list">
           {portfolio.data?.items.map((item) => (
             <article key={item.id} className="list-item stack-sm">
@@ -792,7 +793,7 @@ export function MasterCabinetPage() {
       <section className="card stack">
         <h2>4. Расписание</h2>
         <p>Рабочие часы по умолчанию: пн–пт 10:00–19:00. Исключения дней — в календаре.</p>
-        {hours.isError && <div className="state-box error">Не удалось загрузить расписание</div>}
+        {hours.isError && <ErrorBanner error={hours.error} fallbackTitle="Не удалось загрузить расписание" />}
         <div className="row">
           <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
             Установить пн–пт 10:00–19:00

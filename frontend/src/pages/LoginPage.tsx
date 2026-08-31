@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
+import { consumeSessionEnded } from '@/features/pwa/pwa'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
@@ -18,6 +19,7 @@ type Form = z.infer<typeof schema>
 export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const [sessionEnded] = useState(() => consumeSessionEnded())
   const [error, setError] = useState<string | null>(null)
   const { register, handleSubmit, formState: { errors, isSubmitting }, setFocus } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -54,6 +56,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
             <input id="password" type="password" autoComplete="current-password" aria-invalid={Boolean(errors.password)} {...register('password')} />
             {errors.password && <span className="error">{errors.password.message}</span>}
           </div>
+          {sessionEnded && !error && <ErrorBanner error={{ code: 'session_expired', status: 401 }} />}
           {error && <ErrorBanner error={error} />}
           <button className={`btn btn-primary btn-block${isSubmitting ? ' btn-loading' : ''}`} disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Входим…' : 'Войти'}

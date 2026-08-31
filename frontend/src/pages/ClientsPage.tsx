@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest } from '@/shared/api/client'
@@ -68,7 +69,7 @@ export function ClientsPage() {
         ))}
       </div>
       {clients.isLoading && <div className="state-box">Загрузка…</div>}
-      {clients.isError && <div className="state-box error">Не удалось загрузить клиентов</div>}
+      {clients.isError && <ErrorBanner error={clients.error} fallbackTitle="Не удалось загрузить клиентов" />}
       {clients.data && clients.data.items.length === 0 && (
         <div className="state-box">Клиентов пока нет — они появляются после завершённых визитов</div>
       )}

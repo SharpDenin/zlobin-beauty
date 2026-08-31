@@ -12,6 +12,7 @@ import { MediaImage } from '@/shared/ui/MediaImage'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
@@ -190,7 +191,20 @@ export function MasterPage() {
   })
 
   if (masterQuery.isLoading) return <div className="page state-box">Загрузка профиля…</div>
-  if (masterQuery.isError || !masterQuery.data) return <div className="page state-box error">Мастер не найден</div>
+  if (masterQuery.isError) {
+    return (
+      <main className="page">
+        <ErrorBanner error={masterQuery.error} fallbackTitle="Не удалось открыть профиль мастера" />
+      </main>
+    )
+  }
+  if (!masterQuery.data) {
+    return (
+      <main className="page">
+        <EmptyState title="Мастер не найден" text="Профиль недоступен или больше не опубликован." />
+      </main>
+    )
+  }
 
   const { master, services } = masterQuery.data
 

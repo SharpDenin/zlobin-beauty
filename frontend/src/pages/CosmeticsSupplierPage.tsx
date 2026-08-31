@@ -300,7 +300,7 @@ export function CosmeticsSupplierPage() {
                 />
               </div>
               {pickupBranches.isLoading && <div className="state-box">Загрузка филиалов…</div>}
-              {pickupBranches.isError && <div className="state-box error">Не удалось загрузить филиалы</div>}
+              {pickupBranches.isError && <ErrorBanner error={pickupBranches.error} fallbackTitle="Не удалось загрузить филиалы" />}
               {!pickupBranches.isLoading && filteredBranches.length === 0 && (
                 <div className="state-box">Нет доступных филиалов с самовывозом. Включите pickup у филиала салона.</div>
               )}

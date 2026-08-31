@@ -2,10 +2,12 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { ApiError, apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { fetchPickupBranches, useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { Hint } from '@/shared/ui/Hint'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type Rep = {
   id: string
@@ -109,7 +111,7 @@ export function SupplierTeamPage() {
       setEmail('')
       await qc.invalidateQueries({ queryKey: ['supplier-reps'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось назначить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось назначить')),
   })
 
   const createTask = useMutation({
@@ -133,7 +135,7 @@ export function SupplierTeamPage() {
       await qc.invalidateQueries({ queryKey: ['supplier-reps'] })
       await qc.invalidateQueries({ queryKey: ['supplier-tasks'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось создать задачу'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось создать задачу')),
   })
 
   if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
@@ -149,7 +151,7 @@ export function SupplierTeamPage() {
         <h1>Представители <Hint id="supplier-reps" title="Команда">Карточки представителей и задачи. Мониторинг — по человеку, не по UUID.</Hint></h1>
         <p className="muted">Загрузка, просрочки, доставки и деньги по каждому сотруднику.</p>
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">

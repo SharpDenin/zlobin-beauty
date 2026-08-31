@@ -12,6 +12,7 @@ import { formatMoney } from '@/shared/lib/money'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { ServiceSchemeForm, buildCategoryFields } from '@/features/scheme/ServiceSchemeForm'
@@ -147,7 +148,20 @@ export function AppointmentDetailPage() {
   })
 
   if (query.isLoading) return <div className="page state-box">Загрузка записи…</div>
-  if (query.isError || !query.data) return <div className="page state-box error">Запись не найдена или недоступна</div>
+  if (query.isError) {
+    return (
+      <main className="page">
+        <ErrorBanner error={query.error} fallbackTitle="Не удалось открыть запись" />
+      </main>
+    )
+  }
+  if (!query.data) {
+    return (
+      <main className="page">
+        <EmptyState title="Запись недоступна" text="Запись не найдена или у вас нет к ней доступа." />
+      </main>
+    )
+  }
 
   const a = query.data
   const isMaster = user?.id === a.master_user_id

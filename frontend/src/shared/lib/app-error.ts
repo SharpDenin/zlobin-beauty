@@ -187,8 +187,8 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   network_error: {
     kind: 'network',
-    title: 'Не удалось подключиться к серверу',
-    hint: 'Проверьте соединение и попробуйте ещё раз.',
+    title: 'Нет подключения',
+    hint: 'Проверьте интернет и попробуйте ещё раз.',
   },
   aborted: {
     kind: 'network',
@@ -409,6 +409,10 @@ export function normalizeError(error: unknown): NormalizedError {
   }
 
   return { ...UNKNOWN, code: 'error', status: 0, technicalMessage: error instanceof Error ? error.message : undefined }
+}
+
+export function isNetworkError(error: unknown): boolean {
+  return normalizeError(error).kind === 'network' || isNetworkFailure(error)
 }
 
 export function formatNormalized(error: NormalizedError): string {

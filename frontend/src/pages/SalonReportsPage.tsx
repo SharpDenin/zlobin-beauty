@@ -5,8 +5,10 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { API_BASE_URL, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { formatUserError } from '@/shared/lib/app-error'
 import { formatMoney } from '@/shared/lib/money'
 import { CHART } from '@/shared/ui/chart-theme'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type PeriodMetrics = {
   turnover_minor: number
@@ -158,8 +160,8 @@ export function SalonReportsPage() {
       a.download = 'salon-report.csv'
       a.click()
       URL.revokeObjectURL(a.href)
-    } catch {
-      setCsvError('Не удалось скачать CSV')
+    } catch (e) {
+      setCsvError(formatUserError(e, 'Не удалось скачать CSV'))
     } finally {
       setCsvLoading(false)
     }
@@ -210,9 +212,9 @@ export function SalonReportsPage() {
         </button>
       </div>
 
-      {csvError && <div className="state-box error">{csvError}</div>}
+      {csvError && <ErrorBanner error={csvError} />}
       {report.isLoading && <div className="state-box">Считаем показатели…</div>}
-      {report.isError && <div className="state-box error">Не удалось загрузить отчёт</div>}
+      {report.isError && <ErrorBanner error={report.error} fallbackTitle="Не удалось загрузить отчёт" />}
 
       {report.data && (
         <>

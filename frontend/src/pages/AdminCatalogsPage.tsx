@@ -3,7 +3,9 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 
 type Category = { id: string; name: string; slug: string }
@@ -69,7 +71,7 @@ export function AdminCatalogsPage() {
       serviceForm.reset()
       await qc.invalidateQueries({ queryKey: ['service-categories'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   const createProductCategory = useMutation({
@@ -83,7 +85,7 @@ export function AdminCatalogsPage() {
       productForm.reset()
       await qc.invalidateQueries({ queryKey: ['product-categories'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   const createUnit = useMutation({
@@ -97,7 +99,7 @@ export function AdminCatalogsPage() {
       unitForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-units'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   const deleteServiceCategory = useMutation({
@@ -107,7 +109,7 @@ export function AdminCatalogsPage() {
       setOk('Категория услуг удалена')
       await qc.invalidateQueries({ queryKey: ['service-categories'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   const deleteProductCategory = useMutation({
@@ -117,7 +119,7 @@ export function AdminCatalogsPage() {
       setOk('Категория товаров удалена')
       await qc.invalidateQueries({ queryKey: ['product-categories'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   const deleteUnit = useMutation({
@@ -127,14 +129,14 @@ export function AdminCatalogsPage() {
       setOk('Единица измерения удалена')
       await qc.invalidateQueries({ queryKey: ['commerce-units'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   return (
     <main className="page stack">
       <h1>Справочники</h1>
       <p className="muted">Управление глобальными категориями услуг и товаров, единицами измерения (system_admin).</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">

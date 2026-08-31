@@ -5,65 +5,59 @@ import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabi
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { Drawer } from '@/shared/ui/Drawer'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { NavIcon } from '@/shared/ui/NavIcon'
+import { PageLoading } from '@/shared/ui/PageLoading'
 import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
   const location = useLocation()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading label="Загрузка сессии" />
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
   return <Outlet />
 }
 
+function Forbidden({ title, text }: { title: string; text: string }) {
+  return (
+    <main className="page">
+      <EmptyState title={title} text={text} />
+    </main>
+  )
+}
+
 export function RequireAdmin() {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading />
   if (!hasSystemAdmin(user)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Раздел доступен только системным администраторам</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел доступен только системным администраторам." />
   }
   return <Outlet />
 }
 
 export function RequireMaster() {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading />
   if (!hasMasterAccess(user) && !hasSalonAdmin(user)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Этот раздел доступен мастерам, администраторам и владельцам салона</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел доступен мастерам, администраторам и владельцам салона." />
   }
   return <Outlet />
 }
 
 export function RequireSupplier() {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading />
   if (!hasSupplierAccess(user) && !hasSupplierRepAccess(user)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Этот раздел доступен только поставщикам</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел доступен только поставщикам." />
   }
   return <Outlet />
 }
 
 export function RequireCabinetFeature({ feature }: { feature: CabinetFeature }) {
   const cabinet = useCabinet()
-  if (!cabinet.ready) return <div className="state-box page">Загрузка…</div>
+  if (!cabinet.ready) return <PageLoading />
   if (!cabinet.can(feature)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Этот раздел недоступен для вашей роли</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел недоступен для вашей роли." />
   }
   return <Outlet />
 }
@@ -97,6 +91,7 @@ function NavLinks({
           key={l.to}
           to={l.to === '/more' ? '#' : l.to}
           className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) || messagesActive ? 'active' : ''}`.trim()}
+          aria-current={linkActive(pathname, l.to, l.end) || messagesActive ? 'page' : undefined}
           onClick={(e) => {
             if (l.to === '/more') {
               e.preventDefault()
@@ -244,6 +239,8 @@ function AppShellInner() {
                 key={l.to}
                 type="button"
                 className={`nav-tab ${moreOpen ? 'active' : ''}`}
+                aria-expanded={moreOpen}
+                aria-haspopup="dialog"
                 onClick={() => setMoreOpen(true)}
               >
                 <NavIcon to="/more" />
@@ -256,6 +253,7 @@ function AppShellInner() {
               key={l.to}
               to={l.to}
               className={linkActive(location.pathname, l.to, l.end) ? 'active' : ''}
+              aria-current={linkActive(location.pathname, l.to, l.end) ? 'page' : undefined}
             >
               <NavIcon to={l.to} />
               <span>{l.label}</span>

@@ -90,7 +90,9 @@ async function refreshAccessToken(): Promise<string | null> {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        authBridge!.clearSession()
+        if (res.status === 401 || res.status === 403) {
+          authBridge!.clearSession()
+        }
         return null
       }
       authBridge!.setSession({
@@ -99,9 +101,8 @@ async function refreshAccessToken(): Promise<string | null> {
         user: data.user,
       })
       return data.access_token as string
-    } catch {
-      authBridge!.clearSession()
-      return null
+    } catch (cause) {
+      throw networkApiError(cause)
     } finally {
       refreshInFlight = null
     }
@@ -145,7 +146,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   if (res.status === 401 && !options.skipAuthRefresh && !path.startsWith('/v1/auth/login') && !path.startsWith('/v1/auth/register') && !path.startsWith('/v1/auth/refresh')) {
-    const next = await refreshAccessToken()
+    let next: string | null = null
+    try {
+      next = await refreshAccessToken()
+    } catch (cause) {
+      throw cause instanceof ApiError && cause.code === 'network_error' ? cause : networkApiError(cause)
+    }
     if (next) {
       headers.Authorization = `Bearer ${next}`
       try {

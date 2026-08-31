@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useState } from 'react'
-import { apiRequest, ApiError } from '@/shared/api/client'
-import { userError } from '@/shared/lib/app-error'
+import { apiRequest } from '@/shared/api/client'
+import { userError, formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
@@ -91,7 +92,7 @@ export function MasterclassListPage() {
       void qc.invalidateQueries({ queryKey: ['masterclass-interests'] })
       void qc.invalidateQueries({ queryKey: ['masterclasses'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить интерес'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось сохранить интерес')),
   })
 
   return (
@@ -100,7 +101,7 @@ export function MasterclassListPage() {
         <h1>Мастер-классы</h1>
         <Link className="btn btn-primary" to="/masterclasses/new">Готов провести мастер-класс</Link>
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
 
       <section className="card stack">
         <h2>Хочу мастер-класс</h2>
@@ -208,14 +209,14 @@ export function MasterclassCreatePage() {
       return apiRequest<Masterclass>(`/v1/masterclasses/${created.id}/publish`, { method: 'POST', token: accessToken })
     },
     onSuccess: (e) => navigate(`/masterclasses/${e.id}`),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось опубликовать'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось опубликовать')),
   })
 
   return (
     <main className="page stack">
       <Link className="btn btn-ghost btn-compact" to="/masterclasses">← К афише</Link>
       <h1>Готов провести мастер-класс</h1>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate() }}>
         <div className="field"><label htmlFor="mc-title">Название</label><input id="mc-title" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
         <div className="field"><label htmlFor="mc-cat">Тема / услуга</label><input id="mc-cat" value={category} onChange={(e) => setCategory(e.target.value)} /></div>
@@ -256,7 +257,7 @@ export function MasterclassDetailPage() {
   const register = useMutation({
     mutationFn: () => apiRequest(`/v1/masterclasses/${id}/register`, { method: 'POST', token: accessToken }),
     onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['masterclass', id] }) },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось записаться'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось записаться')),
   })
 
   const e = event.data
@@ -267,8 +268,8 @@ export function MasterclassDetailPage() {
     <main className="page stack">
       <Link className="btn btn-ghost btn-compact" to="/masterclasses">← Афиша</Link>
       {event.isLoading && <div className="state-box">Загрузка…</div>}
-      {event.isError && <div className="state-box error">Мероприятие недоступно</div>}
-      {error && <div className="state-box error">{error}</div>}
+      {event.isError && <ErrorBanner error={event.error} fallbackTitle="Мероприятие недоступно" />}
+      {error && <ErrorBanner error={error} />}
       {e && (
         <section className="card stack">
           <div className="row between">

@@ -436,7 +436,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.goto('/supplier/analytics')
     await expect(page.getByRole('heading', { name: 'Аналитика' })).toBeVisible({ timeout: 15_000 })
     await page.goto('/warehouse')
-    await expect(page.getByRole('heading', { name: /склад/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Склад', exact: true })).toBeVisible({ timeout: 15_000 })
   })
 
   test('master knowledge hub search filters favorite article', async ({ page }, info) => {

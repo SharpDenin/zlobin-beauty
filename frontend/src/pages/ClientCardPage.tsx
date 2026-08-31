@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
@@ -11,7 +11,9 @@ import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
 import { Modal } from '@/shared/ui/Modal'
-import { userError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type ClientCard = {
@@ -150,7 +152,7 @@ export function ClientCardPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось сохранить')),
   })
 
   const unblock = useMutation({
@@ -165,7 +167,7 @@ export function ClientCardPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-blacklist', clientUserId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось разблокировать'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось разблокировать')),
   })
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
@@ -179,7 +181,7 @@ export function ClientCardPage() {
       setError(null)
       noteForm.reset()
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка заметки'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка заметки')),
   })
 
   const saveFormula = useMutation({
@@ -203,7 +205,7 @@ export function ClientCardPage() {
       setOmitFormula(false)
       await qc.invalidateQueries({ queryKey: ['client-formulas', cardId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка состава'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка состава')),
   })
 
   const submitDispute = useMutation({
@@ -218,12 +220,23 @@ export function ClientCardPage() {
       setOk(Boolean(res.already_open) ? 'Несоответствие уже зарегистрировано' : 'Несоответствие зафиксировано')
       await qc.invalidateQueries({ queryKey: ['client', id, appointmentId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось зафиксировать несоответствие'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось зафиксировать несоответствие')),
   })
 
   if (cardQuery.isLoading) return <div className="page state-box">Загрузка карточки…</div>
-  if (cardQuery.isError || !cardQuery.data) {
-    return <div className="page state-box error">Карточка клиента недоступна. Завершите визит, чтобы она появилась.</div>
+  if (cardQuery.isError) {
+    return (
+      <main className="page">
+        <ErrorBanner error={cardQuery.error} fallbackTitle="Не удалось открыть карточку клиента" />
+      </main>
+    )
+  }
+  if (!cardQuery.data) {
+    return (
+      <main className="page">
+        <EmptyState title="Карточка недоступна" text="Завершите визит, чтобы карточка клиента появилась." />
+      </main>
+    )
   }
 
   const card = cardQuery.data
@@ -267,7 +280,7 @@ export function ClientCardPage() {
         </div>
       </section>
 
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {canMaster && (

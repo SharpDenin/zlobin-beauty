@@ -60,6 +60,9 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
 	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
+	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
+	mux.HandleFunc("GET /v1/internal/organizations/{orgID}", a.internalOrg)
+	a.registerAdminRoutes(mux, auth)
 }
 
 func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
@@ -562,6 +565,49 @@ func (a *API) internalContactPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"masters_see_client_contacts": ok})
+}
+
+func (a *API) internalOrg(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	org, err := a.svc.GetOrg(r.Context(), orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, orgDTO(*org))
+}
+
+func (a *API) internalOrgMembers(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	role := r.URL.Query().Get("role")
+	items, err := a.svc.ListOrgMembersInternal(r.Context(), orgID, role)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, m := range items {
+		out = append(out, map[string]any{
+			"user_id": m.UserID.String(), "role": m.Role, "status": m.Status,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) listStaff(w http.ResponseWriter, r *http.Request) {

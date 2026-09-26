@@ -2,12 +2,14 @@ import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { CHART } from '@/shared/ui/chart-theme'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type Rep = {
   id: string
@@ -77,7 +79,7 @@ export function SupplierRepDetailPage() {
   const startTask = useMutation({
     mutationFn: (taskId: string) => apiRequest(`/v1/tasks/${taskId}/status`, { token: accessToken, body: { status: 'in_progress' } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['supplier-tasks'] }),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить задачу'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось обновить задачу')),
   })
 
   const stats = (analytics.data?.representatives ?? []).find((x) => x.user_id === rep?.user_id)
@@ -103,7 +105,7 @@ export function SupplierRepDetailPage() {
         </div>
         <span className={`badge ${rep.active === false ? 'badge-default' : 'badge-success'}`}>{rep.active === false ? 'Неактивен' : 'Активен'}</span>
       </div>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       <div className="tabs">
         {TABS.map((t) => (
           <button key={t.id} type="button" className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>

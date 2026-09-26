@@ -120,7 +120,14 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 			if plannerBlocksSlot(blocks, uuid.Nil, st, en) {
 				continue
 			}
-			slots = append(slots, Slot{StartsAt: st, EndsAt: en})
+			mode, ok, err := s.workModeForSlot(ctx, masterUserID, st, en, loc)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			if !ok {
+				continue
+			}
+			slots = append(slots, Slot{StartsAt: st, EndsAt: en, WorkMode: mode})
 		}
 	}
 	if slots == nil {
@@ -442,15 +449,18 @@ func (s *Service) DeleteScheduleException(ctx context.Context, masterUserID uuid
 type Slot struct {
 	StartsAt time.Time `json:"starts_at"`
 	EndsAt   time.Time `json:"ends_at"`
+	WorkMode string    `json:"work_mode,omitempty"`
 }
 
 type CreateInput struct {
 	ClientUserID   uuid.UUID
+	ActorUserID    uuid.UUID
 	MasterID       uuid.UUID
 	ServiceID      uuid.UUID
 	StartsAt       time.Time
 	OccurrenceID   *uuid.UUID
 	IdempotencyKey string
+	DistrictID     *uuid.UUID
 }
 
 type masterPayload struct {
@@ -460,6 +470,7 @@ type masterPayload struct {
 		OrganizationID string  `json:"organization_id"`
 		BranchID       *string `json:"branch_id"`
 		Published      bool    `json:"published"`
+		DisplayName    string  `json:"display_name"`
 	} `json:"master"`
 	Services []struct {
 		ID              string `json:"id"`
@@ -471,18 +482,18 @@ type masterPayload struct {
 }
 
 type occurrencePayload struct {
-	ID              string  `json:"id"`
-	ServiceID       string  `json:"service_id"`
-	MasterUserID    string  `json:"master_user_id"`
-	BranchID        *string `json:"branch_id"`
-	StartsAt        time.Time `json:"starts_at"`
-	EndsAt          time.Time `json:"ends_at"`
-	Timezone        string  `json:"timezone"`
-	Capacity        int     `json:"capacity"`
-	BookedCount     int     `json:"booked_count"`
-	Status          string  `json:"status"`
+	ID              string     `json:"id"`
+	ServiceID       string     `json:"service_id"`
+	MasterUserID    string     `json:"master_user_id"`
+	BranchID        *string    `json:"branch_id"`
+	StartsAt        time.Time  `json:"starts_at"`
+	EndsAt          time.Time  `json:"ends_at"`
+	Timezone        string     `json:"timezone"`
+	Capacity        int        `json:"capacity"`
+	BookedCount     int        `json:"booked_count"`
+	Status          string     `json:"status"`
 	BookingCutoffAt *time.Time `json:"booking_cutoff_at"`
-	Title           string  `json:"title"`
+	Title           string     `json:"title"`
 }
 
 const createAppointmentOp = "create_appointment"
@@ -516,12 +527,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("bad master user id"))
 	}
+	if in.ActorUserID == uuid.Nil {
+		in.ActorUserID = in.ClientUserID
+	}
+	if in.ClientUserID != in.ActorUserID && in.ActorUserID != masterUserID {
+		return nil, apperr.Forbidden("only the assigned master can book for a client")
+	}
 	blocked, err := s.store.IsBlacklisted(ctx, masterUserID, in.ClientUserID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
 	if blocked {
-		return nil, apperr.Forbidden("client is blacklisted for this master")
+		return nil, apperr.ForbiddenCode(apperr.CodeClientBlacklisted, "client is blacklisted for this master")
 	}
 	orgID, err := uuid.Parse(payload.Master.OrganizationID)
 	if err != nil {
@@ -572,11 +589,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 			return nil, apperr.Validation("occurrence does not match master")
 		}
 		if occ.Status != "scheduled" {
-			return nil, apperr.Conflict("occurrence is not available")
+			return nil, apperr.ConflictCode(apperr.CodeOccurrenceUnavailable, "occurrence is not available")
 		}
 		now := s.now().UTC()
 		if occ.BookingCutoffAt != nil && !now.Before(occ.BookingCutoffAt.UTC()) {
-			return nil, apperr.Conflict("booking cutoff has passed")
+			return nil, apperr.ConflictCode(apperr.CodeBookingCutoff, "booking cutoff has passed")
 		}
 		if !occ.StartsAt.After(now) {
 			return nil, apperr.Validation("occurrence has already started")
@@ -618,7 +635,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 			}
 		}
 		if !okSlot {
-			return nil, apperr.Conflict("selected time is not available")
+			return nil, apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, "selected time is not available")
 		}
 	}
 
@@ -648,6 +665,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		OccurrenceID: occurrenceID, BookingMode: bookingMode,
 		LocationName: locName, LocationCity: locCity, LocationAddress: locAddr, LocationTimezone: locTZ,
 		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.attachWorkModeSnapshot(ctx, &a, in.DistrictID); err != nil {
+		if bookedOccurrence {
+			_ = s.releaseOccurrence(ctx, *occurrenceID)
+		}
+		return nil, err
 	}
 	if err := s.store.CreateAppointment(ctx, a); err != nil {
 		if bookedOccurrence {
@@ -731,7 +754,7 @@ func (s *Service) occurrenceCapacityCall(ctx context.Context, id uuid.UUID, acti
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
 	if resp.StatusCode == http.StatusConflict {
-		return apperr.Conflict("occurrence is not available")
+		return apperr.ConflictCode(apperr.CodeOccurrenceUnavailable, "occurrence is not available")
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return apperr.NotFound("occurrence not found")
@@ -807,19 +830,7 @@ func (s *Service) Start(ctx context.Context, appointmentID, actorUserID uuid.UUI
 }
 
 func (s *Service) Complete(ctx context.Context, appointmentID, actorUserID uuid.UUID) (*domain.Appointment, error) {
-	a, err := s.changeStatus(ctx, appointmentID, actorUserID, domain.StatusCompleted, "", func(a *domain.Appointment) error {
-		if a.MasterUserID != actorUserID {
-			return apperr.Forbidden("only assigned master can complete")
-		}
-		return domain.Transition(a.Status, domain.StatusCompleted)
-	})
-	if err != nil {
-		return nil, err
-	}
-	s.notifyVisitCompleted(ctx, a)
-	s.createVisitRecord(ctx, a)
-	s.consumeStockForAppointment(ctx, a, actorUserID)
-	return a, nil
+	return s.CompleteVisit(ctx, appointmentID, actorUserID, &VisitSchemeInput{})
 }
 
 func (s *Service) NoShow(ctx context.Context, appointmentID, actorUserID uuid.UUID, reason string) (*domain.Appointment, error) {
@@ -885,30 +896,26 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	if a.ClientUserID != actorUserID && a.MasterUserID != actorUserID && !s.isOrgOwnerOrAdmin(ctx, a.OrganizationID, actorUserID) {
 		return nil, apperr.Forbidden("access denied")
 	}
-	if a.BookingMode == domain.BookingModeFixedWindow {
-		return nil, apperr.Validation("fixed_window appointments cannot be rescheduled")
-	}
-	if a.Status != domain.StatusPendingConfirmation && a.Status != domain.StatusConfirmed {
-		return nil, apperr.Conflict("cannot reschedule in current status")
+	if err := rescheduleEligibility(a); err != nil {
+		return nil, err
 	}
 	ends := startsAt.UTC().Add(time.Duration(a.DurationMinutes) * time.Minute)
 	tz := a.LocationTimezone
 	if tz == "" {
 		tz = s.timezoneForBranch(ctx, a.BranchID)
 	}
-	slots, err := s.FreeSlots(ctx, a.MasterUserID, startsAt, a.DurationMinutes, tz, a.ID)
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, apperr.Validation("invalid timezone")
+	}
+	// FreeSlots treats Year/Month/Day of `day` as the salon calendar date in `tz`.
+	localStart := startsAt.In(loc)
+	slots, err := s.FreeSlots(ctx, a.MasterUserID, localStart, a.DurationMinutes, tz, a.ID)
 	if err != nil {
 		return nil, err
 	}
-	okSlot := false
-	for _, slot := range slots {
-		if slot.StartsAt.Equal(startsAt.UTC()) {
-			okSlot = true
-			break
-		}
-	}
-	if !okSlot {
-		return nil, apperr.Conflict("selected time is not available")
+	if !ContainsSlotStart(slots, startsAt) {
+		return nil, apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, "selected time is not available")
 	}
 	now := s.now().UTC()
 	if err := s.store.Reschedule(ctx, a.ID, a.Status, startsAt.UTC(), ends, actorUserID, now); err != nil {
@@ -1092,6 +1099,14 @@ func (s *Service) consumeStockForAppointment(ctx context.Context, a *domain.Appo
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
 		slog.Warn("commerce consume-appointment rejected", "appointment_id", a.ID, "status", resp.StatusCode, "body", string(body))
 	}
+}
+
+func (s *Service) HasClientMasterAppointment(ctx context.Context, masterID, clientID uuid.UUID) (bool, error) {
+	ok, err := s.store.HasClientMasterAppointment(ctx, masterID, clientID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ok, nil
 }
 
 func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appointment, error) {

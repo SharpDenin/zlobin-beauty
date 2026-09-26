@@ -23,6 +23,7 @@ func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, lo
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("POST /v1/internal/visits/from-appointment", a.fromAppointment)
+	mux.HandleFunc("POST /v1/internal/formulas", a.internalFormula)
 	// Literal prefixes avoid ServeMux conflicts between "{id}/visits" and "by-appointment/{id}".
 	mux.Handle("GET /v1/clients/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/clients/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
@@ -32,6 +33,14 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/clients/id/{id}/formulas", auth(http.HandlerFunc(a.addFormula)))
 	mux.Handle("GET /v1/clients/id/{id}/formulas", auth(http.HandlerFunc(a.formulas)))
 	mux.Handle("POST /v1/clients/id/{id}/consents", auth(http.HandlerFunc(a.consent)))
+	mux.Handle("GET /v1/clients/id/{id}/disputes", auth(http.HandlerFunc(a.listDisputes)))
+	mux.Handle("POST /v1/clients/id/{id}/disputes", auth(http.HandlerFunc(a.createDispute)))
+	mux.Handle("POST /v1/clients/disputes/{disputeID}/resolve", auth(http.HandlerFunc(a.resolveDispute)))
+	mux.Handle("GET /v1/me/model-preferences", auth(http.HandlerFunc(a.getModelPrefs)))
+	mux.Handle("PATCH /v1/me/model-preferences", auth(http.HandlerFunc(a.patchModelPrefs)))
+	a.registerAdminRoutes(mux, auth)
+	mux.HandleFunc("GET /v1/internal/model-preferences/matches", a.matchModelPrefs)
+	mux.HandleFunc("GET /v1/internal/model-preferences/{userID}", a.getModelPrefsInternal)
 	// Aliases under /v1/client-cards for the same handlers.
 	mux.Handle("GET /v1/client-cards/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/client-cards/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
@@ -41,6 +50,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/client-cards/id/{id}/formulas", auth(http.HandlerFunc(a.addFormula)))
 	mux.Handle("GET /v1/client-cards/id/{id}/formulas", auth(http.HandlerFunc(a.formulas)))
 	mux.Handle("POST /v1/client-cards/id/{id}/consents", auth(http.HandlerFunc(a.consent)))
+	mux.Handle("GET /v1/client-cards/id/{id}/disputes", auth(http.HandlerFunc(a.listDisputes)))
+	mux.Handle("POST /v1/client-cards/id/{id}/disputes", auth(http.HandlerFunc(a.createDispute)))
 }
 
 func (a *API) fromAppointment(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +172,7 @@ func (a *API) visits(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"id": v.ID.String(), "service_name": v.ServiceName, "price_minor": v.PriceMinor,
 			"completed_at": v.CompletedAt, "appointment_id": v.AppointmentID.String(),
+			"master_user_id": v.MasterUserID.String(),
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
@@ -208,6 +220,7 @@ func (a *API) addFormula(w http.ResponseWriter, r *http.Request) {
 		Ratio      string          `json:"ratio"`
 		Comment    string          `json:"comment"`
 		VisitID    *string         `json:"visit_id"`
+		OmitFormula bool           `json:"omit_formula"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -222,14 +235,12 @@ func (a *API) addFormula(w http.ResponseWriter, r *http.Request) {
 		}
 		visitID = &v
 	}
-	f, err := a.svc.AddFormula(r.Context(), id, claims.UserID, req.Name, req.Brand, req.Components, req.Oxidizer, req.Ratio, req.Comment, visitID)
+	f, err := a.svc.AddFormula(r.Context(), id, claims.UserID, req.Name, req.Brand, req.Components, req.Oxidizer, req.Ratio, req.Comment, visitID, req.OmitFormula)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, map[string]any{
-		"id": f.ID.String(), "name": f.Name, "brand": f.Brand, "oxidizer": f.Oxidizer, "ratio": f.Ratio, "comment": f.Comment, "created_at": f.CreatedAt,
-	})
+	httpx.JSON(w, http.StatusCreated, formulaDTO(*f))
 }
 
 func (a *API) formulas(w http.ResponseWriter, r *http.Request) {
@@ -246,9 +257,7 @@ func (a *API) formulas(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, f := range items {
-		out = append(out, map[string]any{
-			"id": f.ID.String(), "name": f.Name, "brand": f.Brand, "oxidizer": f.Oxidizer, "ratio": f.Ratio, "comment": f.Comment, "created_at": f.CreatedAt,
-		})
+		out = append(out, formulaDTO(f))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -298,4 +307,227 @@ func cardListDTO(item domain.ClientCardListItem) map[string]any {
 		dto["first_visit_at"] = nil
 	}
 	return dto
+}
+
+func formulaDTO(f domain.ColorFormula) map[string]any {
+	dto := map[string]any{
+		"id": f.ID.String(), "created_at": f.CreatedAt, "omit_formula": f.OmitFormula, "redacted": f.Redacted,
+		"created_by": f.CreatedBy.String(),
+	}
+	if f.VisitID != nil {
+		dto["visit_id"] = f.VisitID.String()
+	}
+	if f.Redacted {
+		return dto
+	}
+	dto["name"] = f.Name
+	dto["brand"] = f.Brand
+	dto["components"] = json.RawMessage(f.Components)
+	dto["oxidizer"] = f.Oxidizer
+	dto["ratio"] = f.Ratio
+	dto["comment"] = f.Comment
+	return dto
+}
+
+func disputeDTO(d domain.CardDispute) map[string]any {
+	return map[string]any{
+		"id": d.ID.String(), "client_card_id": d.ClientCardID.String(), "reporter_user_id": d.ReporterUserID.String(),
+		"field_key": d.FieldKey, "comment": d.Comment, "status": d.Status, "created_at": d.CreatedAt,
+		"resolved_at": d.ResolvedAt, "resolved_by": d.ResolvedBy,
+	}
+}
+
+func (a *API) internalFormula(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	var req struct {
+		AppointmentID string          `json:"appointment_id"`
+		MasterUserID  string          `json:"master_user_id"`
+		Name          string          `json:"name"`
+		Brand         string          `json:"brand"`
+		Components    json.RawMessage `json:"components"`
+		Oxidizer      string          `json:"oxidizer"`
+		Ratio         string          `json:"ratio"`
+		Comment       string          `json:"comment"`
+		OmitFormula   bool            `json:"omit_formula"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	apptID, err := uuid.Parse(req.AppointmentID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid appointment_id"))
+		return
+	}
+	masterID := uuid.Nil
+	if req.MasterUserID != "" {
+		masterID, err = uuid.Parse(req.MasterUserID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_user_id"))
+			return
+		}
+	}
+	f, err := a.svc.InternalUpsertFormula(r.Context(), service.InternalFormulaInput{
+		AppointmentID: apptID, MasterUserID: masterID, Name: req.Name, Brand: req.Brand,
+		Components: req.Components, Oxidizer: req.Oxidizer, Ratio: req.Ratio, Comment: req.Comment, OmitFormula: req.OmitFormula,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, formulaDTO(*f))
+}
+
+func (a *API) createDispute(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		FieldKey string `json:"field_key"`
+		Comment  string `json:"comment"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	d, already, err := a.svc.CreateDispute(r.Context(), id, claims.UserID, req.FieldKey, req.Comment)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	status := http.StatusCreated
+	if already {
+		status = http.StatusOK
+	}
+	httpx.JSON(w, status, map[string]any{"dispute": disputeDTO(*d), "already_open": already})
+}
+
+func (a *API) listDisputes(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListDisputes(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, d := range items {
+		out = append(out, disputeDTO(d))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) resolveDispute(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("disputeID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	d, err := a.svc.ResolveDispute(r.Context(), id, claims.UserID, req.Status)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, disputeDTO(*d))
+}
+
+func (a *API) getModelPrefs(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	p, err := a.svc.GetModelPreferences(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, modelPrefDTO(*p))
+}
+
+func (a *API) patchModelPrefs(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Willing    *bool     `json:"willing"`
+		Notify     *bool     `json:"notify"`
+		Categories *[]string `json:"categories"`
+		City       *string   `json:"city"`
+		DateFrom   *string   `json:"date_from"`
+		DateTo     *string   `json:"date_to"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	p, err := a.svc.PatchModelPreferences(r.Context(), claims.UserID, service.PatchModelPreferencesInput{
+		Willing: req.Willing, Notify: req.Notify, Categories: req.Categories, City: req.City, DateFrom: req.DateFrom, DateTo: req.DateTo,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, modelPrefDTO(*p))
+}
+
+func (a *API) getModelPrefsInternal(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	p, err := a.svc.GetModelPreferences(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, modelPrefDTO(*p))
+}
+
+func (a *API) matchModelPrefs(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items, err := a.svc.MatchingModelPreferences(r.Context(), r.URL.Query().Get("category"), r.URL.Query().Get("city"), r.URL.Query().Get("date"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, p := range items {
+		out = append(out, map[string]any{"user_id": p.UserID.String()})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func modelPrefDTO(p domain.ModelPreference) map[string]any {
+	var from, to any
+	if p.DateFrom != nil {
+		from = p.DateFrom.Format("2006-01-02")
+	}
+	if p.DateTo != nil {
+		to = p.DateTo.Format("2006-01-02")
+	}
+	return map[string]any{
+		"user_id": p.UserID.String(), "willing": p.Willing, "notify": p.Notify,
+		"categories": p.Categories, "city": p.City, "date_from": from, "date_to": to,
+	}
 }

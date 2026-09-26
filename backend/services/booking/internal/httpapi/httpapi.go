@@ -29,6 +29,7 @@ func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
+	mux.HandleFunc("GET /v1/internal/client-master-relationship", a.internalClientMasterRelationship)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("PUT /v1/calendar/working-hours", auth(http.HandlerFunc(a.setStaffHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
@@ -40,14 +41,18 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("DELETE /v1/me/schedule-exceptions", auth(http.HandlerFunc(a.deleteScheduleException)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/slots", a.slots)
 	mux.Handle("POST /v1/appointments", auth(http.HandlerFunc(a.create)))
+	mux.Handle("POST /v1/appointments/plans", auth(http.HandlerFunc(a.visitPlans)))
+	mux.Handle("POST /v1/appointments/plans/confirm", auth(http.HandlerFunc(a.confirmVisitPlan)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/calendar/appointments", auth(http.HandlerFunc(a.calendarAppointments)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
+	mux.Handle("GET /v1/appointments/{id}/group", auth(http.HandlerFunc(a.visitGroup)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
 	mux.Handle("POST /v1/appointments/{id}/reject", auth(http.HandlerFunc(a.reject)))
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
+	mux.Handle("GET /v1/appointments/{id}/reschedule-options", auth(http.HandlerFunc(a.rescheduleOptions)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
 	mux.Handle("GET /v1/appointments/{id}/scheme", auth(http.HandlerFunc(a.getScheme)))
@@ -64,7 +69,11 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/me/clients/{clientUserID}/auto-confirm", auth(http.HandlerFunc(a.setAutoConfirm)))
 	mux.Handle("GET /v1/me/clients/{clientUserID}/blacklist", auth(http.HandlerFunc(a.getBlacklistStatus)))
 	mux.Handle("POST /v1/me/clients/{clientUserID}/unblock", auth(http.HandlerFunc(a.unblockClient)))
+	mux.Handle("GET /v1/me/clients/{clientUserID}/repeat-options", auth(http.HandlerFunc(a.repeatOptions)))
+	mux.Handle("GET /v1/appointments/{id}/repeat-preview", auth(http.HandlerFunc(a.repeatPreview)))
 	a.registerReportRoutes(mux, auth)
+	a.registerWorkModeRoutes(mux, auth)
+	a.registerAdminRoutes(mux, auth)
 }
 
 func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +113,29 @@ func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
 		out = append(out, appointmentDTO(item))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) internalClientMasterRelationship(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	masterID, err := uuid.Parse(r.URL.Query().Get("master_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("master_user_id is required"))
+		return
+	}
+	clientID, err := uuid.Parse(r.URL.Query().Get("client_user_id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("client_user_id is required"))
+		return
+	}
+	ok, err := a.svc.HasClientMasterAppointment(r.Context(), masterID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"related": ok})
 }
 
 func (a *API) setHours(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +463,8 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		ServiceID    string    `json:"service_id"`
 		StartsAt     time.Time `json:"starts_at"`
 		OccurrenceID string    `json:"occurrence_id"`
+		DistrictID   string    `json:"district_id"`
+		ClientUserID string    `json:"client_user_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -455,9 +489,28 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		}
 		occurrenceID = &oid
 	}
+	var districtID *uuid.UUID
+	if strings.TrimSpace(req.DistrictID) != "" {
+		did, err := uuid.Parse(req.DistrictID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid district_id"))
+			return
+		}
+		districtID = &did
+	}
+	clientID := claims.UserID
+	if strings.TrimSpace(req.ClientUserID) != "" {
+		cid, err := uuid.Parse(req.ClientUserID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid client_user_id"))
+			return
+		}
+		clientID = cid
+	}
 	aapt, err := a.svc.Create(r.Context(), service.CreateInput{
-		ClientUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
+		ClientUserID: clientID, ActorUserID: claims.UserID, MasterID: masterID, ServiceID: serviceID, StartsAt: req.StartsAt,
 		OccurrenceID: occurrenceID, IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+		DistrictID: districtID,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -606,6 +659,88 @@ func (a *API) getAutoConfirm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) repeatOptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid client user id"))
+		return
+	}
+	var preferred uuid.UUID
+	if v := strings.TrimSpace(r.URL.Query().Get("service_id")); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
+			return
+		}
+		preferred = id
+	}
+	item, err := a.svc.RepeatOptions(r.Context(), claims.UserID, clientID, preferred)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"item": repeatPreviewDTO(item)})
+}
+
+func (a *API) repeatPreview(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := a.svc.RepeatPreview(r.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, repeatPreviewDTO(item))
+}
+
+func repeatPreviewDTO(p *service.RepeatPreview) map[string]any {
+	if p == nil {
+		return nil
+	}
+	reqs := make([]map[string]any, 0, len(p.Requirements))
+	for _, r := range p.Requirements {
+		row := map[string]any{
+			"product_id": r.ProductID.String(), "product_name": r.ProductName, "brand": r.Brand, "unit": r.Unit,
+			"required_qty": r.RequiredQty, "on_hand": r.OnHand, "reserved": r.Reserved,
+			"available_qty": r.AvailableQty, "incoming_qty": r.IncomingQty,
+			"shortage_qty": r.ShortageQty, "status": r.Status, "orderable": r.Orderable,
+		}
+		if r.ExpectedAt != nil {
+			row["expected_at"] = *r.ExpectedAt
+		}
+		reqs = append(reqs, row)
+	}
+	comps := make([]map[string]any, 0, len(p.Components))
+	for _, c := range p.Components {
+		comps = append(comps, map[string]any{"name": c.Name, "brand": c.Brand, "qty": c.Qty, "unit": c.Unit})
+	}
+	out := map[string]any{
+		"can_repeat":            p.CanRepeat,
+		"availability_status":   p.AvailabilityStatus,
+		"source_appointment_id": p.SourceAppointmentID.String(),
+		"service_id":            p.ServiceID.String(),
+		"service":               p.ServiceName,
+		"date":                  p.StartsAt,
+		"formula_hidden":        p.FormulaHidden,
+		"scheme_hidden":         p.SchemeHidden,
+		"requirements":          reqs,
+		"components":            comps,
+	}
+	if p.HiddenReason != "" {
+		out["hidden_reason"] = p.HiddenReason
+	}
+	if !p.SchemeHidden {
+		out["technique"] = p.Technique
+		out["notes"] = p.Notes
+	}
+	return out
+}
+
 func (a *API) setAutoConfirm(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	clientID, err := uuid.Parse(r.PathValue("clientUserID"))
@@ -707,6 +842,201 @@ func (a *API) reschedule(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
 }
 
+func (a *API) rescheduleOptions(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	limit := service.DefaultRescheduleLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if _, err := parseInt(&limit, v); err != nil || limit <= 0 {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid limit"))
+			return
+		}
+	}
+	out, err := a.svc.RescheduleOptions(r.Context(), id, claims.UserID, limit)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(out.Items))
+	for _, slot := range out.Items {
+		items = append(items, map[string]any{
+			"starts_at": slot.StartsAt,
+			"ends_at":   slot.EndsAt,
+			"work_mode": slot.WorkMode,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"timezone":            out.Timezone,
+		"horizon_days":        out.HorizonDays,
+		"has_more":            out.HasMore,
+		"master_display_name": out.MasterDisplayName,
+		"appointment":         appointmentDTO(*out.Appointment),
+		"items":               items,
+	})
+}
+
+func (a *API) visitPlans(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		ServiceIDs []string `json:"service_ids"`
+		Order      []string `json:"order"`
+		From       string   `json:"from"`
+		Limit      int      `json:"limit"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	in := service.VisitPlanRequest{Limit: req.Limit}
+	for _, raw := range req.ServiceIDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_ids"))
+			return
+		}
+		in.ServiceIDs = append(in.ServiceIDs, id)
+	}
+	for _, raw := range req.Order {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid order"))
+			return
+		}
+		in.Order = append(in.Order, id)
+	}
+	if strings.TrimSpace(req.From) != "" {
+		day, err := time.Parse("2006-01-02", req.From)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid from (YYYY-MM-DD)"))
+			return
+		}
+		in.From = day
+	}
+	out, err := a.svc.PlanVisit(r.Context(), claims.UserID, in)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(out.Items))
+	for _, p := range out.Items {
+		items = append(items, visitPlanDTO(p))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"timezone":          out.Timezone,
+		"total_price_minor": out.TotalPriceMinor,
+		"currency":          out.Currency,
+		"recommended_order": uuidStrings(out.RecommendedOrder),
+		"order_warning":     out.OrderWarning,
+		"horizon_days":      out.HorizonDays,
+		"items":             items,
+	})
+}
+
+func (a *API) confirmVisitPlan(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var req struct {
+		Legs []struct {
+			ServiceID string    `json:"service_id"`
+			MasterID  string    `json:"master_id"`
+			StartsAt  time.Time `json:"starts_at"`
+		} `json:"legs"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	in := service.ConfirmVisitPlanInput{
+		ActorUserID: claims.UserID, ClientUserID: claims.UserID,
+		IdempotencyKey: r.Header.Get("Idempotency-Key"),
+	}
+	for _, leg := range req.Legs {
+		sid, err := uuid.Parse(leg.ServiceID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
+			return
+		}
+		mid, err := uuid.Parse(leg.MasterID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid master_id"))
+			return
+		}
+		in.Legs = append(in.Legs, service.ConfirmLeg{ServiceID: sid, MasterID: mid, StartsAt: leg.StartsAt})
+	}
+	items, err := a.svc.ConfirmVisitPlan(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if len(items) == 0 {
+		httpx.WriteError(w, r, a.log, apperr.ConflictCode(apperr.CodeBookingPlanUnavailable, "plan could not be confirmed"))
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, appointmentDTO(it))
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"items": out, "visit_group_id": uuidOrNil(items[0].VisitGroupID)})
+}
+
+func (a *API) visitGroup(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListVisitGroup(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, appointmentDTO(it))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func visitPlanDTO(p service.VisitPlan) map[string]any {
+	legs := make([]map[string]any, 0, len(p.Legs))
+	for _, l := range p.Legs {
+		legs = append(legs, map[string]any{
+			"service_id":          l.ServiceID.String(),
+			"service_name":        l.ServiceName,
+			"master_id":           l.MasterID.String(),
+			"master_user_id":      l.MasterUserID.String(),
+			"master_display_name": l.MasterDisplayName,
+			"starts_at":           l.StartsAt,
+			"ends_at":             l.EndsAt,
+			"duration_minutes":    l.DurationMinutes,
+			"price_minor":         l.PriceMinor,
+			"currency":            l.Currency,
+			"work_mode":           l.WorkMode,
+		})
+	}
+	return map[string]any{
+		"starts_at":     p.StartsAt,
+		"ends_at":       p.EndsAt,
+		"wait_minutes":  p.WaitMinutes,
+		"total_minutes": p.TotalMinutes,
+		"same_master":   p.SameMaster,
+		"reason":        p.Reason,
+		"legs":          legs,
+	}
+}
+
+func uuidStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
 func (a *API) start(w http.ResponseWriter, r *http.Request) {
 	a.simpleAction(w, r, a.svc.Start)
 }
@@ -722,6 +1052,7 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		Technique      string `json:"technique"`
 		Notes          string `json:"notes"`
 		Skipped        bool   `json:"skipped"`
+		OmitFormula    bool   `json:"omit_formula"`
 		CategoryFields any    `json:"category_fields"`
 		Components     []struct {
 			Name       string `json:"name"`
@@ -733,7 +1064,7 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		} `json:"components"`
 	}
 	_ = httpx.DecodeJSON(r, &req)
-	scheme := &service.VisitSchemeInput{Technique: req.Technique, Notes: req.Notes, Skipped: req.Skipped}
+	scheme := &service.VisitSchemeInput{Technique: req.Technique, Notes: req.Notes, Skipped: req.Skipped, OmitFormula: req.OmitFormula}
 	if req.CategoryFields != nil {
 		if b, err := json.Marshal(req.CategoryFields); err == nil {
 			scheme.CategoryFields = b
@@ -764,7 +1095,7 @@ func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	if item == nil {
+	if item == nil || !item.Exists {
 		httpx.JSON(w, http.StatusOK, map[string]any{"appointment_id": id.String(), "exists": false})
 		return
 	}
@@ -774,10 +1105,15 @@ func (a *API) getScheme(w http.ResponseWriter, r *http.Request) {
 			"name": c.Name, "brand": c.Brand, "qty": c.Qty, "unit": c.Unit, "proportion": c.Proportion, "notes": c.Notes,
 		})
 	}
+	fields := any(item.CategoryFields)
+	if len(item.CategoryFields) == 0 {
+		fields = map[string]any{}
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"appointment_id": item.AppointmentID.String(), "exists": true,
 		"technique": item.Technique, "notes": item.Notes, "skipped": item.Skipped,
-		"category_fields": item.CategoryFields, "components": comps,
+		"omit_formula": item.OmitFormula, "details_redacted": item.DetailsRedacted, "formula_redacted": item.FormulaRedacted,
+		"category_fields": fields, "components": comps,
 		"template_id": item.TemplateID, "template_version": item.TemplateVersion,
 	})
 }
@@ -881,8 +1217,19 @@ func appointmentDTO(a domain.Appointment) map[string]any {
 		"occurrence_id": occ, "booking_mode": mode,
 		"location_name": a.LocationName, "location_city": a.LocationCity,
 		"location_address": a.LocationAddress, "location_timezone": a.LocationTimezone,
-		"created_at": a.CreatedAt, "updated_at": a.UpdatedAt,
+		"work_mode": a.WorkMode, "work_mode_label": domain.WorkModeLabel(a.WorkMode),
+		"work_mode_interval_id": uuidOrNil(a.WorkModeIntervalID), "chair_id": uuidOrNil(a.ChairID),
+		"onsite_city_id": uuidOrNil(a.OnsiteCityID), "onsite_district_id": uuidOrNil(a.OnsiteDistrictID),
+		"visit_group_id": uuidOrNil(a.VisitGroupID),
+		"created_at":     a.CreatedAt, "updated_at": a.UpdatedAt,
 	}
+}
+
+func uuidOrNil(id *uuid.UUID) any {
+	if id == nil {
+		return nil
+	}
+	return id.String()
 }
 
 func appointmentPhotoDTO(p domain.AppointmentPhoto) map[string]any {

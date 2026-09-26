@@ -218,7 +218,7 @@ func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, professional b
 			return nil, apperr.Validation("нет остатка для " + it.Name)
 		}
 		if it.CartPriceMinor != p.PriceMinor && !in.ConfirmPriceChanges {
-			return nil, apperr.Conflict("цена изменилась: " + it.Name + ". Обновите корзину и подтвердите оформление.")
+			return nil, apperr.ConflictCode(apperr.CodePriceChanged, "цена изменилась: "+it.Name+". Обновите корзину и подтвердите оформление.")
 		}
 		supplierItems[it.OrganizationID] = append(supplierItems[it.OrganizationID], it)
 	}

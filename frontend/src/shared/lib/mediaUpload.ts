@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError } from '@/shared/api/client'
+import { API_BASE_URL, ApiError, apiErrorFromResponse, networkApiError } from '@/shared/api/client'
 
 const IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const VIDEO_MIME = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
@@ -11,6 +11,19 @@ export const MEDIA_MAX_VIDEO_BYTES = 50 * 1024 * 1024
 
 export function isVideoFile(file: File): boolean {
   return VIDEO_MIME.has(file.type)
+}
+
+export function mediaFileApiError(
+  file: File,
+  opts?: { allowVideo?: boolean; maxImageBytes?: number; maxVideoBytes?: number },
+): ApiError | null {
+  if (!file || file.size === 0) {
+    return new ApiError('empty file', 'media_empty', 400)
+  }
+  const mimeError = validateMediaFile(file, opts)
+  if (!mimeError) return null
+  const knownType = IMAGE_MIME.has(file.type) || VIDEO_MIME.has(file.type)
+  return new ApiError(mimeError, knownType ? 'media_too_large' : 'media_unsupported_type', 400)
 }
 
 export function validateMediaFile(
@@ -57,14 +70,16 @@ export function uploadMedia(
   purpose: string,
   token: string | null | undefined,
   onProgress?: UploadProgressHandler,
-  opts?: { allowVideo?: boolean },
+  opts?: { allowVideo?: boolean; preservePurpose?: boolean },
 ): Promise<UploadMediaResult> {
-  const allowVideo = opts?.allowVideo || purpose === 'video'
+  const allowVideo = opts?.allowVideo || purpose === 'video' || purpose === 'message'
   const mimeError = validateMediaFile(file, { allowVideo })
   if (mimeError) {
-    return Promise.reject(new ApiError(mimeError, 'validation_error', 400))
+    const knownType = IMAGE_MIME.has(file.type) || VIDEO_MIME.has(file.type)
+    const code = knownType ? 'media_too_large' : 'media_unsupported_type'
+    return Promise.reject(new ApiError(mimeError, code, 400))
   }
-  const resolvedPurpose = isVideoFile(file) ? 'video' : purpose
+  const resolvedPurpose = opts?.preservePurpose || purpose === 'message' ? purpose : isVideoFile(file) ? 'video' : purpose
 
   const form = new FormData()
   form.append('file', file)
@@ -93,23 +108,18 @@ export function uploadMedia(
       if (xhr.status >= 200 && xhr.status < 300) {
         const id = data.id
         if (typeof id !== 'string' || !id) {
-          reject(new ApiError('Сервер не вернул id медиа', 'error', xhr.status))
+          reject(new ApiError('Не удалось сохранить файл', 'error', xhr.status))
           return
         }
         onProgress?.(100)
         resolve(data as UploadMediaResult)
         return
       }
-      const err = data.error as { message?: string; code?: string } | undefined
-      reject(new ApiError(
-        err?.message ?? 'Не удалось загрузить файл',
-        err?.code ?? 'error',
-        xhr.status,
-      ))
+      reject(apiErrorFromResponse(data, xhr.status))
     }
 
     xhr.onerror = () => {
-      reject(new ApiError('Сеть недоступна. Проверьте соединение', 'network_error', 0))
+      reject(networkApiError())
     }
 
     xhr.onabort = () => {

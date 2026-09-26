@@ -5,11 +5,16 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
+import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
+import type { ProfessionType } from '@/shared/lib/profession-types'
+import { selectedProfessionIds } from '@/shared/lib/profession-types'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string; published: boolean; description: string }
@@ -33,6 +38,7 @@ const masterSchema = z.object({
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
   work_type: z.enum(['employee', 'renter', 'owner', 'salon_owner', 'independent', 'chain_owner', 'mobile_master', 'chair_master', 'private_master']),
+  profession_type_ids: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один профессиональный тип'),
   published: z.boolean(),
 })
 
@@ -95,6 +101,7 @@ export function MasterCabinetPage() {
           specializations?: string[]
           experience_years?: number
           education?: string
+          profession_types?: ProfessionType[]
         }
         services: unknown[]
       }>('/v1/me/master', { token: accessToken }),
@@ -166,6 +173,7 @@ export function MasterCabinetPage() {
       experience_years: 1,
       education: '',
       work_type: 'independent',
+      profession_type_ids: [],
     },
   })
 
@@ -180,6 +188,7 @@ export function MasterCabinetPage() {
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
       work_type: (m.work_type as z.infer<typeof masterSchema>['work_type']) || 'independent',
+      profession_type_ids: selectedProfessionIds(m),
       published: Boolean(m.published),
     })
   }, [master.data, masterForm, user?.display_name])
@@ -203,7 +212,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка создания салона'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка создания салона')),
   })
 
   const saveBranch = useMutation({
@@ -223,7 +232,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка сохранения филиала'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка сохранения филиала')),
   })
 
   const publishBranch = useMutation({
@@ -243,7 +252,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось опубликовать филиал'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось опубликовать филиал')),
   })
 
   const saveMaster = useMutation({
@@ -263,6 +272,7 @@ export function MasterCabinetPage() {
           experience_years: values.experience_years,
           education: values.education ?? '',
           work_type: values.work_type,
+          profession_type_ids: values.profession_type_ids,
           published: values.published,
         },
       })
@@ -273,7 +283,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['my-master'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка профиля'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка профиля')),
   })
 
   const saveHours = useMutation({
@@ -295,7 +305,7 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['working-hours'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка расписания'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка расписания')),
   })
 
   async function attachProfilePhoto(mediaId: string | null) {
@@ -335,7 +345,7 @@ export function MasterCabinetPage() {
       toast.success('Фото профиля сохранено')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото'
+      const msg = userError(e, 'Не удалось загрузить фото')
       setError(msg)
       toast.error(msg)
       setProfilePhotoDraft(null)
@@ -360,7 +370,7 @@ export function MasterCabinetPage() {
       toast.success('Работа добавлена в портфолио')
       await qc.invalidateQueries({ queryKey: ['my-portfolio'] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки в портфолио'
+      const msg = userError(e, 'Не удалось загрузить в портфолио')
       setError(msg)
       toast.error(msg)
       setPortfolioDraft(null)
@@ -384,7 +394,7 @@ export function MasterCabinetPage() {
       toast.success('Фото салона добавлено')
       await qc.invalidateQueries({ queryKey: ['branch-photos', primaryBranch.id] })
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка загрузки фото салона'
+      const msg = userError(e, 'Не удалось загрузить фото салона')
       setError(msg)
       toast.error(msg)
       setSalonDraft(null)
@@ -398,7 +408,7 @@ export function MasterCabinetPage() {
       setOk('Фото салона удалено')
       await qc.invalidateQueries({ queryKey: ['branch-photos'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить')),
   })
 
   const deletePortfolioItem = useMutation({
@@ -408,7 +418,7 @@ export function MasterCabinetPage() {
       setOk('Работа удалена из портфолио')
       await qc.invalidateQueries({ queryKey: ['my-portfolio'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить')),
   })
 
   const createRecommendation = useMutation({
@@ -423,7 +433,7 @@ export function MasterCabinetPage() {
       setRecoProductId('')
       await qc.invalidateQueries({ queryKey: ['my-recommendations'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось создать рекомендацию'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось создать рекомендацию')),
   })
 
   const deleteRecommendation = useMutation({
@@ -432,20 +442,20 @@ export function MasterCabinetPage() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['my-recommendations'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось удалить рекомендацию'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить рекомендацию')),
   })
 
   return (
     <main className="page stack">
       <h1>Кабинет мастера</h1>
       <p>Настройте салон, профиль и расписание — затем покажитесь клиентам в поиске.</p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       <section className="card stack">
         <h2>Что ещё заполнить</h2>
         {readiness.isLoading && <div className="state-box">Проверяем профиль…</div>}
-        {readiness.isError && <div className="state-box error">Не удалось проверить готовность</div>}
+        {readiness.isError && <ErrorBanner error={readiness.error} fallbackTitle="Не удалось проверить готовность" />}
         {readiness.data && (
           <>
             <p>
@@ -473,7 +483,7 @@ export function MasterCabinetPage() {
       <section className="card stack">
         <h2>1. Салон</h2>
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
-        {orgs.isError && <div className="state-box error">Не удалось загрузить организации</div>}
+        {orgs.isError && <ErrorBanner error={orgs.error} fallbackTitle="Не удалось загрузить организации" />}
         {orgs.data && orgs.data.items.length > 0 ? (
           <div className="stack-sm">
             {orgs.data.items.map((item) => (
@@ -603,7 +613,17 @@ export function MasterCabinetPage() {
             {masterForm.formState.errors.city && <span className="error">{masterForm.formState.errors.city.message}</span>}
           </div>
           <div className="field"><label>О себе</label><textarea {...masterForm.register('bio')} /></div>
-          <div className="field"><label>Специализации через запятую</label><input {...masterForm.register('specializations')} placeholder="Колорист, Парикмахер" /></div>
+          <ProfessionTypePicker
+            value={masterForm.watch('profession_type_ids') ?? []}
+            lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
+            onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
+            error={masterForm.formState.errors.profession_type_ids?.message}
+          />
+          <div className="field">
+            <label>Дополнительные теги</label>
+            <input {...masterForm.register('specializations')} placeholder="Свадебные укладки, мужские стрижки" />
+            <p className="muted">Свободные теги для поиска. Не дублируют профессиональный тип.</p>
+          </div>
           <div className="field">
             <label>Опыт, лет</label>
             <input type="number" {...masterForm.register('experience_years')} />
@@ -611,7 +631,7 @@ export function MasterCabinetPage() {
           </div>
           <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
           <div className="field">
-            <label htmlFor="work_type">Формат работы</label>
+            <label htmlFor="work_type">Формат занятости</label>
             <select id="work_type" {...masterForm.register('work_type')}>
               {WORK_TYPE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -671,7 +691,7 @@ export function MasterCabinetPage() {
         <h2>Портфолио</h2>
         <p className="muted">Загрузите фото работ — они будут видны клиентам на странице мастера.</p>
         {portfolio.isLoading && <div className="state-box">Загрузка портфолио…</div>}
-        {portfolio.isError && <div className="state-box error">Не удалось загрузить портфолио</div>}
+        {portfolio.isError && <ErrorBanner error={portfolio.error} fallbackTitle="Не удалось загрузить портфолио" />}
         <div className="list">
           {portfolio.data?.items.map((item) => (
             <article key={item.id} className="list-item stack-sm">
@@ -773,7 +793,7 @@ export function MasterCabinetPage() {
       <section className="card stack">
         <h2>4. Расписание</h2>
         <p>Рабочие часы по умолчанию: пн–пт 10:00–19:00. Исключения дней — в календаре.</p>
-        {hours.isError && <div className="state-box error">Не удалось загрузить расписание</div>}
+        {hours.isError && <ErrorBanner error={hours.error} fallbackTitle="Не удалось загрузить расписание" />}
         <div className="row">
           <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
             Установить пн–пт 10:00–19:00
@@ -792,7 +812,7 @@ export function MasterCabinetPage() {
         <h2>5. Склад и материалы</h2>
         <p>Товары и остатки создаются приёмкой — без начальных сидов.</p>
         <div className="row">
-          <Link className="btn btn-primary" to="/warehouse">Открыть склад</Link>
+          <Link className="btn btn-primary" to="/inventory">Мой склад</Link>
           <Link className="btn btn-secondary" to="/reports">Отчёты салона</Link>
           <Link className="btn btn-secondary" to="/cosmetics">Косметика</Link>
         </div>

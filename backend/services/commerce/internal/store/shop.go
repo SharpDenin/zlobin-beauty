@@ -144,7 +144,7 @@ INSERT INTO client_carts(id, user_id, updated_at, created_at) VALUES ($1,$2,$3,$
 func (s *Store) ListCartItems(ctx context.Context, cartID uuid.UUID) ([]domain.ClientCartItem, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT ci.cart_id, ci.product_id, ci.qty,
-       p.brand, p.name, p.sku, p.unit, COALESCE(ci.price_minor, p.price_minor), p.price_minor, p.currency, p.organization_id,
+       p.brand, p.name, p.sku, p.unit, COALESCE(ci.price_minor, p.price_minor), p.price_minor, p.currency, p.organization_id, p.photo_media_id,
        `+availableSubquery+` AS available
 FROM client_cart_items ci
 JOIN products p ON p.id = ci.product_id
@@ -158,7 +158,7 @@ ORDER BY p.name`, cartID)
 	for rows.Next() {
 		var it domain.ClientCartItem
 		if err := rows.Scan(&it.CartID, &it.ProductID, &it.Qty, &it.Brand, &it.Name, &it.SKU, &it.Unit,
-			&it.CartPriceMinor, &it.CurrentPriceMinor, &it.Currency, &it.OrganizationID, &it.Available); err != nil {
+			&it.CartPriceMinor, &it.CurrentPriceMinor, &it.Currency, &it.OrganizationID, &it.PhotoMediaID, &it.Available); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

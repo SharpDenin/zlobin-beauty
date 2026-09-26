@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { ApiError, API_BASE_URL } from '@/shared/api/client'
+import { API_BASE_URL } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import {
   MEDIA_ACCEPT_IMAGES,
@@ -7,10 +7,11 @@ import {
   MEDIA_MAX_BYTES_DEFAULT,
   MEDIA_MAX_VIDEO_BYTES,
   isVideoFile,
+  mediaFileApiError,
   uploadMedia,
-  validateMediaFile,
 } from '@/shared/lib/mediaUpload'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type DropzoneState = 'idle' | 'dragging' | 'uploading' | 'error' | 'preview'
 
@@ -43,7 +44,7 @@ export function MediaDropzone({
   const inputId = useId()
 
   const [state, setState] = useState<DropzoneState>(value ? 'preview' : 'idle')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [progress, setProgress] = useState(0)
   const [localPreview, setLocalPreview] = useState<string | null>(null)
   const [localIsVideo, setLocalIsVideo] = useState(false)
@@ -84,7 +85,7 @@ export function MediaDropzone({
 
   async function handleFile(file: File) {
     if (disabled) return
-    const validation = validateMediaFile(file, {
+    const validation = mediaFileApiError(file, {
       allowVideo,
       maxImageBytes: maxBytes,
       maxVideoBytes: MEDIA_MAX_VIDEO_BYTES,
@@ -116,7 +117,7 @@ export function MediaDropzone({
     } catch (e) {
       clearObjectUrl()
       setLocalPreview(null)
-      setError(e instanceof ApiError ? e.message : 'Не удалось загрузить файл')
+      setError(e)
       setState('error')
     }
   }
@@ -245,7 +246,7 @@ export function MediaDropzone({
         )}
       </div>
 
-      {error && <p className="field error" role="alert">{error}</p>}
+      {error != null && <ErrorBanner error={error} fallbackTitle="Не удалось загрузить файл" />}
 
       {(value || localPreview) && state !== 'uploading' && (
         <button

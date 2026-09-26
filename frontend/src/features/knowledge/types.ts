@@ -2,7 +2,7 @@ export type KnowledgeArticle = {
   id: string
   title: string
   category: string
-  content?: string
+  content?: string | Record<string, unknown>
   excerpt?: string
   content_format?: string
   cover_media_id?: string | null
@@ -19,6 +19,9 @@ export type KnowledgeArticle = {
   status?: string
   published_at?: string | null
   created_at: string
+  home_care?: boolean
+  professional?: boolean
+  audience_kind?: 'home' | 'professional' | 'mixed'
 }
 
 export type KnowledgeFacet = { value: string; label: string; count: number }

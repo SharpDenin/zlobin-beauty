@@ -17,10 +17,15 @@ import (
 )
 
 type Service struct {
-	store      *store.Store
-	bookingURL string
-	httpClient *http.Client
-	now        func() time.Time
+	store            *store.Store
+	bookingURL       string
+	identityURL      string
+	organizationsURL string
+	marketplaceURL   string
+	mediaURL         string
+	internalToken    string
+	httpClient       *http.Client
+	now              func() time.Time
 }
 
 func New(st *store.Store, bookingURL string) *Service {

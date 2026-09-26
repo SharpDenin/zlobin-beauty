@@ -51,6 +51,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/commerce/units/{id}", auth(http.HandlerFunc(a.updateUnit)))
 	mux.Handle("DELETE /v1/commerce/units/{id}", auth(http.HandlerFunc(a.deleteUnit)))
 	mux.Handle("POST /v1/internal/stock/consume-appointment", internal(http.HandlerFunc(a.consumeAppointment)))
+	mux.Handle("POST /v1/internal/inventory/repeat-availability", internal(http.HandlerFunc(a.internalRepeatAvailability)))
+	mux.Handle("GET /v1/internal/products/audiences", internal(http.HandlerFunc(a.internalListProductAudiences)))
 	mux.Handle("GET /v1/internal/products/{id}", internal(http.HandlerFunc(a.internalGetProduct)))
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
 	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
@@ -78,6 +80,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	a.registerShopRoutes(mux, auth)
 	a.registerRecommendationRoutes(mux, auth)
 	a.registerRecurringRoutes(mux, auth)
+	a.registerInventoryRoutes(mux, auth)
+	a.registerAdminRoutes(mux, auth)
 }
 
 // --- locations ---
@@ -211,7 +215,11 @@ func (a *API) listProducts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("organization_id is required"))
 		return
 	}
-	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -230,20 +238,16 @@ func (a *API) listCatalogProducts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization id"))
 		return
 	}
-	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	items, err := a.svc.ListProducts(r.Context(), claims.UserID, orgID, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	prof := false
-	if claims != nil {
-		for _, r := range claims.Roles {
-			switch r {
-			case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
-				prof = true
-			}
-		}
-	}
+	prof := hasProfessionalRole(roles)
 	out := make([]map[string]any, 0, len(items))
 	for _, p := range items {
 		if !domain.ProductVisibleTo(p.Audience, prof) {
@@ -261,7 +265,11 @@ func (a *API) getProduct(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
 		return
 	}
-	p, err := a.svc.GetProduct(r.Context(), claims.UserID, id)
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	p, err := a.svc.GetProduct(r.Context(), claims.UserID, id, hasProfessionalRole(roles))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -286,8 +294,39 @@ func (a *API) internalGetProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"id": p.ID.String(), "organization_id": p.OrganizationID.String(),
-		"name": p.Name, "brand": p.Brand, "category_id": categoryID,
+		"name": p.Name, "brand": p.Brand, "category_id": categoryID, "audience": p.Audience,
 	})
+}
+
+func (a *API) internalListProductAudiences(w http.ResponseWriter, r *http.Request) {
+	raw := strings.Split(r.URL.Query().Get("ids"), ",")
+	ids := make([]uuid.UUID, 0, len(raw))
+	for _, part := range raw {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := uuid.Parse(part)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+			return
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) > 500 {
+		httpx.WriteError(w, r, a.log, apperr.Validation("too many ids"))
+		return
+	}
+	items, err := a.svc.ListProductAudiencesInternal(r.Context(), ids)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{"id": it.ID.String(), "audience": it.Audience})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +470,8 @@ func movementDTO(m domain.StockMovement) map[string]any {
 	return map[string]any{
 		"id": m.ID.String(), "location_id": m.LocationID.String(), "product_id": m.ProductID.String(),
 		"kind": m.Kind, "qty": m.Qty, "qty_before": m.QtyBefore, "qty_after": m.QtyAfter, "reason": m.Reason,
-		"actor_user_id": m.ActorUserID.String(), "ref_type": m.RefType, "ref_id": refID, "created_at": m.CreatedAt,
+		"actor_user_id": m.ActorUserID.String(), "ref_type": m.RefType, "ref_id": refID,
+		"idempotency_key": m.IdempotencyKey, "created_at": m.CreatedAt,
 	}
 }
 
@@ -449,20 +489,7 @@ func (a *API) listStock(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, v := range items {
-		out = append(out, map[string]any{
-			"location_id": v.LocationID.String(), "product_id": v.ProductID.String(),
-			"qty_on_hand": v.QtyOnHand, "qty_reserved": v.QtyReserved, "available": v.QtyOnHand - v.QtyReserved,
-			"qty_incoming": v.QtyIncoming,
-			"product_name": v.ProductName, "brand": v.ProductBrand, "sku": v.ProductSKU,
-			"min_stock": v.MinStock, "price_minor": v.PriceMinor, "currency": v.Currency,
-			"status": v.Status, "updated_at": v.UpdatedAt,
-			"photo_media_id": func() any {
-				if v.PhotoMediaID == nil {
-					return nil
-				}
-				return v.PhotoMediaID.String()
-			}(),
-		})
+		out = append(out, stockItemDTO(v))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -597,6 +624,55 @@ func (a *API) consumeAppointment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *API) internalRepeatAvailability(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OwnerUserID         string `json:"owner_user_id"`
+		OrganizationID      string `json:"organization_id"`
+		ServiceID           string `json:"service_id"`
+		SourceAppointmentID string `json:"source_appointment_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	owner, err1 := uuid.Parse(req.OwnerUserID)
+	orgID, err2 := uuid.Parse(req.OrganizationID)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid owner_user_id or organization_id"))
+		return
+	}
+	var serviceID uuid.UUID
+	if strings.TrimSpace(req.ServiceID) != "" {
+		id, err := uuid.Parse(req.ServiceID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid service_id"))
+			return
+		}
+		serviceID = id
+	}
+	var source *uuid.UUID
+	if strings.TrimSpace(req.SourceAppointmentID) != "" {
+		id, err := uuid.Parse(req.SourceAppointmentID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid source_appointment_id"))
+			return
+		}
+		source = &id
+	}
+	items, err := a.svc.RepeatAvailability(r.Context(), service.RepeatAvailabilityInput{
+		OwnerUserID: owner, OrganizationID: orgID, ServiceID: serviceID, SourceAppointmentID: source,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, availabilityItemDTO(it))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func productCategoryDTO(c domain.ProductCategory) map[string]any {
@@ -1051,7 +1127,8 @@ func (a *API) acceptSupplierOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Items []struct {
+		IdempotencyKey string `json:"idempotency_key"`
+		Items          []struct {
 			ProductID   string  `json:"product_id"`
 			QtyAccepted float64 `json:"qty_accepted"`
 			QtyDamaged  float64 `json:"qty_damaged"`
@@ -1074,7 +1151,11 @@ func (a *API) acceptSupplierOrder(w http.ResponseWriter, r *http.Request) {
 			QtyDamaged: it.QtyDamaged, QtyRejected: it.QtyRejected,
 		})
 	}
-	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted)
+	idem := strings.TrimSpace(req.IdempotencyKey)
+	if idem == "" {
+		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
+	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted, idem)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -1117,7 +1198,7 @@ func (a *API) acceptSupplierOrderLegacy(w http.ResponseWriter, r *http.Request) 
 		}
 		accepted = append(accepted, service.AcceptItemInput{ProductID: productID, QtyAccepted: it.QtyAccepted})
 	}
-	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted)
+	o, items, err := a.svc.AcceptSupplierOrder(r.Context(), claims.UserID, id, accepted, strings.TrimSpace(r.Header.Get("Idempotency-Key")))
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -1234,6 +1315,7 @@ func orderDTO(o domain.SupplierOrder, items []domain.SupplierOrderItem) map[stri
 			"id": it.ID.String(), "product_id": it.ProductID.String(),
 			"product_name": it.ProductName, "product_sku": it.ProductSKU,
 			"qty_ordered": it.QtyOrdered, "qty_delivered": it.QtyDelivered, "qty_accepted": it.QtyAccepted,
+			"qty_damaged": it.QtyDamaged, "qty_rejected": it.QtyRejected,
 			"price_minor": it.PriceMinor,
 		})
 	}
@@ -1260,7 +1342,7 @@ func orderDTO(o domain.SupplierOrder, items []domain.SupplierOrderItem) map[stri
 		"total_minor": o.TotalMinor, "subtotal_minor": o.SubtotalMinor, "delivery_cost_minor": o.DeliveryCostMinor,
 		"payment_method": o.PaymentMethod, "payment_status": o.PaymentStatus, "paid_at": paidAt,
 		"idempotency_key": o.IdempotencyKey,
-		"comment": o.Comment, "desired_at": desiredAt, "estimated_delivery_at": estimated,
+		"comment":         o.Comment, "desired_at": desiredAt, "estimated_delivery_at": estimated,
 		"created_by": o.CreatedBy.String(),
 		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt, "items": itemsOut,
 	}

@@ -18,10 +18,16 @@ import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCart
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Modal } from '@/shared/ui/Modal'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { productAudienceLabel } from '@/pages/knowledge-helpers'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 export function CosmeticsSupplierPage() {
   const { supplierId = '' } = useParams()
   const { accessToken } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
   const { locations, ensure, locationId } = useEnsureLocation(buyerOrgId)
@@ -31,7 +37,7 @@ export function CosmeticsSupplierPage() {
   const [branchQuery, setBranchQuery] = useState('')
   const [destinationBranchId, setDestinationBranchId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<string>('cash')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
 
   useEffect(() => {
@@ -137,7 +143,7 @@ export function CosmeticsSupplierPage() {
       setBranchQuery('')
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось оформить заказ'),
+    onError: (e) => setError(e),
   })
 
   const published = useMemo(
@@ -145,15 +151,15 @@ export function CosmeticsSupplierPage() {
     [products.data],
   )
 
-  if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  if (orgs.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   if (!buyerOrgId) {
     return (
       <main className="page">
-        <div className="empty-state">
-          <h2>Нужен салон</h2>
-          <p>Создайте салон в кабинете мастера.</p>
-          <Link className="btn btn-primary" to="/master">Кабинет</Link>
-        </div>
+        <EmptyState
+          title="Нужен салон"
+          text="Создайте салон в кабинете мастера."
+          action={<Link className="btn btn-primary" to="/master">Кабинет</Link>}
+        />
       </main>
     )
   }
@@ -173,36 +179,58 @@ export function CosmeticsSupplierPage() {
           {supplier.data?.city && <p className="muted">{supplier.data.city}</p>}
           {supplier.data?.delivery_note && <p className="muted">Доставка: {supplier.data.delivery_note}</p>}
         </div>
-        <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Заказы</Link>
+        <div className="row">
+          <button
+            className="btn btn-secondary btn-compact"
+            type="button"
+            data-testid="write-supplier"
+            onClick={async () => {
+              try {
+                await messenger.start({
+                  type: 'master_supplier',
+                  supplier_organization_id: supplierId,
+                })
+              } catch (e) {
+                setError(e)
+              }
+            }}
+          >
+            Написать поставщику
+          </button>
+          <Link className="btn btn-secondary btn-compact" to="/cosmetics/orders">Заказы</Link>
+        </div>
       </div>
 
-      {error && <div className="state-box error">{error}</div>}
-      {ok && <div className="state-box success">{ok}</div>}
+      <ErrorBanner error={error} fallbackTitle="Не удалось оформить заказ" />
+      {ok && <p className="muted" role="status">{ok}</p>}
 
-      {products.isLoading && <div className="state-box">Загрузка товаров…</div>}
-      {products.isError && <div className="state-box error">Не удалось загрузить каталог</div>}
-      {!products.isLoading && published.length === 0 && (
-        <div className="empty-state">
-          <h2>Товаров пока нет</h2>
-          <p>Поставщик ещё не опубликовал продукцию.</p>
+      {products.isLoading && (
+        <div className="cards-grid products" aria-busy="true">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="product-card">
+              <div className="media-frame media-frame--product"><div className="media-skeleton" /></div>
+              <div className="skeleton skeleton-line" />
+            </div>
+          ))}
         </div>
+      )}
+      {products.isError && <ErrorBanner error={products.error} fallbackTitle="Не удалось загрузить каталог" />}
+      {!products.isLoading && published.length === 0 && (
+        <EmptyState title="Товаров пока нет" text="Поставщик ещё не опубликовал продукцию." />
       )}
 
       <div className="cards-grid products">
         {published.map((p) => (
           <article key={p.id} className="product-card">
             <Link to={`/cosmetics/products/${p.id}`}>
-              <div className="product-media">
-                {p.photo_media_id ? (
-                  <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} />
-                ) : (
-                  <span>{p.brand || 'Фото'}</span>
-                )}
+              <div className="media-frame media-frame--product">
+                <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} fallback={(p.brand || p.name).slice(0, 2).toUpperCase()} />
               </div>
             </Link>
             <div className="stack-sm">
               <Link to={`/cosmetics/products/${p.id}`}><strong>{p.name}</strong></Link>
               <p className="muted">{[p.brand, p.volume_label || unitLabel(p.unit)].filter(Boolean).join(' · ')}</p>
+              <span className="badge badge-default">{productAudienceLabel(p.audience)}</span>
               <div className="row between">
                 <strong>{formatMoney(p.price_minor)}</strong>
                 <span className="chip badge-default">{availabilityLabel(p.for_sale, p.published)}</span>
@@ -234,16 +262,7 @@ export function CosmeticsSupplierPage() {
         </div>
       )}
 
-      {checkoutOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCheckoutOpen(false)}>
-          <div className="modal-sheet stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between">
-              <h2>Оформление заказа</h2>
-              <button className="btn btn-secondary btn-compact" type="button" onClick={() => setCheckoutOpen(false)}>
-                Закрыть
-              </button>
-            </div>
-
+      <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Оформление заказа" size="lg">
             <div className="list">
               {cart.map((line) => (
                 <article key={line.product.id} className="list-item">
@@ -281,7 +300,7 @@ export function CosmeticsSupplierPage() {
                 />
               </div>
               {pickupBranches.isLoading && <div className="state-box">Загрузка филиалов…</div>}
-              {pickupBranches.isError && <div className="state-box error">Не удалось загрузить филиалы</div>}
+              {pickupBranches.isError && <ErrorBanner error={pickupBranches.error} fallbackTitle="Не удалось загрузить филиалы" />}
               {!pickupBranches.isLoading && filteredBranches.length === 0 && (
                 <div className="state-box">Нет доступных филиалов с самовывозом. Включите pickup у филиала салона.</div>
               )}
@@ -340,9 +359,7 @@ export function CosmeticsSupplierPage() {
             >
               {createOrder.isPending ? 'Отправляем…' : 'Подтвердить заказ'}
             </button>
-          </div>
-        </div>
-      )}
+      </Modal>
     </main>
   )
 }

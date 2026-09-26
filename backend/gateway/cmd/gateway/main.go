@@ -47,6 +47,26 @@ func main() {
 	mux.Handle("/v1/me/hints", identity)
 	mux.Handle("/v1/internal/entitlements/", identity)
 	mux.Handle("/v1/internal/users/", identity)
+	mux.Handle("/v1/internal/audit", identity)
+	mux.Handle("/v1/admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case p == "/v1/admin/stats" || strings.HasPrefix(p, "/v1/admin/users") || strings.HasPrefix(p, "/v1/admin/audit-log"):
+			identity.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/organizations") || strings.HasPrefix(p, "/v1/admin/suppliers"):
+			organizations.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/masters") || strings.HasPrefix(p, "/v1/admin/services") || strings.HasPrefix(p, "/v1/admin/knowledge"):
+			marketplace.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/products") || strings.HasPrefix(p, "/v1/admin/orders"):
+			commerce.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/appointments") || strings.HasPrefix(p, "/v1/admin/working-hours"):
+			booking.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/v1/admin/disputes"):
+			clients.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 	mux.Handle("/v1/me/representative", organizations)
 	mux.Handle("/v1/tasks/", organizations)
 	mux.Handle("/v1/organizations", organizations)
@@ -57,6 +77,17 @@ func main() {
 	mux.Handle("/v1/suppliers/", organizations)
 	mux.Handle("/v1/me/master", marketplace)
 	mux.Handle("/v1/me/master/", marketplace)
+	mux.Handle("/v1/me/model-preferences", clients)
+	mux.Handle("/v1/masterclasses", marketplace)
+	mux.Handle("/v1/masterclasses/", marketplace)
+	mux.Handle("/v1/masterclass-interests", marketplace)
+	mux.Handle("/v1/masterclass-interests/", marketplace)
+	mux.Handle("/v1/masterclass-registrations/", marketplace)
+	mux.Handle("/v1/model-requests", marketplace)
+	mux.Handle("/v1/model-requests/", marketplace)
+	mux.Handle("/v1/model-responses/", marketplace)
+	mux.Handle("/v1/profession-types", marketplace)
+	mux.Handle("/v1/profession-types/", marketplace)
 	mux.Handle("/v1/services", marketplace)
 	mux.Handle("/v1/services/", marketplace)
 	mux.Handle("/v1/occurrences", marketplace)
@@ -67,8 +98,19 @@ func main() {
 	mux.Handle("/v1/knowledge/", marketplace)
 	mux.Handle("/v1/me/knowledge", marketplace)
 	mux.Handle("/v1/me/knowledge/", marketplace)
+	mux.Handle("/v1/me/inventory", commerce)
+	mux.Handle("/v1/me/inventory/", commerce)
 	mux.Handle("/v1/me/working-hours", booking)
 	mux.Handle("/v1/me/schedule-exceptions", booking)
+	mux.Handle("/v1/me/work-mode-intervals", booking)
+	mux.Handle("/v1/me/work-mode-intervals/", booking)
+	mux.Handle("/v1/me/usable-chairs", booking)
+	mux.Handle("/v1/me/chair-leases", booking)
+	mux.Handle("/v1/geo/", booking)
+	mux.Handle("/v1/chairs", booking)
+	mux.Handle("/v1/chairs/", booking)
+	mux.Handle("/v1/chair-leases", booking)
+	mux.Handle("/v1/chair-leases/", booking)
 	mux.Handle("/v1/me/clients/", booking)
 	mux.Handle("/v1/appointments", booking)
 	mux.Handle("/v1/appointments/", booking)
@@ -79,6 +121,8 @@ func main() {
 	mux.Handle("/v1/client-cards/", clients)
 	mux.Handle("/v1/notifications", communications)
 	mux.Handle("/v1/notifications/", communications)
+	mux.Handle("/v1/conversations", communications)
+	mux.Handle("/v1/conversations/", communications)
 	mux.Handle("/v1/reviews", communications)
 	mux.Handle("/v1/reviews/", communications)
 	mux.Handle("/v1/commerce/", commerce)

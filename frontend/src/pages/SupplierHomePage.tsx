@@ -1,10 +1,13 @@
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type Analytics = {
   revenue_today_minor?: number
@@ -79,7 +82,7 @@ export function SupplierHomePage() {
       setCreateError(null)
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
     },
-    onError: (e) => setCreateError(e instanceof ApiError ? e.message : 'Не удалось создать поставщика'),
+    onError: (e) => setCreateError(formatUserError(e, 'Не удалось создать поставщика')),
   })
 
   if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
@@ -89,12 +92,12 @@ export function SupplierHomePage() {
       <main className="page stack">
         <section className="hero">
           <div className="stack">
-            <div className="brand">Salon-X</div>
+            <BrandLogo size="md" />
             <h1>Профиль поставщика</h1>
             <p>Создайте организацию, чтобы публиковать товары для салонов.</p>
           </div>
         </section>
-        {createError && <div className="state-box error">{createError}</div>}
+        {createError && <ErrorBanner error={createError} />}
         <section className="card stack">
           <div className="field">
             <label htmlFor="sup-name">Название</label>

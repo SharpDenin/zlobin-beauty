@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { Modal } from '@/shared/ui/Modal'
 import { useState } from 'react'
 
 type Snapshot = {
@@ -42,7 +45,7 @@ export function SubscriptionPage() {
       setError(null)
       void qc.invalidateQueries({ queryKey: ['me-subscription'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Недоступно в production'),
+    onError: (e) => setError(userError(e, 'Не удалось изменить подписку')),
   })
 
   const s = sub.data
@@ -64,7 +67,7 @@ export function SubscriptionPage() {
         <p className="muted">Новым мастерам и поставщикам Premium Trial открывается сразу на 3 месяца.</p>
       </div>
       {sub.isLoading && <div className="state-box">Загрузка…</div>}
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
 
       {isTrial && ends && (
         <section className="card stack-sm trial-banner" data-testid="subscription-trial-banner">
@@ -102,15 +105,16 @@ export function SubscriptionPage() {
         <Link className="btn btn-secondary" to="/profile">К профилю</Link>
       </section>
 
-      {upgradeOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
-          <section className="card stack">
-            <h2 id="upgrade-title">Premium</h2>
-            <p>Онлайн-оплата будет подключена позже. Сейчас можно пользоваться trial или demo-переключателем в dev-окружении.</p>
-            <button className="btn btn-primary" type="button" onClick={() => setUpgradeOpen(false)}>Понятно</button>
-          </section>
-        </div>
-      )}
+      <Modal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        title="Premium"
+        footer={
+          <button className="btn btn-primary" type="button" onClick={() => setUpgradeOpen(false)}>Понятно</button>
+        }
+      >
+        <p>Онлайн-оплата будет подключена позже. Сейчас можно пользоваться trial или demo-переключателем в dev-окружении.</p>
+      </Modal>
 
       <section className="card stack">
         <h2>Free и Premium</h2>

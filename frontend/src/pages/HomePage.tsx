@@ -3,8 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
-import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { masterProfessionLabel } from '@/shared/lib/profession-types'
+import { AppointmentCard } from '@/shared/ui/AppointmentCard'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { groupAppointmentsByVisit, visitGroupTitle } from '@/pages/visit-plan-helpers'
 
 type Appointment = {
   id: string
@@ -12,6 +16,7 @@ type Appointment = {
   status: string
   starts_at: string
   price_minor: number
+  visit_group_id?: string | null
 }
 
 type Master = {
@@ -19,8 +24,10 @@ type Master = {
   display_name: string
   city: string
   specializations: string[]
+  profession_types?: { id: string; slug: string; name: string }[]
   rating_avg: number
   rating_count: number
+  photo_media_id?: string | null
 }
 
 function ClientHome() {
@@ -38,59 +45,63 @@ function ClientHome() {
     queryFn: () => apiRequest<{ items: Master[] }>(`/v1/masters?city=${encodeURIComponent(city)}`),
   })
 
-  const upcoming = (appointments.data?.items ?? [])
-    .filter((a) => ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status))
-    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0]
+  const upcoming = groupAppointmentsByVisit(
+    (appointments.data?.items ?? []).filter((a) =>
+      ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status),
+    ),
+  ).sort((a, b) => a.items[0].starts_at.localeCompare(b.items[0].starts_at))[0]
 
   return (
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <div className="brand">Salon-X</div>
-          <h1>Здравствуйте, {user?.display_name}</h1>
-          <p>Запишитесь к мастеру или откройте ближайшую запись.</p>
+          <BrandLogo size="md" />
+          <h1>{user?.display_name}</h1>
+          <p>Запись к мастеру за пару шагов.</p>
           <div className="row">
             <Link className="btn btn-primary" to="/search">Найти мастера</Link>
-            <Link className="btn btn-secondary" to="/shop">Магазин</Link>
-            <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
+            <Link className="btn btn-secondary" to="/appointments">Записи</Link>
           </div>
         </div>
       </section>
 
       <section className="stack">
         <h2>Ближайшая запись</h2>
-        {appointments.isLoading && <div className="state-box">Загрузка…</div>}
+        {appointments.isLoading && <div className="skeleton skeleton-card" />}
         {!appointments.isLoading && !upcoming && (
-          <div className="empty-state">
-            <h2>Пока нет записей</h2>
-            <p>Выберите мастера и удобное время.</p>
-            <Link className="btn btn-primary" to="/search">Найти мастера</Link>
-          </div>
+          <EmptyState
+            title="Пока нет записей"
+            text="Выберите мастера и удобное время."
+            action={<Link className="btn btn-primary" to="/search">Найти мастера</Link>}
+          />
         )}
         {upcoming && (
-          <Link to={`/appointments/${upcoming.id}`} className="list-item">
-            <div className="row between">
-              <strong>{upcoming.service_name}</strong>
-              <span className={`badge ${statusBadgeClass(upcoming.status)}`}>{statusLabel(upcoming.status)}</span>
-            </div>
-            <p>{new Date(upcoming.starts_at).toLocaleString('ru-RU')} · {formatMoney(upcoming.price_minor)}</p>
-          </Link>
+          <AppointmentCard
+            to={`/appointments/${upcoming.items[0].id}`}
+            serviceName={visitGroupTitle(upcoming)}
+            subtitle={upcoming.combined ? 'Визит из двух услуг' : undefined}
+            status={upcoming.items[0].status}
+            startsAt={upcoming.items[0].starts_at}
+            priceMinor={upcoming.items.reduce((n, item) => n + item.price_minor, 0)}
+          />
         )}
       </section>
 
       <section className="stack">
         <div className="row between">
           <h2>Мастера рядом</h2>
-          <Link to="/search">Все</Link>
+          <Link className="btn-link" to="/search">Все</Link>
         </div>
         <div className="list">
+          {masters.isLoading && <div className="skeleton skeleton-card" />}
           {masters.data?.items.slice(0, 4).map((m) => (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item">
-              <div className="row between">
+            <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card">
+              <MasterPortrait mediaId={m.photo_media_id} name={m.display_name} />
+              <div className="stack-sm">
                 <strong>{m.display_name}</strong>
-                <span className="badge badge-default">★ {m.rating_avg.toFixed(1)}</span>
+                <span className="meta">{masterProfessionLabel(m, 'Красота и уход')} · {m.city}</span>
               </div>
-              <p>{m.specializations.join(', ') || 'Красота и уход'} · {m.city}</p>
+              <span className="badge badge-default">{m.rating_avg.toFixed(1)}</span>
             </Link>
           ))}
         </div>

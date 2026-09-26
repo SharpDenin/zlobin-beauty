@@ -44,9 +44,18 @@ func CanTransition(from, to string) bool {
 
 func Transition(from, to string) error {
 	if !CanTransition(from, to) {
-		return apperr.Conflict("invalid appointment status transition")
+		return apperr.ConflictCode(apperr.CodeAppointmentStatusInvalid, "invalid appointment status transition")
 	}
 	return nil
+}
+
+// CanReschedule reports whether a live appointment may change date/time.
+// Fixed-window occurrences keep their published interval; terminal statuses cannot move.
+func CanReschedule(status, bookingMode string) bool {
+	if bookingMode == BookingModeFixedWindow {
+		return false
+	}
+	return status == StatusPendingConfirmation || status == StatusConfirmed
 }
 
 type WorkingHours struct {
@@ -90,6 +99,12 @@ type Appointment struct {
 	LocationCity       string
 	LocationAddress    string
 	LocationTimezone   string
+	WorkMode           string
+	WorkModeIntervalID *uuid.UUID
+	ChairID            *uuid.UUID
+	OnsiteCityID       *uuid.UUID
+	OnsiteDistrictID   *uuid.UUID
+	VisitGroupID       *uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }

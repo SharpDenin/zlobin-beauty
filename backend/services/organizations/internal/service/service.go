@@ -15,8 +15,10 @@ import (
 )
 
 type Service struct {
-	store *store.Store
-	now   func() time.Time
+	store         *store.Store
+	identityURL   string
+	internalToken string
+	now           func() time.Time
 }
 
 func New(st *store.Store) *Service {

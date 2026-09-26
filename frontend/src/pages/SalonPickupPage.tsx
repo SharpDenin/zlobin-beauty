@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
@@ -39,7 +41,7 @@ export function SalonPickupPage() {
     mutationFn: (id: string) =>
       apiRequest(`/v1/commerce/shop/pickup/orders/${id}/accept`, { method: 'POST', token: accessToken }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['salon-pickup'] }),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось принять'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось принять')),
   })
   const handover = useMutation({
     mutationFn: (id: string) =>
@@ -49,7 +51,7 @@ export function SalonPickupPage() {
         body: { payment_received: true },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['salon-pickup'] }),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось выдать'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось выдать')),
   })
 
   return (
@@ -58,7 +60,7 @@ export function SalonPickupPage() {
         <p className="eyebrow">Салон</p>
         <h1>Заказы на выдачу</h1>
       </header>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {!branchId && <div className="state-box">Выберите салон в профиле</div>}
       {orders.isLoading && <div className="state-box">Загрузка…</div>}
       {orders.data?.items.length === 0 && <div className="state-box">Нет заказов на выдачу</div>}

@@ -13,6 +13,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
+	"github.com/zlobin/zlobin-beauty/backend/shared/entitlement"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
@@ -20,6 +21,7 @@ type Service struct {
 	store             *store.Store
 	internalToken     string
 	organizationsURL  string
+	identityURL       string
 	httpClient        *http.Client
 	now               func() time.Time
 }
@@ -30,6 +32,11 @@ func New(st *store.Store, internalToken string) *Service {
 
 func (s *Service) WithOrganizations(url string) *Service {
 	s.organizationsURL = strings.TrimRight(url, "/")
+	return s
+}
+
+func (s *Service) WithIdentity(url string) *Service {
+	s.identityURL = strings.TrimRight(url, "/")
 	return s
 }
 
@@ -248,13 +255,19 @@ func (s *Service) AddNote(ctx context.Context, cardID, actor, visitID uuid.UUID,
 	}))
 }
 
-func (s *Service) AddFormula(ctx context.Context, cardID, actor uuid.UUID, name, brand string, components json.RawMessage, oxidizer, ratio, comment string, visitID *uuid.UUID) (*domain.ColorFormula, error) {
+func (s *Service) AddFormula(ctx context.Context, cardID, actor uuid.UUID, name, brand string, components json.RawMessage, oxidizer, ratio, comment string, visitID *uuid.UUID, omitFormula bool) (*domain.ColorFormula, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, apperr.Validation("name is required")
 	}
 	if _, err := s.GetCard(ctx, cardID, actor); err != nil {
 		return nil, err
+	}
+	if omitFormula {
+		snap, err := s.entitlementSnapshot(ctx, actor)
+		if err != nil || !entitlement.CanOmitFormula(snap) {
+			return nil, apperr.Forbidden("omit_formula requires an active paid plan")
+		}
 	}
 	if visitID != nil {
 		visit, err := s.store.GetVisit(ctx, *visitID)
@@ -273,7 +286,7 @@ func (s *Service) AddFormula(ctx context.Context, cardID, actor uuid.UUID, name,
 	f := domain.ColorFormula{
 		ID: ids.New(), ClientCardID: cardID, VisitID: visitID, Name: name, Brand: strings.TrimSpace(brand),
 		Components: components, Oxidizer: strings.TrimSpace(oxidizer), Ratio: strings.TrimSpace(ratio),
-		Comment: strings.TrimSpace(comment), CreatedBy: actor, CreatedAt: s.now().UTC(),
+		Comment: strings.TrimSpace(comment), CreatedBy: actor, CreatedAt: s.now().UTC(), OmitFormula: omitFormula,
 	}
 	if err := s.store.CreateFormula(ctx, f); err != nil {
 		return nil, apperr.Internal(err)
@@ -282,7 +295,8 @@ func (s *Service) AddFormula(ctx context.Context, cardID, actor uuid.UUID, name,
 }
 
 func (s *Service) ListFormulas(ctx context.Context, cardID, actor uuid.UUID) ([]domain.ColorFormula, error) {
-	if _, err := s.GetCard(ctx, cardID, actor); err != nil {
+	card, err := s.GetCard(ctx, cardID, actor)
+	if err != nil {
 		return nil, err
 	}
 	items, err := s.store.ListFormulas(ctx, cardID)
@@ -292,7 +306,30 @@ func (s *Service) ListFormulas(ctx context.Context, cardID, actor uuid.UUID) ([]
 	if items == nil {
 		items = []domain.ColorFormula{}
 	}
-	return items, nil
+	snap, _ := s.entitlementSnapshot(ctx, actor)
+	privileged := s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin")
+	out := make([]domain.ColorFormula, 0, len(items))
+	for _, f := range items {
+		isOwner := f.CreatedBy == actor || privileged
+		isClient := card.UserID == actor
+		vis := entitlement.VisitTechnicalView(isOwner, isClient, false, f.OmitFormula, snap.IsPremium())
+		out = append(out, redactColorFormula(f, vis.RevealFormula))
+	}
+	return out, nil
+}
+
+func redactColorFormula(f domain.ColorFormula, revealFormula bool) domain.ColorFormula {
+	if revealFormula {
+		return f
+	}
+	f.Name = ""
+	f.Brand = ""
+	f.Components = json.RawMessage("[]")
+	f.Oxidizer = ""
+	f.Ratio = ""
+	f.Comment = ""
+	f.Redacted = true
+	return f
 }
 
 func (s *Service) SetConsent(ctx context.Context, cardID, actor uuid.UUID, consentType string, granted bool) error {
@@ -408,4 +445,135 @@ func (s *Service) mastersSeeContacts(ctx context.Context, orgID uuid.UUID) bool 
 		return true
 	}
 	return out.MastersSeeClientContacts
+}
+
+func (s *Service) entitlementSnapshot(ctx context.Context, userID uuid.UUID) (entitlement.Snapshot, error) {
+	if s.identityURL == "" || s.internalToken == "" {
+		return entitlement.Snapshot{EffectivePlan: entitlement.PlanFree}, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/entitlements/"+userID.String(), nil)
+	if err != nil {
+		return entitlement.Snapshot{}, err
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return entitlement.Snapshot{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode >= 300 {
+		return entitlement.Snapshot{EffectivePlan: entitlement.PlanFree}, nil
+	}
+	var snap entitlement.Snapshot
+	if err := json.Unmarshal(body, &snap); err != nil {
+		return entitlement.Snapshot{}, err
+	}
+	return snap, nil
+}
+
+type InternalFormulaInput struct {
+	AppointmentID uuid.UUID
+	MasterUserID  uuid.UUID
+	Name          string
+	Brand         string
+	Components    json.RawMessage
+	Oxidizer      string
+	Ratio         string
+	Comment       string
+	OmitFormula   bool
+}
+
+func (s *Service) InternalUpsertFormula(ctx context.Context, in InternalFormulaInput) (*domain.ColorFormula, error) {
+	visit, err := s.store.GetVisitByAppointment(ctx, in.AppointmentID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if visit == nil {
+		return nil, apperr.NotFound("visit not found for appointment")
+	}
+	if in.MasterUserID != uuid.Nil && visit.MasterUserID != in.MasterUserID {
+		return nil, apperr.Forbidden("formula master mismatch")
+	}
+	return s.AddFormula(ctx, visit.ClientCardID, visit.MasterUserID, in.Name, in.Brand, in.Components, in.Oxidizer, in.Ratio, in.Comment, &visit.ID, in.OmitFormula)
+}
+
+func (s *Service) CreateDispute(ctx context.Context, cardID, actor uuid.UUID, fieldKey, comment string) (*domain.CardDispute, bool, error) {
+	card, err := s.GetCard(ctx, cardID, actor)
+	if err != nil {
+		return nil, false, err
+	}
+	fieldKey = strings.TrimSpace(fieldKey)
+	if !domain.AllowedDisputeField(fieldKey) {
+		return nil, false, apperr.Validation("unsupported dispute field")
+	}
+	now := s.now().UTC()
+	meta, _ := json.Marshal(map[string]any{
+		"display_name": card.DisplayName,
+		"phone":        card.Phone,
+		"email":        card.Email,
+		"preferences":  card.Preferences,
+		"field_key":    fieldKey,
+	})
+	d := domain.CardDispute{
+		ID: ids.New(), ClientCardID: cardID, ReporterUserID: actor, FieldKey: fieldKey,
+		Comment: strings.TrimSpace(comment), Status: domain.DisputeOpen, CreatedAt: now,
+	}
+	ev := domain.DisputeEvent{
+		ID: ids.New(), ActorUserID: actor, Action: "created", ToStatus: domain.DisputeOpen, Meta: meta, CreatedAt: now,
+	}
+	out, already, err := s.store.CreateDispute(ctx, d, ev)
+	if err != nil {
+		return nil, false, apperr.Internal(err)
+	}
+	return out, already, nil
+}
+
+func (s *Service) ListDisputes(ctx context.Context, cardID, actor uuid.UUID) ([]domain.CardDispute, error) {
+	if _, err := s.GetCard(ctx, cardID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListDisputes(ctx, cardID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return items, nil
+}
+
+func (s *Service) ResolveDispute(ctx context.Context, disputeID, actor uuid.UUID, status string) (*domain.CardDispute, error) {
+	d, err := s.store.GetDispute(ctx, disputeID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if d == nil {
+		return nil, apperr.NotFound("dispute not found")
+	}
+	if d.Status != domain.DisputeOpen {
+		return nil, apperr.Conflict("dispute is not open")
+	}
+	card, err := s.store.GetCard(ctx, d.ClientCardID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if card == nil {
+		return nil, apperr.NotFound("client not found")
+	}
+	if !s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin") {
+		return nil, apperr.Forbidden("only organization owner or admin can resolve a dispute")
+	}
+	status = strings.TrimSpace(status)
+	if status != domain.DisputeResolved && status != domain.DisputeRejected {
+		return nil, apperr.Validation("status must be resolved or rejected")
+	}
+	now := s.now().UTC()
+	from := d.Status
+	d.Status = status
+	d.ResolvedAt = &now
+	d.ResolvedBy = &actor
+	if err := s.store.ResolveDispute(ctx, *d, domain.DisputeEvent{
+		ActorUserID: actor, Action: "status." + status, FromStatus: &from, ToStatus: status, CreatedAt: now,
+	}); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return d, nil
 }

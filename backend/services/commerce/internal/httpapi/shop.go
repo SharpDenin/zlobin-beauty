@@ -512,11 +512,15 @@ func cartDTO(c service.CartResult) map[string]any {
 		totalMinor += lineTotal
 		suppliers[it.OrganizationID.String()] = struct{}{}
 		priceChanged := it.CartPriceMinor != it.CurrentPriceMinor
+		var photo any
+		if it.PhotoMediaID != nil {
+			photo = it.PhotoMediaID.String()
+		}
 		items = append(items, map[string]any{
 			"product_id": it.ProductID.String(), "qty": it.Qty, "brand": it.Brand, "name": it.Name,
 			"sku": it.SKU, "unit": it.Unit, "price_minor": it.CartPriceMinor, "current_price_minor": it.CurrentPriceMinor,
 			"price_changed": priceChanged, "currency": it.Currency, "organization_id": it.OrganizationID.String(),
-			"available": it.Available, "line_total_minor": lineTotal,
+			"available": it.Available, "line_total_minor": lineTotal, "photo_media_id": photo,
 		})
 	}
 	multiSupplier := len(suppliers) > 1

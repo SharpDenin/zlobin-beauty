@@ -5,12 +5,16 @@ import { Responsive, useContainerWidth } from 'react-grid-layout'
 import type { Layout } from 'react-grid-layout'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import 'react-grid-layout/css/styles.css'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
+import { CHART } from '@/shared/ui/chart-theme'
+import { tokens } from '@/shared/ui/tokens'
+import { AppointmentCard } from '@/shared/ui/AppointmentCard'
+import { Drawer } from '@/shared/ui/Drawer'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { LIBRARY, makeLayouts, normalizeLayout, type Breakpoint, type WidgetId, type WidgetLayout } from '@/pages/dashboard-layout'
 import type { SupplierOrder } from '@/shared/lib/commerce'
@@ -49,6 +53,9 @@ type SalonReport = {
 
 function notificationHref(n: Notification) {
   if (n.entity_type === 'appointment' && n.entity_id) return `/appointments/${n.entity_id}`
+  if (n.entity_type === 'conversation' && n.entity_id) return `/messages/${n.entity_id}`
+  if (n.entity_type === 'masterclass' && n.entity_id) return `/masterclasses/${n.entity_id}`
+  if (n.entity_type === 'model_request' && n.entity_id) return `/models/${n.entity_id}`
   return '/notifications'
 }
 
@@ -226,16 +233,14 @@ export function DashboardPage() {
 
   return (
     <main className="page stack dashboard-page">
-      <div className="dashboard-head">
+      <section className="hero dashboard-hero">
         <div className="stack-sm">
           <p className="eyebrow">{cabinet.label}</p>
-          <h1>Сегодня, {user?.display_name}</h1>
+          <h1>{user?.display_name}</h1>
           <p className="muted">
             {cabinet.kind === 'chain_owner' && cabinet.selectedBranch
-              ? `${cabinet.selectedOrg?.organization.name ?? 'Сеть'} · ${cabinet.selectedBranch.name}. `
-              : ''}
-            Важное и расписание на одном экране.
-            <Hint id="dash-layout" title="Ваш рабочий стол">Перетаскивайте карточки за заголовок и меняйте их размер за угол. Раскладка сохраняется автоматически.</Hint>
+              ? `${cabinet.selectedOrg?.organization.name ?? 'Сеть'} · ${cabinet.selectedBranch.name}`
+              : `${today.length} записей сегодня`}
           </p>
           {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
             <label className="field" style={{ maxWidth: 280 }}>
@@ -252,13 +257,31 @@ export function DashboardPage() {
             </label>
           )}
         </div>
-        <button className="btn btn-secondary" type="button" onClick={() => setLibraryOpen(true)}>Настроить</button>
-      </div>
+        <div className="stack-sm">
+          <div className="dashboard-quick">
+            {cabinet.can('calendar') && <Link className="btn btn-secondary btn-compact" to="/calendar">Календарь</Link>}
+            <Link className="btn btn-secondary btn-compact" to="/appointments">Записи</Link>
+            {cabinet.can('services') && <Link className="btn btn-secondary btn-compact" to="/services">Услуги</Link>}
+          </div>
+          <div className="row">
+            <button className="btn btn-secondary" type="button" onClick={() => setLibraryOpen(true)}>Настроить</button>
+            <Hint id="dash-layout" title="Рабочий стол">Перетаскивайте карточки за заголовок. Раскладка сохраняется сама.</Hint>
+          </div>
+        </div>
+      </section>
       {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
         <section className="card stack-sm trial-banner">
-          <h2>Premium активирован бесплатно на 3 месяца</h2>
-          <p>До {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')} · <Link to="/profile/subscription">Подписка</Link></p>
+          <p className="eyebrow">Premium</p>
+          <h2>Пробный период до {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}</h2>
+          <Link className="btn-link" to="/profile/subscription">Подписка</Link>
         </section>
+      )}
+
+      {layoutQ.isLoading && (
+        <div className="list">
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
+        </div>
       )}
 
       <div ref={containerRef} className="dashboard-grid-container">
@@ -306,17 +329,20 @@ export function DashboardPage() {
                   {w.id === 'today' && <MetricTile label="Сегодня" value={today.length} caption="записей" to="/calendar" />}
                   {w.id === 'pending' && <MetricTile label="Ожидают" value={pending.length} caption="подтверждения" to="/appointments" />}
                   {w.id === 'clients_today' && <MetricTile label="Клиенты сегодня" value={new Set(today.map((a) => a.client_user_id).filter(Boolean)).size || today.length} caption="человек" to="/clients" />}
-                  {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/notifications" />}
+                  {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/messages" />}
                   {w.id === 'upcoming' && (
                     <div className="stack">
                       <div className="row between"><h2>Ближайшие записи</h2><Link to="/appointments">Все</Link></div>
                       {upcoming.length === 0 && <p className="muted">Нет ближайших записей</p>}
                       {upcoming.map((a) => (
-                        <Link key={a.id} to={`/appointments/${a.id}`} className="appointment-row">
-                          <time>{new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>
-                          <div><strong>{a.service_name}</strong><span>{new Date(a.starts_at).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })}</span></div>
-                          <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
-                        </Link>
+                        <AppointmentCard
+                          key={a.id}
+                          to={`/appointments/${a.id}`}
+                          serviceName={a.service_name}
+                          status={a.status}
+                          startsAt={a.starts_at}
+                          priceMinor={a.price_minor}
+                        />
                       ))}
                     </div>
                   )}
@@ -334,7 +360,7 @@ export function DashboardPage() {
                       </div>
                       <div className="dashboard-chart">
                         <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={chartData}><defs><linearGradient id="visitsFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2f6f78" stopOpacity={0.35}/><stop offset="100%" stopColor="#2f6f78" stopOpacity={0.02}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="day" tick={{ fontSize: 11 }}/><YAxis allowDecimals={false} width={24}/><Tooltip/><Area type="monotone" dataKey="visits" name="Записи" stroke="#2f6f78" fill="url(#visitsFill)"/></AreaChart>
+                          <AreaChart data={chartData}><defs><linearGradient id="visitsFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={CHART.accent} stopOpacity={0.35}/><stop offset="100%" stopColor={CHART.accent} stopOpacity={0.02}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid}/><XAxis dataKey="day" tick={{ fontSize: 11, fill: CHART.text }}/><YAxis allowDecimals={false} width={24} tick={{ fill: CHART.text }}/><Tooltip contentStyle={{ background: tokens.color.surface, border: `1px solid ${tokens.color.surface2}`, color: tokens.color.textPrimary }}/><Area type="monotone" dataKey="visits" name="Записи" stroke={CHART.accent} fill="url(#visitsFill)"/></AreaChart>
                         </ResponsiveContainer>
                       </div>
                       {serviceCounts.length > 0 && <p className="muted">Популярное: {serviceCounts.map(([name, count]) => `${name} · ${count}`).join('  |  ')}</p>}
@@ -376,10 +402,13 @@ export function DashboardPage() {
         )}
       </div>
 
-      {libraryOpen && (
-        <div className="more-drawer" role="dialog" aria-modal="true" onClick={() => setLibraryOpen(false)}>
-          <div className="more-panel stack dashboard-settings" onClick={(e) => e.stopPropagation()}>
-            <div className="row between"><div><p className="eyebrow">Рабочий стол</p><h2>Настроить dashboard</h2></div><button className="btn btn-secondary btn-compact" type="button" onClick={() => setLibraryOpen(false)}>Готово</button></div>
+      <Drawer
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        title={<div><p className="eyebrow">Рабочий стол</p><h2>Настроить dashboard</h2></div>}
+        closeLabel="Готово"
+        panelClassName="dashboard-settings"
+      >
             <p className="muted">Выберите нужные блоки. Порядок и размер также можно менять прямо на рабочем столе.</p>
             {relevant.map((def) => {
               const current = layout.find((x) => x.id === def.id)
@@ -405,10 +434,8 @@ export function DashboardPage() {
                 </article>
               )
             })}
-            {save.isError && <div className="state-box error">{save.error instanceof ApiError ? save.error.message : 'Не удалось сохранить раскладку'}</div>}
-          </div>
-        </div>
-      )}
+            {save.isError && <ErrorBanner error={save.error} fallbackTitle="Не удалось сохранить раскладку" />}
+      </Drawer>
     </main>
   )
 }

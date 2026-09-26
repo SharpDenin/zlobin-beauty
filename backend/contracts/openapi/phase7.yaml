@@ -1,0 +1,155 @@
+openapi: 3.0.3
+info:
+  title: Salon-X Phase 7 Smart Repeat Booking
+  version: 0.7.0
+  description: |
+    Read-only repeat preview for the assigned master. Actor is taken from JWT.
+    Preview does not create appointments, mutate stock, or create supplier orders.
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: RepeatBooking
+paths:
+  /v1/me/clients/{clientUserID}/repeat-options:
+    get:
+      tags: [RepeatBooking]
+      summary: Latest relevant completed visit for this master and client
+      description: |
+        Returns `{ item: null }` when there is no completed visit to repeat.
+        Clients, other masters, and suppliers cannot use this as a formula or inventory side-channel.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: clientUserID
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: service_id
+          schema: { type: string, format: uuid }
+          description: Optional preferred service when scoring candidates
+      responses:
+        "200":
+          description: Repeat option or null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    oneOf:
+                      - $ref: "#/components/schemas/RepeatPreview"
+                      - type: "null"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/appointments/{id}/repeat-preview:
+    get:
+      tags: [RepeatBooking]
+      summary: Resource preview for repeating a completed appointment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepeatPreview" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/appointments:
+    post:
+      tags: [RepeatBooking]
+      summary: Create appointment (existing booking flow)
+      description: |
+        Optional `client_user_id` lets the assigned master book for that client.
+        Confirmation uses this endpoint. Repeat preview never creates the appointment.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [master_id, service_id, starts_at]
+              properties:
+                master_id: { type: string, format: uuid }
+                service_id: { type: string, format: uuid }
+                starts_at: { type: string, format: date-time }
+                client_user_id: { type: string, format: uuid }
+                occurrence_id: { type: string, format: uuid }
+                district_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Appointment created
+        "403": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    RepeatRequirement:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        brand: { type: string }
+        unit: { type: string }
+        required_qty: { type: number }
+        available_qty: { type: number, description: Current master stock (on_hand − reserved). Incoming is not included. }
+        incoming_qty: { type: number, description: Remaining ordered qty not yet accepted. Not stock. }
+        shortage_qty: { type: number, description: Gap after incoming }
+        status:
+          type: string
+          enum: [available, incoming, shortage, unavailable, orderable]
+        orderable: { type: boolean }
+        expected_at: { type: string, format: date-time }
+    RepeatPreview:
+      type: object
+      properties:
+        can_repeat:
+          type: boolean
+          description: True only when every requirement is currently available on the master's warehouse
+        availability_status:
+          type: string
+          enum: [available, incoming, shortage, unavailable, orderable]
+        source_appointment_id: { type: string, format: uuid }
+        service_id: { type: string, format: uuid }
+        service: { type: string }
+        date: { type: string, format: date-time }
+        formula_hidden: { type: boolean }
+        scheme_hidden: { type: boolean }
+        hidden_reason: { type: string }
+        technique: { type: string }
+        notes: { type: string }
+        components:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              brand: { type: string }
+              qty: { type: string }
+              unit: { type: string }
+        requirements:
+          type: array
+          items: { $ref: "#/components/schemas/RepeatRequirement" }
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code: { type: string }
+                  message: { type: string }

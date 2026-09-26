@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,16 +24,24 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 const appointmentCols = `
 id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
 duration_minutes, price_minor, currency, status, COALESCE(cancel_reason, ''), starts_at, ends_at, created_at, updated_at,
-occurrence_id, booking_mode, location_name, location_city, location_address, location_timezone`
+occurrence_id, booking_mode, location_name, location_city, location_address, location_timezone,
+COALESCE(work_mode, ''), work_mode_interval_id, chair_id, onsite_city_id, onsite_district_id, visit_group_id`
 
 const slotConflictMsg = "Это время уже занято"
 
 func mapAppointmentConflict(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && (pgErr.Code == pgerrcode.ExclusionViolation || pgErr.Code == "23P01") {
-		return apperr.Conflict(slotConflictMsg)
+		return apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, slotConflictMsg)
 	}
 	return err
+}
+
+func nullIfEmpty(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *Store) ReplaceWorkingHours(ctx context.Context, masterUserID uuid.UUID, hours []domain.WorkingHours) error {
@@ -155,6 +164,42 @@ ORDER BY starts_at`, masterUserID, from, to)
 }
 
 func (s *Store) CreateAppointment(ctx context.Context, a domain.Appointment) error {
+	return insertAppointment(ctx, s.pool, a)
+}
+
+func (s *Store) CreateAppointments(ctx context.Context, items []domain.Appointment) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, a := range items {
+		if err := insertAppointment(ctx, tx, a); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) ListByVisitGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Appointment, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT `+appointmentCols+`
+FROM appointments WHERE visit_group_id=$1 ORDER BY starts_at`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAppointments(rows)
+}
+
+type appointmentExec interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func insertAppointment(ctx context.Context, exec appointmentExec, a domain.Appointment) error {
 	mode := a.BookingMode
 	if mode == "" {
 		mode = domain.BookingModeFlexible
@@ -163,15 +208,17 @@ func (s *Store) CreateAppointment(ctx context.Context, a domain.Appointment) err
 	if tz == "" {
 		tz = "Europe/Moscow"
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := exec.Exec(ctx, `
 INSERT INTO appointments(
   id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
   duration_minutes, price_minor, currency, status, starts_at, ends_at, created_at, updated_at,
-  occurrence_id, booking_mode, location_name, location_city, location_address, location_timezone
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+  occurrence_id, booking_mode, location_name, location_city, location_address, location_timezone,
+  work_mode, work_mode_interval_id, chair_id, onsite_city_id, onsite_district_id, visit_group_id
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
 		a.ID, a.OrganizationID, a.BranchID, a.MasterUserID, a.ClientUserID, a.ServiceID, a.ServiceName,
 		a.DurationMinutes, a.PriceMinor, a.Currency, a.Status, a.StartsAt, a.EndsAt, a.CreatedAt, a.UpdatedAt,
-		a.OccurrenceID, mode, a.LocationName, a.LocationCity, a.LocationAddress, tz)
+		a.OccurrenceID, mode, a.LocationName, a.LocationCity, a.LocationAddress, tz,
+		nullIfEmpty(a.WorkMode), a.WorkModeIntervalID, a.ChairID, a.OnsiteCityID, a.OnsiteDistrictID, a.VisitGroupID)
 	if err != nil {
 		return mapAppointmentConflict(err)
 	}
@@ -190,6 +237,71 @@ func (s *Store) GetAppointment(ctx context.Context, id uuid.UUID) (*domain.Appoi
 	return a, nil
 }
 
+func (s *Store) HasClientMasterAppointment(ctx context.Context, masterID, clientID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM appointments
+  WHERE master_user_id=$1 AND client_user_id=$2
+)`, masterID, clientID).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) MasterHasCompletedWithClient(ctx context.Context, masterID, clientID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM appointments
+  WHERE master_user_id=$1 AND client_user_id=$2 AND status='completed'
+)`, masterID, clientID).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) ListCompletedForMasterClient(ctx context.Context, masterID, clientID uuid.UUID) ([]domain.Appointment, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT `+appointmentCols+`
+FROM appointments
+WHERE master_user_id=$1 AND client_user_id=$2 AND status='completed'
+ORDER BY updated_at DESC, starts_at DESC
+LIMIT 40`, masterID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAppointments(rows)
+}
+
+func (s *Store) SchemeFlagsByAppointmentIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]struct {
+	Exists  bool
+	Skipped bool
+}, error) {
+	out := map[uuid.UUID]struct {
+		Exists  bool
+		Skipped bool
+	}{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT appointment_id, skipped FROM appointment_service_schemes WHERE appointment_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var skipped bool
+		if err := rows.Scan(&id, &skipped); err != nil {
+			return nil, err
+		}
+		out[id] = struct {
+			Exists  bool
+			Skipped bool
+		}{Exists: true, Skipped: skipped}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) TransitionStatus(ctx context.Context, id uuid.UUID, from, to string, actor uuid.UUID, reason string, at time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -203,7 +315,7 @@ WHERE id=$1 AND status=$2`, id, from, to, reason, at)
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.Conflict("appointment status changed concurrently")
+		return apperr.ConflictCode(apperr.CodeAppointmentConcurrent, "appointment status changed concurrently")
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)
@@ -226,7 +338,7 @@ WHERE id=$1 AND status=$2`, id, fromStatus, starts, ends, at)
 		return mapAppointmentConflict(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.Conflict("appointment status changed concurrently")
+		return apperr.ConflictCode(apperr.CodeAppointmentConcurrent, "appointment status changed concurrently")
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)
@@ -317,6 +429,7 @@ func scanAppointment(row pgx.Row) (*domain.Appointment, error) {
 		&a.ID, &a.OrganizationID, &a.BranchID, &a.MasterUserID, &a.ClientUserID, &a.ServiceID, &a.ServiceName,
 		&a.DurationMinutes, &a.PriceMinor, &a.Currency, &a.Status, &a.CancelReason, &a.StartsAt, &a.EndsAt, &a.CreatedAt, &a.UpdatedAt,
 		&a.OccurrenceID, &a.BookingMode, &a.LocationName, &a.LocationCity, &a.LocationAddress, &a.LocationTimezone,
+		&a.WorkMode, &a.WorkModeIntervalID, &a.ChairID, &a.OnsiteCityID, &a.OnsiteDistrictID, &a.VisitGroupID,
 	); err != nil {
 		return nil, err
 	}

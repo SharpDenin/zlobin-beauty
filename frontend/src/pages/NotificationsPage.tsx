@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useState } from 'react'
 
@@ -32,15 +34,15 @@ export function NotificationsPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['notifications'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось отметить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось отметить')),
   })
 
   return (
     <main className="page stack">
       <h1>Уведомления</h1>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {query.isLoading && <div className="state-box">Загрузка…</div>}
-      {query.isError && <div className="state-box error">Не удалось загрузить уведомления</div>}
+      {query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить уведомления" />}
       {query.data && query.data.items.length === 0 && <div className="state-box">Пока нет уведомлений</div>}
       <div className="list">
         {query.data?.items.map((n) => (
@@ -53,6 +55,15 @@ export function NotificationsPage() {
             <p>{new Date(n.created_at).toLocaleString('ru-RU')}</p>
             {n.entity_type === 'appointment' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/appointments/${n.entity_id}`}>Открыть запись</Link>
+            )}
+            {n.entity_type === 'conversation' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/messages/${n.entity_id}`}>Открыть сообщение</Link>
+            )}
+            {n.entity_type === 'masterclass' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/masterclasses/${n.entity_id}`}>Открыть мастер-класс</Link>
+            )}
+            {n.entity_type === 'model_request' && n.entity_id && (
+              <Link className="btn btn-secondary btn-compact" to={`/models/${n.entity_id}`}>Открыть запрос модели</Link>
             )}
             {n.entity_type === 'client_order' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/orders/${n.entity_id}`}>Открыть заказ</Link>

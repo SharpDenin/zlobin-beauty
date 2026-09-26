@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { useBuyerOrg } from '@/shared/lib/commerce'
 import { statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type Member = { id: string; user_id?: string; role: string; status: string }
 type HoursItem = { weekday: number; start_minute: number; end_minute: number }
@@ -108,7 +110,7 @@ export function StaffPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['staff-hours'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить расписание'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось сохранить расписание')),
   })
 
   const saveDayOff = useMutation({
@@ -119,7 +121,7 @@ export function StaffPage() {
         body: { items: [{ day: dayOff, is_day_off: true, note: 'Выходной' }] },
       }),
     onSuccess: () => { setOk('Выходной добавлен'); setError(null) },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось добавить выходной'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось добавить выходной')),
   })
 
   const invite = useMutation({
@@ -139,7 +141,7 @@ export function StaffPage() {
       setInviteEmail('')
       await qc.invalidateQueries({ queryKey: ['staff'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось пригласить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось пригласить')),
   })
 
   const disable = useMutation({
@@ -174,7 +176,7 @@ export function StaffPage() {
       {cabinet.can('salon_settings') && (
         <p><Link to="/salon/settings">Настройки салона и контакты клиентов</Link></p>
       )}
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
       <section className="card stack">
         <h2>Добавить сотрудника</h2>

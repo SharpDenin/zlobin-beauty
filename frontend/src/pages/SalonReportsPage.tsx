@@ -5,7 +5,10 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { API_BASE_URL, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { formatUserError } from '@/shared/lib/app-error'
 import { formatMoney } from '@/shared/lib/money'
+import { CHART } from '@/shared/ui/chart-theme'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type PeriodMetrics = {
   turnover_minor: number
@@ -157,8 +160,8 @@ export function SalonReportsPage() {
       a.download = 'salon-report.csv'
       a.click()
       URL.revokeObjectURL(a.href)
-    } catch {
-      setCsvError('Не удалось скачать CSV')
+    } catch (e) {
+      setCsvError(formatUserError(e, 'Не удалось скачать CSV'))
     } finally {
       setCsvLoading(false)
     }
@@ -209,9 +212,9 @@ export function SalonReportsPage() {
         </button>
       </div>
 
-      {csvError && <div className="state-box error">{csvError}</div>}
+      {csvError && <ErrorBanner error={csvError} />}
       {report.isLoading && <div className="state-box">Считаем показатели…</div>}
-      {report.isError && <div className="state-box error">Не удалось загрузить отчёт</div>}
+      {report.isError && <ErrorBanner error={report.error} fallbackTitle="Не удалось загрузить отчёт" />}
 
       {report.data && (
         <>
@@ -233,8 +236,8 @@ export function SalonReportsPage() {
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="previous" name="Прошлый период" fill="#c4b7a6" radius={6} />
-                  <Bar dataKey="current" name="Текущий период" fill="#2f6f78" radius={6} />
+                  <Bar dataKey="previous" name="Прошлый период" fill={CHART.muted} radius={6} />
+                  <Bar dataKey="current" name="Текущий период" fill={CHART.accent} radius={6} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -251,7 +254,7 @@ export function SalonReportsPage() {
                     <XAxis type="number" domain={[0, 100]} unit="%" />
                     <YAxis type="category" dataKey="name" width={120} />
                     <Tooltip />
-                    <Bar dataKey="load" name="Загрузка" fill="#8f6a55" radius={6} />
+                    <Bar dataKey="load" name="Загрузка" fill={CHART.gold} radius={6} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -272,9 +275,9 @@ export function SalonReportsPage() {
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="revenue" name="Выручка, ₽" fill="#2f6f78" radius={6} />
-                  <Bar dataKey="visits" name="Записи" fill="#8f6a55" radius={6} />
-                  <Bar dataKey="load" name="Загрузка %" fill="#6b5d91" radius={6} />
+                  <Bar dataKey="revenue" name="Выручка, ₽" fill={CHART.accent} radius={6} />
+                  <Bar dataKey="visits" name="Записи" fill={CHART.gold} radius={6} />
+                  <Bar dataKey="load" name="Загрузка %" fill={CHART.clay} radius={6} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

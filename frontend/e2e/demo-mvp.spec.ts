@@ -57,12 +57,12 @@ test.describe('demo MVP flows', () => {
 
     await page.getByRole('button', { name: /Искать|Найти/i }).click()
     await expect(page.locator('a.list-item').first()).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText('Анна Колористика').first()).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText('Иван Стилист')).toHaveCount(0)
+    await expect(page.getByText('Анна Волкова').first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('Иван Белов')).toHaveCount(0)
 
     await page.getByText('Показывать мастеров из других городов').click()
     await page.getByRole('button', { name: /Искать|Найти/i }).click()
-    await expect(page.getByText('Иван Стилист').first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Иван Белов').first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Новосибирск').first()).toBeVisible()
   })
 
@@ -106,7 +106,7 @@ test.describe('demo MVP flows', () => {
     const toTime = page.getByRole('button', { name: /К времени|Далее/i })
     if (await toTime.count()) await toTime.first().click()
 
-    const slot = page.locator('button.slot').filter({ hasText: /\d{1,2}:\d{2}/ }).first()
+    const slot = page.locator('button.slot:not(.empty)').first()
     await expect(slot).toBeVisible({ timeout: 15_000 })
     await slot.click()
     const toConfirm = page.getByRole('button', { name: /К подтверждению|Далее/i })

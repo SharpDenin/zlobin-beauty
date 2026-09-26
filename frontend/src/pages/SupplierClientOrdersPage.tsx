@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { clientOrderLabel, statusBadgeClass } from '@/shared/lib/status'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { supplierOrderIsTerminal } from '@/pages/supplier-helpers'
 
 type ClientOrderRow = {
   id: string
@@ -20,7 +23,7 @@ export function SupplierClientOrdersPage() {
   const { accessToken } = useAuth()
   const { supplierOrgId } = useSupplierOrg()
   const qc = useQueryClient()
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
   const orders = useQuery({
     queryKey: ['supplier-client-orders', supplierOrgId],
@@ -40,7 +43,7 @@ export function SupplierClientOrdersPage() {
         body: { status: input.status },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['supplier-client-orders'] }),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(e),
   })
 
   return (
@@ -49,11 +52,15 @@ export function SupplierClientOrdersPage() {
         <p className="eyebrow">Поставщик</p>
         <h1>Заказы клиентов</h1>
       </header>
-      {error && <div className="state-box error">{error}</div>}
-      {orders.isLoading && <div className="state-box">Загрузка…</div>}
+      <ErrorBanner error={error} fallbackTitle="Не удалось обновить заказ" />
+      {orders.isLoading && <div className="skeleton skeleton-card" aria-busy="true" />}
+      {orders.isError && <ErrorBanner error={orders.error} fallbackTitle="Не удалось загрузить заказы" />}
+      {!orders.isLoading && (orders.data?.items.length ?? 0) === 0 && (
+        <EmptyState title="Заказов пока нет" text="Когда клиенты оформят покупку, заказ появится здесь." />
+      )}
       <div className="stack">
         {orders.data?.items.map((o) => (
-          <article key={o.id} className="card stack-sm">
+          <article key={o.id} className={`card stack-sm${supplierOrderIsTerminal(o.status) ? ' is-terminal' : ''}`}>
             <div className="row between">
               <strong>{o.order_number ?? formatMoney(o.total_minor)}</strong>
               <span className={`badge ${statusBadgeClass(o.status)}`}>{clientOrderLabel(o.status)}</span>

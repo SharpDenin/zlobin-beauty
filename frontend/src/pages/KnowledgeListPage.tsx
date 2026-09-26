@@ -2,8 +2,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
-import { hasMasterAccess, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
-import { KnowledgeCard } from '@/features/knowledge/KnowledgeCard'
+import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
+import { KnowledgeCard, KnowledgeCardSkeleton } from '@/features/knowledge/KnowledgeCard'
 import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
 import {
   emptyFilters,
@@ -16,7 +16,11 @@ import {
   type KnowledgeFilters,
   type KnowledgeListResponse,
 } from '@/features/knowledge/types'
+import { knowledgeEmptyTitle } from '@/pages/knowledge-helpers'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { Drawer } from '@/shared/ui/Drawer'
 
 type Facets = {
   categories: KnowledgeFacet[]
@@ -33,10 +37,11 @@ export function KnowledgeListPage() {
   const { accessToken, user } = useAuth()
   const isSupplier = hasSupplierAccess(user) && !hasMasterAccess(user)
   if (isSupplier) return <SupplierKnowledgeHome />
-  return <KnowledgeHub token={accessToken} />
+  const professional = hasMasterAccess(user) || hasSalonAdmin(user)
+  return <KnowledgeHub token={accessToken} professional={professional} />
 }
 
-function KnowledgeHub({ token }: { token: string | null }) {
+function KnowledgeHub({ token, professional }: { token: string | null; professional: boolean }) {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const filters = useMemo(() => filtersFromSearch(params), [params])
@@ -208,7 +213,11 @@ function KnowledgeHub({ token }: { token: string | null }) {
       <section className="kb-hero card stack">
         <p className="eyebrow">Salon-X</p>
         <h1>База знаний</h1>
-        <p className="muted">профессиональные материалы, технологии, инструкции и рекомендации поставщиков.</p>
+        <p className="muted">
+          {professional
+            ? 'Материалы для салона и домашнего ухода: технологии, инструкции и рекомендации поставщиков.'
+            : 'Рекомендации по домашнему уходу и косметика, которую можно использовать дома.'}
+        </p>
         <form
           className="kb-search-form"
           onSubmit={(e) => {
@@ -220,6 +229,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
             <label htmlFor="kb-search">Поиск</label>
             <input
               id="kb-search"
+              data-testid="kb-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Статья, бренд, продукт или технология"
@@ -227,7 +237,9 @@ function KnowledgeHub({ token }: { token: string | null }) {
           </div>
           <div className="row kb-search-actions">
             <button className="btn btn-primary" type="submit">Найти</button>
-            <button className="btn btn-secondary" type="button" onClick={() => setDrawer((v) => !v)}>Фильтры</button>
+            <button className="btn btn-secondary" type="button" onClick={() => setDrawer(true)}>
+              Фильтры{filtersActive(filters) ? ' · выбраны' : ''}
+            </button>
           </div>
         </form>
         <div className="chip-row kb-quick-chips">
@@ -249,12 +261,8 @@ function KnowledgeHub({ token }: { token: string | null }) {
         )}
       </section>
 
-      {drawer && (
-        <section className="card stack kb-filter-panel" aria-label="Расширенные фильтры">
-          <div className="row between">
-            <h2>Фильтры</h2>
-            <button className="btn btn-ghost btn-compact" type="button" onClick={() => setDrawer(false)}>Закрыть</button>
-          </div>
+      <Drawer open={drawer} onClose={() => setDrawer(false)} title="Фильтры" label="Фильтры базы знаний">
+          <div className="stack kb-filter-panel">
           <SearchableMultiSelect
             id="kb-f-supplier"
             label="Поставщик"
@@ -323,11 +331,25 @@ function KnowledgeHub({ token }: { token: string | null }) {
               </button>
             ))}
           </div>
-        </section>
-      )}
+          <div className="row wrap">
+            <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
+              Сбросить
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setDrawer(false)}>
+              Применить
+            </button>
+          </div>
+          </div>
+        </Drawer>
 
-      {list.isLoading && <div className="state-box">Загрузка материалов…</div>}
-      {list.isError && <div className="state-box error">Не удалось загрузить базу знаний</div>}
+      {list.isLoading && (
+        <div className="kb-grid" aria-busy="true" aria-label="Загрузка материалов">
+          <KnowledgeCardSkeleton />
+          <KnowledgeCardSkeleton />
+          <KnowledgeCardSkeleton />
+        </div>
+      )}
+      {list.isError && <ErrorBanner error={list.error} fallbackTitle="Не удалось загрузить базу знаний" />}
 
       {browseHome && (recommended.data?.items?.length ?? 0) > 0 && (
         <section className="stack kb-section">
@@ -335,7 +357,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
           <p className="muted">Подобрано по связанным товарам, бренду и актуальности материалов</p>
           <div className="kb-grid">
             {recommended.data!.items.map((a) => (
-              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+              <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
             ))}
           </div>
         </section>
@@ -346,7 +368,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
           <h2>Избранное</h2>
           <div className="kb-grid">
             {favoritesSec.data!.items.map((a) => (
-              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+              <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
             ))}
           </div>
         </section>
@@ -357,7 +379,7 @@ function KnowledgeHub({ token }: { token: string | null }) {
           <h2>Новое</h2>
           <div className="kb-grid">
             {newest.data!.items.map((a) => (
-              <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+              <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
             ))}
           </div>
         </section>
@@ -366,22 +388,27 @@ function KnowledgeHub({ token }: { token: string | null }) {
       <section className="stack kb-section">
         <h2>{browseHome ? 'Все материалы' : 'Результаты'}</h2>
         {!list.isLoading && items.length === 0 && (
-          <div className="empty-state">
-            <h3>По выбранным фильтрам материалов нет</h3>
-            <p className="muted">Снимите один из фильтров или сбросьте все условия поиска.</p>
-            <div className="chip-row">
-              {activeChips.map((c) => (
-                <button key={c.key} type="button" className="chip active" onClick={c.clear}>{c.label} ×</button>
-              ))}
-            </div>
-            <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
-              Сбросить фильтры
-            </button>
-          </div>
+          <EmptyState
+            title={knowledgeEmptyTitle(professional, filtersActive(filters))}
+            text={
+              filtersActive(filters)
+                ? 'Снимите один из фильтров или сбросьте все условия поиска.'
+                : professional
+                  ? 'Попробуйте изменить поиск или сбросить фильтры.'
+                  : 'Когда поставщики опубликуют рекомендации по домашней косметике, они появятся здесь.'
+            }
+            action={
+              filtersActive(filters) ? (
+                <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
+                  Сбросить фильтры
+                </button>
+              ) : undefined
+            }
+          />
         )}
         <div className="kb-grid">
           {items.map((a) => (
-            <KnowledgeCard key={a.id} article={a} token={token} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
+            <KnowledgeCard key={a.id} article={a} token={token} showAudience={professional} onFavorite={(x) => fav.mutate(x)} favoritePending={fav.isPending} />
           ))}
         </div>
         {hasMore && (
@@ -410,30 +437,32 @@ function SupplierKnowledgeHome() {
         </div>
         <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
       </div>
-      {mine.isLoading && <div className="state-box">Загрузка…</div>}
-      {mine.isError && <div className="state-box error">Не удалось загрузить материалы</div>}
+      {mine.isLoading && <div className="kb-grid" aria-busy="true"><KnowledgeCardSkeleton /><KnowledgeCardSkeleton /></div>}
+      {mine.isError && <ErrorBanner error={mine.error} fallbackTitle="Не удалось загрузить материалы" />}
       {!mine.isLoading && items.length === 0 && (
-        <div className="empty-state">
-          <h2>Материалов пока нет</h2>
-          <p>Создайте инструкцию или технологию и свяжите её со своими товарами.</p>
-          <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
-        </div>
+        <EmptyState
+          title="Статей пока нет"
+          text="Создайте инструкцию или технологию и свяжите её со своими товарами."
+          action={<Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>}
+        />
       )}
-      <div className="list">
+      <div className="kb-grid">
         {items.map((a) => (
-          <article key={a.id} className="list-item">
-            <div className="row between">
-              <Link to={`/knowledge/${a.id}`}><strong>{a.title}</strong></Link>
-              <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
-                {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}
-              </span>
-            </div>
-            <p className="muted">{[a.category, a.brand, a.author_name].filter(Boolean).join(' · ')}</p>
-            <div className="row">
-              <Link className="btn btn-secondary btn-compact" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
-              <Link className="btn btn-ghost btn-compact" to={`/knowledge/${a.id}`}>Предпросмотр</Link>
-            </div>
-          </article>
+          <KnowledgeCard
+            key={a.id}
+            article={a}
+            token={accessToken}
+            showAudience
+            actions={
+              <div className="row wrap">
+                <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
+                  {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}
+                </span>
+                <Link className="btn btn-secondary" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
+                <Link className="btn btn-ghost" to={`/knowledge/${a.id}`}>Предпросмотр</Link>
+              </div>
+            }
+          />
         ))}
       </div>
     </main>

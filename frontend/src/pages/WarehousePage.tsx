@@ -4,11 +4,13 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiRequest, ApiError, API_BASE_URL } from '@/shared/api/client'
+import { apiRequest, ApiError, API_BASE_URL, apiErrorFromResponse, networkApiError } from '@/shared/api/client'
 import { hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
 import { fetchSuppliers } from '@/shared/lib/commerce'
 import { statusLabel } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Hint } from '@/shared/ui/Hint'
 
 type OrgItem = {
@@ -94,7 +96,7 @@ export function WarehousePage() {
   const supplierMode = hasSupplierAccess(user)
   const repMode = hasSupplierRepAccess(user) && !supplierMode
   const qc = useQueryClient()
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [locationId, setLocationId] = useState('')
   const [stockQ, setStockQ] = useState('')
@@ -202,7 +204,7 @@ export function WarehousePage() {
       await qc.invalidateQueries({ queryKey: ['commerce-locations'] })
       if (res.id) setLocationId(res.id)
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка склада'),
+    onError: (e) => setError(e),
   })
 
   const createProduct = useMutation({
@@ -227,7 +229,7 @@ export function WarehousePage() {
       productForm.reset({ name: '', brand: '', sku: '', unit: 'pcs', volume_label: '', parent_id: '', price_rubles: 0, min_stock: 5 })
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка товара'),
+    onError: (e) => setError(e),
   })
 
   const receipt = useMutation({
@@ -242,7 +244,7 @@ export function WarehousePage() {
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
       await qc.invalidateQueries({ queryKey: ['commerce-movements'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка приёмки'),
+    onError: (e) => setError(e),
   })
 
   const createSupplierOrder = useMutation({
@@ -262,7 +264,7 @@ export function WarehousePage() {
       supplierOrderForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка заказа'),
+    onError: (e) => setError(e),
   })
 
   const createNorm = useMutation({
@@ -282,7 +284,7 @@ export function WarehousePage() {
       normForm.reset({ required: true, qty: 1 })
       await qc.invalidateQueries({ queryKey: ['commerce-norms'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка нормы'),
+    onError: (e) => setError(e),
   })
 
   const criticalItems = stock.data?.items.filter((s) => s.status === 'critical' || s.status === 'out') ?? []
@@ -292,7 +294,9 @@ export function WarehousePage() {
 
   const validateImport = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/v1/commerce/imports/products/validate?organization_id=${orgId}`, {
+      let res: Response
+      try {
+        res = await fetch(`${API_BASE_URL}/v1/commerce/imports/products/validate?organization_id=${orgId}`, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -300,10 +304,13 @@ export function WarehousePage() {
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: csvText,
-      })
+        })
+      } catch (cause) {
+        throw networkApiError(cause)
+      }
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        throw new ApiError(data?.error?.message ?? 'Ошибка проверки импорта', data?.error?.code ?? 'error', res.status)
+        throw apiErrorFromResponse(data, res.status)
       }
       return data as { id: string; status: string; report: { errors?: unknown[]; preview?: unknown[]; row_count?: number } }
     },
@@ -313,7 +320,7 @@ export function WarehousePage() {
       setOk(`Импорт проверен (${data.report.row_count ?? 0} строк). Подтвердите применение.`)
       setError(null)
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка проверки'),
+    onError: (e) => setError(e),
   })
 
   const applyImport = useMutation({
@@ -332,14 +339,14 @@ export function WarehousePage() {
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка применения'),
+    onError: (e) => setError(e),
   })
 
-  if (orgs.isLoading) return <div className="page state-box">Загрузка…</div>
+  if (orgs.isLoading) return <div className="page"><div className="skeleton skeleton-card" aria-busy="true" /></div>
   if (!orgId) {
     return (
       <main className="page">
-        <div className="state-box">Сначала создайте салон в кабинете мастера</div>
+        <EmptyState title="Сначала создайте салон" text="Склад откроется после онбординга салона." action={<Link className="btn btn-primary" to="/master">Кабинет</Link>} />
       </main>
     )
   }
@@ -354,8 +361,8 @@ export function WarehousePage() {
         {(supplierMode || repMode) && <Link className="btn btn-secondary" to={supplierMode ? '/supplier' : '/rep'}>Панель</Link>}
       </div>
       <p className="muted">{repMode ? 'Состояние запаса для визитов и доставок.' : 'Остатки, резерв и движения по складу.'}</p>
-      {error && <div className="state-box error">{error}</div>}
-      {ok && <div className="state-box success">{ok}</div>}
+      <ErrorBanner error={error} fallbackTitle="Не удалось выполнить операцию склада" />
+      {ok && <p className="muted" role="status">{ok}</p>}
 
       <section className="card stack">
         <h2>Место хранения</h2>
@@ -508,9 +515,9 @@ export function WarehousePage() {
             </select>
           </div>
         </div>
-        {!activeLoc && <div className="state-box">Выберите или создайте склад</div>}
-        {stock.isLoading && <div className="state-box">Загрузка…</div>}
-        {stock.data && stock.data.items.length === 0 && <div className="state-box">Остатков нет — выполните приёмку</div>}
+        {!activeLoc && <EmptyState title="Выберите или создайте склад" />}
+        {stock.isLoading && <div className="skeleton skeleton-card" aria-busy="true" />}
+        {stock.data && stock.data.items.length === 0 && <EmptyState title="Остатков нет" text="Выполните приёмку, чтобы увидеть позиции." />}
         <div className="product-grid">
           {stock.data?.items
             .filter((s) => {
@@ -527,9 +534,9 @@ export function WarehousePage() {
                 : s.status === 'out' ? 'Нет в наличии' : s.status === 'critical' ? 'Критично' : s.status === 'low' ? 'Низкий запас' : 'В норме'
               return (
                 <article key={s.product_id} className="product-card">
-                  {s.photo_media_id
-                    ? <MediaImage mediaId={s.photo_media_id} token={accessToken} alt="" className="product-photo" />
-                    : <div className="product-photo placeholder">{(s.brand || s.product_name).slice(0, 1)}</div>}
+                  <div className="media-frame media-frame--product">
+                    <MediaImage mediaId={s.photo_media_id} token={accessToken} alt={s.product_name} fallback={(s.brand || s.product_name).slice(0, 2).toUpperCase()} />
+                  </div>
                   <strong>{s.product_name}</strong>
                   <p className="muted">{s.brand}</p>
                   <span className={`badge ${s.status === 'out' || s.status === 'critical' ? 'badge-danger' : s.status === 'low' ? 'badge-warning' : 'badge-success'}`}>{simple}</span>
@@ -561,8 +568,8 @@ export function WarehousePage() {
         <section className="card stack">
           <h2>Прогноз дефицита (7 дней)</h2>
           <p className="muted">deficit = max(0, demand + min_stock − available). demand = Σ норм расхода по confirmed/in_progress записям org (если BOOKING_URL настроен).</p>
-          {forecast.isLoading && <div className="state-box">Загрузка…</div>}
-          {forecast.data && forecast.data.items.length === 0 && <div className="state-box">Нет позиций для прогноза</div>}
+          {forecast.isLoading && <div className="skeleton skeleton-line" aria-busy="true" />}
+          {forecast.data && forecast.data.items.length === 0 && <EmptyState title="Нет позиций для прогноза" />}
           <div className="list">
             {forecast.data?.items.filter((f) => f.deficit > 0).map((f) => (
               <article key={f.product_id} className="list-item">
@@ -654,7 +661,9 @@ export function WarehousePage() {
           </button>
         </div>
         {importReport && (
-          <pre className="state-box" style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{importReport}</pre>
+          <div className="table-wrap import-report">
+            <pre>{importReport}</pre>
+          </div>
         )}
       </section>
       )}

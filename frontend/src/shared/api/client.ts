@@ -1,14 +1,48 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8090'
+import { logAppError, payloadFromResponse } from '@/shared/lib/app-error'
+
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? '' : 'http://localhost:8090')
 
 export class ApiError extends Error {
   code: string
   status: number
+  details?: Record<string, unknown>
+  requestId?: string
+  technicalMessage?: string
 
-  constructor(message: string, code: string, status: number) {
+  constructor(
+    message: string,
+    code: string,
+    status: number,
+    extra?: { details?: Record<string, unknown>; requestId?: string; technicalMessage?: string },
+  ) {
     super(message)
+    this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.details = extra?.details
+    this.requestId = extra?.requestId
+    this.technicalMessage = extra?.technicalMessage
   }
+}
+
+export function apiErrorFromResponse(data: unknown, status: number): ApiError {
+  const payload = payloadFromResponse(data, status)
+  const err = new ApiError(payload.message, payload.code, payload.status, {
+    details: payload.details,
+    requestId: payload.requestId,
+    technicalMessage: payload.technicalMessage,
+  })
+  logAppError(err, 'api')
+  return err
+}
+
+export function networkApiError(cause?: unknown): ApiError {
+  const payload = payloadFromResponse({ error: { code: 'network_error', message: 'network error' } }, 0)
+  const err = new ApiError(payload.message, 'network_error', 0, {
+    technicalMessage: cause instanceof Error ? cause.message : 'network error',
+  })
+  logAppError(err, 'network')
+  return err
 }
 
 type RequestOptions = {
@@ -56,7 +90,9 @@ async function refreshAccessToken(): Promise<string | null> {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        authBridge!.clearSession()
+        if (res.status === 401 || res.status === 403) {
+          authBridge!.clearSession()
+        }
         return null
       }
       authBridge!.setSession({
@@ -65,9 +101,8 @@ async function refreshAccessToken(): Promise<string | null> {
         user: data.user,
       })
       return data.access_token as string
-    } catch {
-      authBridge!.clearSession()
-      return null
+    } catch (cause) {
+      throw networkApiError(cause)
     } finally {
       refreshInFlight = null
     }
@@ -103,13 +138,27 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     })
 
-  let res = await doFetch()
+  let res: Response
+  try {
+    res = await doFetch()
+  } catch (cause) {
+    throw networkApiError(cause)
+  }
 
   if (res.status === 401 && !options.skipAuthRefresh && !path.startsWith('/v1/auth/login') && !path.startsWith('/v1/auth/register') && !path.startsWith('/v1/auth/refresh')) {
-    const next = await refreshAccessToken()
+    let next: string | null = null
+    try {
+      next = await refreshAccessToken()
+    } catch (cause) {
+      throw cause instanceof ApiError && cause.code === 'network_error' ? cause : networkApiError(cause)
+    }
     if (next) {
       headers.Authorization = `Bearer ${next}`
-      res = await doFetch()
+      try {
+        res = await doFetch()
+      } catch (cause) {
+        throw networkApiError(cause)
+      }
     }
   }
 
@@ -119,45 +168,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const err = data?.error
-    throw new ApiError(
-      humanizeError(err?.message, res.status),
-      err?.code ?? 'error',
-      res.status,
-    )
+    throw apiErrorFromResponse(data, res.status)
   }
   return data as T
-}
-
-function humanizeError(message: unknown, status: number): string {
-  if (typeof message === 'string' && message.trim()) {
-    const known: Record<string, string> = {
-      'invalid credentials': 'Неверный email или пароль',
-      'email already registered': 'Этот email уже зарегистрирован',
-      'time slot is not available': 'Это время уже занято',
-      'selected time is not available': 'На это время уже запланировано другое событие',
-      'planner block overlaps another event': 'На это время уже запланировано другое событие',
-      'planner block overlaps an appointment': 'На это время уже запланировано другое событие',
-      'planner block is outside working hours': 'Это время вне рабочих часов',
-      'invalid appointment status transition': 'Это действие недоступно для текущего статуса записи',
-      'occurrence overlaps': 'Окно пересекается с другим сеансом',
-      'occurrence is full': 'Мест на этот сеанс больше нет',
-      'occurrence is not bookable': 'Этот сеанс недоступен для записи',
-      'client is blacklisted': 'Запись к этому мастеру сейчас недоступна.',
-      'existing appointments would fall outside': 'Есть записи вне новых рабочих часов. Сначала перенесите или отмените их.',
-      unauthorized: 'Требуется вход в аккаунт',
-      forbidden: 'Недостаточно прав',
-    }
-    const lower = message.toLowerCase()
-    for (const [k, v] of Object.entries(known)) {
-      if (lower.includes(k)) return v
-    }
-    return message
-  }
-  if (status === 401) return 'Сеанс истёк. Войдите снова'
-  if (status === 403) return 'Недостаточно прав для этого действия'
-  if (status === 404) return 'Объект не найден'
-  if (status === 409) return 'Конфликт данных. Обновите страницу и попробуйте снова'
-  if (status >= 500) return 'Сервис временно недоступен. Попробуйте позже'
-  return 'Не удалось выполнить запрос'
 }

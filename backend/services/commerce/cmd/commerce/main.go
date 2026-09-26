@@ -43,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	svc := service.New(st).WithIntegrations(os.Getenv("ORGANIZATIONS_URL"), os.Getenv("INTERNAL_TOKEN")).WithBooking(os.Getenv("BOOKING_URL")).WithCommunications(os.Getenv("COMMUNICATIONS_URL"))
+	svc := service.New(st).WithIntegrations(os.Getenv("ORGANIZATIONS_URL"), os.Getenv("INTERNAL_TOKEN")).WithBooking(os.Getenv("BOOKING_URL")).WithCommunications(os.Getenv("COMMUNICATIONS_URL")).WithIdentity(os.Getenv("IDENTITY_URL"))
 	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)

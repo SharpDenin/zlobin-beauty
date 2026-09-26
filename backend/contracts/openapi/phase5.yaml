@@ -1,0 +1,352 @@
+openapi: 3.0.3
+info:
+  title: Salon-X Phase 5–6 Master Inventory and Receiving
+  version: 0.6.0
+  description: Personal master warehouse, receiving/acceptance workflow, stock movements, consume and adjustment. Bearer JWT.
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: MasterInventory
+paths:
+  /v1/me/inventory:
+    get:
+      tags: [MasterInventory]
+      summary: List the current master's personal stock
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+      responses:
+        "200":
+          description: Master warehouse location and balances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  location: { $ref: "#/components/schemas/StockLocation" }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StockItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/me/inventory/movements:
+    get:
+      tags: [MasterInventory]
+      summary: Movement history for the master's warehouse
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+        - in: query
+          name: product_id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StockMovement" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/me/inventory/receipts:
+    get:
+      tags: [MasterInventory]
+      summary: Deliveries targeting the master's warehouse
+      description: |
+        Default lists pending receipts (ordered qty still remaining).
+        Pass history=1 to include completed acceptances for delivery history.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+        - in: query
+          name: history
+          schema: { type: string, enum: ["1"] }
+          description: Include completed receipts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Receipt" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/me/inventory/receipts/{order_id}:
+    get:
+      tags: [MasterInventory]
+      summary: Receipt details and acceptance state for one supplier order
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Receipt" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/me/inventory/{product_id}:
+    get:
+      tags: [MasterInventory]
+      summary: Stock item details and recent movements
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+        - in: path
+          name: product_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  location: { $ref: "#/components/schemas/StockLocation" }
+                  item: { $ref: "#/components/schemas/StockItem" }
+                  movements:
+                    type: array
+                    items: { $ref: "#/components/schemas/StockMovement" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/me/inventory/consume:
+    post:
+      tags: [MasterInventory]
+      summary: Consume quantity from the master's warehouse
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConsumeStock" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StockMovement" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: insufficient_stock or duplicate idempotency key used for a different product
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+  /v1/me/inventory/adjust:
+    post:
+      tags: [MasterInventory]
+      summary: Manual stock adjustment (reason required)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdjustStock" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StockMovement" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/commerce/supplier-orders/{id}/accept:
+    post:
+      tags: [MasterInventory]
+      summary: Accept a delivered supplier order into the order location (master warehouse when location_id is the master's)
+      description: |
+        Only qty_accepted increases available stock. qty_damaged and qty_rejected are recorded
+        as damage/rejection movements and never become available. Repeating accept after the
+        line is fully dispositioned is idempotent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string }
+          description: Optional. Same key as body idempotency_key; concurrent duplicates replay one acceptance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptOrder" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupplierOrder" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ID:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    OrganizationID:
+      in: query
+      name: organization_id
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum: [validation_error, unauthorized, forbidden, not_found, conflict, insufficient_stock]
+            message: { type: string }
+            request_id: { type: string }
+    StockLocation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [salon, master, supplier, transit]
+        owner_user_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    StockItem:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        brand: { type: string }
+        sku: { type: string }
+        unit: { type: string, description: "pcs|ml|l|g|kg from product catalog" }
+        volume_label: { type: string }
+        qty_on_hand: { type: number }
+        qty_reserved: { type: number }
+        available: { type: number }
+        qty_incoming: { type: number }
+        status: { type: string }
+    StockMovement:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [receipt, consumption, adjust, write_off, return, reserve, unreserve, release, shipment, damage, rejection]
+        qty: { type: number }
+        qty_before: { type: number }
+        qty_after: { type: number }
+        reason: { type: string }
+        actor_user_id: { type: string, format: uuid }
+        ref_type: { type: string }
+        ref_id: { type: string, format: uuid, nullable: true }
+        supplier_name: { type: string, description: "Populated for supplier_order movements when known" }
+        idempotency_key: { type: string }
+        created_at: { type: string, format: date-time }
+    ConsumeStock:
+      type: object
+      required: [organization_id, product_id, qty]
+      properties:
+        organization_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        qty: { type: number, exclusiveMinimum: 0 }
+        appointment_id: { type: string, format: uuid }
+        service_id: { type: string, format: uuid }
+        idempotency_key: { type: string }
+        reason: { type: string }
+    AdjustStock:
+      type: object
+      required: [organization_id, product_id, qty, reason]
+      properties:
+        organization_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        qty: { type: number, description: "Signed delta; must be non-zero" }
+        reason: { type: string, minLength: 1 }
+    AcceptOrder:
+      type: object
+      required: [items]
+      properties:
+        idempotency_key:
+          type: string
+          description: Caller-generated key. Repeat requests replay the same receipt/damage/rejection movements.
+        items:
+          type: array
+          items:
+            type: object
+            required: [product_id]
+            properties:
+              product_id: { type: string, format: uuid }
+              qty_accepted: { type: number }
+              qty_damaged: { type: number }
+              qty_rejected: { type: number }
+    SupplierOrder:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        location_id: { type: string, format: uuid }
+        comment: { type: string }
+        created_at: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: { type: string, format: uuid }
+              product_name: { type: string }
+              qty_ordered: { type: number }
+              qty_delivered: { type: number }
+              qty_accepted: { type: number }
+              qty_damaged: { type: number }
+              qty_rejected: { type: number }
+    Receipt:
+      allOf:
+        - $ref: "#/components/schemas/SupplierOrder"
+        - type: object
+          properties:
+            supplier_name: { type: string }
+            acceptance_state:
+              type: string
+              enum: [pending, in_progress, completed]
+            remaining_qty: { type: number }
+            undelivered_qty: { type: number, description: "ordered − delivered when a delivery qty is recorded" }
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  product_id: { type: string, format: uuid }
+                  product_name: { type: string }
+                  qty_ordered: { type: number }
+                  qty_delivered: { type: number }
+                  qty_accepted: { type: number }
+                  qty_damaged: { type: number }
+                  qty_rejected: { type: number }
+                  remaining_qty: { type: number }
+                  receivable_qty: { type: number }
+                  undelivered_qty: { type: number }
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Error:
+      description: Request failed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }

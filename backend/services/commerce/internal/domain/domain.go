@@ -27,7 +27,81 @@ const (
 	MovementUnreserve   = "unreserve"
 	MovementRelease     = "release"
 	MovementShipment    = "shipment"
+	MovementDamage      = "damage"
+	MovementRejection   = "rejection"
 )
+
+// DispositionRemaining is qty still expected on an order line after previous
+// accept / damage / reject postings. Never negative.
+func DispositionRemaining(ordered, accepted, damaged, rejected float64) float64 {
+	left := ordered - accepted - damaged - rejected
+	if left < 1e-9 {
+		return 0
+	}
+	return left
+}
+
+// Acceptance workflow states derived from order line disposition.
+const (
+	AcceptancePending    = "pending"
+	AcceptanceInProgress = "in_progress"
+	AcceptanceCompleted  = "completed"
+)
+
+// LineReceivable is qty still allowed on this accept call.
+// Cap is remaining vs ordered. When qty_delivered is recorded independently
+// and exceeds already-dispositioned qty, also cap to that leftover.
+func LineReceivable(ordered, delivered, accepted, damaged, rejected float64) float64 {
+	remaining := DispositionRemaining(ordered, accepted, damaged, rejected)
+	if delivered <= 1e-9 {
+		return remaining
+	}
+	leftoverDelivered := delivered - accepted - damaged - rejected
+	if leftoverDelivered < 1e-9 {
+		return remaining
+	}
+	if leftoverDelivered < remaining {
+		return leftoverDelivered
+	}
+	return remaining
+}
+
+func DispositionUndelivered(ordered, delivered float64) float64 {
+	if delivered <= 1e-9 {
+		return 0
+	}
+	left := ordered - delivered
+	if left < 1e-9 {
+		return 0
+	}
+	return left
+}
+
+func OrderAcceptanceState(items []SupplierOrderItem) string {
+	remaining := 0.0
+	disposed := false
+	for _, it := range items {
+		remaining += DispositionRemaining(it.QtyOrdered, it.QtyAccepted, it.QtyDamaged, it.QtyRejected)
+		if it.QtyAccepted+it.QtyDamaged+it.QtyRejected > 1e-9 {
+			disposed = true
+		}
+	}
+	if remaining <= 1e-9 {
+		return AcceptanceCompleted
+	}
+	if disposed {
+		return AcceptanceInProgress
+	}
+	return AcceptancePending
+}
+
+func AcceptMovementIdempotencyKey(base, kind string, productID uuid.UUID) string {
+	base = strings.TrimSpace(base)
+	if base == "" || productID == uuid.Nil {
+		return ""
+	}
+	return base + ":" + kind + ":" + productID.String()
+}
 
 // Stock balance status buckets.
 const (
@@ -154,21 +228,24 @@ type StockBalanceView struct {
 	Status       string
 	PhotoMediaID *uuid.UUID
 	QtyIncoming  float64
+	Unit         string
+	VolumeLabel  string
 }
 
 type StockMovement struct {
-	ID          uuid.UUID
-	LocationID  uuid.UUID
-	ProductID   uuid.UUID
-	Kind        string
-	Qty         float64
-	QtyBefore   float64
-	QtyAfter    float64
-	Reason      string
-	ActorUserID uuid.UUID
-	RefType     string
-	RefID       *uuid.UUID
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	LocationID     uuid.UUID
+	ProductID      uuid.UUID
+	Kind           string
+	Qty            float64
+	QtyBefore      float64
+	QtyAfter       float64
+	Reason         string
+	ActorUserID    uuid.UUID
+	RefType        string
+	RefID          *uuid.UUID
+	IdempotencyKey string
+	CreatedAt      time.Time
 }
 
 type ConsumptionNorm struct {
@@ -182,26 +259,26 @@ type ConsumptionNorm struct {
 }
 
 type SupplierOrder struct {
-	ID                   uuid.UUID
-	BuyerOrgID           uuid.UUID
-	SupplierOrgID        uuid.UUID
-	LocationID           uuid.UUID
-	DestinationBranchID  *uuid.UUID
-	Status               string
-	Currency             string
-	TotalMinor           int64
-	SubtotalMinor        int64
-	DeliveryCostMinor    int64
-	PaymentMethod        string
-	PaymentStatus        string
-	PaidAt               *time.Time
-	IdempotencyKey       string
-	Comment              string
-	DesiredAt            *time.Time
-	EstimatedDeliveryAt  *time.Time
-	CreatedBy            uuid.UUID
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                  uuid.UUID
+	BuyerOrgID          uuid.UUID
+	SupplierOrgID       uuid.UUID
+	LocationID          uuid.UUID
+	DestinationBranchID *uuid.UUID
+	Status              string
+	Currency            string
+	TotalMinor          int64
+	SubtotalMinor       int64
+	DeliveryCostMinor   int64
+	PaymentMethod       string
+	PaymentStatus       string
+	PaidAt              *time.Time
+	IdempotencyKey      string
+	Comment             string
+	DesiredAt           *time.Time
+	EstimatedDeliveryAt *time.Time
+	CreatedBy           uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type SupplierOrderItem struct {
@@ -213,6 +290,8 @@ type SupplierOrderItem struct {
 	QtyOrdered   float64
 	QtyDelivered float64
 	QtyAccepted  float64
+	QtyDamaged   float64
+	QtyRejected  float64
 	PriceMinor   int64
 }
 
@@ -237,14 +316,14 @@ type OrderDelivery struct {
 
 // Client order statuses (B2C shop).
 const (
-	ClientOrderStatusSubmitted     = "submitted"
-	ClientOrderStatusConfirmed     = "confirmed"
-	ClientOrderStatusPicking       = "picking"
-	ClientOrderStatusInDelivery    = "in_delivery"
-	ClientOrderStatusDelivered     = "delivered"
+	ClientOrderStatusSubmitted      = "submitted"
+	ClientOrderStatusConfirmed      = "confirmed"
+	ClientOrderStatusPicking        = "picking"
+	ClientOrderStatusInDelivery     = "in_delivery"
+	ClientOrderStatusDelivered      = "delivered"
 	ClientOrderStatusReadyForPickup = "ready_for_pickup"
-	ClientOrderStatusReceived      = "received"
-	ClientOrderStatusCancelled     = "cancelled"
+	ClientOrderStatusReceived       = "received"
+	ClientOrderStatusCancelled      = "cancelled"
 )
 
 type ClientCheckoutGroup struct {
@@ -310,6 +389,7 @@ type ClientCartItem struct {
 	CurrentPriceMinor int64
 	Currency          string
 	Available         float64
+	PhotoMediaID      *uuid.UUID
 	OrganizationID    uuid.UUID
 }
 

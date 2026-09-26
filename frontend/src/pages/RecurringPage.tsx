@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
+import { formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg, useSupplierOrg } from '@/shared/lib/commerce'
 import { statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type RecurringItem = { product_id: string; qty: number }
 type ProposedChange = {
@@ -137,7 +139,7 @@ export function RecurringPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['recurring'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось создать'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось создать')),
   })
 
   const decide = useMutation({
@@ -153,7 +155,7 @@ export function RecurringPage() {
       setReviseId(null)
       await qc.invalidateQueries({ queryKey: ['recurring'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
 
   const setStatus = useMutation({
@@ -182,7 +184,7 @@ export function RecurringPage() {
           ? 'Заявки салонов. Одобрите, отклоните или предложите другие условия.'
           : 'Частота, филиал, окно доставки и несколько товаров в одном соглашении.'}
       </p>
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {!isSupplier && (

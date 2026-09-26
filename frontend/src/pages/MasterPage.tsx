@@ -2,13 +2,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { workTypeLabel } from '@/shared/lib/status'
+import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
+import { MultiServiceBookingDialog } from '@/pages/MultiServiceBookingDialog'
+import { canJoinMultiService } from '@/pages/visit-plan-helpers'
 
 type BookingMode = 'flexible' | 'fixed_window'
 
@@ -21,6 +30,7 @@ type Service = {
   price_display: string
   description?: string
   booking_mode?: BookingMode | string
+  photo_media_id?: string | null
 }
 
 type MasterDetails = {
@@ -32,7 +42,9 @@ type MasterDetails = {
     city: string
     specializations: string[]
     work_type?: string
+    profession_types?: { id: string; slug: string; name: string }[]
     photo_media_id?: string | null
+    organization_id?: string
   }
   services: Service[]
 }
@@ -72,6 +84,7 @@ function bookingModeLabel(mode?: string) {
 export function MasterPage() {
   const { id } = useParams()
   const { accessToken } = useAuth()
+  const messenger = useMessenger()
   const qc = useQueryClient()
   const toast = useToast()
   const [step, setStep] = useState(0)
@@ -83,6 +96,7 @@ export function MasterPage() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [booked, setBooked] = useState<BookedAppointment | null>(null)
+  const [multiOpen, setMultiOpen] = useState(false)
 
   const masterQuery = useQuery({
     queryKey: ['master', id],
@@ -169,11 +183,7 @@ export function MasterPage() {
       await qc.invalidateQueries({ queryKey: ['service-occurrences'] })
     },
     onError: (e) => {
-      const msg = e instanceof ApiError
-        ? e.message
-        : e instanceof Error
-          ? e.message
-          : 'Не удалось создать запись'
+      const msg = userError(e, 'Не удалось создать запись')
       setMessage(null)
       setError(msg)
       toast.error(msg)
@@ -181,10 +191,22 @@ export function MasterPage() {
   })
 
   if (masterQuery.isLoading) return <div className="page state-box">Загрузка профиля…</div>
-  if (masterQuery.isError || !masterQuery.data) return <div className="page state-box error">Мастер не найден</div>
+  if (masterQuery.isError) {
+    return (
+      <main className="page">
+        <ErrorBanner error={masterQuery.error} fallbackTitle="Не удалось открыть профиль мастера" />
+      </main>
+    )
+  }
+  if (!masterQuery.data) {
+    return (
+      <main className="page">
+        <EmptyState title="Мастер не найден" text="Профиль недоступен или больше не опубликован." />
+      </main>
+    )
+  }
 
   const { master, services } = masterQuery.data
-  const initials = master.display_name.slice(0, 1).toUpperCase()
 
   const summaryStartsAt = isFixed ? selectedOccurrence?.starts_at : slot
   const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || ''
@@ -225,21 +247,31 @@ export function MasterPage() {
     <main className="page stack">
       <section className="hero">
         <div className="row" style={{ alignItems: 'flex-start' }}>
-          <div className="avatar-circle">
-            {master.photo_media_id ? (
-              <MediaImage mediaId={master.photo_media_id} token={accessToken} alt={master.display_name} />
-            ) : (
-              initials
-            )}
-          </div>
+          <MasterPortrait mediaId={master.photo_media_id} name={master.display_name} token={accessToken} />
           <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
             <h1>{master.display_name} <Hint id="client-booking" title="Запись">Выберите услугу и время. Если мастер включил автоподтверждение, запись сразу станет подтверждённой.</Hint></h1>
             <div className="row">
               <span className="city-badge">{master.city}</span>
               <span className="chip badge-default">{workTypeLabel(master.work_type)}</span>
             </div>
-            <p>{master.specializations.join(', ') || 'Красота и уход'}</p>
+            <p>{masterProfessionLabel(master, 'Красота и уход')}</p>
             <p>{master.bio || 'Мастер ещё не добавил описание.'}</p>
+            {accessToken && (
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                data-testid="write-master"
+                onClick={async () => {
+                  try {
+                    await messenger.start({ type: 'client_master', master_user_id: master.user_id })
+                  } catch (e) {
+                    setError(userError(e, 'Не удалось открыть переписку'))
+                  }
+                }}
+              >
+                Написать
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -278,7 +310,7 @@ export function MasterPage() {
               <button
                 key={s.id}
                 type="button"
-                className={`service-card ${serviceId === s.id ? 'selected' : ''}`}
+                className={`service-card service-card--media ${serviceId === s.id ? 'selected' : ''}`}
                 onClick={() => {
                   setServiceId(s.id)
                   setSlot('')
@@ -286,13 +318,16 @@ export function MasterPage() {
                   setError(null)
                 }}
               >
-                <div className="row between">
-                  <strong>{s.name}</strong>
-                  <span>{s.price_display || formatMoney(s.price_minor)}</span>
+                <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
+                <div className="service-card-body">
+                  <div className="row between">
+                    <strong>{s.name}</strong>
+                    <span>{s.price_display || formatMoney(s.price_minor)}</span>
+                  </div>
+                  <p>{s.category} · {s.duration_minutes} мин</p>
+                  <p className="muted">{bookingModeLabel(s.booking_mode)}</p>
+                  {s.description && <p className="muted">{s.description}</p>}
                 </div>
-                <p>{s.category} · {s.duration_minutes} мин</p>
-                <p className="muted">{bookingModeLabel(s.booking_mode)}</p>
-                {s.description && <p className="muted">{s.description}</p>}
               </button>
             ))}
             <button
@@ -303,6 +338,16 @@ export function MasterPage() {
             >
               Далее
             </button>
+            {accessToken && selectedService && canJoinMultiService(selectedService) && master.organization_id && (
+              <button
+                className="btn btn-secondary"
+                type="button"
+                data-testid="add-second-service"
+                onClick={() => setMultiOpen(true)}
+              >
+                Добавить вторую услугу
+              </button>
+            )}
           </div>
         )}
 
@@ -328,7 +373,7 @@ export function MasterPage() {
         {!isFixed && step === 2 && (
           <div className="stack">
             {slotsQuery.isLoading && <div className="state-box">Загрузка слотов…</div>}
-            {slotsQuery.isError && <div className="state-box error">Не удалось получить свободное время</div>}
+            {slotsQuery.isError && <ErrorBanner error={slotsQuery.error} fallbackTitle="Не удалось получить свободное время" />}
             {slotsQuery.data && slotsQuery.data.items.length === 0 && (
               <div className="empty-state">
                 <h2>Нет свободных окон</h2>
@@ -363,7 +408,7 @@ export function MasterPage() {
         {isFixed && step === 1 && (
           <div className="stack">
             {occurrencesQuery.isLoading && <div className="skeleton skeleton-card" />}
-            {occurrencesQuery.isError && <div className="state-box error">Не удалось загрузить сеансы</div>}
+            {occurrencesQuery.isError && <ErrorBanner error={occurrencesQuery.error} fallbackTitle="Не удалось загрузить сеансы" />}
             {occurrencesQuery.data && occurrencesQuery.data.items.filter((o) => o.status === 'scheduled' && o.remaining > 0).length === 0 && (
               <div className="empty-state">
                 <h2>Нет доступных сеансов</h2>
@@ -449,7 +494,7 @@ export function MasterPage() {
                 </div>
               </dl>
             </article>
-            {error && <div className="state-box error">{error}</div>}
+            {error && <ErrorBanner error={error} />}
             <div className="row">
               <button className="btn btn-secondary" type="button" onClick={() => setStep(isFixed ? 1 : 2)}>Назад</button>
               <button
@@ -464,6 +509,20 @@ export function MasterPage() {
           </div>
         )}
       </section>
+
+      {selectedService && master.organization_id && (
+        <MultiServiceBookingDialog
+          open={multiOpen}
+          onClose={() => setMultiOpen(false)}
+          token={accessToken}
+          organizationId={master.organization_id}
+          firstService={selectedService}
+          onSuccess={() => {
+            setDone(true)
+            setMessage('Визит из двух услуг создан')
+          }}
+        />
+      )}
 
       <section className="stack">
         <h2>Отзывы</h2>

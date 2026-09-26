@@ -88,7 +88,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className={`toast toast--${item.kind}`}
             role={item.kind === 'error' ? 'alert' : 'status'}
           >
-            <span>{item.message}</span>
+            <span className="toast-body">{item.message}</span>
             <button
               type="button"
               className="toast-close"

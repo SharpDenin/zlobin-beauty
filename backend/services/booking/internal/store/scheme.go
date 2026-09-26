@@ -27,6 +27,7 @@ type ServiceScheme struct {
 	Notes           string
 	CategoryFields  json.RawMessage
 	Skipped         bool
+	OmitFormula     bool
 	CreatedBy       uuid.UUID
 	TemplateID      *uuid.UUID
 	TemplateVersion int
@@ -39,13 +40,13 @@ func (s *Store) UpsertServiceScheme(ctx context.Context, in ServiceScheme, now t
 		fields = []byte("{}")
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, created_by, template_id, template_version, created_at, updated_at)
-VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$9)
+INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, omit_formula, created_by, template_id, template_version, created_at, updated_at)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$10)
 ON CONFLICT (appointment_id) DO UPDATE SET
   technique=EXCLUDED.technique, notes=EXCLUDED.notes, category_fields=EXCLUDED.category_fields,
-  skipped=EXCLUDED.skipped, template_id=EXCLUDED.template_id, template_version=EXCLUDED.template_version,
+  skipped=EXCLUDED.skipped, omit_formula=EXCLUDED.omit_formula, template_id=EXCLUDED.template_id, template_version=EXCLUDED.template_version,
   updated_at=EXCLUDED.updated_at`,
-		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.CreatedBy, in.TemplateID, in.TemplateVersion, now)
+		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.OmitFormula, in.CreatedBy, in.TemplateID, in.TemplateVersion, now)
 	if err != nil {
 		return err
 	}
@@ -67,9 +68,9 @@ func (s *Store) GetServiceScheme(ctx context.Context, appointmentID uuid.UUID) (
 	var out ServiceScheme
 	out.AppointmentID = appointmentID
 	err := s.pool.QueryRow(ctx, `
-SELECT technique, notes, category_fields, skipped, created_by, template_id, template_version
+SELECT technique, notes, category_fields, skipped, omit_formula, created_by, template_id, template_version
 FROM appointment_service_schemes WHERE appointment_id=$1`, appointmentID).Scan(
-		&out.Technique, &out.Notes, &out.CategoryFields, &out.Skipped, &out.CreatedBy, &out.TemplateID, &out.TemplateVersion)
+		&out.Technique, &out.Notes, &out.CategoryFields, &out.Skipped, &out.OmitFormula, &out.CreatedBy, &out.TemplateID, &out.TemplateVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -207,13 +208,13 @@ func (s *Store) upsertServiceSchemeTx(ctx context.Context, tx pgx.Tx, in Service
 		fields = []byte("{}")
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, created_by, template_id, template_version, created_at, updated_at)
-VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$9)
+INSERT INTO appointment_service_schemes(appointment_id, technique, notes, category_fields, skipped, omit_formula, created_by, template_id, template_version, created_at, updated_at)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$10)
 ON CONFLICT (appointment_id) DO UPDATE SET
   technique=EXCLUDED.technique, notes=EXCLUDED.notes, category_fields=EXCLUDED.category_fields,
-  skipped=EXCLUDED.skipped, template_id=EXCLUDED.template_id, template_version=EXCLUDED.template_version,
+  skipped=EXCLUDED.skipped, omit_formula=EXCLUDED.omit_formula, template_id=EXCLUDED.template_id, template_version=EXCLUDED.template_version,
   updated_at=EXCLUDED.updated_at`,
-		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.CreatedBy, in.TemplateID, in.TemplateVersion, now); err != nil {
+		in.AppointmentID, in.Technique, in.Notes, string(fields), in.Skipped, in.OmitFormula, in.CreatedBy, in.TemplateID, in.TemplateVersion, now); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM appointment_scheme_components WHERE appointment_id=$1`, in.AppointmentID); err != nil {
@@ -244,7 +245,7 @@ WHERE id=$1 AND status=$2 AND master_user_id=$3`, appointmentID, fromStatus, act
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.Conflict("appointment status changed concurrently")
+		return apperr.ConflictCode(apperr.CodeAppointmentConcurrent, "appointment status changed concurrently")
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO appointment_status_history(id, appointment_id, from_status, to_status, actor_user_id, reason, created_at)

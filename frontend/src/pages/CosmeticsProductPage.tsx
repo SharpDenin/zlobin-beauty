@@ -2,11 +2,15 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 import type { CommerceProduct } from '@/shared/lib/commerce'
 import { addToCart, loadCart, saveCart } from '@/shared/lib/cart'
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
 import { formatMoney } from '@/shared/lib/money'
+import { userError } from '@/shared/lib/app-error'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useState } from 'react'
 
 type KnowledgeItem = {
@@ -20,8 +24,10 @@ type KnowledgeItem = {
 export function CosmeticsProductPage() {
   const { productId = '' } = useParams()
   const { accessToken } = useAuth()
+  const messenger = useMessenger()
   const navigate = useNavigate()
   const [added, setAdded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const product = useQuery({
     queryKey: ['commerce-product', productId],
@@ -36,12 +42,16 @@ export function CosmeticsProductPage() {
     enabled: Boolean(accessToken && productId),
   })
 
-  if (product.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  if (product.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   if (product.isError || !product.data) {
     return (
       <main className="page stack">
-        <div className="state-box error">Товар не найден</div>
-        <Link className="btn btn-secondary" to="/cosmetics">К поставщикам</Link>
+        <ErrorBanner error={product.error} fallbackTitle="Товар не найден" />
+        <EmptyState
+          title="Товар не найден"
+          text="Этой позиции нет в каталоге поставщика."
+          action={<Link className="btn btn-secondary" to="/cosmetics">К поставщикам</Link>}
+        />
       </main>
     )
   }
@@ -59,12 +69,8 @@ export function CosmeticsProductPage() {
     <main className="page stack">
       <Link className="btn btn-ghost btn-compact" to={`/cosmetics/${supplierId}`}>← К каталогу</Link>
       <section className="product-card">
-        <div className="product-media" style={{ aspectRatio: '1 / 1' }}>
-          {p.photo_media_id ? (
-            <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} />
-          ) : (
-            <span>Нет фото</span>
-          )}
+        <div className="media-frame media-frame--product">
+          <MediaImage mediaId={p.photo_media_id} token={accessToken} alt={p.name} fallback={(p.brand || p.name).slice(0, 2).toUpperCase()} />
         </div>
         <div className="stack-sm">
           {p.brand && <span className="chip badge-default">{p.brand}</span>}
@@ -93,27 +99,51 @@ export function CosmeticsProductPage() {
           >
             В каталог с корзиной
           </button>
+          <button
+            className="btn btn-secondary"
+            type="button"
+            data-testid="write-supplier-product"
+            onClick={async () => {
+              try {
+                await messenger.start({
+                  type: 'master_supplier',
+                  supplier_organization_id: supplierId,
+                })
+              } catch (e) {
+                setError(userError(e, 'Не удалось открыть переписку'))
+              }
+            }}
+          >
+            Написать поставщику
+          </button>
         </div>
+        {error && <p className="muted">{error}</p>}
         {added && <div className="state-box success">Товар в корзине. Оформите заказ в каталоге поставщика.</div>}
       </section>
-      {(knowledge.data?.items?.length ?? 0) > 0 && (
-        <section className="stack-sm">
-          <h2>Материалы и инструкции</h2>
+      <section className="card stack" data-testid="product-knowledge">
+        <h2>Знания по этому продукту</h2>
+        {knowledge.isLoading && <p className="muted">Загрузка…</p>}
+        {!knowledge.isLoading && (knowledge.data?.items?.length ?? 0) === 0 && (
+          <p className="muted" data-testid="product-knowledge-empty">Сохранённых материалов по этому продукту пока нет.</p>
+        )}
+        {(knowledge.data?.items?.length ?? 0) > 0 && (
           <div className="kb-grid">
             {knowledge.data!.items.map((a) => (
-              <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`}>
-                {a.cover_media_id ? (
-                  <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} className="kb-cover" />
-                ) : (
-                  <div className="kb-cover" />
-                )}
+              <Link key={a.id} className="kb-card" to={`/knowledge/${a.id}`} data-testid="product-knowledge-item">
+                <MediaImage
+                  mediaId={a.cover_media_id}
+                  token={accessToken}
+                  alt={a.title}
+                  className="kb-cover"
+                  fallback={a.title.slice(0, 2).toUpperCase()}
+                />
                 <strong>{a.title}</strong>
                 <p className="muted">{[a.category, a.reading_time_minutes ? `${a.reading_time_minutes} мин` : ''].filter(Boolean).join(' · ')}</p>
               </Link>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
     </main>
   )
 }

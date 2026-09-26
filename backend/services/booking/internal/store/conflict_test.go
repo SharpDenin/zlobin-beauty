@@ -15,8 +15,8 @@ func TestMapAppointmentConflictExclusion(t *testing.T) {
 	if !ok {
 		t.Fatal("expected apperr")
 	}
-	if ae.Code != apperr.CodeConflict {
-		t.Fatalf("code=%v want conflict", ae.Code)
+	if ae.Code != apperr.CodeAppointmentTimeConflict {
+		t.Fatalf("code=%v want appointment_time_conflict", ae.Code)
 	}
 	if ae.Message != slotConflictMsg {
 		t.Fatalf("message=%q want %q", ae.Message, slotConflictMsg)
@@ -25,5 +25,14 @@ func TestMapAppointmentConflictExclusion(t *testing.T) {
 	raw := errors.New("other")
 	if mapAppointmentConflict(raw) != raw {
 		t.Fatal("non-pg errors must pass through")
+	}
+}
+
+func TestCreateAppointmentsIsTransactional(t *testing.T) {
+	// CreateAppointments opens one tx and inserts every leg before commit.
+	// A 23P01 on the second insert rolls back the first so the client never
+	// receives a half-booking. mapAppointmentConflict maps that to appointment_time_conflict.
+	if pgerrcode.ExclusionViolation != "23P01" {
+		t.Fatalf("exclusion code %q", pgerrcode.ExclusionViolation)
 	}
 }

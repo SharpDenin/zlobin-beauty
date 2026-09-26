@@ -19,13 +19,16 @@ import (
 )
 
 type Service struct {
-	store            *store.Store
-	organizationsURL string
-	bookingURL       string
-	commerceURL      string
-	internalToken    string
-	httpClient       *http.Client
-	now              func() time.Time
+	store             *store.Store
+	organizationsURL  string
+	bookingURL        string
+	commerceURL       string
+	clientsURL        string
+	communicationsURL string
+	identityURL       string
+	internalToken     string
+	httpClient        *http.Client
+	now               func() time.Time
 }
 
 func New(st *store.Store) *Service {
@@ -49,19 +52,20 @@ func (s *Service) WithCommerce(commerceURL string) *Service {
 }
 
 type UpsertMasterInput struct {
-	UserID          uuid.UUID
-	OrganizationID  uuid.UUID
-	BranchID        *uuid.UUID
-	DisplayName     string
-	Bio             string
-	Specializations []string
-	City            string
-	ExperienceYears int
-	Education       string
-	PhotoMediaID    *uuid.UUID
-	WorkType        string
-	Published       bool
-	AccessToken     string
+	UserID            uuid.UUID
+	OrganizationID    uuid.UUID
+	BranchID          *uuid.UUID
+	DisplayName       string
+	Bio               string
+	Specializations   []string
+	City              string
+	ExperienceYears   int
+	Education         string
+	PhotoMediaID      *uuid.UUID
+	WorkType          string
+	Published         bool
+	AccessToken       string
+	ProfessionTypeIDs *[]uuid.UUID
 }
 
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
@@ -117,6 +121,20 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 			}
 		}
 	}
+	if existing == nil && (in.ProfessionTypeIDs == nil || len(*in.ProfessionTypeIDs) == 0) {
+		return nil, apperr.ProfessionTypesRequired()
+	}
+	if in.ProfessionTypeIDs != nil {
+		for _, id := range *in.ProfessionTypeIDs {
+			m.ProfessionTypes = append(m.ProfessionTypes, domain.ProfessionType{ID: id})
+		}
+	} else if existing != nil {
+		types, err := s.store.ListMasterProfessionTypes(ctx, in.UserID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		m.ProfessionTypes = types
+	}
 	if m.Published {
 		ready, err := s.evaluateReadiness(ctx, &m, in.AccessToken)
 		if err != nil {
@@ -128,6 +146,9 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	}
 	if err := s.store.UpsertMaster(ctx, m); err != nil {
 		return nil, apperr.Internal(err)
+	}
+	if err := s.applyProfessionTypes(ctx, &m, in.ProfessionTypeIDs, existing == nil); err != nil {
+		return nil, err
 	}
 	return &m, nil
 }
@@ -147,10 +168,18 @@ func (s *Service) MasterReadiness(ctx context.Context, userID uuid.UUID, accessT
 }
 
 func (s *Service) evaluateReadiness(ctx context.Context, m *domain.MasterProfile, accessToken string) (*domain.Readiness, error) {
+	if len(m.ProfessionTypes) == 0 {
+		types, err := s.store.ListMasterProfessionTypes(ctx, m.UserID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		m.ProfessionTypes = types
+	}
 	checks := []domain.ReadinessCheck{
 		{Key: "display_name", Label: "Имя для публикации", OK: strings.TrimSpace(m.DisplayName) != ""},
 		{Key: "city", Label: "Город", OK: strings.TrimSpace(m.City) != ""},
 		{Key: "specializations", Label: "Специализация", OK: len(m.Specializations) > 0},
+		{Key: "profession_types", Label: "Профессиональный тип", OK: len(m.ProfessionTypes) > 0},
 		{Key: "bio", Label: "Описание (от 10 символов)", OK: len([]rune(strings.TrimSpace(m.Bio))) >= 10},
 		{Key: "experience", Label: "Опыт (лет)", OK: m.ExperienceYears > 0},
 	}
@@ -220,15 +249,31 @@ func (s *Service) PopularServices(ctx context.Context) ([]domain.ServiceItem, er
 	return out, nil
 }
 
-func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time, includeOtherCities bool) ([]domain.MasterProfile, error) {
+type SearchHit struct {
+	Master domain.MasterProfile
+	Onsite *OnsiteMatch
+}
+
+type OnsiteMatch struct {
+	City      string
+	Districts []string
+	StartsAt  time.Time
+	EndsAt    time.Time
+	Badge     string
+}
+
+func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time, includeOtherCities bool, districtID *uuid.UUID) ([]SearchHit, error) {
+	if districtID != nil && availableOn == nil {
+		return nil, apperr.Validation("available_on is required when district_id is set")
+	}
 	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), strings.TrimSpace(service), priceMin, priceMax, includeOtherCities, 50)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
 	if items == nil {
-		return []domain.MasterProfile{}, nil
+		return []SearchHit{}, nil
 	}
-	out := make([]domain.MasterProfile, 0, len(items))
+	filtered := make([]domain.MasterProfile, 0, len(items))
 	for _, m := range items {
 		visible, err := s.isMasterPubliclyVisible(ctx, m)
 		if err != nil {
@@ -237,7 +282,7 @@ func (s *Service) Search(ctx context.Context, city, q, service string, priceMin,
 		if !visible {
 			continue
 		}
-		if availableOn != nil && s.bookingURL != "" {
+		if availableOn != nil && s.bookingURL != "" && districtID == nil {
 			ok, err := s.hasAnySlotOn(ctx, m.UserID, *availableOn)
 			if err != nil {
 				return nil, err
@@ -246,7 +291,87 @@ func (s *Service) Search(ctx context.Context, city, q, service string, priceMin,
 				continue
 			}
 		}
-		out = append(out, m)
+		filtered = append(filtered, m)
+	}
+	ptrs := make([]*domain.MasterProfile, 0, len(filtered))
+	for i := range filtered {
+		ptrs = append(ptrs, &filtered[i])
+	}
+	if err := s.attachProfessionTypes(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+	matches := map[uuid.UUID]OnsiteMatch{}
+	if districtID != nil && availableOn != nil {
+		got, err := s.fetchOnsiteMatches(ctx, strings.TrimSpace(city), *districtID, *availableOn)
+		if err != nil {
+			return nil, err
+		}
+		matches = got
+	}
+	out := make([]SearchHit, 0, len(filtered))
+	for _, m := range filtered {
+		hit := SearchHit{Master: m}
+		if districtID != nil {
+			match, ok := matches[m.UserID]
+			if !ok {
+				continue
+			}
+			hit.Onsite = &match
+		}
+		out = append(out, hit)
+	}
+	return out, nil
+}
+
+func (s *Service) fetchOnsiteMatches(ctx context.Context, city string, districtID uuid.UUID, day time.Time) (map[uuid.UUID]OnsiteMatch, error) {
+	out := map[uuid.UUID]OnsiteMatch{}
+	if s.bookingURL == "" {
+		return out, nil
+	}
+	u := fmt.Sprintf("%s/v1/internal/onsite-matches?city=%s&district_id=%s&date=%s",
+		s.bookingURL, url.QueryEscape(city), districtID.String(), day.Format("2006-01-02"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if s.internalToken != "" {
+		req.Header.Set("X-Internal-Token", s.internalToken)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return out, nil
+	}
+	var parsed struct {
+		Items []struct {
+			MasterUserID string    `json:"master_user_id"`
+			StartsAt     time.Time `json:"starts_at"`
+			EndsAt       time.Time `json:"ends_at"`
+			City         string    `json:"city"`
+			Districts    []string  `json:"districts"`
+			Badge        string    `json:"badge"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return out, nil
+	}
+	for _, it := range parsed.Items {
+		id, err := uuid.Parse(it.MasterUserID)
+		if err != nil {
+			continue
+		}
+		badge := it.Badge
+		if badge == "" {
+			badge = "Выезд в вашем районе"
+		}
+		if _, exists := out[id]; exists {
+			continue
+		}
+		out[id] = OnsiteMatch{City: it.City, Districts: it.Districts, StartsAt: it.StartsAt, EndsAt: it.EndsAt, Badge: badge}
 	}
 	return out, nil
 }
@@ -299,6 +424,9 @@ func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterPr
 	if services == nil {
 		services = []domain.ServiceItem{}
 	}
+	if err := s.attachProfessionTypes(ctx, m); err != nil {
+		return nil, nil, err
+	}
 	return m, services, nil
 }
 
@@ -309,6 +437,9 @@ func (s *Service) GetMasterByUserID(ctx context.Context, userID uuid.UUID) (*dom
 	}
 	if m == nil {
 		return nil, apperr.NotFound("master not found")
+	}
+	if err := s.attachProfessionTypes(ctx, m); err != nil {
+		return nil, err
 	}
 	return m, nil
 }
@@ -327,6 +458,9 @@ func (s *Service) GetMyMaster(ctx context.Context, userID uuid.UUID) (*domain.Ma
 	}
 	if services == nil {
 		services = []domain.ServiceItem{}
+	}
+	if err := s.attachProfessionTypes(ctx, m); err != nil {
+		return nil, nil, err
 	}
 	return m, services, nil
 }
@@ -510,6 +644,31 @@ func (s *Service) UpdateService(ctx context.Context, in UpdateServiceInput) (*do
 		return nil, apperr.Internal(err)
 	}
 	return item, nil
+}
+
+func (s *Service) ListPublishedServicesByOrg(ctx context.Context, orgID uuid.UUID) ([]domain.ServiceItem, error) {
+	items, err := s.store.ListPublishedServicesByOrg(ctx, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.ServiceItem{}
+	}
+	return items, nil
+}
+
+func (s *Service) ListMastersOfferingService(ctx context.Context, serviceID uuid.UUID) ([]domain.MasterProfile, error) {
+	if _, err := s.GetService(ctx, serviceID); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListMastersOfferingService(ctx, serviceID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.MasterProfile{}
+	}
+	return items, nil
 }
 
 func (s *Service) GetService(ctx context.Context, id uuid.UUID) (*domain.ServiceItem, error) {

@@ -19,6 +19,9 @@ import {
   supplierOrderActionLabel,
   supplierOrderLabel,
 } from '@/shared/lib/status'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { supplierOrderIsTerminal } from '@/pages/supplier-helpers'
 
 /** Commercial order machine only — physical progress lives on Delivery. */
 const nextCommercialStatus: Record<string, string> = {
@@ -47,7 +50,7 @@ export function SupplierOrdersPage() {
   const { supplierOrgId, supplierOrg, orgs } = useSupplierOrg()
   const qc = useQueryClient()
   const [scheduleDraft, setScheduleDraft] = useState<Record<string, ScheduleDraft>>({})
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
 
   const orders = useQuery({
@@ -73,7 +76,7 @@ export function SupplierOrdersPage() {
       await qc.invalidateQueries({ queryKey: ['supplier-dashboard'] })
       await qc.invalidateQueries({ queryKey: ['order-delivery'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить статус'),
+    onError: (e) => setError(e),
   })
 
   const deliveryTransition = useMutation({
@@ -88,7 +91,7 @@ export function SupplierOrdersPage() {
       await qc.invalidateQueries({ queryKey: ['order-delivery'] })
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось обновить доставку'),
+    onError: (e) => setError(e),
   })
 
   const markPaid = useMutation({
@@ -102,7 +105,7 @@ export function SupplierOrdersPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось отметить оплату'),
+    onError: (e) => setError(e),
   })
 
   const scheduleDelivery = useMutation({
@@ -133,17 +136,18 @@ export function SupplierOrdersPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['order-delivery'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось запланировать доставку'),
+    onError: (e) => setError(e),
   })
 
-  if (orgs.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
+  if (orgs.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
   if (!supplierOrgId) {
     return (
       <main className="page">
-        <div className="empty-state">
-          <h2>Сначала создайте поставщика</h2>
-          <Link className="btn btn-primary" to="/supplier">Онбординг</Link>
-        </div>
+        <EmptyState
+          title="Сначала создайте поставщика"
+          text="Онбординг откроет заказы салонов."
+          action={<Link className="btn btn-primary" to="/supplier">Онбординг</Link>}
+        />
       </main>
     )
   }
@@ -159,15 +163,17 @@ export function SupplierOrdersPage() {
         <Link className="btn btn-secondary btn-compact" to="/supplier">На главную</Link>
       </div>
 
-      {error && <div className="state-box error">{error}</div>}
-      {ok && <div className="state-box success">{ok}</div>}
-      {orders.isLoading && <div className="state-box">Загрузка…</div>}
-      {orders.isError && <div className="state-box error">Не удалось загрузить заказы</div>}
-      {orders.data && orders.data.items.length === 0 && (
-        <div className="empty-state">
-          <h2>Пока нет заказов</h2>
-          <p>Когда салоны оформят заказ, он появится здесь.</p>
+      <ErrorBanner error={error} fallbackTitle="Не удалось обновить заказ" />
+      {ok && <p className="muted" role="status">{ok}</p>}
+      {orders.isLoading && (
+        <div className="stack" aria-busy="true">
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
         </div>
+      )}
+      {orders.isError && <ErrorBanner error={orders.error} fallbackTitle="Не удалось загрузить заказы" />}
+      {orders.data && orders.data.items.length === 0 && (
+        <EmptyState title="Пока нет заказов" text="Когда салоны оформят заказ, он появится здесь." />
       )}
 
       <div className="list">
@@ -177,7 +183,7 @@ export function SupplierOrdersPage() {
           const draft = scheduleDraft[o.id] ?? { date: '', windowStart: '10:00', windowEnd: '18:00' }
           const canMarkPaid = o.payment_status && o.payment_status !== 'paid' && o.payment_status !== 'cancelled'
           return (
-            <article key={o.id} className="history-card stack-sm">
+            <article key={o.id} className={`history-card stack-sm${supplierOrderIsTerminal(o.status) ? ' is-terminal' : ''}`}>
               <div className="row between">
                 <strong>{formatMoney(o.total_minor)}</strong>
                 <span className={`badge ${statusBadgeClass(o.status)}`}>{supplierOrderLabel(o.status)}</span>

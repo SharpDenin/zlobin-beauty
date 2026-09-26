@@ -4,15 +4,22 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest, ApiError } from '@/shared/api/client'
+import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
 import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
+import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import { photoMediaIdForCreate, photoMediaIdForPatch } from '@/shared/lib/mediaPayload'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
+import { Modal } from '@/shared/ui/Modal'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { PageHeader } from '@/app/layout'
 
 type Service = {
   id: string
@@ -47,7 +54,7 @@ const schema = z.object({
   description: z.string().optional(),
   notes: z.string().optional(),
   duration_minutes: z.coerce.number().int().positive('Длительность должна быть больше 0'),
-  price_rubles: z.coerce.number().positive('Цена должна быть больше 0'),
+  price_rubles: z.coerce.number().positive('Стоимость должна быть больше 0.'),
   published: z.boolean(),
   booking_mode: z.enum(['flexible', 'fixed_window']),
 })
@@ -152,13 +159,15 @@ export function ServicesPage() {
         price_minor: Math.round(values.price_rubles * 100),
         published: values.published,
         booking_mode: values.booking_mode,
-        photo_media_id: photoMediaId,
       }
       if (id && editing) {
         return apiRequest(`/v1/services/${id}`, {
           method: 'PATCH',
           token: accessToken,
-          body: payload,
+          body: {
+            ...payload,
+            photo_media_id: photoMediaIdForPatch(photoMediaId),
+          },
         })
       }
       return apiRequest('/v1/services', {
@@ -166,6 +175,7 @@ export function ServicesPage() {
         body: {
           organization_id: orgId,
           ...payload,
+          photo_media_id: photoMediaIdForCreate(photoMediaId),
           attach_to_me: true,
         },
       })
@@ -190,7 +200,7 @@ export function ServicesPage() {
       void navigate('/services')
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Ошибка сохранения услуги'
+      const msg = userError(e, 'Не удалось сохранить услугу')
       setError(msg)
       toast.error(msg)
     },
@@ -207,7 +217,7 @@ export function ServicesPage() {
       setOk('Услуга скрыта')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось архивировать'),
+    onError: (e) => setError(userError(e, 'Не удалось архивировать услугу')),
   })
 
   const addOccurrence = useMutation({
@@ -236,7 +246,7 @@ export function ServicesPage() {
       await qc.invalidateQueries({ queryKey: ['service-occurrences-manage', id] })
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : 'Не удалось добавить сеанс'
+      const msg = userError(e, 'Не удалось добавить сеанс')
       setError(msg)
       toast.error(msg)
     },
@@ -249,7 +259,7 @@ export function ServicesPage() {
       setOk('Сеанс отменён')
       await qc.invalidateQueries({ queryKey: ['service-occurrences-manage', id] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось отменить сеанс'),
+    onError: (e) => setError(userError(e, 'Не удалось отменить сеанс')),
   })
 
   function openCreate() {
@@ -270,63 +280,74 @@ export function ServicesPage() {
 
   function closeModal() {
     setModalOpen(false)
+    setError(null)
     void navigate('/services')
   }
 
   return (
     <main className="page stack">
-      <div className="row between">
-        <div className="stack-sm">
-          <h1>Услуги <Hint id="service-duration" title="Длительность">Длительность услуги задаёт слоты в календаре. Клиент видит её на записи.</Hint></h1>
-          <p className="muted">Прайс и длительность для записи клиентов</p>
-        </div>
-        <button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>
-      </div>
+      <PageHeader
+        title="Услуги"
+        subtitle={<p className="muted">Прайс и длительность для записи</p>}
+        actions={<button className="btn btn-primary" type="button" onClick={openCreate}>Добавить</button>}
+      />
 
-      {error && <div className="state-box error">{error}</div>}
+      {!modalOpen && error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
-      {master.isLoading && <div className="state-box">Загрузка…</div>}
-      {master.isError && (
-        <div className="empty-state">
-          <h2>Профиль ещё не готов</h2>
-          <p>Создайте профиль мастера, затем добавьте услуги.</p>
-          <Link className="btn btn-primary" to="/master">Открыть кабинет</Link>
+      {master.isLoading && (
+        <div className="cards-grid services">
+          <div className="skeleton skeleton-card" />
+          <div className="skeleton skeleton-card" />
         </div>
       )}
+      {master.isError && (
+        <EmptyState
+          title="Профиль ещё не готов"
+          text="Создайте профиль мастера, затем добавьте услуги."
+          action={<Link className="btn btn-primary" to="/master">Открыть кабинет</Link>}
+        />
+      )}
       {!master.isLoading && !master.isError && services.length === 0 && (
-        <div className="empty-state">
-          <h2>Услуг пока нет</h2>
-          <p>Добавьте первую услугу — клиенты увидят её на вашей странице.</p>
-          <button className="btn btn-primary" type="button" onClick={openCreate}>Создать услугу</button>
-        </div>
+        <EmptyState
+          title="Услуг пока нет"
+          text="Первая услуга появится на вашей странице для клиентов."
+          action={<button className="btn btn-primary" type="button" onClick={openCreate}>Создать услугу</button>}
+        />
       )}
 
       <div className="cards-grid services">
         {services.map((s) => {
           const state = s.archived_at ? 'archived' : s.published ? 'active' : 'inactive'
           return (
-            <article key={s.id} className="service-card">
-              <div className="row between">
-                <strong>{s.name}</strong>
-                <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
-              </div>
-              <p className="muted">{s.category} · {s.duration_minutes} мин · {bookingModeLabel(s.booking_mode)}</p>
-              {s.description && <p>{s.description}</p>}
-              <div className="row between">
-                <strong>{s.price_display || formatMoney(s.price_minor)}</strong>
-                <div className="row">
-                  <Link className="btn btn-secondary btn-compact" to={`/services/${s.id}`}>Изменить</Link>
-                  {s.published && !s.archived_at && (
-                    <button
-                      className="btn btn-ghost btn-compact"
-                      type="button"
-                      disabled={archive.isPending}
-                      onClick={() => archive.mutate(s.id)}
-                    >
-                      В архив
-                    </button>
-                  )}
+            <article key={s.id} className="service-card service-card--media">
+              <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
+              <div className="service-card-body">
+                <div className="row between">
+                  <strong>{s.name}</strong>
+                  <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
+                </div>
+                <div className="service-card-meta">
+                  <span className="chip">{s.category}</span>
+                  <span className="chip">{s.duration_minutes} мин</span>
+                  <span className="chip">{bookingModeLabel(s.booking_mode)}</span>
+                </div>
+                {s.description ? <p className="muted">{s.description}</p> : null}
+                <div className="row between">
+                  <strong className="service-card-price">{s.price_display || formatMoney(s.price_minor)}</strong>
+                  <div className="row">
+                    <Link className="btn btn-secondary btn-compact" to={`/services/${s.id}`}>Изменить</Link>
+                    {s.published && !s.archived_at && (
+                      <button
+                        className="btn btn-ghost btn-compact"
+                        type="button"
+                        disabled={archive.isPending}
+                        onClick={() => archive.mutate(s.id)}
+                      >
+                        В архив
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </article>
@@ -334,21 +355,21 @@ export function ServicesPage() {
         })}
       </div>
 
-      {modalOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeModal}>
-          <div className="modal-sheet stack" onClick={(e) => e.stopPropagation()}>
-            <div className="row between">
-              <h2>{editing ? 'Редактировать услугу' : 'Новая услуга'}</h2>
-              <button className="btn btn-secondary btn-compact" type="button" onClick={closeModal}>Закрыть</button>
-            </div>
+      <Modal
+        open={modalOpen}
+        onClose={closeModal}
+        title={editing ? 'Редактировать услугу' : 'Новая услуга'}
+        size="lg"
+      >
             <form className="stack" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
+              {error && <ErrorBanner error={error} />}
               <div className="field">
-                <label>Фото услуги</label>
+                <label>Фото услуги (необязательно)</label>
                 <MediaDropzone
-                  purpose="portfolio"
+                  purpose="service"
                   value={photoMediaId}
                   onChange={setPhotoMediaId}
-                  label="Фото услуги"
+                  label="Загрузить фото — можно пропустить"
                 />
               </div>
               <div className="field">
@@ -377,12 +398,14 @@ export function ServicesPage() {
               </div>
               <div className="row">
                 <div className="field" style={{ flex: 1 }}>
-                  <label>Длительность, мин</label>
-                  <input type="number" {...form.register('duration_minutes')} />
+                  <label>Длительность, мин <Hint id="service-duration" title="Длительность">Длительность задаёт слоты в календаре.</Hint></label>
+                  <input type="number" aria-invalid={Boolean(form.formState.errors.duration_minutes)} {...form.register('duration_minutes')} />
+                  {form.formState.errors.duration_minutes && <span className="error">{form.formState.errors.duration_minutes.message}</span>}
                 </div>
                 <div className="field" style={{ flex: 1 }}>
-                  <label>Цена, ₽</label>
-                  <input type="number" {...form.register('price_rubles')} />
+                  <label>Стоимость, ₽</label>
+                  <input type="number" aria-invalid={Boolean(form.formState.errors.price_rubles)} {...form.register('price_rubles')} />
+                  {form.formState.errors.price_rubles && <span className="error">{form.formState.errors.price_rubles.message}</span>}
                 </div>
               </div>
               <label className="field-check">
@@ -453,9 +476,7 @@ export function ServicesPage() {
                 </button>
               </section>
             )}
-          </div>
-        </div>
-      )}
+      </Modal>
     </main>
   )
 }

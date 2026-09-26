@@ -6,6 +6,25 @@ import (
 	"github.com/google/uuid"
 )
 
+type ProfessionType struct {
+	ID        uuid.UUID
+	Slug      string
+	Name      string
+	IsActive  bool
+	LockedAt  *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type MasterProfileType struct {
+	ID               uuid.UUID
+	MasterUserID     uuid.UUID
+	ProfessionTypeID uuid.UUID
+	LockedAt         *time.Time
+	CreatedAt        time.Time
+	Type             ProfessionType
+}
+
 type MasterProfile struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID
@@ -24,6 +43,7 @@ type MasterProfile struct {
 	Published       bool
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	ProfessionTypes []ProfessionType
 }
 
 type ServiceCategory struct {
@@ -122,4 +142,8 @@ type KnowledgeArticle struct {
 	ArchivedAt         *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	// Computed from linked product.audience; not stored.
+	HomeCare     bool
+	Professional bool
+	AudienceKind string
 }

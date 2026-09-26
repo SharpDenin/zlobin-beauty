@@ -3,12 +3,18 @@ import { useParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { apiRequest, ApiError } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { useState } from 'react'
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
+import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
+import { Modal } from '@/shared/ui/Modal'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { userError, formatUserError } from '@/shared/lib/app-error'
+import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type ClientCard = {
   id: string
@@ -31,14 +37,25 @@ type Visit = {
 
 type Formula = {
   id: string
-  name: string
-  brand: string
-  oxidizer: string
-  ratio: string
-  comment: string
+  name?: string
+  brand?: string
+  oxidizer?: string
+  ratio?: string
+  comment?: string
   created_at: string
+  redacted?: boolean
+  omit_formula?: boolean
   components?: Array<{ label?: string; amount?: string } | string>
 }
+
+const DISPUTE_FIELDS = [
+  { key: 'hair_color', label: 'Цвет волос' },
+  { key: 'hair_condition', label: 'Состояние волос' },
+  { key: 'preferences', label: 'Предпочтения' },
+  { key: 'display_name', label: 'Имя' },
+  { key: 'phone', label: 'Телефон' },
+  { key: 'email', label: 'Email' },
+] as const
 
 const noteSchema = z.object({
   visit_id: z.string().min(1, 'Выберите визит'),
@@ -65,10 +82,15 @@ function formulaComponents(f: Formula): string[] {
 export function ClientCardPage() {
   const { id, appointmentId } = useParams()
   const { accessToken, user } = useAuth()
+  const messenger = useMessenger()
   const canMaster = hasMasterAccess(user)
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [disputeOpen, setDisputeOpen] = useState(false)
+  const [disputeField, setDisputeField] = useState<(typeof DISPUTE_FIELDS)[number]['key']>('preferences')
+  const [disputeComment, setDisputeComment] = useState('')
+  const [disputeDone, setDisputeDone] = useState(false)
 
   const cardQuery = useQuery({
     queryKey: ['client', id, appointmentId],
@@ -94,6 +116,14 @@ export function ClientCardPage() {
     queryFn: () => apiRequest<{ items: Formula[] }>(`/v1/clients/id/${cardId}/formulas`, { token: accessToken }),
     enabled: Boolean(cardId && accessToken),
   })
+  const subscription = useQuery({
+    queryKey: ['me-subscription'],
+    queryFn: () =>
+      apiRequest<{ effective_plan: string }>('/v1/me/subscription', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+  const isPremium = subscription.data?.effective_plan === 'premium'
+  const [omitFormula, setOmitFormula] = useState(false)
   const autoConfirm = useQuery({
     queryKey: ['client-auto-confirm', clientUserId],
     queryFn: () =>
@@ -122,7 +152,7 @@ export function ClientCardPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось сохранить')),
   })
 
   const unblock = useMutation({
@@ -137,7 +167,7 @@ export function ClientCardPage() {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-blacklist', clientUserId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось разблокировать'),
+    onError: (e) => setError(formatUserError(e, 'Не удалось разблокировать')),
   })
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
@@ -151,7 +181,7 @@ export function ClientCardPage() {
       setError(null)
       noteForm.reset()
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка заметки'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка заметки')),
   })
 
   const saveFormula = useMutation({
@@ -165,20 +195,48 @@ export function ClientCardPage() {
           oxidizer: v.oxidizer ?? '',
           ratio: v.ratio ?? '',
           comment: v.comment ?? '',
+          omit_formula: isPremium && omitFormula,
         },
       }),
     onSuccess: async () => {
       setOk('Состав сохранён')
       setError(null)
       formulaForm.reset()
+      setOmitFormula(false)
       await qc.invalidateQueries({ queryKey: ['client-formulas', cardId] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ошибка состава'),
+    onError: (e) => setError(formatUserError(e, 'Ошибка состава')),
+  })
+
+  const submitDispute = useMutation({
+    mutationFn: () =>
+      apiRequest<{ dispute: { id: string; field_key: string; status: string }; already_open?: boolean }>(
+        `/v1/clients/id/${cardId}/disputes`,
+        { token: accessToken, body: { field_key: disputeField, comment: disputeComment } },
+      ),
+    onSuccess: async (res) => {
+      setError(null)
+      setDisputeDone(true)
+      setOk(Boolean(res.already_open) ? 'Несоответствие уже зарегистрировано' : 'Несоответствие зафиксировано')
+      await qc.invalidateQueries({ queryKey: ['client', id, appointmentId] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось зафиксировать несоответствие')),
   })
 
   if (cardQuery.isLoading) return <div className="page state-box">Загрузка карточки…</div>
-  if (cardQuery.isError || !cardQuery.data) {
-    return <div className="page state-box error">Карточка клиента недоступна. Завершите визит, чтобы она появилась.</div>
+  if (cardQuery.isError) {
+    return (
+      <main className="page">
+        <ErrorBanner error={cardQuery.error} fallbackTitle="Не удалось открыть карточку клиента" />
+      </main>
+    )
+  }
+  if (!cardQuery.data) {
+    return (
+      <main className="page">
+        <EmptyState title="Карточка недоступна" text="Завершите визит, чтобы карточка клиента появилась." />
+      </main>
+    )
   }
 
   const card = cardQuery.data
@@ -193,11 +251,36 @@ export function ClientCardPage() {
           ) : (
             <p data-testid="client-contacts">{card.phone || card.email || 'Контакты не указаны'}</p>
           )}
-          {card.preferences && <p className="muted">Предпочтения: {card.preferences}</p>}
+          {card.preferences && <p className="muted" data-testid="client-preferences">Предпочтения: {card.preferences}</p>}
+          <button
+            className="btn btn-secondary"
+            type="button"
+            data-testid="write-client"
+            onClick={async () => {
+              try {
+                await messenger.start({ type: 'client_master', client_user_id: card.user_id })
+              } catch (e) {
+                setError(userError(e, 'Не удалось открыть переписку'))
+              }
+            }}
+          >
+            Написать
+          </button>
+          <button
+            className="btn btn-secondary"
+            type="button"
+            data-testid="dispute-open"
+            onClick={() => {
+              setDisputeOpen(true)
+              setDisputeDone(false)
+            }}
+          >
+            Не соответствует действительности
+          </button>
         </div>
       </section>
 
-      {error && <div className="state-box error">{error}</div>}
+      {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
       {canMaster && (
@@ -257,6 +340,10 @@ export function ClientCardPage() {
         </div>
       </section>
 
+      {canMaster && clientUserId && (
+        <RepeatOffer clientUserId={clientUserId} token={accessToken} />
+      )}
+
       <section className="card stack">
         <h2>Заметка</h2>
         <form className="stack" onSubmit={noteForm.handleSubmit((v) => saveNote.mutate(v))}>
@@ -286,9 +373,16 @@ export function ClientCardPage() {
         )}
         <div className="list">
           {formulas.data?.items.map((f) => {
+            if (f.redacted) {
+              return (
+                <article key={f.id} className="formula-card" data-testid="formula-redacted">
+                  <p className="muted">Состав скрыт</p>
+                </article>
+              )
+            }
             const comps = formulaComponents(f)
             return (
-              <article key={f.id} className="formula-card">
+              <article key={f.id} className="formula-card" data-testid="formula-visible">
                 <div className="row between">
                   <strong>{f.name}</strong>
                   <span className="muted">{new Date(f.created_at).toLocaleDateString('ru-RU')}</span>
@@ -312,9 +406,68 @@ export function ClientCardPage() {
           <div className="field"><label>Окислитель</label><input {...formulaForm.register('oxidizer')} /></div>
           <div className="field"><label>Пропорция</label><input {...formulaForm.register('ratio')} placeholder="1:2" /></div>
           <div className="field"><label>Комментарий</label><textarea {...formulaForm.register('comment')} /></div>
+          {isPremium && (
+            <label className="field-check">
+              <input
+                type="checkbox"
+                data-testid="omit-formula"
+                checked={omitFormula}
+                onChange={(e) => setOmitFormula(e.target.checked)}
+              />
+              <span>Не указывать формулу</span>
+            </label>
+          )}
           <button className="btn btn-primary btn-block" type="submit" disabled={saveFormula.isPending}>Сохранить состав</button>
         </form>
       </section>
+
+      <Modal
+        open={disputeOpen}
+        onClose={() => setDisputeOpen(false)}
+        title="Не соответствует действительности"
+      >
+            {disputeDone ? (
+              <div className="state-box success" data-testid="dispute-success">
+                {ok || 'Несоответствие зафиксировано'}
+              </div>
+            ) : (
+              <>
+                <p className="muted">Исходные данные клиента не изменятся. Будет зафиксирован спор.</p>
+                <div className="field">
+                  <label htmlFor="dispute-field">Спорное поле</label>
+                  <select
+                    id="dispute-field"
+                    data-testid="dispute-field"
+                    value={disputeField}
+                    onChange={(e) => setDisputeField(e.target.value as typeof disputeField)}
+                  >
+                    {DISPUTE_FIELDS.map((f) => (
+                      <option key={f.key} value={f.key}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="dispute-comment">Комментарий</label>
+                  <textarea
+                    id="dispute-comment"
+                    data-testid="dispute-comment"
+                    value={disputeComment}
+                    onChange={(e) => setDisputeComment(e.target.value)}
+                    placeholder="Что именно неверно"
+                  />
+                </div>
+                <button
+                  className="btn btn-primary btn-block"
+                  type="button"
+                  data-testid="dispute-submit"
+                  disabled={submitDispute.isPending}
+                  onClick={() => submitDispute.mutate()}
+                >
+                  Отправить
+                </button>
+              </>
+            )}
+      </Modal>
     </main>
   )
 }

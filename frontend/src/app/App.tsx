@@ -26,6 +26,29 @@ import { SalonPickupPage } from '@/pages/SalonPickupPage'
 import { SupplierClientOrdersPage } from '@/pages/SupplierClientOrdersPage'
 import { RepPage } from '@/pages/RepPage'
 import { AdminCatalogsPage } from '@/pages/AdminCatalogsPage'
+import { AdminDashboardPage } from '@/features/admin/AdminDashboardPage'
+import { AdminUserDetailPage, AdminUsersPage } from '@/features/admin/AdminUsersPage'
+import {
+  AdminAppointmentDetailPage,
+  AdminAppointmentsPage,
+  AdminAuditPage,
+  AdminDisputeDetailPage,
+  AdminDisputesPage,
+  AdminKnowledgeDetailPage,
+  AdminKnowledgePage,
+  AdminMasterDetailPage,
+  AdminMastersPage,
+  AdminOrderDetailPage,
+  AdminOrdersPage,
+  AdminOrganizationDetailPage,
+  AdminOrganizationsPage,
+  AdminProductDetailPage,
+  AdminProductsPage,
+  AdminServiceDetailPage,
+  AdminServicesPage,
+  AdminSupplierDetailPage,
+  AdminSuppliersPage,
+} from '@/features/admin/AdminResources'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { CosmeticsPage } from '@/pages/CosmeticsPage'
 import { CosmeticsSupplierPage } from '@/pages/CosmeticsSupplierPage'
@@ -41,8 +64,17 @@ import { SupplierRepDetailPage } from '@/pages/SupplierRepDetailPage'
 import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
 import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
+import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
+import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
+import { MessagesPage } from '@/pages/MessagesPage'
+import { MasterclassCreatePage, MasterclassDetailPage, MasterclassListPage } from '@/pages/MasterclassPages'
+import { ModelRequestCreatePage, ModelRequestDetailPage, ModelsPage } from '@/pages/ModelPages'
+import { MasterInventoryPage, MasterReceiptsPage } from '@/pages/MasterInventoryPage'
+import { ErrorBoundary } from '@/shared/ui/ErrorBoundary'
 import { ToastProvider } from '@/shared/ui/Toast'
+import { PwaProvider } from '@/features/pwa/PwaProvider'
+import { PageLoading } from '@/shared/ui/PageLoading'
 import type { ReactNode } from 'react'
 
 const queryClient = new QueryClient({
@@ -53,7 +85,7 @@ const queryClient = new QueryClient({
 
 function PublicOnly({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading label="Загрузка сессии" />
   if (user) return <Navigate to={homePathForUser(user)} replace />
   return children
 }
@@ -71,8 +103,10 @@ function LoginRoute() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
+        <PwaProvider>
         <CabinetProvider>
         <BrowserRouter>
           <Routes>
@@ -88,6 +122,10 @@ export function App() {
                 <Route path="/clients/by-appointment/:appointmentId" element={<ClientCardPage />} />
                 <Route path="/clients/:id" element={<ClientCardPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
+                <Route path="/messages" element={<MessagesPage />} />
+                <Route path="/messages/:id" element={<MessagesPage />} />
+                <Route path="/models" element={<ModelsPage />} />
+                <Route path="/models/:id" element={<ModelRequestDetailPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/subscription" element={<SubscriptionPage />} />
                 <Route path="/shop" element={<ShopPage />} />
@@ -110,10 +148,38 @@ export function App() {
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/warehouse" element={<WarehousePage />} />
                 <Route element={<RequireAdmin />}>
+                  <Route path="/admin" element={<AdminDashboardPage />} />
+                  <Route path="/admin/users" element={<AdminUsersPage />} />
+                  <Route path="/admin/users/:id" element={<AdminUserDetailPage />} />
+                  <Route path="/admin/organizations" element={<AdminOrganizationsPage />} />
+                  <Route path="/admin/organizations/:id" element={<AdminOrganizationDetailPage />} />
+                  <Route path="/admin/masters" element={<AdminMastersPage />} />
+                  <Route path="/admin/masters/:id" element={<AdminMasterDetailPage />} />
+                  <Route path="/admin/suppliers" element={<AdminSuppliersPage />} />
+                  <Route path="/admin/suppliers/:id" element={<AdminSupplierDetailPage />} />
+                  <Route path="/admin/products" element={<AdminProductsPage />} />
+                  <Route path="/admin/products/:id" element={<AdminProductDetailPage />} />
+                  <Route path="/admin/services" element={<AdminServicesPage />} />
+                  <Route path="/admin/services/:id" element={<AdminServiceDetailPage />} />
+                  <Route path="/admin/knowledge" element={<AdminKnowledgePage />} />
+                  <Route path="/admin/knowledge/:id" element={<AdminKnowledgeDetailPage />} />
+                  <Route path="/admin/appointments" element={<AdminAppointmentsPage />} />
+                  <Route path="/admin/appointments/:id" element={<AdminAppointmentDetailPage />} />
+                  <Route path="/admin/orders" element={<AdminOrdersPage />} />
+                  <Route path="/admin/orders/:id" element={<AdminOrderDetailPage />} />
+                  <Route path="/admin/disputes" element={<AdminDisputesPage />} />
+                  <Route path="/admin/disputes/:id" element={<AdminDisputeDetailPage />} />
+                  <Route path="/admin/audit" element={<AdminAuditPage />} />
                   <Route path="/admin/catalogs" element={<AdminCatalogsPage />} />
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
+                  <Route path="/masterclasses" element={<MasterclassListPage />} />
+                  <Route path="/masterclasses/new" element={<MasterclassCreatePage />} />
+                  <Route path="/masterclasses/:id" element={<MasterclassDetailPage />} />
+                  <Route path="/models/new" element={<ModelRequestCreatePage />} />
+                  <Route path="/schedule" element={<WorkSchedulePage />} />
+                  <Route path="/chairs" element={<ChairMarketplacePage />} />
                   <Route path="/clients" element={<ClientsPage />} />
                   <Route path="/services" element={<ServicesPage />} />
                   <Route path="/services/:id" element={<ServicesPage />} />
@@ -122,6 +188,10 @@ export function App() {
                   <Route path="/cosmetics/recurring" element={<RecurringPage />} />
                   <Route path="/cosmetics/products/:productId" element={<CosmeticsProductPage />} />
                   <Route path="/cosmetics/:supplierId" element={<CosmeticsSupplierPage />} />
+                  <Route path="/inventory/receipts/:orderId" element={<MasterReceiptsPage />} />
+                  <Route path="/inventory/receipts" element={<MasterReceiptsPage />} />
+                  <Route path="/inventory/:productId" element={<MasterInventoryPage />} />
+                  <Route path="/inventory" element={<MasterInventoryPage />} />
                   <Route path="/pickup-orders" element={<SalonPickupPage />} />
                   <Route element={<RequireCabinetFeature feature="staff" />}>
                     <Route path="/staff" element={<StaffPage />} />
@@ -151,8 +221,10 @@ export function App() {
           </Routes>
         </BrowserRouter>
         </CabinetProvider>
+        </PwaProvider>
         </ToastProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </QueryClientProvider>
   )
 }

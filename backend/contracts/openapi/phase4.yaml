@@ -1,0 +1,392 @@
+openapi: 3.0.3
+info:
+  title: Salon-X Phase 4 APIs
+  version: 0.4.0
+  description: Messenger, masterclass marketplace, and model marketplace. Bearer JWT unless noted.
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: Messenger
+  - name: Masterclasses
+  - name: Models
+paths:
+  /v1/conversations:
+    get:
+      tags: [Messenger]
+      summary: List conversations for the current user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 100 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Conversation list with last message and unread_count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Conversation" }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Messenger]
+      summary: Find or create a conversation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateConversation" }
+      responses:
+        "201":
+          description: Existing or new conversation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}:
+    get:
+      tags: [Messenger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}/messages:
+    get:
+      tags: [Messenger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 100 }
+        - in: query
+          name: before
+          schema: { type: string, format: date-time }
+          description: Cursor — return messages older than this timestamp
+      responses:
+        "200":
+          description: Chronological page of messages (oldest first in the page)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Message" }
+                  limit: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [Messenger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 4000 }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}/read:
+    post:
+      tags: [Messenger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: last_read_at updated }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/masterclasses:
+    get:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: mine
+          schema: { type: string, enum: ["1", "true"] }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Published afisha unless mine=1. relevant is computed by the backend.
+    post:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MasterclassWrite" }
+      responses:
+        "201": { description: Draft created }
+  /v1/masterclasses/{id}:
+    get:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Event details including available_seats and relevant }
+    patch:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Draft updated }
+  /v1/masterclasses/{id}/publish:
+    post:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Status published }
+  /v1/masterclasses/{id}/register:
+    post:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "201": { description: Auto-confirmed registration }
+        "409": { description: Duplicate or no seats }
+  /v1/masterclass-interests:
+    get:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Current master's interests }
+    post:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, city, date_from, date_to]
+              properties:
+                category: { type: string }
+                city: { type: string }
+                location_note: { type: string }
+                date_from: { type: string, format: date }
+                date_to: { type: string, format: date }
+      responses:
+        "201": { description: Interest stored }
+  /v1/masterclass-registrations/{id}/cancel:
+    post:
+      tags: [Masterclasses]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "204": { description: Cancelled }
+  /v1/me/model-preferences:
+    get:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Own model preferences }
+    patch:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                willing: { type: boolean }
+                notify: { type: boolean }
+                categories:
+                  type: array
+                  items: { type: string }
+                city: { type: string }
+                date_from: { type: string, format: date }
+                date_to: { type: string, format: date }
+      responses:
+        "200": { description: Updated preferences }
+  /v1/model-requests:
+    get:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: mine
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: offset
+          schema: { type: integer }
+      responses:
+        "200": { description: Published requests unless mine=1 }
+    post:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelRequestWrite" }
+      responses:
+        "201": { description: Draft created }
+  /v1/model-requests/{id}:
+    get:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Request details }
+    patch:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Draft updated }
+  /v1/model-requests/{id}/publish:
+    post:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Published; matching clients with notify=true receive a notification }
+  /v1/model-requests/{id}/respond:
+    post:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "201": { description: Open response created }
+        "409": { description: Duplicate open response }
+  /v1/model-responses/{id}/accept:
+    post:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Slot booked; request closes when capacity is reached }
+  /v1/model-responses/{id}/cancel:
+    post:
+      tags: [Models]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "204": { description: Open response cancelled }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ID:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Error:
+      description: API error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+  schemas:
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, enum: [validation_error, unauthorized, forbidden, not_found, conflict, internal_error] }
+            message: { type: string }
+            request_id: { type: string }
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [client_master, master_supplier, masterclass, model_request] }
+        peer_name: { type: string, description: Display name only; phone/email are not exposed }
+        unread_count: { type: integer }
+        last_message: { $ref: "#/components/schemas/Message" }
+        participants:
+          type: array
+          items:
+            type: object
+            properties:
+              user_id: { type: string }
+              role: { type: string }
+              display_name: { type: string }
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        sender_user_id: { type: string, format: uuid }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+    CreateConversation:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string }
+        master_user_id: { type: string, format: uuid }
+        supplier_organization_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        peer_user_id: { type: string, format: uuid }
+    MasterclassWrite:
+      type: object
+      required: [title, category, city, starts_at, ends_at, capacity]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        category: { type: string }
+        city: { type: string }
+        location_note: { type: string }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        timezone: { type: string }
+        capacity: { type: integer, minimum: 1 }
+    ModelRequestWrite:
+      type: object
+      required: [title, category, city, starts_at, ends_at, capacity]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        category: { type: string }
+        city: { type: string }
+        location_note: { type: string }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        timezone: { type: string }
+        capacity: { type: integer, minimum: 1 }

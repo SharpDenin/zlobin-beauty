@@ -15,6 +15,28 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/routing"
 )
 
+func (s *Service) ListOrgMembersInternal(ctx context.Context, orgID uuid.UUID, role string) ([]domain.Membership, error) {
+	if _, err := s.GetOrg(ctx, orgID); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListMembershipsByOrg(ctx, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	role = strings.TrimSpace(role)
+	out := make([]domain.Membership, 0, len(items))
+	for _, m := range items {
+		if m.Status != "active" {
+			continue
+		}
+		if role != "" && m.Role != role {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
 func (s *Service) ListStaff(ctx context.Context, orgID, actor uuid.UUID) ([]domain.Membership, error) {
 	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
 		return nil, err

@@ -1,18 +1,22 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { JSONContent } from '@tiptap/react'
-import { ApiError, apiRequest } from '@/shared/api/client'
+import { apiRequest } from '@/shared/api/client'
 import { hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
 import { useSupplierOrg } from '@/shared/lib/commerce'
 import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
+import { knowledgeCoverClearValue, parseKnowledgeDoc, productAudienceLabel } from '@/pages/knowledge-helpers'
 import type { KnowledgeArticle } from '@/features/knowledge/types'
 import { emptyDoc, estimateReadingMinutes, docHasText, RichDocEditor } from '@/shared/ui/RichDocEditor'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
+import { Modal } from '@/shared/ui/Modal'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 
-type SupplierProduct = { id: string; brand?: string; name: string; category?: string }
+type SupplierProduct = { id: string; brand?: string; name: string; category?: string; audience?: string }
 type ProductCategory = { id: string; name: string }
 
 type Draft = {
@@ -37,25 +41,6 @@ const emptyDraft = (): Draft => ({
   categoryIds: [],
 })
 
-function parseDoc(content?: string, format?: string): JSONContent {
-  if ((format || 'plain') === 'doc_json' && content) {
-    try {
-      const parsed = JSON.parse(content) as JSONContent
-      if (parsed?.type === 'doc') return parsed
-    } catch {
-      /* fall through */
-    }
-  }
-  if (!content?.trim()) return emptyDoc()
-  return {
-    type: 'doc',
-    content: content.split(/\n+/).map((line) => ({
-      type: 'paragraph',
-      content: line ? [{ type: 'text', text: line }] : [],
-    })),
-  }
-}
-
 export function KnowledgeEditorPage() {
   const { id } = useParams()
   const isNew = !id
@@ -64,10 +49,13 @@ export function KnowledgeEditorPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [draft, setDraft] = useState<Draft>(emptyDraft())
-  const [error, setError] = useState<string | null>(null)
+  const [hydrated, setHydrated] = useState(isNew)
+  const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [preview, setPreview] = useState(false)
   const [productQ, setProductQ] = useState('')
+  const [confirmArchive, setConfirmArchive] = useState(false)
+  const hydratedForId = useRef<string | null>(null)
 
   const existing = useQuery({
     queryKey: ['knowledge', id],
@@ -76,18 +64,27 @@ export function KnowledgeEditorPage() {
   })
 
   useEffect(() => {
+    hydratedForId.current = null
+    setHydrated(isNew)
+    if (isNew) setDraft(emptyDraft())
+  }, [id, isNew])
+
+  useEffect(() => {
     if (!existing.data) return
+    if (hydratedForId.current === existing.data.id) return
     const a = existing.data
     setDraft({
       title: a.title,
       category: a.category,
       brand: a.brand ?? '',
-      doc: parseDoc(a.content, a.content_format),
+      doc: parseKnowledgeDoc(a.content, a.content_format),
       coverMediaId: a.cover_media_id ?? null,
       status: (a.status as Draft['status']) || (a.published ? 'published' : 'draft'),
       productIds: a.product_ids ?? (a.product_id ? [a.product_id] : []),
       categoryIds: a.category_ids ?? [],
     })
+    hydratedForId.current = a.id
+    setHydrated(true)
   }, [existing.data])
 
   const products = useQuery({
@@ -128,7 +125,7 @@ export function KnowledgeEditorPage() {
         brand: draft.brand.trim(),
         content: JSON.stringify(draft.doc),
         content_format: 'doc_json',
-        cover_media_id: draft.coverMediaId,
+        cover_media_id: knowledgeCoverClearValue(draft.coverMediaId),
         reading_time_minutes: estimateReadingMinutes(draft.doc),
         author_name: user?.display_name ?? '',
         organization_id: supplierOrgId,
@@ -150,7 +147,7 @@ export function KnowledgeEditorPage() {
       await qc.invalidateQueries({ queryKey: ['knowledge', item.id] })
       if (!id) navigate(`/knowledge/${item.id}/edit`, { replace: true })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось сохранить'),
+    onError: (e) => setError(e),
   })
 
   const setStatus = useMutation({
@@ -163,41 +160,59 @@ export function KnowledgeEditorPage() {
       setDraft((d) => ({ ...d, status: (item.status as Draft['status']) || 'draft' }))
       await qc.invalidateQueries({ queryKey: ['knowledge-mine'] })
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Не удалось изменить статус'),
+    onError: (e) => setError(e),
   })
 
   if (!hasSupplierAccess(user)) {
     return (
       <main className="page stack">
-        <div className="state-box error">Редактор доступен только поставщику</div>
-        <Link className="btn btn-secondary" to="/knowledge">К базе знаний</Link>
+        <ErrorBanner error="Редактор доступен только поставщику" />
+        <EmptyState
+          title="Нет доступа"
+          text="Материалы редактирует поставщик, которому принадлежит статья."
+          action={<Link className="btn btn-secondary" to="/knowledge">К базе знаний</Link>}
+        />
       </main>
     )
   }
 
-  if (!isNew && existing.isLoading) return <main className="page"><div className="state-box">Загрузка…</div></main>
   if (!isNew && existing.isError) {
     return (
       <main className="page stack">
-        <div className="state-box error">Материал не найден или нет доступа</div>
-        <Link className="btn btn-secondary" to="/knowledge">Назад</Link>
+        <ErrorBanner error={existing.error} fallbackTitle="Материал не найден" />
+        <EmptyState
+          title="Материал не найден"
+          text="Нет доступа или статья удалена."
+          action={<Link className="btn btn-secondary" to="/knowledge">Назад</Link>}
+        />
+      </main>
+    )
+  }
+  if (!isNew && (existing.isLoading || !hydrated)) {
+    return (
+      <main className="page stack kb-editor" aria-busy="true">
+        <div className="skeleton skeleton-line" />
+        <div className="skeleton skeleton-card" />
       </main>
     )
   }
 
   const canSave = draft.title.trim().length >= 2 && docHasText(draft.doc)
   const reading = estimateReadingMinutes(draft.doc)
+  const linkedProducts = draft.productIds
+    .map((pid) => productItems.find((x) => x.id === pid))
+    .filter(Boolean) as SupplierProduct[]
 
   if (preview) {
     return (
       <main className="page stack kb-article">
-        <div className="row">
+        <div className="row wrap">
           <button className="btn btn-secondary" type="button" onClick={() => setPreview(false)}>К редактору</button>
           <span className={`badge ${statusBadgeClass(draft.status)}`}>{productStateLabel(draft.status)}</span>
         </div>
         <article className="kb-article-column stack">
           <h1>{draft.title || 'Без названия'}</h1>
-          <p className="muted">{[draft.brand, draft.category, reading ? `${reading} мин` : null].filter(Boolean).join(' · ')}</p>
+          <p className="muted">{[user?.display_name, draft.brand, draft.category, reading ? `${reading} мин` : null].filter(Boolean).join(' · ')}</p>
           <RichDocRenderer content={JSON.stringify(draft.doc)} contentFormat="doc_json" token={accessToken} />
         </article>
       </main>
@@ -205,117 +220,185 @@ export function KnowledgeEditorPage() {
   }
 
   return (
-    <main className="page stack kb-editor">
-      <div className="row between">
+    <main className="page stack kb-editor" data-testid="kb-editor">
+      <div className="row between wrap">
         <div>
           <h1>{isNew ? 'Новый материал' : 'Редактирование'}</h1>
-          <p className="muted">CMS для инструкций, технологий и рекомендаций.</p>
+          <p className="muted">Инструкции, технологии и рекомендации к товарам каталога.</p>
         </div>
         <Link className="btn btn-ghost" to="/knowledge">К списку</Link>
       </div>
-      {error && <div className="state-box error">{error}</div>}
-      {ok && <div className="state-box success">{ok}</div>}
+      <ErrorBanner error={error} fallbackTitle="Не удалось сохранить материал" />
+      {ok && <p className="muted" role="status">{ok}</p>}
 
-      <section className="card stack">
-        <h2>Основное</h2>
-        <div className="field">
-          <label htmlFor="kb-title">Заголовок</label>
-          <input id="kb-title" value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} />
-        </div>
-        <div className="filters-grid">
+      <div className="kb-editor-layout">
+        <section className="card stack kb-ed-title">
+          <h2>Заголовок</h2>
           <div className="field">
-            <label htmlFor="kb-cat">Категория материала</label>
-            <input id="kb-cat" list="kb-cat-list" value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} placeholder="Колористика, Уход…" />
-            <datalist id="kb-cat-list">
-              {['Колористика', 'Уход', 'Стайлинг', 'Продукция', 'Процедуры', 'Салон'].map((c) => <option key={c} value={c} />)}
-            </datalist>
+            <label htmlFor="kb-title">Название статьи</label>
+            <input
+              id="kb-title"
+              value={draft.title}
+              onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              aria-invalid={draft.title.trim().length > 0 && draft.title.trim().length < 2}
+            />
+            {draft.title.trim().length > 0 && draft.title.trim().length < 2 && (
+              <span className="error">Укажите заголовок не короче двух символов.</span>
+            )}
           </div>
-          <div className="field">
-            <label htmlFor="kb-brand">Бренд</label>
-            <input id="kb-brand" list="kb-brand-list" value={draft.brand} onChange={(e) => setDraft((d) => ({ ...d, brand: e.target.value }))} placeholder="Из каталога товаров" />
-            <datalist id="kb-brand-list">
-              {brands.map((b) => <option key={b} value={b} />)}
-            </datalist>
+          <div className="kb-editor-meta">
+            <div className="field">
+              <label htmlFor="kb-cat">Категория материала</label>
+              <input id="kb-cat" list="kb-cat-list" value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} placeholder="Колористика, Уход…" />
+              <datalist id="kb-cat-list">
+                {['Колористика', 'Уход', 'Стайлинг', 'Продукция', 'Процедуры', 'Салон'].map((c) => <option key={c} value={c} />)}
+              </datalist>
+            </div>
+            <div className="field">
+              <label htmlFor="kb-brand">Бренд</label>
+              <input id="kb-brand" list="kb-brand-list" value={draft.brand} onChange={(e) => setDraft((d) => ({ ...d, brand: e.target.value }))} placeholder="Из каталога товаров" />
+              <datalist id="kb-brand-list">
+                {brands.map((b) => <option key={b} value={b} />)}
+              </datalist>
+            </div>
           </div>
-        </div>
-        <MediaDropzone
-          purpose="article"
-          value={draft.coverMediaId}
-          onChange={(id) => setDraft((d) => ({ ...d, coverMediaId: id }))}
-          label="Обложка: перетащите изображение или нажмите"
-        />
-      </section>
+        </section>
 
-      <section className="card stack">
-        <h2>Связи</h2>
-        <p className="muted">Можно привязать категорию каталога без конкретного товара — или выбрать свои продукты.</p>
-        <SearchableMultiSelect
-          id="kb-rel-cats"
-          label="Категории товаров"
-          options={(categories.data?.items ?? []).map((c) => ({ value: c.id, label: c.name }))}
-          values={draft.categoryIds}
-          onChange={(categoryIds) => setDraft((d) => ({ ...d, categoryIds }))}
-        />
-        <div className="field">
-          <label htmlFor="kb-rel-products">Товары</label>
-          {draft.productIds.length > 0 && (
+        <section className="card stack kb-ed-status">
+          <h2>Статус</h2>
+          <p>
+            <span className={`badge ${statusBadgeClass(draft.status)}`}>{productStateLabel(draft.status)}</span>
+          </p>
+          <p className="muted">Автор: {user?.display_name || 'Поставщик'}</p>
+          {reading > 0 && <p className="muted">Время чтения: {reading} мин</p>}
+        </section>
+
+        <section className="card stack kb-ed-content">
+          <h2>Материал</h2>
+          <RichDocEditor
+            key={id ?? 'new'}
+            value={draft.doc}
+            onChange={(doc) => setDraft((d) => {
+              if (!docHasText(doc) && docHasText(d.doc)) return d
+              return { ...d, doc }
+            })}
+            token={accessToken}
+            imagePurpose="article"
+          />
+        </section>
+
+        <section className="card stack kb-ed-media">
+          <h2>Обложка</h2>
+          <MediaDropzone
+            purpose="article"
+            value={draft.coverMediaId}
+            onChange={(id) => setDraft((d) => ({ ...d, coverMediaId: id }))}
+            label="Обложка: перетащите изображение или нажмите"
+          />
+        </section>
+
+        <section className="card stack kb-ed-products">
+          <h2>Связанные товары</h2>
+          <p className="muted">Клиенты увидят статью, только если среди товаров есть косметика для домашнего ухода.</p>
+          {draft.productIds.length === 0 ? (
+            <EmptyState title="Связанных товаров пока нет" text="Найдите товар в каталоге и добавьте его к статье." />
+          ) : (
             <div className="chip-row">
               {draft.productIds.map((pid) => {
                 const p = productItems.find((x) => x.id === pid)
                 return (
-                  <button key={pid} type="button" className="chip active" onClick={() => setDraft((d) => ({ ...d, productIds: d.productIds.filter((x) => x !== pid) }))}>
-                    {p ? [p.brand, p.name].filter(Boolean).join(' · ') : 'Товар'} ×
+                  <button
+                    key={pid}
+                    type="button"
+                    className="chip active kb-product-chip"
+                    data-testid="kb-related-product"
+                    onClick={() => setDraft((d) => ({ ...d, productIds: d.productIds.filter((x) => x !== pid) }))}
+                  >
+                    <span>{p ? [p.brand, p.name].filter(Boolean).join(' · ') : 'Товар'}</span>
+                    <span className="badge badge-default">{productAudienceLabel(p?.audience)}</span>
+                    ×
                   </button>
                 )
               })}
             </div>
           )}
-          <input id="kb-rel-products" value={productQ} onChange={(e) => setProductQ(e.target.value)} placeholder="Поиск по своим товарам" />
-          <ul className="kb-suggest">
-            {filteredProducts.map((p) => (
-              <li key={p.id}>
-                <button type="button" onClick={() => { setDraft((d) => ({ ...d, productIds: [...d.productIds, p.id] })); setProductQ('') }}>
-                  {[p.brand, p.name].filter(Boolean).join(' · ')}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
+          {linkedProducts.length > 0 && linkedProducts.every((p) => p.audience === 'professional_only') && (
+            <p className="muted">Сейчас привязаны только салонные товары — для клиентов статья останется скрытой.</p>
+          )}
+          <div className="field">
+            <label htmlFor="kb-rel-products">Добавить товар</label>
+            <input id="kb-rel-products" value={productQ} onChange={(e) => setProductQ(e.target.value)} placeholder="Поиск по своим товарам" />
+            <ul className="kb-suggest">
+              {filteredProducts.map((p) => (
+                <li key={p.id}>
+                  <button type="button" onClick={() => { setDraft((d) => ({ ...d, productIds: [...d.productIds, p.id] })); setProductQ('') }}>
+                    {[p.brand, p.name].filter(Boolean).join(' · ')}
+                    <span className="muted"> · {productAudienceLabel(p.audience)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
 
-      <section className="card stack">
-        <h2>Материал</h2>
-        <RichDocEditor value={draft.doc} onChange={(doc) => setDraft((d) => ({ ...d, doc }))} token={accessToken} imagePurpose="article" />
-        {reading > 0 && <p className="muted">Время чтения: {reading} мин (считается автоматически)</p>}
-      </section>
+        <section className="card stack kb-ed-cats">
+          <h2>Категории товаров</h2>
+          <SearchableMultiSelect
+            id="kb-rel-cats"
+            label="Связанные категории"
+            options={(categories.data?.items ?? []).map((c) => ({ value: c.id, label: c.name }))}
+            values={draft.categoryIds}
+            onChange={(categoryIds) => setDraft((d) => ({ ...d, categoryIds }))}
+          />
+        </section>
 
-      <section className="card stack">
-        <h2>Публикация</h2>
-        <p>
-          Статус: <span className={`badge ${statusBadgeClass(draft.status)}`}>{productStateLabel(draft.status)}</span>
-        </p>
+        <section className="card stack kb-ed-actions kb-editor-actions">
+          <h2>Действия</h2>
+          <div className="stack-sm kb-editor-action-list">
+            <button className="btn btn-secondary" type="button" disabled={!canSave || save.isPending} onClick={() => save.mutate('draft')}>
+              Сохранить черновик
+            </button>
+            <button className="btn btn-secondary" type="button" disabled={!canSave} onClick={() => setPreview(true)}>
+              Предпросмотр
+            </button>
+            <button className="btn btn-primary" type="button" disabled={!canSave || save.isPending} onClick={() => save.mutate('published')}>
+              Опубликовать
+            </button>
+            {id && draft.status === 'published' && (
+              <button className="btn btn-ghost" type="button" disabled={setStatus.isPending} onClick={() => setStatus.mutate('draft')}>
+                Снять с публикации
+              </button>
+            )}
+            {id && draft.status === 'archived' && (
+              <button className="btn btn-secondary" type="button" disabled={setStatus.isPending} onClick={() => setStatus.mutate('draft')}>
+                Вернуть в черновики
+              </button>
+            )}
+            {id && draft.status !== 'archived' && (
+              <button className="btn btn-ghost" type="button" disabled={setStatus.isPending} onClick={() => setConfirmArchive(true)}>
+                В архив
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <Modal open={confirmArchive} onClose={() => setConfirmArchive(false)} title="Архивировать материал?">
+        <p>Статья исчезнет из публичной базы знаний. Её можно будет вернуть в черновики.</p>
         <div className="row wrap">
-          <button className="btn btn-secondary" type="button" disabled={!canSave || save.isPending} onClick={() => save.mutate('draft')}>
-            Сохранить черновик
+          <button className="btn btn-secondary" type="button" onClick={() => setConfirmArchive(false)}>Отмена</button>
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => {
+              setConfirmArchive(false)
+              setStatus.mutate('archived')
+            }}
+          >
+            В архив
           </button>
-          <button className="btn btn-secondary" type="button" disabled={!canSave} onClick={() => setPreview(true)}>
-            Предпросмотр
-          </button>
-          <button className="btn btn-primary" type="button" disabled={!canSave || save.isPending} onClick={() => save.mutate('published')}>
-            Опубликовать
-          </button>
-          {id && draft.status === 'published' && (
-            <button className="btn btn-ghost" type="button" disabled={setStatus.isPending} onClick={() => setStatus.mutate('draft')}>
-              Снять с публикации
-            </button>
-          )}
-          {id && draft.status !== 'archived' && (
-            <button className="btn btn-ghost" type="button" disabled={setStatus.isPending} onClick={() => setStatus.mutate('archived')}>
-              В архив
-            </button>
-          )}
         </div>
-      </section>
+      </Modal>
     </main>
   )
 }

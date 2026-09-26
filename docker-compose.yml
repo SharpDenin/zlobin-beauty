@@ -89,6 +89,7 @@ services:
       DATABASE_URL: postgres://organizations:organizations@postgres:5432/organizations?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      IDENTITY_URL: http://identity:8080
       MIGRATIONS_DIR: /migrations
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
@@ -113,6 +114,9 @@ services:
       ORGANIZATIONS_URL: http://organizations:8080
       BOOKING_URL: http://booking:8080
       COMMERCE_URL: http://commerce:8080
+      CLIENTS_URL: http://clients:8080
+      COMMUNICATIONS_URL: http://communications:8080
+      IDENTITY_URL: http://identity:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
@@ -171,6 +175,7 @@ services:
       MIGRATIONS_DIR: /migrations
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       ORGANIZATIONS_URL: http://organizations:8080
+      IDENTITY_URL: http://identity:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -194,6 +199,7 @@ services:
       ORGANIZATIONS_URL: http://organizations:8080
       BOOKING_URL: http://booking:8080
       COMMUNICATIONS_URL: http://communications:8080
+      IDENTITY_URL: http://identity:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
@@ -218,6 +224,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       MIGRATIONS_DIR: /migrations
       BOOKING_URL: http://booking:8080
+      IDENTITY_URL: http://identity:8080
+      ORGANIZATIONS_URL: http://organizations:8080
+      MARKETPLACE_URL: http://marketplace:8080
+      MEDIA_URL: http://media:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
@@ -245,6 +255,7 @@ services:
       MINIO_BUCKET: zlobin-media
       MINIO_USE_SSL: "false"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      COMMUNICATIONS_URL: http://communications:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:

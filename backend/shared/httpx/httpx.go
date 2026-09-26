@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,9 +27,10 @@ type ErrorBody struct {
 }
 
 type ErrorDetail struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
+	Code      string         `json:"code"`
+	Message   string         `json:"message"`
+	RequestID string         `json:"request_id"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 func RequestID(r *http.Request) string {
@@ -71,10 +73,19 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 	rid := RequestID(r)
 	var ae *apperr.AppError
 	if errors.As(err, &ae) {
-		if ae.HTTPStatus >= 500 && log != nil {
-			log.Error("request failed", "error", ae.Err, "code", ae.Code, "request_id", rid)
+		if log != nil {
+			if ae.HTTPStatus >= 500 {
+				log.Error("request failed", "error", ae.Err, "code", ae.Code, "request_id", rid)
+			} else {
+				log.Info("request error", "code", ae.Code, "status", ae.HTTPStatus, "message", ae.Message, "request_id", rid)
+			}
 		}
-		JSON(w, ae.HTTPStatus, ErrorBody{Error: ErrorDetail{Code: string(ae.Code), Message: ae.Message, RequestID: rid}})
+		JSON(w, ae.HTTPStatus, ErrorBody{Error: ErrorDetail{
+			Code:      string(ae.Code),
+			Message:   ae.Message,
+			RequestID: rid,
+			Details:   ae.Details,
+		}})
 		return
 	}
 	if log != nil {
@@ -83,17 +94,71 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 	JSON(w, http.StatusInternalServerError, ErrorBody{Error: ErrorDetail{Code: string(apperr.CodeInternal), Message: "internal error", RequestID: rid}})
 }
 
+func RequireSystemAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := ClaimsFrom(r.Context())
+		if !ok || !auth.HasRole(claims, "system_admin") {
+			WriteError(w, r, nil, apperr.Forbidden("system_admin role required"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func ParsePage(limitRaw, offsetRaw string) (limit, offset int) {
+	limit = 20
+	if n, err := strconv.Atoi(strings.TrimSpace(limitRaw)); err == nil && n > 0 {
+		limit = n
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(offsetRaw)); err == nil && n > 0 {
+		offset = n
+	}
+	return limit, offset
+}
+
+func ParseOptionalUUID(raw string) (*uuid.UUID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func ParseOptionalBool(raw string) (*bool, error) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return nil, nil
+	}
+	switch raw {
+	case "true", "1", "yes":
+		v := true
+		return &v, nil
+	case "false", "0", "no":
+		v := false
+		return &v, nil
+	default:
+		return nil, errors.New("invalid boolean")
+	}
+}
+
 func BearerAuth(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
 			if !strings.HasPrefix(h, "Bearer ") {
-				WriteError(w, r, nil, apperr.Unauthorized("missing bearer token"))
+				WriteError(w, r, nil, apperr.SessionExpired())
 				return
 			}
 			claims, err := auth.ParseAccessToken(secret, strings.TrimPrefix(h, "Bearer "))
 			if err != nil {
-				WriteError(w, r, nil, apperr.Unauthorized("invalid access token"))
+				WriteError(w, r, nil, apperr.SessionExpired())
 				return
 			}
 			ctx := context.WithValue(r.Context(), KeyClaims, claims)

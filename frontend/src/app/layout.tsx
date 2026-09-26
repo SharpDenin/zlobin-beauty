@@ -3,63 +3,61 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { workTypeLabel } from '@/shared/lib/status'
+import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { Drawer } from '@/shared/ui/Drawer'
+import { EmptyState } from '@/shared/ui/EmptyState'
+import { NavIcon } from '@/shared/ui/NavIcon'
+import { PageLoading } from '@/shared/ui/PageLoading'
+import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
   const location = useLocation()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading label="Загрузка сессии" />
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
   return <Outlet />
 }
 
+function Forbidden({ title, text }: { title: string; text: string }) {
+  return (
+    <main className="page">
+      <EmptyState title={title} text={text} />
+    </main>
+  )
+}
+
 export function RequireAdmin() {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading />
   if (!hasSystemAdmin(user)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Раздел доступен только системным администраторам</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел доступен только системным администраторам." />
   }
   return <Outlet />
 }
 
 export function RequireMaster() {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading />
   if (!hasMasterAccess(user) && !hasSalonAdmin(user)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Этот раздел доступен мастерам, администраторам и владельцам салона</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел доступен мастерам, администраторам и владельцам салона." />
   }
   return <Outlet />
 }
 
 export function RequireSupplier() {
   const { user, loading } = useAuth()
-  if (loading) return <div className="state-box page">Загрузка…</div>
+  if (loading) return <PageLoading />
   if (!hasSupplierAccess(user) && !hasSupplierRepAccess(user)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Этот раздел доступен только поставщикам</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел доступен только поставщикам." />
   }
   return <Outlet />
 }
 
 export function RequireCabinetFeature({ feature }: { feature: CabinetFeature }) {
   const cabinet = useCabinet()
-  if (!cabinet.ready) return <div className="state-box page">Загрузка…</div>
+  if (!cabinet.ready) return <PageLoading />
   if (!cabinet.can(feature)) {
-    return (
-      <main className="page">
-        <div className="state-box error">Этот раздел недоступен для вашей роли</div>
-      </main>
-    )
+    return <Forbidden title="Нет доступа" text="Этот раздел недоступен для вашей роли." />
   }
   return <Outlet />
 }
@@ -83,25 +81,42 @@ function NavLinks({
   onNavigate?: () => void
   className?: string
 }) {
+  const messenger = useMessengerOptional()
   return (
     <>
-      {links.map((l) => (
+      {links.map((l) => {
+        const messagesActive = l.to === '/messages' && Boolean(messenger?.overlayOpen)
+        return (
         <Link
           key={l.to}
           to={l.to === '/more' ? '#' : l.to}
-          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) ? 'active' : ''}`.trim()}
+          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) || messagesActive ? 'active' : ''}`.trim()}
+          aria-current={linkActive(pathname, l.to, l.end) || messagesActive ? 'page' : undefined}
           onClick={(e) => {
             if (l.to === '/more') {
               e.preventDefault()
               onNavigate?.()
               return
             }
+            if (l.to === '/messages' && messenger?.isDesktop) {
+              e.preventDefault()
+              messenger.openList()
+              onNavigate?.()
+              return
+            }
             onNavigate?.()
           }}
         >
-          {l.label}
+          <NavIcon to={l.to} />
+          <span>{l.label}</span>
+          {l.to === '/messages' && (messenger?.unreadTotal ?? 0) > 0 && (
+            <span className="nav-unread" aria-label={`${messenger!.unreadTotal} непрочитанных`}>
+              {messenger!.unreadTotal > 99 ? '99+' : messenger!.unreadTotal}
+            </span>
+          )}
         </Link>
-      ))}
+        )
+      })}
     </>
   )
 }
@@ -117,21 +132,22 @@ function MoreDrawer({
   links: NavLink[]
   pathname: string
 }) {
-  if (!open) return null
   return (
-    <div className="more-drawer" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="more-panel stack-sm" onClick={(e) => e.stopPropagation()}>
-        <div className="row between">
-          <h2>Ещё</h2>
-          <button className="btn btn-secondary btn-compact" type="button" onClick={onClose}>Закрыть</button>
-        </div>
-        <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
-      </div>
-    </div>
+    <Drawer open={open} onClose={onClose} title="Ещё" panelClassName="stack-sm">
+      <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
+    </Drawer>
   )
 }
 
 export function AppShell() {
+  return (
+    <MessengerProvider>
+      <AppShellInner />
+    </MessengerProvider>
+  )
+}
+
+function AppShellInner() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)
@@ -149,7 +165,7 @@ export function AppShell() {
   return (
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
-        <div className="brand">Salon-X</div>
+        <div className="brand"><BrandLogo size="md" /></div>
         <p className="muted cabinet-label">{cabinet.label}</p>
         {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
         {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
@@ -190,7 +206,7 @@ export function AppShell() {
       <div className="shell-main">
         <header className="topbar">
           <div>
-            <div className="brand">Salon-X</div>
+            <div className="brand"><BrandLogo size="sm" /></div>
             <div className="muted topbar-cabinet">{cabinet.label}</div>
           </div>
           <div className="row">
@@ -223,9 +239,12 @@ export function AppShell() {
                 key={l.to}
                 type="button"
                 className={`nav-tab ${moreOpen ? 'active' : ''}`}
+                aria-expanded={moreOpen}
+                aria-haspopup="dialog"
                 onClick={() => setMoreOpen(true)}
               >
-                {l.label}
+                <NavIcon to="/more" />
+                <span>{l.label}</span>
               </button>
             )
           }
@@ -234,8 +253,10 @@ export function AppShell() {
               key={l.to}
               to={l.to}
               className={linkActive(location.pathname, l.to, l.end) ? 'active' : ''}
+              aria-current={linkActive(location.pathname, l.to, l.end) ? 'page' : undefined}
             >
-              {l.label}
+              <NavIcon to={l.to} />
+              <span>{l.label}</span>
             </Link>
           )
         })}
@@ -260,7 +281,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <div className="row between">
+    <div className="page-toolbar">
       <div className="stack-sm">
         <h1>{title}</h1>
         {subtitle}

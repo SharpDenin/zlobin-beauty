@@ -14,30 +14,35 @@ import (
 )
 
 type API struct {
-	svc *service.Service
-	log *slog.Logger
+	svc           *service.Service
+	log           *slog.Logger
+	internalToken string
 }
 
-func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, log: log} }
+func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
+	return &API{svc: svc, log: log, internalToken: internalToken}
+}
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	optional := httpx.OptionalBearerAuth(jwtSecret)
+	internal := httpx.InternalAuth(a.internalToken)
 	mux.Handle("POST /v1/media", auth(http.HandlerFunc(a.upload)))
 	mux.Handle("GET /v1/media/{id}", optional(http.HandlerFunc(a.getMetadata)))
 	mux.Handle("GET /v1/media/{id}/content", optional(http.HandlerFunc(a.getContent)))
 	mux.Handle("DELETE /v1/media/{id}", auth(http.HandlerFunc(a.delete)))
+	mux.Handle("GET /v1/internal/media/{id}", internal(http.HandlerFunc(a.internalGet)))
 }
 
 func (a *API) upload(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
-	if err := r.ParseMultipartForm(6 << 20); err != nil {
+	if err := r.ParseMultipartForm(52 << 20); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid multipart form"))
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		httpx.WriteError(w, r, a.log, apperr.Validation("file field is required"))
+		httpx.WriteError(w, r, a.log, apperr.ValidationCode(apperr.CodeMediaEmpty, "file field is required"))
 		return
 	}
 	defer file.Close()
@@ -109,6 +114,24 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) internalGet(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	obj, err := a.svc.InternalGet(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"id": obj.ID.String(), "owner_user_id": obj.OwnerUserID.String(),
+		"purpose": obj.Purpose, "content_type": obj.ContentType,
+		"size_bytes": obj.SizeBytes, "created_at": obj.CreatedAt,
+	})
 }
 
 func uploadDTO(r service.UploadResult) map[string]any {

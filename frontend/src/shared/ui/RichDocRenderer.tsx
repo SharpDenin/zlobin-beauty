@@ -3,9 +3,11 @@ import type { JSONContent } from '@tiptap/react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { API_BASE_URL } from '@/shared/api/client'
 import { sanitizeHref, sanitizeMediaSrc } from '@/shared/ui/richSanitize'
+import { Overlay } from '@/shared/ui/Overlay'
+import { parseKnowledgeDoc } from '@/pages/knowledge-helpers'
 
 type Props = {
-  content: string
+  content: string | JSONContent | null | undefined
   contentFormat?: string | null
   token?: string | null
   className?: string
@@ -13,36 +15,29 @@ type Props = {
 
 export function RichDocRenderer({ content, contentFormat, token, className }: Props) {
   const format = (contentFormat || 'plain').toLowerCase()
+  const classNames = `prose-article ${className ?? ''}`.trim()
 
-  if (format === 'plain' || !content.trim()) {
+  if (format === 'plain' && typeof content === 'string') {
     return (
-      <div className={`prose-article ${className ?? ''}`.trim()} style={{ whiteSpace: 'pre-wrap' }}>
-        {content || 'Нет текста'}
+      <div className={classNames} style={{ whiteSpace: 'pre-wrap' }}>
+        {content.trim() ? content : 'Нет текста'}
       </div>
     )
   }
 
-  let doc: JSONContent | null = null
-  try {
-    const parsed = JSON.parse(content) as JSONContent
-    if (parsed && typeof parsed === 'object' && parsed.type === 'doc') {
-      doc = parsed
-    }
-  } catch {
-    doc = null
-  }
-
-  if (!doc) {
+  const doc = parseKnowledgeDoc(content, format)
+  const nodes = doc.content ?? []
+  if (nodes.length === 0) {
     return (
-      <div className={`prose-article ${className ?? ''}`.trim()} style={{ whiteSpace: 'pre-wrap' }}>
-        {content}
+      <div className={classNames} style={{ whiteSpace: 'pre-wrap' }}>
+        Нет текста
       </div>
     )
   }
 
   return (
-    <div className={`prose-article ${className ?? ''}`.trim()}>
-      {(doc.content ?? []).map((node, idx) => (
+    <div className={classNames}>
+      {nodes.map((node, idx) => (
         <DocNode key={idx} node={node} token={token} />
       ))}
     </div>
@@ -129,12 +124,18 @@ function ArticleImage({ node, token }: { node: JSONContent; token?: string | nul
         {img}
       </button>
       {caption ? <figcaption className="muted">{caption}</figcaption> : null}
-      {open && (
-        <div className="kb-lightbox" role="dialog" aria-modal="true" onClick={() => setOpen(false)}>
-          <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)}>Закрыть</button>
-          {mediaId ? <MediaImage mediaId={mediaId} token={token} alt={alt} /> : <img src={src} alt={alt} />}
-        </div>
-      )}
+      <Overlay
+        open={open}
+        onClose={() => setOpen(false)}
+        className="kb-lightbox overlay-scrim"
+        closeOnAnyClick
+        label="Просмотр изображения"
+      >
+        <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)} data-overlay-initial-focus>
+          Закрыть
+        </button>
+        {mediaId ? <MediaImage mediaId={mediaId} token={token} alt={alt} /> : <img src={src} alt={alt} />}
+      </Overlay>
     </figure>
   )
 }

@@ -18,6 +18,10 @@ export function loadCart(supplierId: string): CartLine[] {
 }
 
 export function saveCart(supplierId: string, lines: CartLine[]) {
+  if (lines.length === 0) {
+    sessionStorage.removeItem(key(supplierId))
+    return
+  }
   sessionStorage.setItem(key(supplierId), JSON.stringify(lines))
 }
 

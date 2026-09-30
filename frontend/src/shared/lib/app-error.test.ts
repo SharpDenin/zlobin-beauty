@@ -116,6 +116,14 @@ describe('normalizeError', () => {
     })
     expect(stock.title).toBe('Товара недостаточно на складе')
     expect(formatUserError(stock)).toContain('Уменьшите количество')
+
+    const legacyStock = normalizeError({
+      code: 'conflict',
+      status: 409,
+      message: 'insufficient out of stock at location',
+    })
+    expect(legacyStock.code).toBe('insufficient_stock')
+    expect(legacyStock.title).toBe('Товара недостаточно на складе')
   })
 
   it('uses unknown copy when nothing matches', () => {

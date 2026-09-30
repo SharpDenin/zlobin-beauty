@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -494,10 +495,7 @@ func (s *Service) CreateMovement(ctx context.Context, actor uuid.UUID, in Moveme
 	}
 	out, err := s.store.CreateMovement(ctx, m)
 	if err != nil {
-		if ae, ok := apperr.As(err); ok {
-			return nil, ae
-		}
-		return nil, apperr.Internal(err)
+		return nil, typedOrInternal(err)
 	}
 	return out, nil
 }
@@ -1067,12 +1065,31 @@ func (s *Service) CreateSupplierOrder(ctx context.Context, actor uuid.UUID, in C
 		}
 	}
 
-	outOrder, outItems, _, err := s.store.CreateOrder(ctx, order, built.Items, delivery)
+	// The supplier's stock is reserved in the same transaction as the order: when any
+	// line is short the caller gets insufficient_stock (409) and nothing is persisted.
+	supplierLoc, err := s.store.GetOrCreateLocationByKind(ctx, in.SupplierOrgID, domain.LocationSupplier, "Склад поставщика")
 	if err != nil {
 		return nil, nil, apperr.Internal(err)
 	}
-	if err := s.reserveOrderStock(ctx, actor, outOrder, outItems); err != nil {
-		return nil, nil, err
+	reservations := reserveMovements(actor, order.ID, supplierLoc.ID, built.Items, now)
+
+	outOrder, outItems, _, err := s.store.CreateOrderReserving(ctx, order, built.Items, delivery, reservations)
+	if err != nil {
+		if idemKey != "" && errors.Is(err, store.ErrDuplicateOrderKey) {
+			// A concurrent identical submit won the race: return its order instead of failing.
+			existing, gerr := s.store.GetOrderByIdempotencyKey(ctx, actor, idemKey)
+			if gerr != nil {
+				return nil, nil, apperr.Internal(gerr)
+			}
+			if existing != nil {
+				items, ierr := s.OrderItems(ctx, existing.ID)
+				if ierr != nil {
+					return nil, nil, ierr
+				}
+				return existing, items, nil
+			}
+		}
+		return nil, nil, typedOrInternal(err)
 	}
 	return outOrder, outItems, nil
 }
@@ -1471,16 +1488,17 @@ func (s *Service) TransitionOrderDelivery(ctx context.Context, actor, orderID uu
 
 	now := s.now().UTC()
 	if toStatus == domain.DeliveryStatusDelivered {
+		// Ship reserved stock first: a shortage must block "delivered" instead of
+		// leaving a completed order with stock still on the supplier shelf.
+		if err := s.shipOrderStock(ctx, actor, o); err != nil {
+			return nil, typedOrInternal(err)
+		}
 		if err := s.store.CompleteDelivery(ctx, d.ID, o.ID, now, now); err != nil {
-			if ae, ok := apperr.As(err); ok {
-				return nil, ae
-			}
-			return nil, apperr.Internal(err)
+			return nil, typedOrInternal(err)
 		}
 		d.Status = domain.DeliveryStatusDelivered
 		d.DeliveredAt = &now
 		d.UpdatedAt = now
-		_ = s.shipOrderStock(ctx, actor, o)
 		return d, nil
 	}
 

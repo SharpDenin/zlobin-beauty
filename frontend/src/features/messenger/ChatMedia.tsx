@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { API_BASE_URL } from '@/shared/api/client'
+import { getCachedMediaUrl, loadMediaBlobUrl } from '@/shared/lib/mediaCache'
+import { MediaVideo } from '@/shared/ui/MediaVideo'
 
 type Props = {
   mediaId: string
+  /** Kept for call-site compatibility; requests always use the live session token. */
   token?: string | null
   kind: 'image' | 'video' | string
   alt?: string
@@ -10,64 +12,47 @@ type Props = {
 }
 
 export function ChatMedia({ mediaId, token, kind, alt, onOpenImage }: Props) {
-  const [src, setSrc] = useState<string | null>(null)
+  const isVideo = kind === 'video'
+  const [src, setSrc] = useState<string | null>(() => (isVideo ? null : getCachedMediaUrl(mediaId)))
   const [failed, setFailed] = useState(false)
-  const [unsupported, setUnsupported] = useState(false)
 
   useEffect(() => {
+    if (isVideo) return
     let cancelled = false
-    let objectUrl: string | null = null
     setFailed(false)
-    setUnsupported(false)
+    const cached = getCachedMediaUrl(mediaId)
+    if (cached) {
+      setSrc(cached)
+      return
+    }
     setSrc(null)
-    const headers: HeadersInit = {}
-    if (token) headers.Authorization = `Bearer ${token}`
-    void fetch(`${API_BASE_URL}/v1/media/${mediaId}/content`, { headers })
-      .then(async (res) => {
-        if (!res.ok || cancelled) {
-          if (!cancelled) setFailed(true)
-          return
-        }
-        const blob = await res.blob()
-        objectUrl = URL.createObjectURL(blob)
-        if (!cancelled) setSrc(objectUrl)
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true)
-      })
+    void loadMediaBlobUrl(mediaId).then((url) => {
+      if (cancelled) return
+      if (url) setSrc(url)
+      else setFailed(true)
+    })
     return () => {
       cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [mediaId, token])
+    // `token` retriggers a retry after the session is renewed.
+  }, [mediaId, token, isVideo])
 
+  if (isVideo) {
+    return (
+      <div className="chat-media-video">
+        <MediaVideo mediaId={mediaId} title={alt || 'Видео'} />
+      </div>
+    )
+  }
   if (failed) {
     return <p className="muted">Не удалось загрузить вложение</p>
   }
   if (!src) {
     return <div className="media-skeleton chat-media-skel" aria-busy="true" aria-label="Загрузка вложения" />
   }
-  if (kind === 'video') {
-    return (
-      <div className="chat-media-video">
-        {unsupported ? (
-          <p>Это видео не удалось воспроизвести. Попробуйте открыть на другом устройстве или попросите отправить MP4 или WebM.</p>
-        ) : (
-          <video
-            src={src}
-            controls
-            playsInline
-            preload="metadata"
-            onError={() => setUnsupported(true)}
-            aria-label={alt || 'Видео'}
-          />
-        )}
-      </div>
-    )
-  }
   return (
     <button type="button" className="chat-media-image" onClick={onOpenImage} aria-label={alt || 'Открыть изображение'}>
-      <img src={src} alt={alt || ''} />
+      <img src={src} alt={alt || ''} decoding="async" />
     </button>
   )
 }

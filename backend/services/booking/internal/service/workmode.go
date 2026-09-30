@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	chairBusyUserMsg  = "Это кресло уже занято в выбранный период"
+	chairBusyUserMsg    = "Это кресло уже занято в выбранный период"
 	leaseOverlapUserMsg = "Это кресло уже сдано в аренду на пересекающийся период"
 )
 
@@ -399,8 +399,10 @@ func (s *Service) RequestChairLease(ctx context.Context, actor, chairID uuid.UUI
 	if chair == nil || chair.Status != domain.ChairStatusActive || !chair.ListedForRent {
 		return nil, apperr.NotFound("chair is not available for rent")
 	}
-	if err := s.requireMembership(ctx, chair.OrganizationID, actor, "owner", "admin", "master", "staff"); err == nil {
-		return nil, apperr.Validation("сотрудник салона не арендует кресло своей организации")
+	// Owners/admins already control chairs of their salon; they do not rent them.
+	// Masters and staff of the same salon MAY lease a chair (percentage / renter model).
+	if err := s.requireMembership(ctx, chair.OrganizationID, actor, "owner", "admin"); err == nil {
+		return nil, apperr.Validation("владелец или администратор салона не арендует кресло своей организации")
 	} else if !isForbidden(err) {
 		return nil, err
 	}

@@ -5,7 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
-import { consumeSessionEnded } from '@/features/pwa/pwa'
+import { clearSessionEnded, peekSessionEnded } from '@/features/pwa/pwa'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
@@ -20,7 +20,8 @@ type Form = z.infer<typeof schema>
 export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   const { login } = useAuth()
   const navigate = useNavigate()
-  const [sessionEnded] = useState(() => consumeSessionEnded())
+  // A soft notice, shown only after a REAL expiry (never after a normal logout) and until dismissed.
+  const [sessionEnded, setSessionEnded] = useState(() => peekSessionEnded())
   const [error, setError] = useState<string | null>(null)
   const { register, handleSubmit, formState: { errors, isSubmitting }, setFocus } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -32,7 +33,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
         <div className="auth-theme-bar"><ThemeToggle labelled /></div>
         <BrandLogo size="lg" />
         <h1>Вход</h1>
-        <p className="auth-lead">Записи, мастера и салон — в одном кабинете.</p>
+        <p className="auth-lead">Записи, мастера и салон — в одном месте.</p>
         <form
           className="card stack"
           onSubmit={handleSubmit(async (values) => {
@@ -50,15 +51,30 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
         >
           <div className="field">
             <label htmlFor="email">Email</label>
-            <input id="email" type="email" autoComplete="email" aria-invalid={Boolean(errors.email)} {...register('email')} />
+            <input id="email" type="email" autoComplete="email" inputMode="email" aria-required="true" aria-invalid={Boolean(errors.email)} {...register('email')} />
             {errors.email && <span className="error">{errors.email.message}</span>}
           </div>
           <div className="field">
             <label htmlFor="password">Пароль</label>
-            <input id="password" type="password" autoComplete="current-password" aria-invalid={Boolean(errors.password)} {...register('password')} />
+            <input id="password" type="password" autoComplete="current-password" aria-required="true" aria-invalid={Boolean(errors.password)} {...register('password')} />
             {errors.password && <span className="error">{errors.password.message}</span>}
           </div>
-          {sessionEnded && !error && <ErrorBanner error={{ code: 'session_expired', status: 401 }} />}
+          {sessionEnded && !error && (
+            <div className="auth-notice" role="status" data-testid="session-expired-notice">
+              <span>Сессия истекла — войдите снова.</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-compact"
+                aria-label="Скрыть сообщение"
+                onClick={() => {
+                  clearSessionEnded()
+                  setSessionEnded(false)
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
           {error && <ErrorBanner error={error} />}
           <button className={`btn btn-primary btn-block${isSubmitting ? ' btn-loading' : ''}`} disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Входим…' : 'Войти'}

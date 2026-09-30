@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import type { KnowledgeArticle } from '@/features/knowledge/types'
-import { articleAudienceBadges, knowledgeSeriesLabel } from '@/pages/knowledge-helpers'
+import { articleAudienceBadges, knowledgeSectionToneClass, knowledgeSeriesLabel } from '@/pages/knowledge-helpers'
+import '@/features/knowledge/knowledge-tones.css'
 
 type Props = {
   article: KnowledgeArticle
@@ -20,9 +21,10 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, 
   const chips = [a.brand, categoryLabel].filter(Boolean).slice(0, 2)
   const audience = showAudience ? articleAudienceBadges(a) : []
   const productCover = Boolean(a.category?.includes(' / '))
+  const tone = a.category ? knowledgeSectionToneClass(a.category) : 'kb-tone kb-tone--neutral'
 
   return (
-    <article className="kb-card">
+    <article className={`kb-card ${tone}`}>
       <Link to={`/knowledge/${a.id}`} className="kb-card-link" data-testid="kb-article">
         <div className={`kb-cover ${productCover ? 'kb-cover--product' : ''}`}>
           <MediaImage
@@ -43,7 +45,7 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, 
             ))}
             {series && <span className="badge badge-default">{series}</span>}
             {chips.map((c) => (
-              <span key={c} className="chip">{c}</span>
+              <span key={c} className={`chip ${c === categoryLabel && a.category ? knowledgeSectionToneClass(a.category) : ''}`}>{c}</span>
             ))}
           </div>
         )}

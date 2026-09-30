@@ -214,3 +214,42 @@ export function clientVisibleProducts<T extends { audience?: string }>(items: T[
   if (professional) return items
   return items.filter((p) => p.audience !== 'professional_only')
 }
+
+export type KnowledgeSectionTone = 'primary' | 'success' | 'warning' | 'info' | 'danger' | 'neutral'
+
+/** Stable EPICA top-level catalog sections → design-token tones. */
+const EPICA_SECTION_TONES: Record<string, KnowledgeSectionTone> = {
+  'Окрашивание и осветление': 'primary',
+  'Уход за волосами': 'success',
+  Стайлинг: 'warning',
+  'Химическая завивка': 'danger',
+  'Уход за кожей рук': 'info',
+  'Мужское направление': 'info',
+  Аксессуары: 'neutral',
+  Наборы: 'warning',
+  Колористика: 'primary',
+  Уход: 'success',
+  Продукция: 'info',
+  Процедуры: 'warning',
+  Салон: 'neutral',
+  Бренд: 'primary',
+}
+
+const TONE_CYCLE: KnowledgeSectionTone[] = ['primary', 'success', 'warning', 'info', 'danger']
+
+/** Top-level section label (before ` / `) → stable tone using design tokens only. */
+export function knowledgeSectionTone(label: string): KnowledgeSectionTone {
+  const top = (label.includes(' / ') ? label.split(' / ')[0] : label).trim()
+  if (!top) return 'neutral'
+  const mapped = EPICA_SECTION_TONES[top]
+  if (mapped) return mapped
+  let hash = 0
+  for (let i = 0; i < top.length; i += 1) {
+    hash = (hash * 31 + top.charCodeAt(i)) >>> 0
+  }
+  return TONE_CYCLE[hash % TONE_CYCLE.length]
+}
+
+export function knowledgeSectionToneClass(label: string, prefix = 'kb-tone'): string {
+  return `${prefix} ${prefix}--${knowledgeSectionTone(label)}`
+}

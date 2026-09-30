@@ -24,12 +24,13 @@ var allowedDashboardSizes = map[string]struct{}{
 }
 
 func defaultWidgets() []byte {
+	// clients_today removed from defaults (KPI moved into analytics on the frontend).
+	// Id remains in allowedDashboardIDs so older stored layouts still validate.
 	return []byte(`[
 	  {"id":"alerts","enabled":true,"positions":{"lg":{"x":0,"y":0,"w":12,"h":5}}},
 	  {"id":"calendar","enabled":true,"positions":{"lg":{"x":0,"y":5,"w":12,"h":18}}},
 	  {"id":"today","enabled":true,"positions":{"lg":{"x":0,"y":23,"w":3,"h":4}}},
 	  {"id":"pending","enabled":true,"positions":{"lg":{"x":3,"y":23,"w":3,"h":4}}},
-	  {"id":"clients_today","enabled":true,"positions":{"lg":{"x":6,"y":23,"w":3,"h":4}}},
 	  {"id":"upcoming","enabled":true,"positions":{"lg":{"x":0,"y":27,"w":6,"h":8}}},
 	  {"id":"analytics","enabled":true,"positions":{"lg":{"x":6,"y":27,"w":6,"h":8}}}
 	]`)

@@ -229,10 +229,14 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	orgID, err := uuid.Parse(req.OrganizationID)
-	if err != nil {
-		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
-		return
+	orgID := uuid.Nil
+	if strings.TrimSpace(req.OrganizationID) != "" {
+		parsed, err := uuid.Parse(req.OrganizationID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = parsed
 	}
 	var branchID *uuid.UUID
 	if req.BranchID != "" {
@@ -442,8 +446,12 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	for _, t := range m.ProfessionTypes {
 		types = append(types, professionTypeDTO(t))
 	}
+	var orgID any
+	if m.OrganizationID != uuid.Nil {
+		orgID = m.OrganizationID.String()
+	}
 	return map[string]any{
-		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": m.OrganizationID.String(),
+		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": orgID,
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
 		"photo_media_id": photoMediaID, "work_type": workType,

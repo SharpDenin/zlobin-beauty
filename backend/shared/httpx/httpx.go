@@ -153,11 +153,14 @@ func BearerAuth(secret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
 			if !strings.HasPrefix(h, "Bearer ") {
-				WriteError(w, r, nil, apperr.SessionExpired())
+				// No credentials at all: a plain 401, not an "expired session".
+				WriteError(w, r, nil, apperr.Unauthorized("authentication required"))
 				return
 			}
 			claims, err := auth.ParseAccessToken(secret, strings.TrimPrefix(h, "Bearer "))
 			if err != nil {
+				// Malformed/expired/forged token: the client should try a refresh.
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 				WriteError(w, r, nil, apperr.SessionExpired())
 				return
 			}
@@ -209,8 +212,10 @@ func CORS(origins []string) func(http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, Idempotency-Key")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, Idempotency-Key, Range, If-None-Match")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Content-Range, Accept-Ranges, Content-Length, ETag")
+				w.Header().Set("Access-Control-Max-Age", "600")
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -265,6 +270,51 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Unwrap lets http.ResponseController reach the real connection (deadlines, flush).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush keeps streaming responses (media, SSE) working through the access-log wrapper.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// DeadlineRule returns the read/write budget for a request. ok=false keeps the default.
+type DeadlineRule func(r *http.Request) (read, write time.Duration, ok bool)
+
+// Deadlines sets per-request read/write deadlines. The http.Server must be configured with
+// ReadTimeout/WriteTimeout = 0 and rely on these rules instead: a fixed server-wide timeout
+// (e.g. 15s) silently kills slow mobile uploads and long media streams.
+func Deadlines(defaultRead, defaultWrite time.Duration, rules ...DeadlineRule) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			read, write := defaultRead, defaultWrite
+			for _, rule := range rules {
+				if rd, wr, ok := rule(r); ok {
+					read, write = rd, wr
+					break
+				}
+			}
+			rc := http.NewResponseController(w)
+			now := time.Now()
+			if read > 0 {
+				_ = rc.SetReadDeadline(now.Add(read))
+			}
+			if write > 0 {
+				_ = rc.SetWriteDeadline(now.Add(write))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// IsBodyTooLarge reports whether err comes from http.MaxBytesReader.
+func IsBodyTooLarge(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
 }
 
 func Healthz(w http.ResponseWriter, _ *http.Request) {

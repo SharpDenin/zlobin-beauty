@@ -6,7 +6,8 @@ import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
-import { articleAudienceBadges, clientVisibleProducts, productAudienceLabel } from '@/pages/knowledge-helpers'
+import { articleAudienceBadges, clientVisibleProducts, knowledgeSectionToneClass, productAudienceLabel } from '@/pages/knowledge-helpers'
+import '@/features/knowledge/knowledge-tones.css'
 import { KnowledgeCard, KnowledgeCardSkeleton } from '@/features/knowledge/KnowledgeCard'
 import type { KnowledgeArticle, KnowledgeListResponse } from '@/features/knowledge/types'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
@@ -157,14 +158,14 @@ export function KnowledgeArticlePage() {
         <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} fallback={(a.category || a.title).slice(0, 2)} />
       </div>
       <article className="kb-article-column stack">
-        <div className="stack-sm">
+        <div className={`stack-sm kb-article-header ${a.category ? knowledgeSectionToneClass(a.category) : ''}`}>
           <h1>{a.title}</h1>
           <div className="row wrap">
             {articleAudienceBadges(a).map((b) => (
               <span key={b.id} className={`badge ${b.id === 'home' ? 'badge-success' : 'badge-default'}`}>{b.label}</span>
             ))}
             {a.brand && <span className="badge badge-default">{a.brand}</span>}
-            {categoryLabel && <span className="badge badge-default">{categoryLabel}</span>}
+            {categoryLabel && <span className={`badge kb-section-badge ${a.category ? knowledgeSectionToneClass(a.category) : 'badge-default'}`}>{categoryLabel}</span>}
             {typeof a.published === 'boolean' && supplier && (
               <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
                 {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}

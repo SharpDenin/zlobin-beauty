@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -17,6 +18,8 @@ import { supplierOrderIsTerminal } from '@/pages/supplier-helpers'
 export function CosmeticsOrdersPage() {
   const { accessToken } = useAuth()
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
+  const [params] = useSearchParams()
+  const highlightId = params.get('highlight') ?? ''
 
   const orders = useQuery({
     queryKey: ['commerce-supplier-orders', 'buyer', buyerOrgId],
@@ -27,6 +30,12 @@ export function CosmeticsOrdersPage() {
       ),
     enabled: Boolean(accessToken && buyerOrgId),
   })
+
+  useEffect(() => {
+    if (!highlightId || !orders.data?.items?.length) return
+    const el = document.getElementById(`order-${highlightId}`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [highlightId, orders.data])
 
   if (orgs.isLoading) return <main className="page"><div className="skeleton skeleton-card" aria-busy="true" /></main>
 
@@ -61,7 +70,12 @@ export function CosmeticsOrdersPage() {
 
       <div className="list">
         {orders.data?.items.map((o) => (
-          <article key={o.id} className={`history-card${supplierOrderIsTerminal(o.status) ? ' is-terminal' : ''}`}>
+          <article
+            key={o.id}
+            id={`order-${o.id}`}
+            className={`history-card${supplierOrderIsTerminal(o.status) ? ' is-terminal' : ''}${highlightId === o.id ? ' selected' : ''}`}
+            data-highlighted={highlightId === o.id ? 'true' : undefined}
+          >
             <div className="row between">
               <strong>{formatMoney(o.total_minor)}</strong>
               <span className={`badge ${statusBadgeClass(o.status)}`}>{supplierOrderLabel(o.status)}</span>

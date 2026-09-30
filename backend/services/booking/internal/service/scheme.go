@@ -16,6 +16,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/entitlement"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type VisitSchemeInput struct {
@@ -318,6 +319,9 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 	if title == "" {
 		return nil, apperr.Validation("title is required")
 	}
+	if err := moderation.ValidateFields(map[string]string{"title": title}); err != nil {
+		return nil, err
+	}
 	if !ends.After(starts) {
 		return nil, apperr.Validation("ends_at must be after starts_at")
 	}
@@ -326,6 +330,11 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 	}
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return nil, apperr.Validation("invalid timezone")
+	}
+	category = strings.TrimSpace(category)
+	normalizedColor, err := NormalizePlannerColor(color, category)
+	if err != nil {
+		return nil, err
 	}
 	owner := actor
 	if ownerUserID != nil && *ownerUserID != uuid.Nil && *ownerUserID != actor {
@@ -346,8 +355,8 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 	now := s.now().UTC()
 	b := store.PlannerBlock{
 		ID: ids.New(), OwnerUserID: owner, OrganizationID: orgID, Title: title,
-		Category: strings.TrimSpace(category), StartsAt: starts.UTC(), EndsAt: ends.UTC(),
-		Timezone: timezone, Color: colorOrDefault(color), CreatedAt: now, UpdatedAt: now,
+		Category: category, StartsAt: starts.UTC(), EndsAt: ends.UTC(),
+		Timezone: timezone, Color: normalizedColor, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.InsertPlannerBlock(ctx, b); err != nil {
 		return nil, apperr.Internal(err)
@@ -400,13 +409,21 @@ func (s *Service) UpdatePlannerBlock(ctx context.Context, actor, id uuid.UUID, t
 		return nil, err
 	}
 	if strings.TrimSpace(title) != "" {
-		b.Title = strings.TrimSpace(title)
+		title = strings.TrimSpace(title)
+		if err := moderation.ValidateFields(map[string]string{"title": title}); err != nil {
+			return nil, err
+		}
+		b.Title = title
 	}
 	if strings.TrimSpace(category) != "" {
 		b.Category = strings.TrimSpace(category)
 	}
 	if strings.TrimSpace(color) != "" {
-		b.Color = colorOrDefault(color)
+		normalized, nerr := NormalizePlannerColor(color, b.Category)
+		if nerr != nil {
+			return nil, nerr
+		}
+		b.Color = normalized
 	}
 	if err := s.validatePlannerInterval(ctx, b.OwnerUserID, id, starts, ends, b.Timezone); err != nil {
 		return nil, err
@@ -437,14 +454,6 @@ func (s *Service) DeletePlannerBlock(ctx context.Context, actor, id uuid.UUID) e
 		return apperr.Internal(err)
 	}
 	return nil
-}
-
-func colorOrDefault(c string) string {
-	c = strings.TrimSpace(c)
-	if c == "" {
-		return "#b45a6a"
-	}
-	return c
 }
 
 func (s *Service) validatePlannerInterval(ctx context.Context, owner, excludeID uuid.UUID, starts, ends time.Time, timezone string) error {

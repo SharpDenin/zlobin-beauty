@@ -29,6 +29,7 @@ func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuth(jwtSecret)
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
+	mux.HandleFunc("GET /v1/internal/media/{id}/access", a.internalMediaAccess)
 	mux.HandleFunc("GET /v1/internal/client-master-relationship", a.internalClientMasterRelationship)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("PUT /v1/calendar/working-hours", auth(http.HandlerFunc(a.setStaffHours)))

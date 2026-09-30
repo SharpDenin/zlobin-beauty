@@ -26,6 +26,7 @@ type Service struct {
 	clientsURL        string
 	communicationsURL string
 	identityURL       string
+	mediaURL          string
 	internalToken     string
 	httpClient        *http.Client
 	now               func() time.Time
@@ -68,6 +69,15 @@ type UpsertMasterInput struct {
 	ProfessionTypeIDs *[]uuid.UUID
 }
 
+func workTypeNeedsOrganization(workType string) bool {
+	switch workType {
+	case "employee", "renter", "chair_master", "owner", "salon_owner", "chain_owner":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
 	name := strings.TrimSpace(in.DisplayName)
 	city := strings.TrimSpace(in.City)
@@ -86,16 +96,25 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	default:
 		return nil, apperr.Validation("invalid work_type")
 	}
-	if err := s.requireMembership(ctx, in.OrganizationID, in.UserID, "owner", "admin", "master"); err != nil {
-		return nil, err
-	}
 	now := s.now().UTC()
 	existing, err := s.store.GetMasterByUser(ctx, in.UserID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	orgID := in.OrganizationID
+	if orgID == uuid.Nil && existing != nil {
+		orgID = existing.OrganizationID
+	}
+	if orgID == uuid.Nil && workTypeNeedsOrganization(workType) {
+		return nil, apperr.Validation("organization_id is required for this work type")
+	}
+	if orgID != uuid.Nil {
+		if err := s.requireMembership(ctx, orgID, in.UserID, "owner", "admin", "master"); err != nil {
+			return nil, err
+		}
+	}
 	m := domain.MasterProfile{
-		UserID: in.UserID, OrganizationID: in.OrganizationID, BranchID: in.BranchID,
+		UserID: in.UserID, OrganizationID: orgID, BranchID: in.BranchID,
 		DisplayName: name, Bio: strings.TrimSpace(in.Bio), Specializations: in.Specializations,
 		City: city, ExperienceYears: in.ExperienceYears, Education: strings.TrimSpace(in.Education),
 		PhotoMediaID: in.PhotoMediaID, WorkType: workType, Published: in.Published, UpdatedAt: now,

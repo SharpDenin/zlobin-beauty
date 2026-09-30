@@ -1083,14 +1083,15 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')
     await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: 'Настроить' }).click()
-    const messages = page.locator('.dashboard-setting-row').filter({ hasText: 'Сообщения' }).locator('input[type="checkbox"]')
+    await page.getByTestId('dashboard-edit').click()
+    const messages = page.locator('.dash-edit-row').filter({ hasText: 'Сообщения' }).locator('input[type="checkbox"]')
     await expect(messages).toBeVisible()
     if (await messages.isChecked()) await messages.uncheck()
-    await page.getByRole('button', { name: 'Готово' }).click()
+    await page.getByTestId('dashboard-save').click()
     await page.reload()
     await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.widget-drag-handle', { hasText: 'Сообщения' })).toHaveCount(0)
+    await expect(page.locator('[data-widget="messages"]')).toHaveCount(0)
   })
 
   test('calendar planner block is clickable and editable', async ({ page }, info) => {

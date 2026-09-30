@@ -8,7 +8,8 @@ import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
-import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import '@/features/media-cards/media-cards.css'
 
 type Master = {
   id: string
@@ -176,15 +177,21 @@ export function SearchPage() {
         {query.data?.items.map((m) => {
           const otherCity = m.city.trim().toLowerCase() !== selectedCity
           return (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item search-master-card">
-              <MasterPortrait mediaId={m.photo_media_id} name={m.display_name} />
-              <div className="stack-sm">
+            <Link key={m.id} to={`/masters/${m.id}`} className="list-item search-master-card media-first-card">
+              <ServiceCardMedia
+                mediaId={m.photo_media_id}
+                name={m.display_name}
+                aspect="hero"
+                overlay={{
+                  title: m.display_name,
+                  meta: `★ ${m.rating_avg.toFixed(1)} (${m.rating_count}) · ${m.city}`,
+                }}
+              />
+              <div className="media-first-body stack-sm">
                 <div className="row between">
-                  <strong>{m.display_name}</strong>
+                  <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
                   <span className={`city-badge${otherCity ? ' city-badge--other' : ''}`}>{m.city}</span>
                 </div>
-                <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
-                <p className="muted">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</p>
                 {m.onsite_match && (
                   <p className="badge badge-success" data-testid="onsite-badge">{m.onsite_match.badge || 'Выезд в вашем районе'}</p>
                 )}

@@ -8,6 +8,8 @@ import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { premiumLabel } from '@/features/dashboard/premiumLabel'
+import '@/features/dashboard/dashboard.css'
 
 type Analytics = {
   revenue_today_minor?: number
@@ -53,7 +55,7 @@ export function SupplierHomePage() {
   const sub = useQuery({
     queryKey: ['me-subscription'],
     queryFn: () =>
-      apiRequest<{ status: string; trial_ends_at?: string }>('/v1/me/subscription', { token: accessToken }),
+      apiRequest<{ status: string; trial_ends_at?: string; effective_plan?: string }>('/v1/me/subscription', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
 
@@ -145,12 +147,13 @@ export function SupplierHomePage() {
     <main className="page stack">
       <section className="hero">
         <div className="stack">
-          <p className="eyebrow">Поставщик</p>
+          <p className="eyebrow">Главная</p>
           <h1>{supplierOrg?.organization.name || user?.display_name}</h1>
+          <p className="muted">Поставщик</p>
           <p>Состояние бизнеса прямо сейчас: заказы, оплаты и полевая команда.</p>
-          {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
-            <p><strong>Premium активирован бесплатно на 3 месяца</strong> · до {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}</p>
-          )}
+          <Link className="dash-premium-pill" to="/profile/subscription" data-testid="supplier-premium-pill">
+            {premiumLabel(sub.data)}
+          </Link>
           <div className="row">
             <Link className="btn btn-primary" to="/supplier/analytics">Аналитика</Link>
             <Link className="btn btn-secondary" to="/supplier/team">Представители</Link>

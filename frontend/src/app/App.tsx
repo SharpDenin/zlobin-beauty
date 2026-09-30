@@ -1,15 +1,18 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClient } from '@/shared/api/query-client'
 import { AuthProvider, homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { AppShell, RequireAdmin, RequireAuth, RequireCabinetFeature, RequireMaster, RequireSupplier } from '@/app/layout'
 import { CabinetProvider } from '@/shared/lib/cabinet'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
+import { InvitePage } from '@/pages/InvitePage'
 import { HomePage } from '@/pages/HomePage'
 import { SearchPage } from '@/pages/SearchPage'
 import { MasterPage } from '@/pages/MasterPage'
 import { AppointmentsPage } from '@/pages/AppointmentsPage'
 import { MasterCabinetPage } from '@/pages/MasterCabinetPage'
+import { PortfolioPage } from '@/pages/PortfolioPage'
 import { AppointmentDetailPage } from '@/pages/AppointmentDetailPage'
 import { ClientCardPage } from '@/pages/ClientCardPage'
 import { ClientsPage } from '@/pages/ClientsPage'
@@ -68,6 +71,7 @@ import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { MessagesPage } from '@/pages/MessagesPage'
+import { ContactsPage } from '@/pages/ContactsPage'
 import { MasterclassCreatePage, MasterclassDetailPage, MasterclassListPage } from '@/pages/MasterclassPages'
 import { ModelRequestCreatePage, ModelRequestDetailPage, ModelsPage } from '@/pages/ModelPages'
 import { MasterInventoryPage, MasterReceiptsPage } from '@/pages/MasterInventoryPage'
@@ -76,12 +80,6 @@ import { ToastProvider } from '@/shared/ui/Toast'
 import { PwaProvider } from '@/features/pwa/PwaProvider'
 import { PageLoading } from '@/shared/ui/PageLoading'
 import type { ReactNode } from 'react'
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 15_000, retry: 1 },
-  },
-})
 
 function PublicOnly({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -92,7 +90,9 @@ function PublicOnly({ children }: { children: ReactNode }) {
 
 function LoginRoute() {
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from
+  const fromState = (location.state as { from?: string } | null)?.from
+  const next = new URLSearchParams(location.search).get('next')
+  const from = next || fromState
   return (
     <PublicOnly>
       <LoginPage redirectTo={from && from !== '/login' ? from : undefined} />
@@ -111,7 +111,8 @@ export function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
-            <Route path="/register" element={<PublicOnly><RegisterPage /></PublicOnly>} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/invite/:token" element={<InvitePage />} />
             <Route element={<RequireAuth />}>
               <Route element={<AppShell />}>
                 <Route path="/" element={<HomePage />} />
@@ -124,6 +125,7 @@ export function App() {
                 <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/messages" element={<MessagesPage />} />
                 <Route path="/messages/:id" element={<MessagesPage />} />
+                <Route path="/contacts" element={<ContactsPage />} />
                 <Route path="/models" element={<ModelsPage />} />
                 <Route path="/models/:id" element={<ModelRequestDetailPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
@@ -174,6 +176,7 @@ export function App() {
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
+                  <Route path="/portfolio" element={<PortfolioPage />} />
                   <Route path="/masterclasses" element={<MasterclassListPage />} />
                   <Route path="/masterclasses/new" element={<MasterclassCreatePage />} />
                   <Route path="/masterclasses/:id" element={<MasterclassDetailPage />} />

@@ -1,0 +1,55 @@
+/* Cosmetics checkout cart lines: explicit qty stepper + remove, 44px touch targets (360px safe). */
+
+.cart-line {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  min-width: 0;
+}
+
+.cart-line-head {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.cart-line-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cart-line-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cart-line .cart-qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* `.cart-line` in the selector beats the generic `.btn` padding/size regardless of stylesheet order. */
+.cart-line .cart-qty-btn {
+  min-width: var(--control-h);
+  min-height: var(--control-h);
+  padding: 0;
+}
+
+.cart-line .cart-qty-value {
+  min-width: 2rem;
+  text-align: center;
+  font-weight: 700;
+}
+
+.cart-line .cart-line-remove {
+  min-height: var(--control-h);
+}

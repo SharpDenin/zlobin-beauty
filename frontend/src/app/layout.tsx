@@ -1,7 +1,8 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, type ReactNode } from 'react'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
-import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
+import { useCabinet, applyNavOrder, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
+import { usePreference } from '@/shared/lib/preferences'
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ThemeToggle } from '@/shared/ui/ThemeToggle'
@@ -133,9 +134,34 @@ function MoreDrawer({
   links: NavLink[]
   pathname: string
 }) {
+  const cabinet = useCabinet()
+  const [navOrder, setNavOrder] = usePreference<string[]>('nav.order', [])
+  const primary = applyNavOrder(cabinet.primary, navOrder).filter((l) => l.to !== '/more')
+  function move(index: number, dir: -1 | 1) {
+    const next = primary.map((l) => l.to)
+    const j = index + dir
+    if (j < 0 || j >= next.length) return
+    ;[next[index], next[j]] = [next[j], next[index]]
+    setNavOrder(next)
+  }
   return (
     <Drawer open={open} onClose={onClose} title="Ещё" panelClassName="stack-sm">
       <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
+      {primary.length > 1 && (
+        <section className="stack-sm nav-order">
+          <h2 className="nav-order-title">Порядок вкладок</h2>
+          <p className="muted">Сохраняется для вашего аккаунта. На мобильном меняет нижнее меню.</p>
+          {primary.map((l, i) => (
+            <div key={l.to} className="row between nav-order-row">
+              <span>{l.label}</span>
+              <div className="row">
+                <button className="btn btn-secondary btn-compact" type="button" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                <button className="btn btn-secondary btn-compact" type="button" disabled={i === primary.length - 1} onClick={() => move(i, 1)}>↓</button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
     </Drawer>
   )
 }

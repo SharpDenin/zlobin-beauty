@@ -18,6 +18,7 @@ describe('ServiceCardMedia', () => {
   it('uses landscape frame and fallback for a service without photo', () => {
     const { container } = render(<ServiceCardMedia name="Окрашивание" mediaId={null} />)
     expect(container.querySelector('.media-frame--landscape')).not.toBeNull()
+    expect(container.querySelector('.media-first-cover--landscape')).not.toBeNull()
     expect(screen.getByRole('img', { name: 'Окрашивание' })).toHaveClass('media-fallback')
     expect(screen.getByRole('img', { name: 'Окрашивание' })).toHaveTextContent('ОК')
   })

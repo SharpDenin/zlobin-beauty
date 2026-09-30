@@ -82,5 +82,7 @@ type Session struct {
 	IP               *string
 	ExpiresAt        time.Time
 	RevokedAt        *time.Time
+	RotatedAt        *time.Time
+	ReplacedBy       *uuid.UUID
 	CreatedAt        time.Time
 }

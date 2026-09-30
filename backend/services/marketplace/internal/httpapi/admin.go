@@ -24,6 +24,10 @@ func (a *API) registerAdminRoutes(mux *http.ServeMux, auth func(http.Handler) ht
 	mux.Handle("GET /v1/admin/services/{id}", admin(a.adminGetService))
 	mux.Handle("POST /v1/admin/services/{id}/publish", admin(a.adminPublishService))
 	mux.Handle("POST /v1/admin/services/{id}/unpublish", admin(a.adminUnpublishService))
+	mux.Handle("GET /v1/admin/profession-types", admin(a.adminListProfessionTypes))
+	mux.Handle("POST /v1/admin/profession-types", admin(a.adminCreateProfessionType))
+	mux.Handle("POST /v1/admin/profession-types/{id}/disable", admin(a.adminDisableProfessionType))
+	mux.Handle("POST /v1/admin/profession-types/{id}/enable", admin(a.adminEnableProfessionType))
 	mux.Handle("GET /v1/admin/knowledge", admin(a.adminListKnowledge))
 	mux.Handle("GET /v1/admin/knowledge/{id}", admin(a.adminGetKnowledge))
 	mux.Handle("POST /v1/admin/knowledge/{id}/publish", admin(func(w http.ResponseWriter, r *http.Request) {
@@ -261,4 +265,60 @@ func (a *API) adminSetKnowledgeStatus(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 	httpx.JSON(w, http.StatusOK, knowledgeDTO(*item))
+}
+
+func (a *API) adminListProfessionTypes(w http.ResponseWriter, r *http.Request) {
+	items, err := a.svc.AdminListProfessionTypes(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, t := range items {
+		out = append(out, professionTypeDTO(t))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) adminCreateProfessionType(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	t, err := a.svc.AdminCreateProfessionType(r.Context(), req.Name, req.Slug)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, professionTypeDTO(*t))
+}
+
+func (a *API) adminDisableProfessionType(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.AdminSetProfessionTypeActive(r.Context(), id, false); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) adminEnableProfessionType(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.AdminSetProfessionTypeActive(r.Context(), id, true); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

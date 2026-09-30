@@ -143,3 +143,39 @@ func (s *Store) CountMasterServices(ctx context.Context, masterID uuid.UUID) (in
 	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM master_services WHERE master_id=$1`, masterID).Scan(&n)
 	return n, err
 }
+
+func (s *Store) ListAllProfessionTypes(ctx context.Context) ([]domain.ProfessionType, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, slug, name, is_active, created_at, updated_at
+FROM master_types ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ProfessionType
+	for rows.Next() {
+		var t domain.ProfessionType
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.IsActive, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if out == nil {
+		out = []domain.ProfessionType{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateProfessionType(ctx context.Context, t domain.ProfessionType) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO master_types(id, slug, name, is_active, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, is_active=TRUE, updated_at=EXCLUDED.updated_at`,
+		t.ID, t.Slug, t.Name, t.IsActive, t.CreatedAt, t.UpdatedAt)
+	return err
+}
+
+func (s *Store) SetProfessionTypeActive(ctx context.Context, id uuid.UUID, active bool, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE master_types SET is_active=$2, updated_at=$3 WHERE id=$1`, id, active, at)
+	return err
+}

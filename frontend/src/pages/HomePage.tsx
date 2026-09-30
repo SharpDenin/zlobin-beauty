@@ -7,8 +7,9 @@ import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
-import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
 import { groupAppointmentsByVisit, visitGroupTitle } from '@/pages/visit-plan-helpers'
+import '@/features/media-cards/media-cards.css'
 
 type Appointment = {
   id: string
@@ -95,13 +96,21 @@ function ClientHome() {
         <div className="list">
           {masters.isLoading && <div className="skeleton skeleton-card" />}
           {masters.data?.items.slice(0, 4).map((m) => (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card">
-              <MasterPortrait mediaId={m.photo_media_id} name={m.display_name} />
-              <div className="stack-sm">
-                <strong>{m.display_name}</strong>
-                <span className="meta">{masterProfessionLabel(m, 'Красота и уход')} · {m.city}</span>
+            <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card media-first-card">
+              <ServiceCardMedia
+                mediaId={m.photo_media_id}
+                name={m.display_name}
+                token={accessToken}
+                aspect="hero"
+                overlay={{
+                  title: m.display_name,
+                  meta: `${masterProfessionLabel(m, 'Красота и уход')} · ${m.city}`,
+                }}
+              />
+              <div className="media-first-body row between">
+                <span className="meta">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</span>
+                <span className="badge badge-default">{m.city}</span>
               </div>
-              <span className="badge badge-default">{m.rating_avg.toFixed(1)}</span>
             </Link>
           ))}
         </div>

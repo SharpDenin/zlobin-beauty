@@ -4,6 +4,9 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
 )
 
 func TestKnowledgeRankScoreProductBeatsCategory(t *testing.T) {
@@ -24,7 +27,7 @@ func TestKnowledgeRankScoreAdditiveSignals(t *testing.T) {
 		TitleMatch:        true,
 		Now:               now,
 	})
-	want := 100 + 50 + 30 + 20 + knowledgeRecencyScore(nil, time.Time{}, now)
+	want := 100 + 50 + 30 + 80 + knowledgeRecencyScore(nil, time.Time{}, now)
 	if math.Abs(got-want) > 1e-9 {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -76,5 +79,35 @@ func TestKnowledgeRankScoreNegativeViewsIgnored(t *testing.T) {
 	zero := KnowledgeRankScore(KnowledgeRankInput{ViewCount: 0, Now: now})
 	if neg != zero {
 		t.Fatalf("negative views should clamp to zero: %v vs %v", neg, zero)
+	}
+}
+
+// Search is title-first: a title starting with the query beats a title that merely
+// contains it, which beats a match found only in the brand.
+func TestRankKnowledgeArticlesTitleFirst(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	brandOnly := domain.KnowledgeArticle{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), Title: "Инструкция к уходу", Brand: "Otium"}
+	titleInfix := domain.KnowledgeArticle{ID: uuid.MustParse("00000000-0000-0000-0000-000000000002"), Title: "Быстрый Otium: инструкция", Brand: "Estel"}
+	titlePrefix := domain.KnowledgeArticle{ID: uuid.MustParse("00000000-0000-0000-0000-000000000003"), Title: "Otium Aqua — гид", Brand: "Estel"}
+
+	got := rankKnowledgeArticles(
+		[]domain.KnowledgeArticle{brandOnly, titleInfix, titlePrefix},
+		KnowledgeListQuery{Query: "OTIUM"},
+		now,
+	)
+	want := []uuid.UUID{titlePrefix.ID, titleInfix.ID, brandOnly.ID}
+	for i, a := range got {
+		if a.ID != want[i] {
+			t.Fatalf("position %d: got %s (%s), want %s", i, a.ID, a.Title, want[i])
+		}
+	}
+}
+
+func TestKnowledgeRankScoreTitlePrefixAddsOnTopOfTitleMatch(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	title := KnowledgeRankScore(KnowledgeRankInput{TitleMatch: true, Now: now})
+	prefix := KnowledgeRankScore(KnowledgeRankInput{TitleMatch: true, TitlePrefixMatch: true, Now: now})
+	if math.Abs((prefix-title)-20) > 1e-9 {
+		t.Fatalf("prefix bonus got %v want 20", prefix-title)
 	}
 }

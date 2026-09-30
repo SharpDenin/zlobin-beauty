@@ -67,6 +67,9 @@ func (s *Service) InviteStaff(ctx context.Context, orgID, actor, userID uuid.UUI
 	}); err != nil {
 		return apperr.Internal(err)
 	}
+	if err := s.grantIdentityRole(ctx, userID, role); err != nil {
+		return err
+	}
 	meta, _ := json.Marshal(map[string]any{"role": role, "user_id": userID.String()})
 	_ = s.store.AddOrgAudit(ctx, ids.New(), orgID, &actor, "membership.invited", "membership", &userID, meta, now)
 	return nil

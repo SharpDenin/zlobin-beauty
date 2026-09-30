@@ -11,6 +11,7 @@ import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
 import type { ProfessionType } from '@/shared/lib/profession-types'
 import { selectedProfessionIds } from '@/shared/lib/profession-types'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
@@ -49,8 +50,6 @@ export function MasterCabinetPage() {
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [portfolioCaption, setPortfolioCaption] = useState('')
-  const [recoProductId, setRecoProductId] = useState('')
-  const [recoComment, setRecoComment] = useState('')
   const [profilePhotoDraft, setProfilePhotoDraft] = useState<string | null>(null)
   const [portfolioDraft, setPortfolioDraft] = useState<string | null>(null)
   const [salonDraft, setSalonDraft] = useState<string | null>(null)
@@ -140,26 +139,6 @@ export function MasterCabinetPage() {
     enabled: Boolean(primaryBranch?.id),
   })
 
-  const orgProducts = useQuery({
-    queryKey: ['commerce-products-reco', primaryOrg?.organization.id],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; name: string; brand: string; published: boolean }> }>(
-        `/v1/commerce/products?organization_id=${primaryOrg!.organization.id}`,
-        { token: accessToken },
-      ),
-    enabled: Boolean(accessToken && primaryOrg?.organization.id),
-  })
-
-  const myRecommendations = useQuery({
-    queryKey: ['my-recommendations'],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; product_id: string; comment: string; created_at: string }> }>(
-        '/v1/commerce/recommendations/mine',
-        { token: accessToken },
-      ),
-    enabled: Boolean(accessToken),
-  })
-
   const orgForm = useForm<z.infer<typeof orgSchema>>({ resolver: zodResolver(orgSchema) })
   const branchForm = useForm<{ phone: string }>({
     defaultValues: { phone: '' },
@@ -176,10 +155,26 @@ export function MasterCabinetPage() {
       profession_type_ids: [],
     },
   })
+  const masterDraft = useFormDraft(masterForm, 'master-profile-form')
+  const watchedWorkType = masterForm.watch('work_type')
+  const needsSalon = ['employee', 'renter', 'chair_master', 'owner', 'salon_owner', 'chain_owner'].includes(watchedWorkType)
+  const hasSalon = Boolean(orgs.data?.items.length)
 
   useEffect(() => {
     const m = master.data?.master
-    if (!m) return
+    if (!m) {
+      try {
+        const types = JSON.parse(sessionStorage.getItem('sx.onboard.profession_types') || '[]') as string[]
+        const wt = sessionStorage.getItem('sx.onboard.work_type')
+        if (Array.isArray(types) && types.length) {
+          masterForm.setValue('profession_type_ids', types, { shouldDirty: true })
+        }
+        if (wt) {
+          masterForm.setValue('work_type', wt as z.infer<typeof masterSchema>['work_type'])
+        }
+      } catch { /* ignore malformed onboard cache */ }
+      return
+    }
     masterForm.reset({
       display_name: m.display_name || user?.display_name || '',
       city: m.city || 'Красноярск',
@@ -258,13 +253,12 @@ export function MasterCabinetPage() {
   const saveMaster = useMutation({
     mutationFn: (values: z.infer<typeof masterSchema>) => {
       const org = orgs.data?.items[0]
-      if (!org) throw new ApiError('Сначала создайте салон', 'validation_error', 400)
+      if (needsSalon && !org) throw new ApiError('Для этого формата работы нужен салон. Создайте салон или примите приглашение.', 'validation_error', 400)
       return apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
         body: {
-          organization_id: org.organization.id,
-          branch_id: org.branches[0]?.id,
+          ...(org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
           display_name: values.display_name,
           city: values.city,
           bio: values.bio ?? '',
@@ -280,6 +274,9 @@ export function MasterCabinetPage() {
     onSuccess: async () => {
       setOk('Профиль мастера сохранён')
       setError(null)
+      masterDraft.clear()
+      sessionStorage.removeItem('sx.onboard.profession_types')
+      sessionStorage.removeItem('sx.onboard.work_type')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
@@ -315,9 +312,9 @@ export function MasterCabinetPage() {
     }
     if (!accessToken) return
     const org = orgs.data?.items[0]
-    if (!org) {
-      setError('Сначала создайте салон')
-      toast.error('Сначала создайте салон')
+    if (needsSalon && !org) {
+      setError('Для этого формата работы нужен салон')
+      toast.error('Для этого формата работы нужен салон')
       setProfilePhotoDraft(null)
       return
     }
@@ -327,8 +324,7 @@ export function MasterCabinetPage() {
         method: 'PUT',
         token: accessToken,
         body: {
-          organization_id: org.organization.id,
-          branch_id: org.branches[0]?.id,
+          ...(org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
           display_name: masterForm.getValues('display_name') || user?.display_name || '',
           city: masterForm.getValues('city') || 'Красноярск',
           bio: masterForm.getValues('bio') ?? '',
@@ -421,34 +417,10 @@ export function MasterCabinetPage() {
     onError: (e) => setError(formatUserError(e, 'Не удалось удалить')),
   })
 
-  const createRecommendation = useMutation({
-    mutationFn: () =>
-      apiRequest('/v1/commerce/recommendations', {
-        token: accessToken,
-        body: { product_id: recoProductId, comment: recoComment.trim() },
-      }),
-    onSuccess: async () => {
-      setOk('Рекомендация создана')
-      setRecoComment('')
-      setRecoProductId('')
-      await qc.invalidateQueries({ queryKey: ['my-recommendations'] })
-    },
-    onError: (e) => setError(formatUserError(e, 'Не удалось создать рекомендацию')),
-  })
-
-  const deleteRecommendation = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest(`/v1/commerce/recommendations/${id}`, { method: 'DELETE', token: accessToken }),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['my-recommendations'] })
-    },
-    onError: (e) => setError(formatUserError(e, 'Не удалось удалить рекомендацию')),
-  })
-
   return (
     <main className="page stack">
-      <h1>Кабинет мастера</h1>
-      <p>Настройте салон, профиль и расписание — затем покажитесь клиентам в поиске.</p>
+      <h1>Профиль мастера</h1>
+      <p>Заполните профиль и типы услуг. Салон нужен только если вы владелец или работаете в чужой точке.</p>
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
@@ -481,7 +453,13 @@ export function MasterCabinetPage() {
       </section>
 
       <section className="card stack">
-        <h2>1. Салон</h2>
+        <h2>Салон {needsSalon ? '' : '(необязательно)'}</h2>
+        {!needsSalon && !hasSalon && (
+          <p className="muted">Частный, выездной и независимый мастер может работать без своего салона. Создайте салон, только если открываете собственную точку.</p>
+        )}
+        {needsSalon && !hasSalon && (
+          <p className="muted">Для этого формата нужен салон: создайте свой или примите QR-приглашение владельца.</p>
+        )}
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
         {orgs.isError && <ErrorBanner error={orgs.error} fallbackTitle="Не удалось загрузить организации" />}
         {orgs.data && orgs.data.items.length > 0 ? (
@@ -580,7 +558,7 @@ export function MasterCabinetPage() {
       )}
 
       <section className="card stack">
-        <h2>2. Профиль мастера</h2>
+        <h2>Профиль мастера</h2>
         {master.isError && <div className="state-box">Профиль ещё не создан — заполните форму ниже</div>}
         <div className="stack-sm">
           <h3>Фото профиля</h3>
@@ -603,13 +581,13 @@ export function MasterCabinetPage() {
         </div>
         <form className="stack" onSubmit={masterForm.handleSubmit((v) => saveMaster.mutate(v))}>
           <div className="field">
-            <label>Имя в поиске</label>
-            <input aria-invalid={Boolean(masterForm.formState.errors.display_name)} {...masterForm.register('display_name')} />
+            <label htmlFor="display_name">Имя в поиске</label>
+            <input id="display_name" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.display_name)} {...masterForm.register('display_name')} />
             {masterForm.formState.errors.display_name && <span className="error">{masterForm.formState.errors.display_name.message}</span>}
           </div>
           <div className="field">
-            <label>Город</label>
-            <input aria-invalid={Boolean(masterForm.formState.errors.city)} {...masterForm.register('city')} />
+            <label htmlFor="master-city">Город</label>
+            <input id="master-city" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.city)} {...masterForm.register('city')} />
             {masterForm.formState.errors.city && <span className="error">{masterForm.formState.errors.city.message}</span>}
           </div>
           <div className="field"><label>О себе</label><textarea {...masterForm.register('bio')} /></div>
@@ -728,60 +706,6 @@ export function MasterCabinetPage() {
       </section>
 
       <section className="card stack">
-        <h2>Рекомендовать товар клиентам</h2>
-        <p className="muted">Общая рекомендация появится у всех ваших клиентов в магазине.</p>
-        {orgProducts.isLoading && <div className="state-box">Загрузка товаров…</div>}
-        <div className="field">
-          <label htmlFor="reco-product">Товар</label>
-          <select
-            id="reco-product"
-            value={recoProductId}
-            onChange={(e) => setRecoProductId(e.target.value)}
-          >
-            <option value="">Выберите товар</option>
-            {orgProducts.data?.items.filter((p) => p.published).map((p) => (
-              <option key={p.id} value={p.id}>{p.brand ? `${p.brand} · ` : ''}{p.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="reco-comment">Комментарий</label>
-          <input id="reco-comment" value={recoComment} onChange={(e) => setRecoComment(e.target.value)} placeholder="Почему рекомендуете" />
-        </div>
-        <button
-          className="btn btn-primary"
-          type="button"
-          disabled={!recoProductId || createRecommendation.isPending}
-          onClick={() => createRecommendation.mutate()}
-        >
-          Рекомендовать
-        </button>
-        {myRecommendations.data && myRecommendations.data.items.length > 0 && (
-          <div className="list">
-            {myRecommendations.data.items.map((r) => {
-              const product = orgProducts.data?.items.find((p) => p.id === r.product_id)
-              return (
-                <article key={r.id} className="list-item">
-                  <div className="row between">
-                    <strong>{product ? `${product.brand ? `${product.brand} · ` : ''}${product.name}` : 'Товар'}</strong>
-                    <button
-                      className="btn btn-secondary btn-compact"
-                      type="button"
-                      disabled={deleteRecommendation.isPending}
-                      onClick={() => deleteRecommendation.mutate(r.id)}
-                    >
-                      Удалить
-                    </button>
-                  </div>
-                  {r.comment && <p>{r.comment}</p>}
-                </article>
-              )
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="card stack">
         <h2>3. Услуги</h2>
         <p className="muted">Прайс и длительности удобнее вести на отдельной странице.</p>
         <div className="row">
@@ -798,7 +722,7 @@ export function MasterCabinetPage() {
           <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
             Установить пн–пт 10:00–19:00
           </button>
-          <Link className="btn btn-secondary" to="/calendar">Календарь и исключения</Link>
+          <Link className="btn btn-secondary" to="/schedule">Установка графика</Link>
         </div>
         {hours.data && hours.data.items.length > 0 && (
           <p className="muted">Сохранено интервалов: {hours.data.items.length}</p>

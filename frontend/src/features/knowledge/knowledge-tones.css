@@ -1,0 +1,182 @@
+/*
+  Knowledge base: section tones, mobile catalog, fast search, editor chrome.
+
+  Tokens only (no hex / rgb): works in the dark and the light theme.
+  A tone contributes an ACCENT (border, dot, stripe) and a soft TINT. Text on a
+  tint always stays --color-text-primary, so contrast holds on every tone in both
+  themes (tone colours themselves are only used for non-text accents).
+*/
+
+.kb-tone--primary { --kb-tone: var(--color-primary); --kb-tone-soft: var(--color-primary-muted); }
+.kb-tone--success { --kb-tone: var(--color-success); --kb-tone-soft: var(--color-success-soft); }
+.kb-tone--warning { --kb-tone: var(--color-warning); --kb-tone-soft: var(--color-warning-soft); }
+.kb-tone--info    { --kb-tone: var(--color-info);    --kb-tone-soft: var(--color-info-soft); }
+.kb-tone--danger  { --kb-tone: var(--color-danger);  --kb-tone-soft: var(--color-danger-soft); }
+.kb-tone--neutral { --kb-tone: var(--color-text-muted); --kb-tone-soft: var(--color-surface-2); }
+
+/* Catalog tree node: accent on the left edge; the active node gets the tint. */
+.kb-tree-btn.kb-tone {
+  border-left: 3px solid var(--kb-tone);
+  padding-left: 7px; /* .kb-tree-btn uses 10px; the border takes 3px */
+}
+.kb-tree-btn.kb-tone.is-on {
+  background: var(--kb-tone-soft);
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+/* Quick section chips: a dot marks the section, the active chip is tinted. */
+.chip.kb-tone::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--kb-tone);
+  vertical-align: baseline;
+}
+.chip.kb-tone.active {
+  background: var(--kb-tone-soft);
+  border-color: var(--kb-tone);
+  color: var(--color-text-primary);
+}
+
+/* Article card: tinted category chip + accent stripe under the cover. */
+.kb-card.kb-tone .chip.kb-tone {
+  background: var(--kb-tone-soft);
+  border-color: transparent;
+  color: var(--color-text-primary);
+}
+.kb-card.kb-tone .kb-cover {
+  box-shadow: inset 0 -3px 0 var(--kb-tone);
+}
+
+/* Article page header. */
+.kb-article-header.kb-tone {
+  border-left: 4px solid var(--kb-tone);
+  padding-left: var(--space-3);
+}
+.kb-article-header.kb-tone .badge.kb-section-badge {
+  background: var(--kb-tone-soft);
+  border: 1px solid var(--kb-tone);
+  color: var(--color-text-primary);
+}
+
+/* Catalog: an accordion on mobile (never pushes the results down), always open on desktop.
+   `.kb-catalog` in the selectors beats the generic `.btn` rules whatever the stylesheet order. */
+.kb-catalog .kb-catalog-toggle {
+  display: none;
+  width: 100%;
+  min-height: var(--control-h);
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: left;
+}
+@media (max-width: 767px) {
+  .kb-catalog .kb-catalog-toggle {
+    display: inline-flex;
+  }
+  .kb-catalog .kb-catalog-heading-desktop {
+    display: none;
+  }
+  .kb-catalog:not(.is-open) .kb-catalog-panel {
+    display: none;
+  }
+}
+
+/* Fast title search. */
+.kb-search-bar {
+  display: grid;
+  gap: var(--space-2);
+}
+.kb-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.kb-search-input-wrap input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-h);
+  padding-right: calc(var(--control-h) + var(--space-2));
+}
+.kb-search-input-wrap .kb-search-clear {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: var(--control-h);
+  min-height: var(--control-h);
+  padding: 0;
+}
+.kb-search-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+.kb-result-count {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ---- Supplier article editor ------------------------------------------------------------
+
+   Root cause of the "Действия" card covering the editor on mobile: styles.css makes
+   `.kb-editor-actions` `position: sticky; bottom: nav-height; z-index: var(--z-sticky)` below
+   768px. The card is tall (title + 5 buttons), so while scrolling it pinned itself over the
+   text being edited. The rule below restores normal flow (three classes beat one, no
+   !important needed) and mobile uses a bottom sheet (Drawer) for the secondary actions.
+   The card keeps `.card`'s own shadow. */
+.kb-editor .kb-editor-actions.kb-ed-actions {
+  position: static;
+  bottom: auto;
+  z-index: auto;
+  box-shadow: var(--shadow-sm);
+}
+.kb-editor-actions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.kb-ed-actions .kb-editor-mobile-actions-trigger {
+  display: none;
+}
+
+/* The formatting toolbar stays visible while typing, directly under the app header.
+   --editor-sticky-top is measured by RichDocEditor (the mobile top bar height; 0 on desktop,
+   where there is no top bar). It sits one layer below the top bar. */
+.rich-doc-editor .editor-toolbar.kb-editor-toolbar-sticky {
+  position: sticky;
+  top: var(--editor-sticky-top, 0px);
+  z-index: calc(var(--z-sticky) - 1);
+}
+
+@media (max-width: 767px) {
+  /* One scrollable row instead of 4 wrapped rows: a sticky toolbar must not eat the
+     screen at 360px, especially with the on-screen keyboard open. */
+  .rich-doc-editor .editor-toolbar.kb-editor-toolbar-sticky {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .rich-doc-editor .editor-toolbar.kb-editor-toolbar-sticky::-webkit-scrollbar {
+    display: none;
+  }
+  .rich-doc-editor .editor-toolbar.kb-editor-toolbar-sticky button {
+    flex: 0 0 auto;
+  }
+  .kb-ed-actions .kb-editor-desktop-actions {
+    display: none;
+  }
+  .kb-ed-actions .kb-editor-mobile-actions-trigger {
+    display: flex;
+  }
+}

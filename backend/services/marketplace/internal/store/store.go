@@ -20,7 +20,27 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 const masterCols = `id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
     experience_years, education, photo_media_id, work_type, rating_avg, rating_count, published, created_at, updated_at`
 
+func scanMaster(row interface{ Scan(dest ...any) error }) (*domain.MasterProfile, error) {
+	var m domain.MasterProfile
+	var orgID *uuid.UUID
+	if err := row.Scan(&m.ID, &m.UserID, &orgID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
+		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if orgID != nil {
+		m.OrganizationID = *orgID
+	}
+	return &m, nil
+}
+
 func (s *Store) UpsertMaster(ctx context.Context, m domain.MasterProfile) error {
+	var org any
+	if m.OrganizationID != uuid.Nil {
+		org = m.OrganizationID
+	}
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
   experience_years, education, photo_media_id, work_type, rating_avg, rating_count, published, created_at, updated_at)
@@ -38,7 +58,7 @@ ON CONFLICT (user_id) DO UPDATE SET
   work_type=EXCLUDED.work_type,
   published=EXCLUDED.published,
   updated_at=EXCLUDED.updated_at`,
-		m.ID, m.UserID, m.OrganizationID, m.BranchID, m.DisplayName, m.Bio, m.Specializations, m.City,
+		m.ID, m.UserID, org, m.BranchID, m.DisplayName, m.Bio, m.Specializations, m.City,
 		m.ExperienceYears, m.Education, m.PhotoMediaID, m.WorkType, m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
 	return err
 }
@@ -52,15 +72,7 @@ func (s *Store) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterProf
 }
 
 func (s *Store) scanMaster(row pgx.Row) (*domain.MasterProfile, error) {
-	var m domain.MasterProfile
-	if err := row.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
-		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &m, nil
+	return scanMaster(row)
 }
 
 func (s *Store) SearchMasters(ctx context.Context, city, q, service string, priceMin, priceMax *int64, includeOtherCities bool, limit int) ([]domain.MasterProfile, error) {
@@ -122,10 +134,14 @@ LIMIT $6`, cityFilter, q, service, priceMin, priceMax, limit, city)
 	var out []domain.MasterProfile
 	for rows.Next() {
 		var m domain.MasterProfile
+		var orgID *uuid.UUID
 		var cityRank int
-		if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
+		if err := rows.Scan(&m.ID, &m.UserID, &orgID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
 			&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt, &cityRank); err != nil {
 			return nil, err
+		}
+		if orgID != nil {
+			m.OrganizationID = *orgID
 		}
 		out = append(out, m)
 	}

@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -99,6 +101,9 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 	}
 	if flags > 1 {
 		return nil, apperr.Validation("choose a single professional role")
+	}
+	if os.Getenv("APP_ENV") == "production" && (in.AsSalonAdmin || in.AsSupplierRep) {
+		return nil, apperr.Forbidden("this role cannot be self-assigned")
 	}
 	now := s.now().UTC()
 	roles := []string{domain.RoleClient}
@@ -200,9 +205,15 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthResult
 		return nil, apperr.SessionExpired()
 	}
 	if sess.RevokedAt != nil {
-		_ = s.store.RevokeFamily(ctx, sess.FamilyID, now)
-		_ = s.security(ctx, &sess.UserID, "refresh.reuse_detected", map[string]any{})
-		return nil, apperr.SessionExpired()
+		// A refresh token that was rotated moments ago is almost always a benign race (two tabs, a
+		// retried request), not theft: rotate the still-active successor instead of killing the family.
+		if succ := s.graceSuccessor(ctx, sess, now); succ != nil {
+			sess = succ
+		} else {
+			_ = s.store.RevokeFamily(ctx, sess.FamilyID, now)
+			_ = s.security(ctx, &sess.UserID, "refresh.reuse_detected", map[string]any{})
+			return nil, apperr.SessionExpired()
+		}
 	}
 	if now.After(sess.ExpiresAt) {
 		return nil, apperr.SessionExpired()
@@ -229,6 +240,9 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthResult
 		CreatedAt:        now,
 	}
 	if err := s.store.RotateSession(ctx, sess.ID, next, now); err != nil {
+		if errors.Is(err, store.ErrSessionAlreadyRotated) {
+			return nil, apperr.SessionExpired()
+		}
 		return nil, apperr.Internal(err)
 	}
 	return &AuthResult{
@@ -523,14 +537,19 @@ func (s *Service) DevSetSubscription(ctx context.Context, actor uuid.UUID, in De
 	return s.SubscriptionFor(ctx, actor)
 }
 
+func allowedGrantRole(role string) bool {
+	switch role {
+	case domain.RoleMaster, domain.RoleSupplier, domain.RoleSupplierRep, domain.RoleSalonOwner, domain.RoleSalonAdmin, domain.RoleClient:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) GrantRole(ctx context.Context, email, role string) (*domain.User, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	role = strings.TrimSpace(role)
-	allowed := map[string]struct{}{
-		domain.RoleMaster: {}, domain.RoleSupplier: {}, domain.RoleSupplierRep: {},
-		domain.RoleSalonOwner: {}, domain.RoleSalonAdmin: {}, domain.RoleClient: {},
-	}
-	if _, ok := allowed[role]; !ok {
+	if !allowedGrantRole(role) {
 		return nil, apperr.Validation("unsupported role")
 	}
 	user, err := s.store.GetUserByEmail(ctx, email)
@@ -540,8 +559,31 @@ func (s *Service) GrantRole(ctx context.Context, email, role string) (*domain.Us
 	if user == nil {
 		return nil, apperr.NotFound("user not found")
 	}
+	return s.grantRoleToUser(ctx, user, role)
+}
+
+func (s *Service) GrantRoleToUser(ctx context.Context, userID uuid.UUID, role string) (*domain.User, error) {
+	role = strings.TrimSpace(role)
+	if !allowedGrantRole(role) {
+		return nil, apperr.Validation("unsupported role")
+	}
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if user == nil {
+		return nil, apperr.NotFound("user not found")
+	}
+	return s.grantRoleToUser(ctx, user, role)
+}
+
+func (s *Service) grantRoleToUser(ctx context.Context, user *domain.User, role string) (*domain.User, error) {
 	if err := s.store.AddUserRole(ctx, user.ID, role); err != nil {
 		return nil, apperr.Internal(err)
+	}
+	email := ""
+	if user.Email != nil {
+		email = *user.Email
 	}
 	meta, _ := json.Marshal(map[string]any{"role": role, "email": email})
 	_ = s.store.AddAudit(ctx, ids.New(), user.ID, "role.granted", "user", &user.ID, meta, s.now().UTC())

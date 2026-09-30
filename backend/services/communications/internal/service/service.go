@@ -14,6 +14,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type Service struct {
@@ -77,6 +78,10 @@ func (s *Service) CreateReview(ctx context.Context, in CreateReviewInput) (*doma
 	if in.MasterRating < 1 || in.MasterRating > 5 || in.ResultRating < 1 || in.ResultRating > 5 {
 		return nil, apperr.Validation("ratings must be 1-5")
 	}
+	comment := strings.TrimSpace(in.Comment)
+	if err := moderation.ValidateFields(map[string]string{"comment": comment}); err != nil {
+		return nil, err
+	}
 	if s.bookingURL == "" {
 		return nil, apperr.Internal(fmt.Errorf("BOOKING_URL is not configured"))
 	}
@@ -119,7 +124,7 @@ func (s *Service) CreateReview(ctx context.Context, in CreateReviewInput) (*doma
 	}
 	r := domain.Review{
 		ID: ids.New(), AppointmentID: in.AppointmentID, ClientUserID: in.ActorID, MasterUserID: masterID,
-		MasterRating: in.MasterRating, ResultRating: in.ResultRating, Comment: strings.TrimSpace(in.Comment),
+		MasterRating: in.MasterRating, ResultRating: in.ResultRating, Comment: comment,
 		PublishAllowed: in.PublishAllowed, CreatedAt: s.now().UTC(),
 	}
 	if err := s.store.CreateReview(ctx, r); err != nil {

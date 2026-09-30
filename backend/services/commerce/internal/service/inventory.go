@@ -296,10 +296,7 @@ func (s *Service) ConsumeMyStock(ctx context.Context, actor uuid.UUID, in Consum
 	}
 	out, err := s.store.CreateMovement(ctx, m)
 	if err != nil {
-		if ae, ok := apperr.As(err); ok {
-			return nil, ae
-		}
-		return nil, apperr.Internal(err)
+		return nil, typedOrInternal(err)
 	}
 	return out, nil
 }
@@ -336,10 +333,7 @@ func (s *Service) AdjustMyStock(ctx context.Context, actor uuid.UUID, in AdjustS
 	}
 	out, err := s.store.CreateMovement(ctx, m)
 	if err != nil {
-		if ae, ok := apperr.As(err); ok {
-			return nil, ae
-		}
-		return nil, apperr.Internal(err)
+		return nil, typedOrInternal(err)
 	}
 	return out, nil
 }

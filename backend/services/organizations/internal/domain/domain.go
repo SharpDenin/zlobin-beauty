@@ -153,3 +153,16 @@ type BranchPhoto struct {
 	SortOrder int
 	CreatedAt time.Time
 }
+
+type SalonInvite struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	CreatedBy      uuid.UUID
+	Role           string
+	TokenHash      string
+	ExpiresAt      time.Time
+	MaxUses        int
+	UseCount       int
+	RevokedAt      *time.Time
+	CreatedAt      time.Time
+}

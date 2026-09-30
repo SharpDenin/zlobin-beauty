@@ -5,12 +5,9 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
-import { workTypeLabel } from '@/shared/lib/status'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
-import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
-import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { useToast } from '@/shared/ui/Toast'
@@ -18,6 +15,19 @@ import { Hint } from '@/shared/ui/Hint'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { MultiServiceBookingDialog } from '@/pages/MultiServiceBookingDialog'
 import { canJoinMultiService } from '@/pages/visit-plan-helpers'
+import {
+  PortfolioCategoryChips,
+  PortfolioGrid,
+  PortfolioViewer,
+} from '@/features/portfolio/PortfolioUI'
+import {
+  collectPortfolioCategories,
+  filterPortfolioByCategory,
+  type PortfolioListResponse,
+} from '@/features/portfolio/types'
+import '@/features/master-profile/master-profile.css'
+import '@/features/portfolio/portfolio.css'
+import '@/features/media-cards/media-cards.css'
 
 type BookingMode = 'flexible' | 'fixed_window'
 
@@ -45,6 +55,9 @@ type MasterDetails = {
     profession_types?: { id: string; slug: string; name: string }[]
     photo_media_id?: string | null
     organization_id?: string
+    experience_years?: number
+    rating_avg?: number
+    rating_count?: number
   }
   services: Service[]
 }
@@ -74,6 +87,14 @@ type BookedAppointment = {
   booking_mode?: string
 }
 
+type Review = {
+  id: string
+  master_rating: number
+  result_rating: number
+  comment: string
+  created_at: string
+}
+
 const FLEX_STEPS = ['Услуга', 'Дата', 'Время', 'Итого'] as const
 const FIXED_STEPS = ['Услуга', 'Сеанс', 'Итого'] as const
 
@@ -81,9 +102,37 @@ function bookingModeLabel(mode?: string) {
   return mode === 'fixed_window' ? 'Фиксированное окно' : 'Гибкая запись'
 }
 
+function nearbyDates(centerISO: string, span = 7): string[] {
+  const base = new Date(`${centerISO}T12:00:00`)
+  const out: string[] = []
+  for (let i = -1; i < span - 1; i++) {
+    const d = new Date(base)
+    d.setDate(base.getDate() + i)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (d < today) continue
+    out.push(d.toISOString().slice(0, 10))
+  }
+  while (out.length < span) {
+    const last = out[out.length - 1] ? new Date(`${out[out.length - 1]}T12:00:00`) : new Date()
+    last.setDate(last.getDate() + 1)
+    out.push(last.toISOString().slice(0, 10))
+  }
+  return out.slice(0, span)
+}
+
+function ratingDistribution(reviews: Review[]): number[] {
+  const counts = [0, 0, 0, 0, 0]
+  for (const r of reviews) {
+    const star = Math.min(5, Math.max(1, Math.round(r.master_rating)))
+    counts[5 - star] += 1
+  }
+  return counts
+}
+
 export function MasterPage() {
   const { id } = useParams()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const messenger = useMessenger()
   const qc = useQueryClient()
   const toast = useToast()
@@ -97,6 +146,11 @@ export function MasterPage() {
   const [done, setDone] = useState(false)
   const [booked, setBooked] = useState<BookedAppointment | null>(null)
   const [multiOpen, setMultiOpen] = useState(false)
+  const [aboutExpanded, setAboutExpanded] = useState(false)
+  const [portfolioCategory, setPortfolioCategory] = useState('Все')
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerIndex, setViewerIndex] = useState(0)
+  const [bookingFocus, setBookingFocus] = useState(false)
 
   const masterQuery = useQuery({
     queryKey: ['master', id],
@@ -118,7 +172,7 @@ export function MasterPage() {
       apiRequest<{ items: Slot[] }>(
         `/v1/masters/${masterQuery.data!.master.user_id}/slots?date=${date}&duration_minutes=${selectedService!.duration_minutes}`,
       ),
-    enabled: Boolean(masterQuery.data?.master.user_id && selectedService && !isFixed && step >= 2),
+    enabled: Boolean(masterQuery.data?.master.user_id && selectedService && !isFixed && (step >= 2 || bookingFocus)),
   })
 
   const occurrencesQuery = useQuery({
@@ -135,18 +189,13 @@ export function MasterPage() {
   const reviewsQuery = useQuery({
     queryKey: ['master-reviews', masterQuery.data?.master.user_id],
     queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; master_rating: number; result_rating: number; comment: string; created_at: string }> }>(
-        `/v1/masters/${masterQuery.data!.master.user_id}/reviews`,
-      ),
+      apiRequest<{ items: Review[] }>(`/v1/masters/${masterQuery.data!.master.user_id}/reviews`),
     enabled: Boolean(masterQuery.data?.master.user_id),
   })
 
   const portfolioQuery = useQuery({
     queryKey: ['master-portfolio', id],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string }> }>(
-        `/v1/masters/${id}/portfolio`,
-      ),
+    queryFn: () => apiRequest<PortfolioListResponse>(`/v1/masters/${id}/portfolio`),
     enabled: Boolean(id),
   })
 
@@ -190,6 +239,16 @@ export function MasterPage() {
     },
   })
 
+  const portfolioItems = portfolioQuery.data?.items ?? []
+  const portfolioCategories = useMemo(() => collectPortfolioCategories(portfolioItems), [portfolioItems])
+  const filteredPortfolio = useMemo(
+    () => filterPortfolioByCategory(portfolioItems, portfolioCategory),
+    [portfolioItems, portfolioCategory],
+  )
+
+  const reviews = reviewsQuery.data?.items ?? []
+  const dist = useMemo(() => ratingDistribution(reviews), [reviews])
+
   if (masterQuery.isLoading) return <div className="page state-box">Загрузка профиля…</div>
   if (masterQuery.isError) {
     return (
@@ -207,12 +266,21 @@ export function MasterPage() {
   }
 
   const { master, services } = masterQuery.data
+  const ratingAvg = master.rating_avg ?? 0
+  const ratingCount = master.rating_count ?? 0
+  const experienceYears = master.experience_years ?? 0
 
   const summaryStartsAt = isFixed ? selectedOccurrence?.starts_at : slot
   const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || ''
   const summaryAddress = booked?.location_address
   const confirmStep = isFixed ? 2 : 3
   const canConfirm = isFixed ? Boolean(occurrenceId && selectedOccurrence) : Boolean(slot)
+
+  function scrollToBooking() {
+    setBookingFocus(true)
+    setStep(0)
+    document.getElementById('mp-booking')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   if (done) {
     return (
@@ -243,24 +311,50 @@ export function MasterPage() {
     )
   }
 
+  const dates = nearbyDates(date)
+
   return (
-    <main className="page stack">
-      <section className="hero">
-        <div className="row" style={{ alignItems: 'flex-start' }}>
-          <MasterPortrait mediaId={master.photo_media_id} name={master.display_name} token={accessToken} />
-          <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
-            <h1>{master.display_name} <Hint id="client-booking" title="Запись">Выберите услугу и время. Если мастер включил автоподтверждение, запись сразу станет подтверждённой.</Hint></h1>
-            <div className="row">
-              <span className="city-badge">{master.city}</span>
-              <span className="chip badge-default">{workTypeLabel(master.work_type)}</span>
-            </div>
-            <p>{masterProfessionLabel(master, 'Красота и уход')}</p>
-            <p>{master.bio || 'Мастер ещё не добавил описание.'}</p>
+    <main className="page mp-page">
+      <section className="mp-hero" aria-label="Профиль мастера">
+        {master.photo_media_id && (
+          <div className="mp-hero-photo" aria-hidden="true">
+            <MediaImage mediaId={master.photo_media_id} token={accessToken} alt="" variant="cover" />
+          </div>
+        )}
+        <div className="mp-hero-body">
+          <h1>
+            {master.display_name}{' '}
+            <Hint id="client-booking" title="Запись">
+              Выберите услугу и время. Если мастер включил автоподтверждение, запись сразу станет подтверждённой.
+            </Hint>
+          </h1>
+          <div className="mp-hero-tags">
+            {(master.profession_types?.length
+              ? master.profession_types.map((t) => t.name)
+              : [masterProfessionLabel(master, 'Красота и уход')]
+            ).map((label) => (
+              <span key={label} className="chip badge-default">{label}</span>
+            ))}
+          </div>
+          <div className="mp-hero-meta">
+            {ratingCount > 0 && (
+              <span>
+                <strong>★ {ratingAvg.toFixed(1)}</strong> · {ratingCount}{' '}
+                {ratingCount === 1 ? 'отзыв' : 'отзывов'}
+              </span>
+            )}
+            <span className="city-badge">{master.city}</span>
+          </div>
+          <div className="mp-hero-cta">
+            <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
+              Записаться
+            </button>
             {accessToken && (
               <button
-                className="btn btn-secondary btn-compact"
+                className="btn btn-secondary mp-msg-btn"
                 type="button"
                 data-testid="write-master"
+                aria-label="Написать"
                 onClick={async () => {
                   try {
                     await messenger.start({ type: 'client_master', master_user_id: master.user_id })
@@ -269,29 +363,72 @@ export function MasterPage() {
                   }
                 }}
               >
-                Написать
+                ✉
               </button>
+            )}
+          </div>
+          <div className="mp-stats">
+            {experienceYears > 0 && (
+              <div className="mp-stat">
+                <strong>{experienceYears}</strong>
+                <span>{experienceYears === 1 ? 'год опыта' : 'лет опыта'}</span>
+              </div>
+            )}
+            {ratingCount > 0 && (
+              <div className="mp-stat">
+                <strong>{ratingAvg.toFixed(1)}</strong>
+                <span>{ratingCount} отзывов</span>
+              </div>
+            )}
+            {services.length > 0 && (
+              <div className="mp-stat">
+                <strong>{services.length}</strong>
+                <span>услуг</span>
+              </div>
             )}
           </div>
         </div>
       </section>
 
-      {(portfolioQuery.data?.items.length ?? 0) > 0 && (
-        <section className="stack">
-          <h2>Работы</h2>
-          <div className="portfolio-grid">
-            {portfolioQuery.data?.items.map((item) => (
-              <figure key={item.id} className="portfolio-item">
-                <MediaImage mediaId={item.media_id} token={accessToken} alt={item.caption || 'Работа'} className="portfolio-thumb" />
-                {item.caption && <figcaption>{item.caption}</figcaption>}
-              </figure>
-            ))}
-          </div>
+      {(master.bio?.trim().length ?? 0) > 0 && (
+        <section className={`mp-about ${aboutExpanded ? '' : 'is-collapsed'}`.trim()}>
+          <h2 className="mp-section-title">О мастере</h2>
+          <p>{master.bio}</p>
+          {master.bio.trim().length > 160 && (
+            <button
+              type="button"
+              className="btn-link"
+              onClick={() => setAboutExpanded((v) => !v)}
+            >
+              {aboutExpanded ? 'Свернуть' : 'Подробнее'}
+            </button>
+          )}
         </section>
       )}
 
-      <section className="card stack">
-        <h2>Запись</h2>
+      {portfolioItems.length > 0 && (
+        <section className="stack">
+          <h2 className="mp-section-title">Портфолио</h2>
+          <PortfolioCategoryChips
+            categories={portfolioCategories}
+            value={portfolioCategory}
+            onChange={setPortfolioCategory}
+          />
+          <PortfolioGrid
+            items={filteredPortfolio}
+            token={accessToken}
+            onOpen={(index) => {
+              setViewerIndex(index)
+              setViewerOpen(true)
+            }}
+          />
+        </section>
+      )}
+
+      <section id="mp-booking" className="card stack">
+        <h2 className="mp-section-title">
+          Услуги и запись
+        </h2>
         <div className="wizard-steps" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
           {steps.map((label, idx) => (
             <div
@@ -304,13 +441,13 @@ export function MasterPage() {
         </div>
 
         {step === 0 && (
-          <div className="cards-grid services">
+          <div className="stack">
             {services.length === 0 && <div className="state-box">Услуги пока не опубликованы</div>}
             {services.map((s) => (
               <button
                 key={s.id}
                 type="button"
-                className={`service-card service-card--media ${serviceId === s.id ? 'selected' : ''}`}
+                className={`mp-service-row ${serviceId === s.id ? 'is-selected' : ''}`}
                 onClick={() => {
                   setServiceId(s.id)
                   setSlot('')
@@ -318,18 +455,28 @@ export function MasterPage() {
                   setError(null)
                 }}
               >
-                <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
-                <div className="service-card-body">
-                  <div className="row between">
-                    <strong>{s.name}</strong>
-                    <span>{s.price_display || formatMoney(s.price_minor)}</span>
-                  </div>
-                  <p>{s.category} · {s.duration_minutes} мин</p>
-                  <p className="muted">{bookingModeLabel(s.booking_mode)}</p>
-                  {s.description && <p className="muted">{s.description}</p>}
+                <div className="mp-service-thumb">
+                  <MediaImage
+                    mediaId={s.photo_media_id}
+                    token={accessToken}
+                    alt={s.name}
+                    fallback={s.name.slice(0, 2).toUpperCase()}
+                    variant="cover"
+                  />
                 </div>
+                <div className="mp-service-main">
+                  <strong>{s.name}</strong>
+                  <span>от {s.duration_minutes} мин</span>
+                </div>
+                <span className="mp-service-price">
+                  {s.price_display || formatMoney(s.price_minor)}
+                  <span className="mp-service-chevron" aria-hidden>›</span>
+                </span>
               </button>
             ))}
+            {selectedService?.description && (
+              <p className="muted">{selectedService.description}</p>
+            )}
             <button
               className="btn btn-primary"
               type="button"
@@ -353,8 +500,28 @@ export function MasterPage() {
 
         {!isFixed && step === 1 && (
           <div className="stack">
+            <p className="muted">Свободное время</p>
+            <div className="mp-date-strip" role="listbox" aria-label="Дата">
+              {dates.map((d) => {
+                const dt = new Date(`${d}T12:00:00`)
+                const weekday = dt.toLocaleDateString('ru-RU', { weekday: 'short' })
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    role="option"
+                    aria-selected={date === d}
+                    className={`mp-date-chip ${date === d ? 'is-active' : ''}`}
+                    onClick={() => { setDate(d); setSlot('') }}
+                  >
+                    <span>{weekday}</span>
+                    <strong>{dt.getDate()}</strong>
+                  </button>
+                )
+              })}
+            </div>
             <div className="field">
-              <label htmlFor="date">Выберите день</label>
+              <label htmlFor="date">Или выберите день</label>
               <input
                 id="date"
                 type="date"
@@ -453,6 +620,10 @@ export function MasterPage() {
               <h3>Итого</h3>
               <dl>
                 <div>
+                  <dt>Клиент</dt>
+                  <dd>{user?.display_name || user?.email || 'Вы'}</dd>
+                </div>
+                <div>
                   <dt>Мастер</dt>
                   <dd>{master.display_name}</dd>
                 </div>
@@ -525,12 +696,35 @@ export function MasterPage() {
       )}
 
       <section className="stack">
-        <h2>Отзывы</h2>
-        {reviewsQuery.data && reviewsQuery.data.items.length === 0 && (
+        <h2 className="mp-section-title">Отзывы</h2>
+        {ratingCount > 0 && (
+          <div className="mp-rating-header">
+            <span className="mp-rating-num">{ratingAvg.toFixed(1)}</span>
+            <span className="muted">на основе {ratingCount} отзывов</span>
+          </div>
+        )}
+        {reviews.length > 0 && (
+          <div className="mp-rating-bars" aria-hidden={reviews.length === 0}>
+            {dist.map((count, i) => {
+              const star = 5 - i
+              const pct = reviews.length ? Math.round((count / reviews.length) * 100) : 0
+              return (
+                <div key={star} className="mp-rating-bar-row">
+                  <span>{star}</span>
+                  <div className="mp-rating-bar-track">
+                    <div className="mp-rating-bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span>{pct}%</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {reviewsQuery.data && reviews.length === 0 && (
           <div className="state-box">Пока нет опубликованных отзывов</div>
         )}
         <div className="list">
-          {reviewsQuery.data?.items.map((r) => (
+          {reviews.map((r) => (
             <article key={r.id} className="list-item">
               <div className="row between">
                 <strong>Мастер {r.master_rating}/5</strong>
@@ -542,6 +736,21 @@ export function MasterPage() {
           ))}
         </div>
       </section>
+
+      <PortfolioViewer
+        open={viewerOpen}
+        items={filteredPortfolio}
+        index={viewerIndex}
+        token={accessToken}
+        onClose={() => setViewerOpen(false)}
+        onIndexChange={setViewerIndex}
+      />
+
+      <div className="mp-sticky-cta">
+        <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
+          Записаться
+        </button>
+      </div>
     </main>
   )
 }

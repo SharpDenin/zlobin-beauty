@@ -293,6 +293,25 @@ func main() {
 		log.Printf("ok messenger demo conversations")
 	}
 
+	if err := seedContacts(client, base, master1, client1, users["client2@demo.local"], supplier1); err != nil {
+		log.Printf("warn contacts: %v", err)
+	} else {
+		log.Printf("ok address book contacts")
+	}
+	if err := seedContacts(client, base, client1, master1, master2); err != nil {
+		log.Printf("warn client contacts: %v", err)
+	}
+	if err := seedPortfolio(client, base, master1); err != nil {
+		log.Printf("warn portfolio: %v", err)
+	} else {
+		log.Printf("ok master portfolio")
+	}
+	if err := seedCalendarTasks(client, base, master1); err != nil {
+		log.Printf("warn calendar tasks: %v", err)
+	} else {
+		log.Printf("ok calendar planner tasks")
+	}
+
 	if err := seedOrders(client, base, master1, supplier1, m1Org, m1Branch, products1); err != nil {
 		log.Printf("warn orders: %v", err)
 	} else {

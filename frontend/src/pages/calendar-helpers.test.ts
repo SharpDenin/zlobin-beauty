@@ -2,10 +2,20 @@ import { describe, expect, it } from 'vitest'
 import {
   appointmentToneClass,
   buildDayStrip,
+  calendarColorClass,
+  calendarColorCss,
   canDragAppointment,
+  countEventsOutsideRange,
+  detectHorizontalSwipe,
   eventOverlapsDay,
+  extendDisplayRangeForEvents,
+  isCalendarViewId,
   isTerminalStatus,
   minutesToTime,
+  normalizeCalendarColor,
+  rangeToDayInterval,
+  snapMinutes,
+  validateDisplayRange,
   visitCompanionTitle,
   weekdayIndex,
   zonedYmd,
@@ -41,5 +51,55 @@ describe('calendar helpers', () => {
     expect(zonedYmd(new Date('2026-08-30T01:00:00Z'), 'Europe/Moscow')).toBe('2026-08-30')
     expect(eventOverlapsDay('2026-08-30T10:00:00+07:00', '2026-08-30T11:00:00+07:00', '2026-08-30', 'Asia/Krasnoyarsk')).toBe(true)
     expect(weekdayIndex(new Date('2026-08-30T12:00:00+07:00'), 'Asia/Krasnoyarsk')).toBe(0)
+  })
+
+  it('validates display range with 4h min and 30-min snap', () => {
+    expect(validateDisplayRange('08:00', '22:00')).toEqual({ ok: true, value: { from: '08:00', to: '22:00' } })
+    expect(validateDisplayRange('08:10', '12:20').ok).toBe(true)
+    expect(validateDisplayRange('08:10', '12:20')).toMatchObject({ value: { from: '08:00', to: '12:30' } })
+    expect(validateDisplayRange('10:00', '12:00').ok).toBe(false)
+    expect(validateDisplayRange('14:00', '10:00').ok).toBe(false)
+    expect(snapMinutes(68, 15)).toBe(75)
+    expect(snapMinutes(67, 30)).toBe(60)
+  })
+
+  it('extends display range so outside events stay reachable', () => {
+    const extended = extendDisplayRangeForEvents({ from: '10:00', to: '18:00' }, [7 * 60, 21 * 60])
+    expect(extended.from <= '07:00' || extended.from === '06:30' || extended.from === '07:00').toBe(true)
+    expect(parseInt(extended.to.slice(0, 2), 10)).toBeGreaterThanOrEqual(21)
+    expect(countEventsOutsideRange([7 * 60, 12 * 60, 23 * 60], 8 * 60, 22 * 60)).toEqual({ earlier: 1, later: 1 })
+  })
+
+  it('maps palette tokens and keeps legacy hex', () => {
+    expect(normalizeCalendarColor('success', 'task')).toBe('success')
+    expect(normalizeCalendarColor('', 'break')).toBe('info')
+    expect(normalizeCalendarColor('var(--color-danger)', 'task')).toBe('danger')
+    expect(normalizeCalendarColor('#7C82FF', 'task')).toBe('#7c82ff')
+    expect(calendarColorCss('primary')).toBe('var(--color-primary)')
+    expect(calendarColorCss('#abcdef')).toBe('#abcdef')
+    expect(calendarColorClass('warning')).toBe('cal-color-warning')
+    expect(calendarColorClass('#112233')).toBe('cal-color-hex')
+  })
+
+  it('detects horizontal swipe without fighting vertical scroll', () => {
+    expect(detectHorizontalSwipe(-80, 10)).toBe('left')
+    expect(detectHorizontalSwipe(80, 5)).toBe('right')
+    expect(detectHorizontalSwipe(-80, 70)).toBe(null)
+    expect(detectHorizontalSwipe(-40, 0)).toBe(null)
+  })
+
+  it('maps a same-day range to schedule-exception minutes', () => {
+    const tz = 'Asia/Krasnoyarsk'
+    const start = new Date('2026-08-30T02:00:00Z') // 09:00 in +07
+    const end = new Date('2026-08-30T05:00:00Z') // 12:00 in +07
+    expect(rangeToDayInterval(start, end, tz)).toEqual({
+      day: '2026-08-30',
+      start_minute: 9 * 60,
+      end_minute: 12 * 60,
+    })
+    const midnight = new Date('2026-08-30T17:00:00Z') // 00:00 next day in +07
+    expect(rangeToDayInterval(start, midnight, tz)?.end_minute).toBe(1440)
+    expect(isCalendarViewId('timeGridThreeDay')).toBe(true)
+    expect(isCalendarViewId('timeGridYear')).toBe(false)
   })
 })

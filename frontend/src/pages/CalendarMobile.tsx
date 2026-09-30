@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { EventInput } from '@fullcalendar/core'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { formatLocalInTimezone } from '@/shared/lib/time'
 import {
   buildDayStrip,
+  buildHalfHourSlots,
+  calendarColorClass,
+  displayRangeToSlotTimes,
   eventOverlapsDay,
   minutesFromMidnight,
+  minutesToHHMM,
+  type DisplayRange,
   weekdayIndex,
   zonedYmd,
 } from '@/pages/calendar-helpers'
@@ -19,18 +24,38 @@ type Props = {
   selectedDate: Date
   hours: HoursItem[]
   exceptions: ExceptionItem[]
+  displayRange: DisplayRange
+  baseRange?: DisplayRange
+  rangeExtendedHint?: string | null
   loading?: boolean
   moving?: boolean
+  monthMode?: boolean
+  intervalSelecting?: boolean
+  intervalStartMin?: number | null
+  intervalEndMin?: number | null
   onSelectDate: (date: Date) => void
   onToday: () => void
   onPrev: () => void
   onNext: () => void
   onEventClick: (id: string) => void
+  onEventLongPress?: (id: string) => void
   onCreateSlot?: (start: Date) => void
+  onLongPressEmpty?: (start: Date) => void
+  onIntervalSlotTap?: (slotMin: number) => void
+  onSaveInterval?: () => void
+  onCancelInterval?: () => void
 }
 
 function padTime(minutes: number) {
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`
+  return minutesToHHMM(minutes)
+}
+
+function wallDateAt(selectedDate: Date, ymd: string, startMin: number) {
+  const [y, mo, d] = ymd.split('-').map(Number)
+  const local = new Date(selectedDate)
+  local.setFullYear(y, mo - 1, d)
+  local.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0)
+  return local
 }
 
 export function CalendarMobile({
@@ -39,19 +64,37 @@ export function CalendarMobile({
   selectedDate,
   hours,
   exceptions,
+  displayRange,
+  rangeExtendedHint,
   loading,
   moving,
+  monthMode,
+  intervalSelecting,
+  intervalStartMin,
+  intervalEndMin,
   onSelectDate,
   onToday,
   onPrev,
   onNext,
   onEventClick,
+  onEventLongPress,
   onCreateSlot,
+  onLongPressEmpty,
+  onIntervalSlotTap,
+  onSaveInterval,
+  onCancelInterval,
 }: Props) {
   const stripRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLElement | null>(null)
+  const longPressTimer = useRef<number | null>(null)
+  const longPressFired = useRef(false)
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null)
+  const scrolledOnce = useRef(false)
+  const [nowLabel, setNowLabel] = useState(() => formatLocalInTimezone(new Date().toISOString(), timezone))
   const ymd = zonedYmd(selectedDate, timezone)
   const todayYmd = zonedYmd(new Date(), timezone)
   const strip = useMemo(() => buildDayStrip(selectedDate, timezone, 14), [selectedDate, timezone])
+  const { fromMin, toMin } = displayRangeToSlotTimes(displayRange)
   const dayEvents = useMemo(
     () =>
       events
@@ -69,27 +112,145 @@ export function CalendarMobile({
     month: 'long',
     year: 'numeric',
   }).format(selectedDate)
+  const slots = useMemo(() => buildHalfHourSlots(fromMin, toMin), [fromMin, toMin])
 
   useEffect(() => {
     const selected = stripRef.current?.querySelector('[aria-current="date"]')
     selected?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
   }, [ymd])
 
-  const timelineRows = useMemo(() => {
-    const rows: Array<{ key: string; kind: 'now' } | { key: string; kind: 'event'; event: EventInput }> = []
-    let nowPlaced = false
-    dayEvents.forEach((e, index) => {
-      const startMin = minutesFromMidnight(new Date(String(e.start)), timezone)
-      const prevMin = index === 0 ? -1 : minutesFromMidnight(new Date(String(dayEvents[index - 1].start)), timezone)
-      if (isToday && !nowPlaced && nowMin >= prevMin && nowMin < startMin) {
-        rows.push({ key: 'now', kind: 'now' })
-        nowPlaced = true
-      }
-      rows.push({ key: String(e.id), kind: 'event', event: e })
+  useEffect(() => {
+    if (!isToday) return
+    const id = window.setInterval(() => {
+      setNowLabel(formatLocalInTimezone(new Date().toISOString(), timezone))
+    }, 60_000)
+    return () => window.clearInterval(id)
+  }, [isToday, timezone])
+
+  useEffect(() => {
+    if (loading || monthMode || scrolledOnce.current) return
+    scrolledOnce.current = true
+    requestAnimationFrame(() => {
+      const target =
+        listRef.current?.querySelector('.cal-now-banner') ??
+        listRef.current?.querySelector('.cal-slot-event') ??
+        null
+      target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
     })
-    if (isToday && !nowPlaced) rows.push({ key: 'now', kind: 'now' })
-    return rows
-  }, [dayEvents, isToday, nowMin, timezone])
+  }, [loading, monthMode, ymd])
+
+  function clearLongPress() {
+    if (longPressTimer.current != null) {
+      window.clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    pressOrigin.current = null
+  }
+
+  function armLongPress(onFire: () => void) {
+    clearLongPress()
+    longPressFired.current = false
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFired.current = true
+      navigator.vibrate?.(10)
+      onFire()
+      longPressTimer.current = null
+    }, 350)
+  }
+
+  function suppressClickIfLongPress(e: { preventDefault: () => void; stopPropagation: () => void }) {
+    if (!longPressFired.current) return false
+    e.preventDefault()
+    e.stopPropagation()
+    longPressFired.current = false
+    return true
+  }
+
+  function onPressMove(e: ReactPointerEvent) {
+    const origin = pressOrigin.current
+    if (!origin || longPressTimer.current == null) return
+    if (Math.abs(e.clientX - origin.x) > 10 || Math.abs(e.clientY - origin.y) > 10) {
+      clearLongPress()
+    }
+  }
+
+  const eventsBySlot = useMemo(() => {
+    const map = new Map<number, EventInput[]>()
+    for (const e of dayEvents) {
+      const m = minutesFromMidnight(new Date(String(e.start)), timezone)
+      const slot = Math.floor(m / 30) * 30
+      if (slot < fromMin || slot >= toMin) continue
+      const list = map.get(slot) ?? []
+      list.push(e)
+      map.set(slot, list)
+    }
+    return map
+  }, [dayEvents, timezone, fromMin, toMin])
+
+  const monthCells = useMemo(() => {
+    if (!monthMode) return []
+    const anchor = new Date(selectedDate)
+    anchor.setDate(1)
+    anchor.setHours(12, 0, 0, 0)
+    const startPad = weekdayIndex(anchor, timezone)
+    const pad = (startPad + 6) % 7
+    const daysInMonth = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0).getDate()
+    const cells: Array<{ date: Date; ymd: string; day: number; count: number }> = []
+    for (let i = 0; i < pad; i++) {
+      cells.push({ date: new Date(0), ymd: `pad-${i}`, day: 0, count: 0 })
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(anchor.getFullYear(), anchor.getMonth(), day, 12)
+      const cellYmd = zonedYmd(d, timezone)
+      const count = events.filter(
+        (e) => e.start && e.display !== 'background' && eventOverlapsDay(String(e.start), e.end ? String(e.end) : undefined, cellYmd, timezone),
+      ).length
+      cells.push({ date: d, ymd: cellYmd, day, count })
+    }
+    return cells
+  }, [monthMode, selectedDate, timezone, events])
+
+  if (monthMode) {
+    return (
+      <div className="cal-mobile" data-testid="calendar-mobile">
+        <header className="cal-mobile-head">
+          <div className="cal-mobile-period">
+            <p className="eyebrow">Календарь</p>
+            <h2 className="cal-mobile-month">{periodLabel}</h2>
+          </div>
+          <div className="cal-mobile-nav">
+            <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущему месяцу">←</button>
+            <button type="button" className="btn btn-secondary cal-touch" onClick={onToday}>Сегодня</button>
+            <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующему месяцу">→</button>
+          </div>
+        </header>
+        <div className="cal-month-dots" role="grid" aria-label="Месяц">
+          {['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map((d) => (
+            <span key={d} className="muted" style={{ textAlign: 'center', fontSize: 11 }}>{d}</span>
+          ))}
+          {monthCells.map((c) =>
+            c.day === 0 ? (
+              <span key={c.ymd} />
+            ) : (
+              <button
+                key={c.ymd}
+                type="button"
+                className={`cal-month-cell ${c.ymd === todayYmd ? 'is-today' : ''} ${c.ymd === ymd ? 'is-selected' : ''}`}
+                onClick={() => onSelectDate(c.date)}
+              >
+                <span>{c.day}</span>
+                <span className="cal-month-dots-row" aria-hidden>
+                  {Array.from({ length: Math.min(3, c.count) }, (_, i) => (
+                    <span key={i} className="cal-month-dot" />
+                  ))}
+                </span>
+              </button>
+            ),
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="cal-mobile" data-testid="calendar-mobile">
@@ -99,15 +260,9 @@ export function CalendarMobile({
           <h2 className="cal-mobile-month">{periodLabel}</h2>
         </div>
         <div className="cal-mobile-nav">
-          <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущей дате">
-            ←
-          </button>
-          <button type="button" className="btn btn-secondary cal-touch" onClick={onToday}>
-            Сегодня
-          </button>
-          <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующей дате">
-            →
-          </button>
+          <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущей дате">←</button>
+          <button type="button" className="btn btn-secondary cal-touch" onClick={onToday}>Сегодня</button>
+          <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующей дате">→</button>
         </div>
       </header>
 
@@ -142,8 +297,28 @@ export function CalendarMobile({
         <p className="cal-hours-hint muted">Выходной по графику</p>
       )}
 
+      {rangeExtendedHint ? <p className="cal-outside-banner muted" role="status">{rangeExtendedHint}</p> : null}
+
+      {intervalSelecting ? (
+        <div className="cal-interval-bar" role="status">
+          <span>
+            {intervalStartMin == null
+              ? 'Выберите начало интервала'
+              : intervalEndMin == null
+                ? `Начало ${padTime(intervalStartMin)} — выберите конец`
+                : `${padTime(Math.min(intervalStartMin, intervalEndMin))}–${padTime(Math.max(intervalStartMin, intervalEndMin) + 30)}`}
+          </span>
+          <div className="row gap">
+            {intervalStartMin != null && intervalEndMin != null ? (
+              <button type="button" className="btn btn-primary btn-compact" onClick={onSaveInterval}>Сохранить рабочий интервал</button>
+            ) : null}
+            <button type="button" className="btn btn-ghost btn-compact" onClick={onCancelInterval}>Отмена</button>
+          </div>
+        </div>
+      ) : null}
+
       {loading ? (
-        <div className="cal-timeline" aria-busy="true">
+        <div className="cal-slot-grid" aria-busy="true">
           <div className="skeleton skeleton-card" />
           <div className="skeleton skeleton-card" />
           <div className="skeleton skeleton-card" />
@@ -165,63 +340,128 @@ export function CalendarMobile({
           title="Рабочий график пока не задан"
           text="Календарь покажет рабочие часы после того, как мастер сохранит расписание."
         />
-      ) : dayEvents.length === 0 ? (
-        <>
-          {isToday ? (
-            <p className="cal-now-banner" aria-current="time">
-              Сейчас {formatLocalInTimezone(new Date().toISOString(), timezone)}
-            </p>
-          ) : null}
-          <EmptyState
-          title="День свободен"
-          text="Записей и блоков планера нет. Свободное рабочее время можно занять событием."
-          action={
-            onCreateSlot ? (
-              <button type="button" className="btn" onClick={() => onCreateSlot(selectedDate)}>
-                Добавить событие
-              </button>
-            ) : undefined
-          }
-        />
-        </>
       ) : (
-        <ol className="cal-timeline">
-          {timelineRows.map((row) => {
-            if (row.kind === 'now') {
-              return (
-                <li key={row.key} className="cal-now-banner" aria-current="time">
-                  Сейчас {formatLocalInTimezone(new Date().toISOString(), timezone)}
-                </li>
-              )
+        <ol className="cal-slot-grid" ref={(el) => { listRef.current = el }}>
+          {isToday && nowMin >= fromMin && nowMin < toMin ? (
+            <li className="cal-now-banner" aria-current="time" style={{ scrollMarginTop: 120 }}>
+              Сейчас {nowLabel}
+            </li>
+          ) : null}
+          {slots.flatMap((slotMin) => {
+            const inInterval =
+              intervalSelecting &&
+              intervalStartMin != null &&
+              (intervalEndMin == null
+                ? slotMin === intervalStartMin
+                : slotMin >= Math.min(intervalStartMin, intervalEndMin) &&
+                  slotMin <= Math.max(intervalStartMin, intervalEndMin))
+            const bucket = eventsBySlot.get(slotMin) ?? []
+            if (bucket.length > 0 && !intervalSelecting) {
+              return bucket.map((e) => {
+                const start = String(e.start)
+                const end = e.end ? String(e.end) : start
+                const classes = Array.isArray(e.classNames) ? e.classNames.join(' ') : String(e.classNames ?? '')
+                const colorClass = calendarColorClass(String(e.extendedProps?.color ?? ''), String(e.extendedProps?.category ?? 'task'))
+                const client = String(e.extendedProps?.clientName ?? '')
+                const status = String(e.extendedProps?.statusLabel ?? '')
+                return (
+                  <li key={String(e.id)} className="cal-slot-row">
+                    <time className="cal-slot-time is-dim" dateTime={start}>
+                      {formatLocalInTimezone(start, timezone)}
+                    </time>
+                    <button
+                      type="button"
+                      className={`cal-slot-event ${classes} ${colorClass}`}
+                      style={
+                        colorClass === 'cal-color-hex'
+                          ? ({ ['--cal-event-accent' as string]: String(e.extendedProps?.colorCss ?? e.extendedProps?.color) } as CSSProperties)
+                          : undefined
+                      }
+                      onClick={(ev) => {
+                        if (suppressClickIfLongPress(ev)) return
+                        if (e.id) onEventClick(String(e.id))
+                      }}
+                      onPointerDown={(ev) => {
+                        pressOrigin.current = { x: ev.clientX, y: ev.clientY }
+                        if (e.id && onEventLongPress) {
+                          armLongPress(() => onEventLongPress(String(e.id)))
+                        }
+                      }}
+                      onPointerMove={onPressMove}
+                      onPointerUp={clearLongPress}
+                      onPointerCancel={clearLongPress}
+                      onPointerLeave={clearLongPress}
+                      disabled={moving}
+                    >
+                      <strong>{e.title}</strong>
+                      <span className="muted">
+                        {formatLocalInTimezone(start, timezone)}–{formatLocalInTimezone(end, timezone)}
+                        {client ? ` · ${client}` : ''}
+                        {status ? ` · ${status}` : ''}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })
             }
-            const e = row.event
-            const start = String(e.start)
-            const end = e.end ? String(e.end) : start
-            const classes = Array.isArray(e.classNames) ? e.classNames.join(' ') : String(e.classNames ?? '')
-            const client = String(e.extendedProps?.clientName ?? '')
-            const status = String(e.extendedProps?.statusLabel ?? '')
-            const visit = String(e.extendedProps?.visitLabel ?? '')
-            return (
-              <li key={row.key} className="cal-timeline-item">
-                <time className="cal-timeline-hour" dateTime={start}>
-                  {formatLocalInTimezone(start, timezone)}
-                </time>
+            const label = padTime(slotMin)
+            const weekdayName = new Intl.DateTimeFormat('ru-RU', { timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long' }).format(selectedDate)
+            const openSlot = () => {
+              if (intervalSelecting) {
+                onIntervalSlotTap?.(slotMin)
+                return
+              }
+              onCreateSlot?.(wallDateAt(selectedDate, ymd, slotMin))
+            }
+            return [(
+              <li key={slotMin} className={`cal-slot-row ${inInterval ? 'is-interval' : ''}`}>
                 <button
                   type="button"
-                  className={`cal-block ${classes}`}
-                  onClick={() => e.id && onEventClick(String(e.id))}
-                  disabled={moving}
+                  className={`cal-slot-time ${inInterval ? 'is-interval' : ''}`}
+                  onClick={(ev) => {
+                    if (suppressClickIfLongPress(ev)) return
+                    openSlot()
+                  }}
+                  onPointerDown={(ev) => {
+                    pressOrigin.current = { x: ev.clientX, y: ev.clientY }
+                    if (!intervalSelecting) {
+                      armLongPress(() => onLongPressEmpty?.(wallDateAt(selectedDate, ymd, slotMin)))
+                    }
+                  }}
+                  onPointerMove={onPressMove}
+                  onPointerUp={clearLongPress}
+                  onPointerCancel={clearLongPress}
+                  onPointerLeave={clearLongPress}
                 >
-                  <strong>{e.title}</strong>
-                  {client ? <span>{client}</span> : null}
+                  {label}
+                </button>
+                <button
+                  type="button"
+                  className={`cal-slot-body ${inInterval ? 'is-interval' : ''}`}
+                  onClick={(ev) => {
+                    if (suppressClickIfLongPress(ev)) return
+                    openSlot()
+                  }}
+                  onPointerDown={(ev) => {
+                    pressOrigin.current = { x: ev.clientX, y: ev.clientY }
+                    if (!intervalSelecting) {
+                      armLongPress(() => onLongPressEmpty?.(wallDateAt(selectedDate, ymd, slotMin)))
+                    }
+                  }}
+                  onPointerMove={onPressMove}
+                  onPointerUp={clearLongPress}
+                  onPointerCancel={clearLongPress}
+                  onPointerLeave={clearLongPress}
+                >
                   <span className="muted">
-                    {formatLocalInTimezone(start, timezone)}–{formatLocalInTimezone(end, timezone)}
-                    {status ? ` · ${status}` : ''}
+                    {intervalSelecting
+                      ? (inInterval ? 'В выбранном интервале' : 'Свободное время')
+                      : `Свободное время на ${weekdayName}`}
                   </span>
-                  {visit ? <span className="cal-visit-link">{visit}</span> : null}
+                  <span className="chev" aria-hidden>›</span>
                 </button>
               </li>
-            )
+            )]
           })}
         </ol>
       )}

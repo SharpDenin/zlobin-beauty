@@ -69,32 +69,26 @@ export function SubscriptionPage() {
       {sub.isLoading && <div className="state-box">Загрузка…</div>}
       {error && <ErrorBanner error={error} />}
 
-      {isTrial && ends && (
-        <section className="card stack-sm trial-banner" data-testid="subscription-trial-banner">
-          <p className="eyebrow">Trial</p>
-          <h2>Premium активирован бесплатно на 3 месяца</h2>
-          <p>Пробный Premium до {ends} · осталось {trialDays} дн.</p>
-          {trialEndingSoon && <p className="muted">Premium Trial закончится через {trialDays} дн.</p>}
-        </section>
-      )}
-
-      {expired && !isPremium && (
-        <section className="card stack-sm" data-testid="subscription-expired-banner">
-          <p className="eyebrow">Trial завершён</p>
-          <h2>Пробный Premium завершён</h2>
-          <p>Сейчас используется Free. Схема услуги обязательна при завершении приёма.</p>
-        </section>
-      )}
-
-      <section className="card stack">
+      <section className="card stack" data-testid="subscription-status-card">
         <p className="muted">Текущий план</p>
         <h2>{planTitle}</h2>
         <p>
           Статус: {s?.status === 'trial' ? 'Пробный период' : s?.status === 'active' ? 'Активна' : s?.status === 'expired' ? 'Истекла' : s?.status ?? '—'}
         </p>
-        {isTrial && ends && <p>Окончание trial: {ends}</p>}
+        {isTrial && ends && (
+          <p data-testid="subscription-trial-banner">
+            Пробный период до {ends}
+            {trialDays != null ? ` · осталось ${trialDays} дн.` : ''}
+            {trialEndingSoon ? ' · скоро закончится' : ''}
+          </p>
+        )}
+        {expired && !isPremium && (
+          <p data-testid="subscription-expired-banner">
+            Пробный Premium завершён. Сейчас Free — схема услуги обязательна при завершении приёма.
+          </p>
+        )}
         {s?.paid_until && <p className="muted">Оплачено до {new Date(s.paid_until).toLocaleDateString('ru-RU')}</p>}
-        {!isPremium && (
+        {!isPremium && !expired && (
           <p className="muted">На Free схема услуги обязательна при завершении приёма.</p>
         )}
         {!isPremium && (

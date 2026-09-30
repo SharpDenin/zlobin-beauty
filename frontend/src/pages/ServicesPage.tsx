@@ -13,6 +13,7 @@ import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
 import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import '@/features/media-cards/media-cards.css'
 import { photoMediaIdForCreate, photoMediaIdForPatch } from '@/shared/lib/mediaPayload'
 import { useToast } from '@/shared/ui/Toast'
 import { Hint } from '@/shared/ui/Hint'
@@ -320,17 +321,24 @@ export function ServicesPage() {
         {services.map((s) => {
           const state = s.archived_at ? 'archived' : s.published ? 'active' : 'inactive'
           return (
-            <article key={s.id} className="service-card service-card--media">
-              <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
-              <div className="service-card-body">
+            <article key={s.id} className="service-card service-card--media service-card--edge media-first-card">
+              <ServiceCardMedia
+                mediaId={s.photo_media_id}
+                name={s.name}
+                token={accessToken}
+                aspect="landscape"
+                overlay={{
+                  title: s.name,
+                  meta: `${s.duration_minutes} мин · ${s.price_display || formatMoney(s.price_minor)}`,
+                }}
+              />
+              <div className="service-card-body media-first-body">
                 <div className="row between">
-                  <strong>{s.name}</strong>
                   <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
+                  <span className="chip">{bookingModeLabel(s.booking_mode)}</span>
                 </div>
                 <div className="service-card-meta">
                   <span className="chip">{s.category}</span>
-                  <span className="chip">{s.duration_minutes} мин</span>
-                  <span className="chip">{bookingModeLabel(s.booking_mode)}</span>
                 </div>
                 {s.description ? <p className="muted">{s.description}</p> : null}
                 <div className="row between">

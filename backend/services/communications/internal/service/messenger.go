@@ -17,6 +17,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type MessengerDeps struct {
@@ -367,6 +368,11 @@ func ValidateMessageContent(body string, hasMedia bool) error {
 	}
 	if len([]rune(body)) > domain.MaxMessageRunes {
 		return apperr.Validation("body is too long")
+	}
+	if body != "" {
+		if err := moderation.ValidateFields(map[string]string{"body": body}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

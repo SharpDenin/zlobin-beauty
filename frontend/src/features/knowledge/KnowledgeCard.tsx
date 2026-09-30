@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import type { KnowledgeArticle } from '@/features/knowledge/types'
-import { articleAudienceBadges } from '@/pages/knowledge-helpers'
+import { articleAudienceBadges, knowledgeSeriesLabel } from '@/pages/knowledge-helpers'
 
 type Props = {
   article: KnowledgeArticle
@@ -15,13 +15,16 @@ type Props = {
 
 export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, showAudience, actions }: Props) {
   const reading = a.reading_time_minutes && a.reading_time_minutes > 0 ? `${a.reading_time_minutes} мин` : null
-  const chips = [a.brand, a.category].filter(Boolean).slice(0, 2)
+  const series = knowledgeSeriesLabel(a.title)
+  const categoryLabel = a.category?.includes(' / ') ? a.category.split(' / ').at(-1) : a.category
+  const chips = [a.brand, categoryLabel].filter(Boolean).slice(0, 2)
   const audience = showAudience ? articleAudienceBadges(a) : []
+  const productCover = Boolean(a.category?.includes(' / '))
 
   return (
     <article className="kb-card">
       <Link to={`/knowledge/${a.id}`} className="kb-card-link" data-testid="kb-article">
-        <div className="kb-cover">
+        <div className={`kb-cover ${productCover ? 'kb-cover--product' : ''}`}>
           <MediaImage
             mediaId={a.cover_media_id}
             token={token}
@@ -38,6 +41,7 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, 
             {audience.map((b) => (
               <span key={b.id} className={`badge ${b.id === 'home' ? 'badge-success' : 'badge-default'}`}>{b.label}</span>
             ))}
+            {series && <span className="badge badge-default">{series}</span>}
             {chips.map((c) => (
               <span key={c} className="chip">{c}</span>
             ))}

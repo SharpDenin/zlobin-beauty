@@ -4,6 +4,7 @@ import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess
 import { useCabinet, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { Drawer } from '@/shared/ui/Drawer'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { NavIcon } from '@/shared/ui/NavIcon'
@@ -166,6 +167,7 @@ function AppShellInner() {
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
+        <ThemeToggle labelled />
         <p className="muted cabinet-label">{cabinet.label}</p>
         {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
         {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
@@ -223,6 +225,7 @@ function AppShellInner() {
                 ))}
               </select>
             )}
+            <ThemeToggle />
             <span className="muted topbar-name">{user?.display_name}</span>
             <button className="btn btn-secondary btn-compact" type="button" onClick={() => void logout()}>
               Выйти

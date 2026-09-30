@@ -801,12 +801,24 @@ func (s *Service) ensureOwnProducts(ctx context.Context, orgID *uuid.UUID, produ
 	return nil
 }
 
+func categoryMatchesFilter(category, filter string) bool {
+	category = strings.TrimSpace(category)
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return false
+	}
+	if strings.EqualFold(category, filter) {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(category), strings.ToLower(filter)+" / ")
+}
+
 // ArticleMatchesListQuery is the AND-combination contract used by tests and ranking.
 func ArticleMatchesListQuery(a domain.KnowledgeArticle, q KnowledgeListQuery) bool {
 	if len(q.Categories) > 0 {
 		ok := false
 		for _, c := range q.Categories {
-			if strings.EqualFold(a.Category, strings.TrimSpace(c)) {
+			if categoryMatchesFilter(a.Category, c) {
 				ok = true
 				break
 			}

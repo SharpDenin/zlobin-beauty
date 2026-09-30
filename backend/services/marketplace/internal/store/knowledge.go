@@ -248,9 +248,14 @@ func knowledgeWhere(f KnowledgeListFilter) (string, []any, int) {
 		n++
 	}
 	if cats := trimNonEmpty(f.Categories); len(cats) > 0 {
-		b.WriteString(fmt.Sprintf(` AND ka.category ILIKE ANY($%d)`, n))
-		args = append(args, cats)
-		n++
+		parts := make([]string, 0, len(cats))
+		for _, c := range cats {
+			exact := escapeLike(strings.TrimSpace(c))
+			parts = append(parts, fmt.Sprintf(`(ka.category ILIKE $%d ESCAPE '\' OR ka.category ILIKE $%d ESCAPE '\')`, n, n+1))
+			args = append(args, exact, exact+" / %")
+			n += 2
+		}
+		b.WriteString(` AND (` + strings.Join(parts, " OR ") + `)`)
 	}
 	if brands := trimNonEmpty(f.Brands); len(brands) > 0 {
 		b.WriteString(fmt.Sprintf(` AND ka.brand ILIKE ANY($%d)`, n))
@@ -294,6 +299,10 @@ func knowledgeWhere(f KnowledgeListFilter) (string, []any, int) {
 		}
 	}
 	return b.String(), args, n
+}
+
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func trimNonEmpty(in []string) []string {

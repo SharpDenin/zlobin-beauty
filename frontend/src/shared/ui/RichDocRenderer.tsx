@@ -92,6 +92,8 @@ function DocNode({ node, token }: { node: JSONContent; token?: string | null }) 
         </aside>
       )
     }
+    case 'productSheet':
+      return <ProductSheet attrs={node.attrs} />
     case 'hardBreak':
       return <br />
     default:
@@ -100,6 +102,43 @@ function DocNode({ node, token }: { node: JSONContent; token?: string | null }) 
       }
       return null
   }
+}
+
+function attrText(attrs: JSONContent['attrs'], key: string) {
+  const value = attrs?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function ProductSheet({ attrs }: { attrs?: JSONContent['attrs'] }) {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: 'Бренд', value: attrText(attrs, 'brand') },
+    { label: 'Категория', value: attrText(attrs, 'category') },
+    { label: 'Серия', value: attrText(attrs, 'series') },
+    { label: 'Оттенок', value: attrText(attrs, 'shadeName') },
+    { label: 'Код оттенка', value: attrText(attrs, 'shadeCode') },
+    { label: 'Артикул', value: attrText(attrs, 'sku') },
+    { label: 'Объем', value: attrText(attrs, 'volume') },
+  ].filter((row) => row.value)
+  const sourceUrl = sanitizeHref(attrText(attrs, 'sourceUrl'))
+  const source = attrText(attrs, 'source')
+  if (!rows.length && !sourceUrl) return null
+  return (
+    <section className="product-sheet card stack-sm" aria-label="Карточка продукта">
+      <dl className="product-sheet-grid">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {sourceUrl && (
+        <a href={sourceUrl} target="_blank" rel="noopener noreferrer" title={source || undefined}>
+          Официальная страница
+        </a>
+      )}
+    </section>
+  )
 }
 
 function ArticleImage({ node, token }: { node: JSONContent; token?: string | null }) {

@@ -134,6 +134,76 @@ export function articleAudienceBadges(article: {
   return [{ id: 'pro', label: 'Профессиональный материал' }]
 }
 
+const SERIES_NAMES = [
+  'COLORSHADE',
+  'COLORDREAM',
+  'COLORSOLUTION',
+  'OVERCOLOR',
+  'OXY ACTIVE',
+  'PROXY',
+  'COLD BLOND PRO',
+  'COLD BLOND',
+  'SILVER BLOND',
+  'POST COLOR',
+]
+
+export function knowledgeSeriesLabel(title: string) {
+  const upper = title.toUpperCase()
+  if (upper.includes('ПАЛИТРА ОТТЕНКОВ')) return ''
+  for (const name of SERIES_NAMES) {
+    if (upper.includes(name)) return name
+  }
+  return ''
+}
+
+export type KnowledgeCategoryNode = {
+  name: string
+  path: string
+  count: number
+  children: KnowledgeCategoryNode[]
+}
+
+const legacyKnowledgeCategories = new Set(['Колористика', 'Уход', 'Продукция', 'Процедуры', 'Салон', 'Бренд', 'Стайлинг'])
+
+export function buildKnowledgeCategoryTree(facets: Array<{ value: string; count: number }>): KnowledgeCategoryNode[] {
+  type Bucket = { name: string; path: string; direct: number; kids: Map<string, Bucket> }
+  const root = new Map<string, Bucket>()
+  for (const facet of facets) {
+    if (!facet.value.includes(' / ')) {
+      if (!legacyKnowledgeCategories.has(facet.value)) {
+        root.set(facet.value, { name: facet.value, path: facet.value, direct: facet.count, kids: new Map() })
+      }
+      continue
+    }
+    const parts = facet.value.split(' / ').map((part) => part.trim()).filter(Boolean)
+    let level = root
+    let path = ''
+    parts.forEach((name, index) => {
+      path = path ? `${path} / ${name}` : name
+      let bucket = level.get(name)
+      if (!bucket) {
+        bucket = { name, path, direct: 0, kids: new Map() }
+        level.set(name, bucket)
+      }
+      if (index === parts.length - 1) bucket.direct += facet.count
+      level = bucket.kids
+    })
+  }
+  const toNodes = (map: Map<string, Bucket>): KnowledgeCategoryNode[] =>
+    [...map.values()]
+      .map((bucket) => {
+        const children = toNodes(bucket.kids)
+        return {
+          name: bucket.name,
+          path: bucket.path,
+          count: bucket.direct + children.reduce((sum, child) => sum + child.count, 0),
+          children,
+        }
+      })
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ru'))
+  return toNodes(root)
+}
+
 export function knowledgeEmptyTitle(professional: boolean, filtered: boolean) {
   if (professional) return 'Материалы не найдены.'
   if (filtered) return 'По выбранным фильтрам нет материалов для домашнего ухода.'

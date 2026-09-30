@@ -13,7 +13,6 @@ import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
-import { tokens } from '@/shared/ui/tokens'
 import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone, isoToDatetimeLocal, wallTimeInTimezoneToUtcIso } from '@/shared/lib/time'
 import { formatMoney } from '@/shared/lib/money'
@@ -99,26 +98,26 @@ type CalendarSelection = {
 }
 
 const MASTER_CATEGORIES: Category[] = [
-  { id: 'client', label: 'Клиент', color: tokens.color.primary, icon: '✦', system: true },
-  { id: 'personal', label: 'Личное', color: tokens.color.textSecondary, icon: '●' },
-  { id: 'break', label: 'Перерыв', color: '#6B7385', icon: 'Ⅱ' },
-  { id: 'blocked', label: 'Заблокировано', color: tokens.color.danger, icon: '◆' },
-  { id: 'task', label: 'Задача', color: tokens.color.success, icon: '✓' },
-  { id: 'delivery', label: 'Получение / доставка', color: tokens.color.primarySoft, icon: '→' },
+  { id: 'client', label: 'Клиент', color: 'var(--color-primary)', icon: '✦', system: true },
+  { id: 'personal', label: 'Личное', color: 'var(--color-text-secondary)', icon: '●' },
+  { id: 'break', label: 'Перерыв', color: 'var(--color-info)', icon: 'Ⅱ' },
+  { id: 'blocked', label: 'Заблокировано', color: 'var(--color-danger)', icon: '◆' },
+  { id: 'task', label: 'Задача', color: 'var(--color-success)', icon: '✓' },
+  { id: 'delivery', label: 'Получение / доставка', color: 'var(--color-primary-soft)', icon: '→' },
 ]
 
 const REP_CATEGORIES: Category[] = [
-  { id: 'delivery', label: 'Доставка', color: tokens.color.primary, icon: '→' },
-  { id: 'salon_visit', label: 'Посещение салона', color: tokens.color.success, icon: '⌂' },
-  { id: 'task', label: 'Задача', color: tokens.color.primarySoft, icon: '✓' },
-  { id: 'personal', label: 'Личное', color: tokens.color.textSecondary, icon: '●' },
+  { id: 'delivery', label: 'Доставка', color: 'var(--color-primary)', icon: '→' },
+  { id: 'salon_visit', label: 'Посещение салона', color: 'var(--color-success)', icon: '⌂' },
+  { id: 'task', label: 'Задача', color: 'var(--color-primary-soft)', icon: '✓' },
+  { id: 'personal', label: 'Личное', color: 'var(--color-text-secondary)', icon: '●' },
 ]
 
 const ADMIN_CATEGORIES: Category[] = [
-  { id: 'client', label: 'Запись клиента', color: tokens.color.primary, icon: '✦', system: true },
-  { id: 'task', label: 'Задача', color: tokens.color.success, icon: '✓' },
-  { id: 'operational', label: 'Операционное', color: tokens.color.warning, icon: '◆' },
-  { id: 'staff', label: 'Сотрудники', color: tokens.color.primarySoft, icon: '◎' },
+  { id: 'client', label: 'Запись клиента', color: 'var(--color-primary)', icon: '✦', system: true },
+  { id: 'task', label: 'Задача', color: 'var(--color-success)', icon: '✓' },
+  { id: 'operational', label: 'Операционное', color: 'var(--color-warning)', icon: '◆' },
+  { id: 'staff', label: 'Сотрудники', color: 'var(--color-primary-soft)', icon: '◎' },
 ]
 
 function categoriesFor(kind: string): Category[] {
@@ -364,7 +363,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   })
 
   function category(id: string) {
-    return palette.find((c) => c.id === id) ?? { id, label: id, color: tokens.color.textSecondary, icon: '•' }
+    return palette.find((c) => c.id === id) ?? { id, label: id, color: 'var(--color-text-secondary)', icon: '•' }
   }
 
   const businessHours = useMemo(() => {
@@ -505,7 +504,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           start: ex.day,
           allDay: true,
           display: 'background',
-          backgroundColor: 'rgba(239, 119, 119, 0.18)',
+          backgroundColor: 'var(--color-danger-soft)',
           editable: false,
         })
       }
@@ -517,8 +516,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         title: `${w.mode_label}${w.location_label ? ` · ${w.location_label}` : ''}`,
         start: w.starts_at,
         end: w.ends_at,
-        backgroundColor: tokens.color.primaryMuted,
-        borderColor: tokens.color.primary,
+        backgroundColor: 'var(--color-primary-muted)',
+        borderColor: 'var(--color-primary)',
         editable: false,
         classNames: ['is-work-mode'],
         extendedProps: {

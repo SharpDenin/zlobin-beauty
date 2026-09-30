@@ -1,17 +1,19 @@
-import { tokens } from '@/shared/ui/tokens'
-
+/** Chart colors follow the active theme through CSS variables. */
 export const CHART = {
-  accent: tokens.color.primary,
-  accentSoft: tokens.color.primaryMuted,
-  gold: tokens.color.primarySoft,
-  clay: tokens.color.textSecondary,
-  muted: '#6B7385',
-  info: tokens.color.info,
-  success: tokens.color.success,
-  warning: tokens.color.warning,
-  danger: tokens.color.danger,
-  grid: tokens.color.surface2,
-  text: tokens.color.textSecondary,
+  accent: 'var(--color-primary)',
+  accentSoft: 'var(--color-primary-muted)',
+  gold: 'var(--color-primary-soft)',
+  clay: 'var(--color-text-secondary)',
+  muted: 'var(--color-text-secondary)',
+  info: 'var(--color-info)',
+  success: 'var(--color-success)',
+  warning: 'var(--color-warning)',
+  danger: 'var(--color-danger)',
+  grid: 'var(--color-border)',
+  text: 'var(--color-text-secondary)',
+  surface: 'var(--color-surface)',
+  surface2: 'var(--color-surface-2)',
+  tooltipText: 'var(--color-text-primary)',
 }
 
-export const CHART_SERIES = [CHART.accent, CHART.gold, CHART.clay, CHART.muted, '#4A5163']
+export const CHART_SERIES = [CHART.accent, CHART.gold, CHART.clay, CHART.info, CHART.muted]

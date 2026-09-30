@@ -23,6 +23,17 @@ type RelatedProduct = {
   published?: boolean
 }
 
+function knowledgeBackHref(article: { brand?: string; category?: string }) {
+  const params = new URLSearchParams()
+  if (article.brand) params.set('brand', article.brand)
+  if (article.category?.includes(' / ')) {
+    const parent = article.category.split(' / ').slice(0, -1).join(' / ')
+    if (parent) params.append('category', parent)
+  }
+  const qs = params.toString()
+  return qs ? `/knowledge?${qs}` : '/knowledge'
+}
+
 export function KnowledgeArticlePage() {
   const { id } = useParams()
   const [params] = useSearchParams()
@@ -127,6 +138,8 @@ export function KnowledgeArticlePage() {
     ? `${a.reading_time_minutes} мин чтения`
     : null
   const productHref = (pid: string) => professional ? `/cosmetics/products/${pid}` : `/shop/${pid}`
+  const backHref = knowledgeBackHref(a)
+  const categoryLabel = a.category?.includes(' / ') ? a.category.split(' / ').at(-1) : a.category
   const publishedOn = a.published_at || a.created_at
   const supplierHref = a.author_org_id ? `/knowledge?supplier=${a.author_org_id}` : '/knowledge'
   const isPreview = params.get('preview') === '1'
@@ -134,13 +147,13 @@ export function KnowledgeArticlePage() {
   return (
     <main className="page stack kb-article">
       <div className="row between">
-        <Link className="btn btn-ghost btn-compact" to="/knowledge">← К базе знаний</Link>
+        <Link className="btn btn-ghost btn-compact" to={backHref}>← К базе знаний</Link>
         {supplier && (
           <Link className="btn btn-secondary btn-compact" to={`/knowledge/${a.id}/edit`}>Редактировать</Link>
         )}
       </div>
       {isPreview && <div className="state-box">Предпросмотр</div>}
-      <div className="article-cover">
+      <div className={`article-cover ${a.category?.includes(' / ') ? 'article-cover--product' : ''}`}>
         <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} fallback={(a.category || a.title).slice(0, 2)} />
       </div>
       <article className="kb-article-column stack">
@@ -151,7 +164,7 @@ export function KnowledgeArticlePage() {
               <span key={b.id} className={`badge ${b.id === 'home' ? 'badge-success' : 'badge-default'}`}>{b.label}</span>
             ))}
             {a.brand && <span className="badge badge-default">{a.brand}</span>}
-            {a.category && <span className="badge badge-default">{a.category}</span>}
+            {categoryLabel && <span className="badge badge-default">{categoryLabel}</span>}
             {typeof a.published === 'boolean' && supplier && (
               <span className={`badge ${statusBadgeClass(a.status || (a.published ? 'published' : 'draft'))}`}>
                 {productStateLabel(a.status || (a.published ? 'published' : 'draft'))}

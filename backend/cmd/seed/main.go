@@ -28,6 +28,22 @@ func main() {
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	log.Printf("seed: gateway=%s", base)
+	if envOr("SEED_EPICA_ONLY", "") == "true" {
+		supplier, err := loginOrRegister(client, base, accountSpec{
+			Email: "supplier1@demo.local", Name: "Марина Котова", Role: "supplier",
+		}, password)
+		if err != nil {
+			fatal("epica supplier login: %v", err)
+		}
+		orgID, _, err := ensureOrg(client, base, supplier, "supplier", "ПрофиКосмет", "Склад", "Москва", "", "Europe/Moscow")
+		if err != nil || orgID == "" {
+			fatal("epica supplier org: %v", err)
+		}
+		if err := seedEpicaKnowledge(client, base, supplier, orgID); err != nil {
+			fatal("epica knowledge: %v", err)
+		}
+		return
+	}
 	if err := waitHealth(client, base); err != nil {
 		fatal("gateway health: %v", err)
 	}
@@ -249,6 +265,9 @@ func main() {
 		log.Printf("warn knowledge supplier2: %v", err)
 	} else {
 		log.Printf("ok knowledge articles (supplier2)")
+	}
+	if err := seedEpicaKnowledge(client, base, supplier1, sup1Org); err != nil {
+		log.Printf("warn epica knowledge: %v", err)
 	}
 	if err := seedKnowledgeFavorites(client, base, master1); err != nil {
 		log.Printf("warn knowledge favorites: %v", err)

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, useAuth } from '@/features/auth/AuthProvider'
+import { CatalogTree } from '@/features/knowledge/CatalogTree'
 import { KnowledgeCard, KnowledgeCardSkeleton } from '@/features/knowledge/KnowledgeCard'
 import { SearchableMultiSelect } from '@/features/knowledge/SearchableMultiSelect'
 import {
@@ -16,7 +17,7 @@ import {
   type KnowledgeFilters,
   type KnowledgeListResponse,
 } from '@/features/knowledge/types'
-import { knowledgeEmptyTitle } from '@/pages/knowledge-helpers'
+import { buildKnowledgeCategoryTree, knowledgeEmptyTitle } from '@/pages/knowledge-helpers'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
@@ -32,6 +33,7 @@ type ProductOpt = { id: string; name: string; brand?: string }
 type CategoryOpt = { id: string; name: string }
 
 const PAGE_SIZE = 12
+const EPICA_SERIES = ['COLORSHADE', 'COLORDREAM', 'COLORSOLUTION', 'OVERCOLOR', 'PROXY', 'OXY ACTIVE']
 
 export function KnowledgeListPage() {
   const { accessToken, user } = useAuth()
@@ -155,6 +157,9 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
 
   const cats = facets.data?.categories ?? []
   const brands = facets.data?.brands ?? []
+  const catalogTree = useMemo(() => buildKnowledgeCategoryTree(cats), [cats])
+  const selectedCategory = filters.category[0] ?? ''
+  const epicaSelected = filters.brand.some((brand) => brand.toLowerCase() === 'epica professional')
   const suppliers = facets.data?.suppliers ?? []
   const productCats = productCategories.data?.items ?? []
 
@@ -195,7 +200,7 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
     { id: 'fav', label: 'Избранное', active: filters.favorites, onClick: () => patch({ favorites: !filters.favorites, sort: '' }) },
     { id: 'new', label: 'Новое', active: filters.sort === 'new', onClick: () => patch({ sort: filters.sort === 'new' ? '' : 'new', favorites: false }) },
     { id: 'rec', label: 'Рекомендовано', active: filters.sort === 'recommended', onClick: () => patch({ sort: filters.sort === 'recommended' ? '' : 'recommended', favorites: false }) },
-    ...cats.map((c) => ({
+    ...cats.filter((c) => !c.value.includes(' / ')).map((c) => ({
       id: `cat-${c.value}`,
       label: c.label,
       active: filters.category.includes(c.value),
@@ -351,6 +356,61 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
       )}
       {list.isError && <ErrorBanner error={list.error} fallbackTitle="Не удалось загрузить базу знаний" />}
 
+      {brands.length > 0 && (browseHome || epicaSelected) && (
+        <section className="stack kb-section">
+          <h2>Бренды</h2>
+          <div className="kb-brand-row">
+            {brands.map((brand) => (
+              <button
+                key={brand.value}
+                type="button"
+                className={`card kb-brand-card ${filters.brand.includes(brand.value) ? 'selected' : ''}`}
+                onClick={() => patch({ brand: filters.brand.includes(brand.value) ? [] : [brand.value], category: [] })}
+              >
+                <strong>{brand.label}</strong>
+                <span className="muted">{brand.count} материалов</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {catalogTree.length > 0 && (browseHome || epicaSelected || filters.category.length > 0) && (
+        <section className="card stack-sm kb-catalog">
+          <div className="row between">
+            <h2>Каталог</h2>
+            {selectedCategory && (
+              <button className="btn btn-ghost btn-compact" type="button" onClick={() => patch({ category: [] })}>
+                Все разделы
+              </button>
+            )}
+          </div>
+          <CatalogTree
+            nodes={catalogTree}
+            selected={selectedCategory}
+            onSelect={(path) => patch({
+              category: selectedCategory === path ? [] : [path],
+              brand: epicaSelected || !browseHome ? filters.brand : ['EPICA Professional'],
+            })}
+          />
+        </section>
+      )}
+
+      {epicaSelected && (
+        <div className="chip-row">
+          {EPICA_SERIES.map((series) => (
+            <button
+              key={series}
+              type="button"
+              className={`chip ${filters.q.toUpperCase() === series ? 'active' : ''}`}
+              onClick={() => patch({ q: filters.q.toUpperCase() === series ? '' : series })}
+            >
+              {series}
+            </button>
+          ))}
+        </div>
+      )}
+
       {browseHome && (recommended.data?.items?.length ?? 0) > 0 && (
         <section className="stack kb-section">
           <h2>Рекомендовано для вас</h2>
@@ -421,12 +481,14 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
 
 function SupplierKnowledgeHome() {
   const { accessToken } = useAuth()
+  const [extra, setExtra] = useState<KnowledgeArticle[]>([])
   const mine = useQuery({
     queryKey: ['knowledge-mine'],
     queryFn: () => apiRequest<KnowledgeListResponse>('/v1/me/knowledge?limit=50', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
-  const items = mine.data?.items ?? []
+  const items = [...(mine.data?.items ?? []), ...extra]
+  const total = mine.data?.total ?? items.length
 
   return (
     <main className="page stack">
@@ -465,6 +527,18 @@ function SupplierKnowledgeHome() {
           />
         ))}
       </div>
+      {items.length < total && (
+        <button
+          className="btn btn-secondary"
+          type="button"
+          onClick={() => {
+            void apiRequest<KnowledgeListResponse>(`/v1/me/knowledge?limit=50&offset=${items.length}`, { token: accessToken })
+              .then((res) => setExtra((prev) => [...prev, ...(res.items ?? [])]))
+          }}
+        >
+          Показать ещё
+        </button>
+      )}
     </main>
   )
 }

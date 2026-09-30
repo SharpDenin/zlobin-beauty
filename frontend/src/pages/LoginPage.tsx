@@ -7,6 +7,7 @@ import { homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
 import { consumeSessionEnded } from '@/features/pwa/pwa'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
+import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 const schema = z.object({
@@ -28,6 +29,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   return (
     <div className="app-shell app-shell--auth">
       <div className="page page-narrow stack auth-screen">
+        <div className="auth-theme-bar"><ThemeToggle labelled /></div>
         <BrandLogo size="lg" />
         <h1>Вход</h1>
         <p className="auth-lead">Записи, мастера и салон — в одном кабинете.</p>

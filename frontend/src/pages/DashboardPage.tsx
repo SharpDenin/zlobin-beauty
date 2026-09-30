@@ -11,7 +11,6 @@ import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
 import { Hint } from '@/shared/ui/Hint'
 import { CHART } from '@/shared/ui/chart-theme'
-import { tokens } from '@/shared/ui/tokens'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { Drawer } from '@/shared/ui/Drawer'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
@@ -360,7 +359,7 @@ export function DashboardPage() {
                       </div>
                       <div className="dashboard-chart">
                         <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={chartData}><defs><linearGradient id="visitsFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={CHART.accent} stopOpacity={0.35}/><stop offset="100%" stopColor={CHART.accent} stopOpacity={0.02}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid}/><XAxis dataKey="day" tick={{ fontSize: 11, fill: CHART.text }}/><YAxis allowDecimals={false} width={24} tick={{ fill: CHART.text }}/><Tooltip contentStyle={{ background: tokens.color.surface, border: `1px solid ${tokens.color.surface2}`, color: tokens.color.textPrimary }}/><Area type="monotone" dataKey="visits" name="Записи" stroke={CHART.accent} fill="url(#visitsFill)"/></AreaChart>
+                          <AreaChart data={chartData}><defs><linearGradient id="visitsFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={CHART.accent} stopOpacity={0.35}/><stop offset="100%" stopColor={CHART.accent} stopOpacity={0.02}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid}/><XAxis dataKey="day" tick={{ fontSize: 11, fill: CHART.text }}/><YAxis allowDecimals={false} width={24} tick={{ fill: CHART.text }}/><Tooltip contentStyle={{ background: CHART.surface, border: `1px solid ${CHART.surface2}`, color: CHART.tooltipText }}/><Area type="monotone" dataKey="visits" name="Записи" stroke={CHART.accent} fill="url(#visitsFill)"/></AreaChart>
                         </ResponsiveContainer>
                       </div>
                       {serviceCounts.length > 0 && <p className="muted">Популярное: {serviceCounts.map(([name, count]) => `${name} · ${count}`).join('  |  ')}</p>}

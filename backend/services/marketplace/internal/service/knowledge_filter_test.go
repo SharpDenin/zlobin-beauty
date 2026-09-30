@@ -45,6 +45,18 @@ func TestArticleMatchesListQueryCombination(t *testing.T) {
 	}
 }
 
+func TestCategoryMatchesFilterPrefix(t *testing.T) {
+	if !categoryMatchesFilter("Окрашивание и осветление / Окрашивание / Крем краска", "Окрашивание и осветление") {
+		t.Fatal("parent path must include children")
+	}
+	if !categoryMatchesFilter("Уход", "уход") {
+		t.Fatal("exact category is case-insensitive")
+	}
+	if categoryMatchesFilter("Уход за волосами / Для блонда", "Уход") {
+		t.Fatal("a shorter word must not match a different branch")
+	}
+}
+
 func TestEstimateReadingMinutesFromDocJSON(t *testing.T) {
 	doc := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"один два три"}]}]}`
 	if n := EstimateReadingMinutes(doc, "doc_json"); n < 1 {

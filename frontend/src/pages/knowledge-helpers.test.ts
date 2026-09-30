@@ -11,6 +11,8 @@ import {
   knowledgeEmptyTitle,
   knowledgeCoverClearValue,
   parseKnowledgeDoc,
+  buildKnowledgeCategoryTree,
+  knowledgeSeriesLabel,
 } from './knowledge-helpers'
 
 describe('knowledge-helpers', () => {
@@ -82,5 +84,20 @@ describe('knowledge-helpers', () => {
     expect(parseKnowledgeDoc({ content: obj.content }, 'doc_json')).toEqual(obj)
     expect(parseKnowledgeDoc([obj], 'doc_json')).toEqual(obj)
     expect(parseKnowledgeDoc(undefined, 'doc_json').type).toBe('doc')
+  })
+
+  it('builds a category tree and recognizes real series names', () => {
+    const tree = buildKnowledgeCategoryTree([
+      { value: 'Окрашивание и осветление / Окрашивание / Крем краска', count: 4 },
+      { value: 'Окрашивание и осветление / Окрашивание / Гель краска', count: 2 },
+      { value: 'Колористика', count: 9 },
+      { value: 'Наборы', count: 3 },
+    ])
+    expect(tree.map((node) => node.name)).toEqual(['Окрашивание и осветление', 'Наборы'])
+    expect(tree[0]?.name).toBe('Окрашивание и осветление')
+    expect(tree[0]?.count).toBe(6)
+    expect(tree[0]?.children[0]?.children.map((node) => node.name)).toEqual(['Крем краска', 'Гель краска'])
+    expect(knowledgeSeriesLabel('COLORSHADE 7.1 Крем-краска русый пепельный')).toBe('COLORSHADE')
+    expect(knowledgeSeriesLabel('Палитра оттенков краски COLORSHADE/COLORDREAM')).toBe('')
   })
 })

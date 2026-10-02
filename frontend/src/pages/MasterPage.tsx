@@ -23,6 +23,7 @@ import {
 import {
   collectPortfolioCategories,
   filterPortfolioByCategory,
+  teaserPortfolio,
   type PortfolioListResponse,
 } from '@/features/portfolio/types'
 import '@/features/master-profile/master-profile.css'
@@ -412,14 +413,28 @@ export function MasterPage() {
 
       {portfolioItems.length > 0 && (
         <section className="stack">
-          <h2 className="mp-section-title">Портфолио</h2>
+          <div className="row between">
+            <h2 className="mp-section-title">Портфолио</h2>
+            {filteredPortfolio.length > 6 && (
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => {
+                  setViewerIndex(0)
+                  setViewerOpen(true)
+                }}
+              >
+                Все работы
+              </button>
+            )}
+          </div>
           <PortfolioCategoryChips
             categories={portfolioCategories}
             value={portfolioCategory}
             onChange={setPortfolioCategory}
           />
           <PortfolioGrid
-            items={filteredPortfolio}
+            items={teaserPortfolio(filteredPortfolio, 6)}
             token={accessToken}
             onOpen={(index) => {
               setViewerIndex(index)
@@ -457,6 +472,7 @@ export function MasterPage() {
                   setSlot('')
                   setOccurrenceId('')
                   setError(null)
+                  setStep(1)
                 }}
               >
                 <div className="mp-service-thumb">
@@ -481,14 +497,6 @@ export function MasterPage() {
             {selectedService?.description && (
               <p className="muted">{selectedService.description}</p>
             )}
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={!serviceId}
-              onClick={() => setStep(1)}
-            >
-              Далее
-            </button>
             {accessToken && selectedService && canJoinMultiService(selectedService) && master.organization_id && (
               <button
                 className="btn btn-secondary"
@@ -516,7 +524,7 @@ export function MasterPage() {
                     role="option"
                     aria-selected={date === d}
                     className={`mp-date-chip ${date === d ? 'is-active' : ''}`}
-                    onClick={() => { setDate(d); setSlot('') }}
+                    onClick={() => { setDate(d); setSlot(''); setStep(2) }}
                   >
                     <span>{weekday}</span>
                     <strong>{dt.getDate()}</strong>
@@ -559,7 +567,7 @@ export function MasterPage() {
                     key={s.starts_at}
                     type="button"
                     className={`slot ${slot === s.starts_at ? 'active' : ''}`}
-                    onClick={() => setSlot(s.starts_at)}
+                    onClick={() => { setSlot(s.starts_at); setStep(3) }}
                   >
                     {label}
                   </button>
@@ -597,7 +605,7 @@ export function MasterPage() {
                       type="button"
                       className={`occurrence-card ${occurrenceId === o.id ? 'selected' : ''}`}
                       disabled={disabled}
-                      onClick={() => setOccurrenceId(o.id)}
+                      onClick={() => { setOccurrenceId(o.id); setStep(2) }}
                     >
                       <div className="row between">
                         <strong>{o.title || 'Сеанс'}</strong>

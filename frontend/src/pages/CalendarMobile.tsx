@@ -128,7 +128,7 @@ export function CalendarMobile({
   }, [isToday, timezone])
 
   useEffect(() => {
-    if (loading || monthMode || scrolledOnce.current) return
+    if (loading || monthMode || scrolledOnce.current || dayEvents.length === 0) return
     scrolledOnce.current = true
     requestAnimationFrame(() => {
       const target =
@@ -137,7 +137,7 @@ export function CalendarMobile({
         null
       target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
     })
-  }, [loading, monthMode, ymd])
+  }, [loading, monthMode, ymd, dayEvents.length])
 
   function clearLongPress() {
     if (longPressTimer.current != null) {
@@ -298,6 +298,28 @@ export function CalendarMobile({
       )}
 
       {rangeExtendedHint ? <p className="cal-outside-banner muted" role="status">{rangeExtendedHint}</p> : null}
+
+      {!loading && !monthMode && !dayOff && dayEvents.length === 0 ? (
+        <EmptyState
+          title="На этот день записей нет"
+          text="Создайте запись или задачу в свободном слоте."
+          action={
+            onLongPressEmpty || onCreateSlot ? (
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => {
+                  const start = wallDateAt(selectedDate, ymd, Math.max(fromMin, hoursToday?.start_minute ?? fromMin))
+                  if (onLongPressEmpty) onLongPressEmpty(start)
+                  else onCreateSlot?.(start)
+                }}
+              >
+                Создать запись
+              </button>
+            ) : undefined
+          }
+        />
+      ) : null}
 
       {intervalSelecting ? (
         <div className="cal-interval-bar" role="status">

@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 
 export type AppointmentTone = 'waiting' | 'live' | 'upcoming' | 'done' | 'cancelled'
 
@@ -64,7 +64,7 @@ export function AppointmentCard({
           </div>
         </div>
         <div className="appt-card-meta">
-          <span className={`badge ${statusBadgeClass(status)}`}>{statusLabel(status)}</span>
+          <span className={`badge ${statusBadgeClass(status)}`}>{appointmentStatusLabel(status)}</span>
           {typeof priceMinor === 'number' ? <span className="meta">{formatMoney(priceMinor)}</span> : null}
         </div>
       </div>

@@ -3191,6 +3191,14 @@ button.list-item:hover {
 .media-first-card.home-master-card,
 .media-first-card.search-master-card {
   border: 0;
+}
+.media-bleed {
+  margin-inline: calc(var(--space-4) * -1);
+}
+.media-bleed-frame {
+  overflow: hidden;
+  border-radius: 0;
+}
   box-shadow: var(--shadow-md);
 }
 .bottomnav { z-index: 26; }

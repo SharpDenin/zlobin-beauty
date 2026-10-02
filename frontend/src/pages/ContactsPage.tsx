@@ -257,7 +257,7 @@ export function ContactsPage() {
 
       {!list.isLoading && !list.isError && filtered.length === 0 && (
         <EmptyState
-          title={q.trim() ? 'Никого не нашли' : 'Пока нет контактов'}
+          title={q.trim() ? 'Никого не нашли' : 'У вас пока нет контактов'}
           text={
             q.trim()
               ? 'Попробуйте другой запрос или добавьте человека по email или телефону.'

@@ -13,7 +13,7 @@ import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone, isoToDatetimeLocal, wallTimeInTimezoneToUtcIso } from '@/shared/lib/time'
 import { formatMoney } from '@/shared/lib/money'
 import { formatUserError } from '@/shared/lib/app-error'
@@ -33,6 +33,7 @@ import {
   countEventsOutsideRange,
   DEFAULT_DISPLAY_RANGE,
   detectHorizontalSwipe,
+  swipeStep,
   displayRangeToSlotTimes,
   extendDisplayRangeForEvents,
   isCalendarViewId,
@@ -530,7 +531,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           category: 'client',
           categoryLabel: 'Клиент',
           status: a.status,
-          statusLabel: statusLabel(a.status),
+          statusLabel: appointmentStatusLabel(a.status),
           secondary: [masterName, a.location_name].filter(Boolean).join(' · '),
           location: [a.location_name, a.location_address].filter(Boolean).join(', '),
           master: masterName,
@@ -1112,7 +1113,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (Date.now() - start.t > 600) return
     const dir = detectHorizontalSwipe(e.clientX - start.x, e.clientY - start.y)
     if (!dir) return
-    if (compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth')) {
+    if (swipeStep(currentView, compact) === 'day') {
       shiftDay(dir === 'left' ? 1 : -1)
     } else {
       shiftPeriod(dir === 'left' ? 1 : -1)
@@ -1368,8 +1369,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       {settingsOpen && (
         <section className="card calendar-color-settings stack" data-testid="calendar-settings">
           <div>
-            <strong>Рабочее время с / до</strong>
-            <p className="muted">Это диапазон отображения сетки, а не рабочие часы записи клиентов.</p>
+            <strong>Показывать с / до</strong>
+            <p className="muted">Календарь откроется в этом диапазоне. События раньше или позже всё равно можно открыть — сетка чуть расширится.</p>
           </div>
           <div className="calendar-display-range">
             <div className="field">
@@ -1485,7 +1486,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
           locale={ruLocale}
           timeZone={salonTimezone}
-          height="auto"
+          height={embedded || compact ? 'auto' : '100%'}
           editable={!readOnlyOverlay}
           selectable={!readOnlyOverlay}
           selectMirror
@@ -1620,6 +1621,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       >
         <div className="stack cal-action-sheet">
           <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); if (sheetSlot) openCreateAt(sheetSlot) }}>Создать задачу</button>
+          <Link className="btn btn-secondary" to="/clients" onClick={() => setSheet(null)}>Записать клиента</Link>
           <Link
             className="btn btn-secondary"
             to={sheetSlot ? `/schedule?start=${encodeURIComponent(sheetSlot.toISOString())}&end=${encodeURIComponent(new Date(sheetSlot.getTime() + 60 * 60 * 1000).toISOString())}` : '/schedule'}
@@ -1685,7 +1687,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 pendingApptDrop.start.toISOString(),
                 pendingApptDrop.end.toISOString(),
                 salonTimezone,
-              )}. Подтвердите перенос через API переноса записи.
+              )}. Подтвердите, если слот свободен.
             </p>
             <div className="row gap">
               <button

@@ -227,8 +227,8 @@ export function PortfolioPage() {
             ownerActions={{ onMove }}
             empty={
               <EmptyState
-                title="Портфолио пусто"
-                text="Добавьте фото работ — клиенты увидят их в вашем профиле."
+                title="Пока нет работ"
+                text="Добавьте фото — клиенты увидят их на вашей странице."
                 action={
                   <button className="btn btn-primary" type="button" onClick={openCreate}>
                     Добавить работу

@@ -3,6 +3,7 @@ import {
   collectPortfolioCategories,
   filterPortfolioByCategory,
   movePortfolioItem,
+  teaserPortfolio,
   portfolioDisplayTitle,
   suggestPortfolioCategories,
   type PortfolioItem,
@@ -53,6 +54,11 @@ describe('portfolio helpers', () => {
     expect(movePortfolioItem(ids, 'b', 'up')).toEqual(['b', 'a', 'c'])
     expect(movePortfolioItem(ids, 'b', 'down')).toEqual(['a', 'c', 'b'])
     expect(movePortfolioItem(ids, 'a', 'up')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('keeps a short teaser for the profile', () => {
+    expect(teaserPortfolio([1, 2, 3, 4, 5, 6, 7, 8]).length).toBe(6)
+    expect(teaserPortfolio([1, 2], 6)).toEqual([1, 2])
   })
 
   it('suggests categories from services and professions', () => {

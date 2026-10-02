@@ -101,8 +101,12 @@ export function AppointmentsPage() {
       {query.data && query.data.items.length === 0 && (
         <EmptyState
           title="Записей пока нет"
-          text={role === 'client' ? 'Выберите мастера и удобное время.' : 'Новые заявки появятся здесь.'}
-          action={role === 'client' ? <Link className="btn btn-primary" to="/search">Найти мастера</Link> : undefined}
+          text={role === 'client' ? 'Выберите мастера и удобное время.' : 'Создайте запись в календаре — она появится здесь.'}
+          action={
+            role === 'client'
+              ? <Link className="btn btn-primary" to="/search">Найти мастера</Link>
+              : <Link className="btn btn-primary" to="/calendar">Создать запись</Link>
+          }
         />
       )}
 

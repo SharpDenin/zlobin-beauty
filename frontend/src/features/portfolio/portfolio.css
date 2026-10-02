@@ -45,8 +45,8 @@
 .portfolio-tight-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 3px;
-  margin-inline: calc(var(--space-4) * -1 + 2px);
+  gap: 2px;
+  margin-inline: calc(var(--space-4) * -1);
 }
 @media (max-width: 360px) {
   .portfolio-tight-grid {
@@ -60,7 +60,7 @@
   aspect-ratio: 3 / 4;
   border: 0;
   padding: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   overflow: hidden;
   background: var(--gradient-image-fallback);
   cursor: pointer;
@@ -82,6 +82,7 @@
   object-fit: cover;
   display: block;
   border-radius: inherit;
+  pointer-events: none;
 }
 
 .portfolio-cell-actions {
@@ -108,12 +109,17 @@
   backdrop-filter: blur(6px);
 }
 
+.portfolio-viewer-host {
+  position: fixed;
+  inset: 0;
+  background: var(--color-background);
+}
 .portfolio-viewer {
   position: fixed;
   inset: 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: var(--overlay-scrim);
+  background: var(--color-background);
   color: var(--color-text-primary);
   padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
 }
@@ -132,17 +138,42 @@
   min-height: 0;
   overflow: hidden;
   touch-action: pan-y;
+  background: var(--color-background);
 }
-.portfolio-viewer-stage img,
+.portfolio-viewer-stage::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background: var(--gradient-image-fallback);
+  filter: blur(28px);
+  opacity: 0.45;
+  pointer-events: none;
+}
 .portfolio-viewer-stage .edge-media,
 .portfolio-viewer-stage .media-fallback,
 .portfolio-viewer-stage .media-skeleton {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
-  width: auto;
-  height: auto;
+  border-radius: 0;
+}
+.portfolio-viewer-stage .edge-media__blur {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  width: 124%;
+  height: 124%;
+  object-fit: cover;
+}
+.portfolio-viewer-stage .edge-media__cover {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  border-radius: var(--radius-md);
 }
 .portfolio-viewer-nav {
   position: absolute;

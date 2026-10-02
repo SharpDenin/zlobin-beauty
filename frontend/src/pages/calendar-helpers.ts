@@ -261,6 +261,12 @@ export function minutesFromMidnight(date: Date, timeZone: string) {
 }
 
 /** Horizontal swipe that won't fight vertical scroll / drag. */
+/** Day swipe only on compact day view; week/month always move by period. */
+export function swipeStep(view: CalendarViewId, compact: boolean): 'day' | 'period' {
+  if (compact && view === 'timeGridDay') return 'day'
+  return 'period'
+}
+
 export function detectHorizontalSwipe(
   dx: number,
   dy: number,

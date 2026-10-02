@@ -129,7 +129,6 @@ export function PortfolioGrid({ items, token, onOpen, ownerActions, empty }: Gri
             key={item.id}
             type="button"
             className="portfolio-cell"
-            role="listitem"
             aria-label={title}
             onClick={() => onOpen(index)}
           >

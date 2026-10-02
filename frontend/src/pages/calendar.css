@@ -16,6 +16,29 @@
   overflow-x: clip;
 }
 
+@media (min-width: 768px) {
+  .page.calendar-page-root:not(:has(.is-embedded)):not(:has(.is-mobile-day)) {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .page.calendar-page-root:not(:has(.is-embedded)):not(:has(.is-mobile-day)) .calendar-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .page.calendar-page-root:not(:has(.is-embedded)):not(:has(.is-mobile-day)) .calendar-wrap {
+    flex: 1 1 auto;
+    min-height: 28rem;
+    overflow: hidden;
+  }
+  .page.calendar-page-root:not(:has(.is-embedded)):not(:has(.is-mobile-day)) .calendar-wrap .fc,
+  .page.calendar-page-root:not(:has(.is-embedded)):not(:has(.is-mobile-day)) .calendar-wrap .fc .fc-view-harness {
+    height: 100% !important;
+  }
+}
+
 .calendar-shell.is-embedded {
   height: 100%;
   max-height: 100%;
@@ -364,6 +387,14 @@
 
 .cal-hours-hint {
   margin: 0;
+  font-size: var(--text-sm);
+}
+.cal-empty-day {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 70%, transparent);
+  color: var(--color-text-secondary);
   font-size: var(--text-sm);
 }
 

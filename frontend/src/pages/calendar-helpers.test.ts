@@ -7,6 +7,7 @@ import {
   canDragAppointment,
   countEventsOutsideRange,
   detectHorizontalSwipe,
+  swipeStep,
   eventOverlapsDay,
   extendDisplayRangeForEvents,
   isCalendarViewId,
@@ -79,6 +80,13 @@ describe('calendar helpers', () => {
     expect(calendarColorCss('#abcdef')).toBe('#abcdef')
     expect(calendarColorClass('warning')).toBe('cal-color-warning')
     expect(calendarColorClass('#112233')).toBe('cal-color-hex')
+  })
+
+  it('swipes a month/week by period and a compact day by one day', () => {
+    expect(swipeStep('timeGridDay', true)).toBe('day')
+    expect(swipeStep('dayGridMonth', true)).toBe('period')
+    expect(swipeStep('timeGridWeek', false)).toBe('period')
+    expect(swipeStep('timeGridThreeDay', true)).toBe('period')
   })
 
   it('detects horizontal swipe without fighting vertical scroll', () => {

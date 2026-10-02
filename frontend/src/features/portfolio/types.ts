@@ -39,6 +39,10 @@ export function filterPortfolioByCategory(items: PortfolioItem[], category: stri
   return items.filter((i) => i.category.trim() === category)
 }
 
+export function teaserPortfolio<T>(items: T[], limit = 6): T[] {
+  return items.slice(0, Math.max(0, limit))
+}
+
 export function movePortfolioItem(ids: string[], id: string, direction: 'up' | 'down'): string[] {
   const idx = ids.indexOf(id)
   if (idx < 0) return ids

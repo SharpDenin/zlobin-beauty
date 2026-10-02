@@ -20,6 +20,8 @@ type Appointment = {
   price_minor: number
   master_user_id: string
   client_user_id: string
+  client_display_name?: string
+  master_display_name?: string
   visit_group_id?: string | null
 }
 
@@ -115,6 +117,7 @@ export function AppointmentsPage() {
             key={group.key}
             to={`/appointments/${a.id}`}
             serviceName={visitGroupTitle(group)}
+            personName={role === 'master' ? a.client_display_name : a.master_display_name}
             subtitle={group.combined ? 'Визит из двух услуг' : undefined}
             status={a.status}
             startsAt={a.starts_at}

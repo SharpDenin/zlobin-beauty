@@ -238,9 +238,10 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
 
+  const ownerHome = kind === 'salon_owner' || kind === 'chain_owner' || kind === 'salon_admin'
   const primary: NavLink[] = [
-    { to: '/', label: 'Сегодня', end: true },
-    { to: '/calendar', label: 'Календарь' },
+    { to: '/', label: ownerHome ? 'Обзор' : 'Сегодня', end: true },
+    { to: '/calendar', label: ownerHome ? 'Расписание' : 'Календарь' },
     { to: '/appointments', label: 'Записи' },
     { to: '/more', label: 'Ещё' },
   ]
@@ -290,6 +291,14 @@ export function applyNavOrder(links: NavLink[], order: string[]): NavLink[] {
     if (byTo.has(item.to)) out.push(item)
   }
   return [...out, ...more]
+}
+
+export function moveNavPath(order: string[], from: number, to: number): string[] {
+  if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return order
+  const next = [...order]
+  const [item] = next.splice(from, 1)
+  next.splice(to, 0, item)
+  return next
 }
 
 export function CabinetProvider({ children }: { children: ReactNode }) {

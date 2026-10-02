@@ -34,6 +34,8 @@ type Appointment = {
   duration_minutes: number
   master_user_id: string
   client_user_id: string
+  client_display_name?: string
+  master_display_name?: string
   organization_id: string
   cancel_reason?: string
   location_timezone?: string
@@ -237,6 +239,13 @@ export function AppointmentDetailPage() {
       </div>
 
       <section className="card stack-sm">
+        {(a.client_display_name || a.master_display_name) && (
+          <p>
+            {a.client_display_name ? <>Клиент: <strong>{a.client_display_name}</strong></> : null}
+            {a.client_display_name && a.master_display_name ? ' · ' : null}
+            {a.master_display_name ? <>Мастер: <strong>{a.master_display_name}</strong></> : null}
+          </p>
+        )}
         <strong>{a.service_name}</strong>
         <p>{new Date(a.starts_at).toLocaleString('ru-RU')} — {new Date(a.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</p>
         <p>{formatMoney(a.price_minor)} · {a.duration_minutes} мин</p>

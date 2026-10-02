@@ -63,6 +63,7 @@ Gradients are **system presets**, not decoration on every card.
 | `--gradient-hero` | Hero, empty states, rare section intros |
 | `--gradient-primary-button` | Primary button fill only |
 | `--gradient-image-fallback` | Image placeholders / failed media |
+| Owner start atmosphere | Salon-owner home only: deep teal/forest gradient (no photo). Page-scoped in `owner-home.css`. |
 
 Rules:
 

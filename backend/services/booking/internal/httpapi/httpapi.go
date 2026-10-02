@@ -109,11 +109,7 @@ func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, appointmentDTO(item))
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": a.appointmentDTOs(r, items)})
 }
 
 func (a *API) internalClientMasterRelationship(w http.ResponseWriter, r *http.Request) {
@@ -552,11 +548,7 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, appointmentDTO(item))
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": a.appointmentDTOs(r, items)})
 }
 
 func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
@@ -581,11 +573,7 @@ func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, appointmentDTO(item))
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": a.appointmentDTOs(r, items)})
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request) {
@@ -600,7 +588,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+	httpx.JSON(w, http.StatusOK, a.namedAppointment(r, *item))
 }
 
 func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
@@ -1198,6 +1186,38 @@ func (a *API) simpleAction(w http.ResponseWriter, r *http.Request, fn func(conte
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) namedAppointment(r *http.Request, item domain.Appointment) map[string]any {
+	names := a.svc.DirectoryNames(r.Context(), []uuid.UUID{item.ClientUserID, item.MasterUserID})
+	return appointmentDTOWithNames(item, names)
+}
+
+func (a *API) appointmentDTOs(r *http.Request, items []domain.Appointment) []map[string]any {
+	ids := make([]uuid.UUID, 0, len(items)*2)
+	for _, item := range items {
+		ids = append(ids, item.ClientUserID, item.MasterUserID)
+	}
+	names := a.svc.DirectoryNames(r.Context(), ids)
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, appointmentDTOWithNames(item, names))
+	}
+	return out
+}
+
+func appointmentDTOWithNames(a domain.Appointment, names map[string]string) map[string]any {
+	dto := appointmentDTO(a)
+	if names == nil {
+		return dto
+	}
+	if n := names[a.ClientUserID.String()]; n != "" {
+		dto["client_display_name"] = n
+	}
+	if n := names[a.MasterUserID.String()]; n != "" {
+		dto["master_display_name"] = n
+	}
+	return dto
 }
 
 func appointmentDTO(a domain.Appointment) map[string]any {

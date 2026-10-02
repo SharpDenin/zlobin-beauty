@@ -346,7 +346,7 @@ export function WarehousePage() {
   if (!orgId) {
     return (
       <main className="page">
-        <EmptyState title="Сначала создайте салон" text="Склад откроется после онбординга салона." action={<Link className="btn btn-primary" to="/master">Кабинет</Link>} />
+        <EmptyState title="Сначала создайте салон" text="Склад откроется после онбординга салона." action={<Link className="btn btn-primary" to="/master">Моя страница</Link>} />
       </main>
     )
   }

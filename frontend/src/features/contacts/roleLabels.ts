@@ -3,6 +3,8 @@ const ROLE_LABELS: Record<string, string> = {
   master: 'мастер',
   salon_owner: 'владелец салона',
   salon_admin: 'администратор салона',
+  salon_employee: 'сотрудник салона',
+  employee: 'сотрудник салона',
   supplier: 'поставщик',
   supplier_rep: 'представитель поставщика',
   system_admin: 'администратор',

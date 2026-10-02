@@ -27,6 +27,8 @@ export const tokens = {
     primaryButton: 'linear-gradient(180deg, #A8ACFF 0%, #7C82FF 100%)',
     imageFallback:
       'linear-gradient(145deg, rgba(124, 130, 255, 0.18) 0%, #1D2230 48%, #141821 100%)',
+    ownerStart:
+      'radial-gradient(920px 560px at 12% -8%, rgba(46, 140, 128, 0.42), transparent 58%), radial-gradient(720px 480px at 96% 6%, rgba(93, 192, 139, 0.18), transparent 52%), linear-gradient(180deg, #0c1a1c 0%, #0B0D12 78%)',
   },
   radius: {
     sm: 10,

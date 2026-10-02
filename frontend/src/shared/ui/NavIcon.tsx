@@ -16,6 +16,8 @@ const ICONS: Record<string, string> = {
   scissors: 'M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6.5 9.5 20 20M6.5 20.5 14 14',
   staff: 'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20a5 5 0 0 1 10 0M13 20a5 5 0 0 1 8 0',
   schedule: 'M5 8h14M8 3v3M16 3v3M7 5h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7h2m3 0h4m-9 4h8',
+  settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM4.5 11l2-1.5L6.5 6 9 6.5 10.7 5.5 11 3h2l.3 2.5 1.7 1L17.5 6l2 3.5-2 1.5a8 8 0 0 1 0 2l2 1.5-2 3.5-2.5-.5-1.7 1L13 21h-2l-.3-2.5-1.7-1L6.5 18l-2-3.5 2-1.5A8 8 0 0 1 4.5 11z',
+  reports: 'M5 19V9m7 10V5m7 14v-7',
 }
 
 function iconFor(to: string) {
@@ -40,8 +42,10 @@ function iconFor(to: string) {
   if (to.startsWith('/messages')) return 'chat'
   if (to.startsWith('/contacts')) return 'contacts'
   if (to.startsWith('/portfolio')) return 'portfolio'
+  if (to.startsWith('/salon/settings')) return 'settings'
   if (to.startsWith('/profile')) return 'user'
   if (to.startsWith('/staff')) return 'staff'
+  if (to.startsWith('/reports') || to.startsWith('/supplier/analytics') || to.startsWith('/rep/analytics')) return 'reports'
   if (to.startsWith('/services')) return 'scissors'
   if (to.startsWith('/supplier/products')) return 'box'
   if (to.startsWith('/supplier/orders') || to.startsWith('/supplier/client-orders')) return 'money'

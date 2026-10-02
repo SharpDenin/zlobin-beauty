@@ -1,7 +1,7 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
-import { useCabinet, applyNavOrder, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
+import { useCabinet, applyNavOrder, moveNavPath, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { usePreference } from '@/shared/lib/preferences'
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
@@ -137,27 +137,70 @@ function MoreDrawer({
   const cabinet = useCabinet()
   const [navOrder, setNavOrder] = usePreference<string[]>('nav.order', [])
   const primary = applyNavOrder(cabinet.primary, navOrder).filter((l) => l.to !== '/more')
-  function move(index: number, dir: -1 | 1) {
-    const next = primary.map((l) => l.to)
-    const j = index + dir
-    if (j < 0 || j >= next.length) return
-    ;[next[index], next[j]] = [next[j], next[index]]
-    setNavOrder(next)
+  const drag = useRef<{ from: number; y: number } | null>(null)
+  const [dragging, setDragging] = useState<number | null>(null)
+  const [over, setOver] = useState<number | null>(null)
+
+  function persistOrder(from: number, to: number) {
+    setNavOrder(moveNavPath(primary.map((l) => l.to), from, to))
   }
+
+  function onHandlePointerDown(index: number, e: ReactPointerEvent<HTMLButtonElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { from: index, y: e.clientY }
+    setDragging(index)
+    setOver(index)
+  }
+
+  function onHandlePointerMove(e: ReactPointerEvent<HTMLButtonElement>) {
+    if (drag.current == null) return
+    const row = e.currentTarget.closest('[data-nav-order-row]')
+    const list = row?.parentElement
+    if (!list) return
+    const rows = Array.from(list.querySelectorAll('[data-nav-order-row]'))
+    const y = e.clientY
+    let next = drag.current.from
+    rows.forEach((el, i) => {
+      const box = el.getBoundingClientRect()
+      if (y >= box.top && y <= box.bottom) next = i
+    })
+    setOver(next)
+  }
+
+  function onHandlePointerUp() {
+    if (drag.current != null && over != null) persistOrder(drag.current.from, over)
+    drag.current = null
+    setDragging(null)
+    setOver(null)
+  }
+
   return (
     <Drawer open={open} onClose={onClose} title="Ещё" panelClassName="stack-sm">
       <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
       {primary.length > 1 && (
         <section className="stack-sm nav-order">
           <h2 className="nav-order-title">Порядок вкладок</h2>
-          <p className="muted">Сохраняется для вашего аккаунта. На мобильном меняет нижнее меню.</p>
+          <p className="muted">Перетащите за ручку. Порядок сохранится после перезапуска.</p>
           {primary.map((l, i) => (
-            <div key={l.to} className="row between nav-order-row">
+            <div
+              key={l.to}
+              data-nav-order-row
+              className={`row between nav-order-row${dragging === i ? ' is-dragging' : ''}${over === i && dragging !== i ? ' is-drop' : ''}`}
+            >
               <span>{l.label}</span>
-              <div className="row">
-                <button className="btn btn-secondary btn-compact" type="button" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
-                <button className="btn btn-secondary btn-compact" type="button" disabled={i === primary.length - 1} onClick={() => move(i, 1)}>↓</button>
-              </div>
+              <button
+                className="nav-order-handle"
+                type="button"
+                aria-label={`Переместить вкладку ${l.label}`}
+                onPointerDown={(e) => onHandlePointerDown(i, e)}
+                onPointerMove={onHandlePointerMove}
+                onPointerUp={onHandlePointerUp}
+                onPointerCancel={onHandlePointerUp}
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.75">
+                  <path d="M8 7h8M8 12h8M8 17h8" />
+                </svg>
+              </button>
             </div>
           ))}
         </section>

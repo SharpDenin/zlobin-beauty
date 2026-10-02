@@ -42,7 +42,7 @@ export function CosmeticsOrdersPage() {
   if (!buyerOrgId) {
     return (
       <main className="page">
-        <EmptyState title="Нужен салон" action={<Link className="btn btn-primary" to="/master">Кабинет</Link>} />
+        <EmptyState title="Нужен салон" action={<Link className="btn btn-primary" to="/master">Моя страница</Link>} />
       </main>
     )
   }

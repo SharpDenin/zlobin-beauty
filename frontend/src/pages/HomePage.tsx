@@ -1,6 +1,9 @@
 import { Link, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, useAuth } from '@/features/auth/AuthProvider'
+import { useCabinet } from '@/shared/lib/cabinet'
+import { isOwnerStartKind } from '@/features/owner-home/owner-home-helpers'
+import { OwnerStartPage } from '@/features/owner-home/OwnerStartPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { apiRequest } from '@/shared/api/client'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
@@ -17,6 +20,7 @@ type Appointment = {
   status: string
   starts_at: string
   price_minor: number
+  master_display_name?: string
   visit_group_id?: string | null
 }
 
@@ -80,6 +84,7 @@ function ClientHome() {
           <AppointmentCard
             to={`/appointments/${upcoming.items[0].id}`}
             serviceName={visitGroupTitle(upcoming)}
+            personName={upcoming.items[0].master_display_name}
             subtitle={upcoming.combined ? 'Визит из двух услуг' : undefined}
             status={upcoming.items[0].status}
             startsAt={upcoming.items[0].starts_at}
@@ -125,8 +130,10 @@ function SupplierHomeRedirect() {
 
 export function HomePage() {
   const { user } = useAuth()
-  if (hasMasterAccess(user) || hasSalonAdmin(user)) return <DashboardPage />
+  const cabinet = useCabinet()
   if (hasSupplierAccess(user)) return <SupplierHomeRedirect />
   if (hasSupplierRepAccess(user)) return <Navigate to="/rep" replace />
+  if (isOwnerStartKind(cabinet.kind)) return <OwnerStartPage />
+  if (hasMasterAccess(user) || hasSalonAdmin(user)) return <DashboardPage />
   return <ClientHome />
 }

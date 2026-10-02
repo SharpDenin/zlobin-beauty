@@ -10,6 +10,7 @@ import {
   searchPeople,
   updateContactNote,
 } from '@/features/contacts/api'
+import { conversationStartBody, existingConversationId } from '@/features/contacts/startChat'
 import {
   ContactAvatar,
   ContactRoleBadges,
@@ -192,21 +193,18 @@ export function ContactsPage() {
       toast.error('Мессенджер недоступен')
       return
     }
-    if (contact.conversation_id) {
-      messenger.open(contact.conversation_id)
+    const existing = existingConversationId(contact)
+    if (existing) {
+      messenger.open(existing)
       return
     }
-    const roles = new Set(contact.roles)
+    const body = conversationStartBody(contact.roles, contact.user_id)
+    if (!body) {
+      toast.error('Нельзя начать чат с этим контактом')
+      return
+    }
     try {
-      if (roles.has('master')) {
-        await messenger.start({ type: 'client_master', master_user_id: contact.user_id })
-        return
-      }
-      if (roles.has('client')) {
-        await messenger.start({ type: 'client_master', client_user_id: contact.user_id })
-        return
-      }
-      toast.error('Пока нельзя начать чат с этим контактом из адресной книги')
+      await messenger.start(body)
     } catch {
       /* toast already in messenger.start */
     }
@@ -233,7 +231,7 @@ export function ContactsPage() {
     <main className="page contacts-page">
       <header className="stack-sm">
         <h1>Контакты</h1>
-        <p className="muted">Адресная книга для быстрого старта переписки.</p>
+        <p className="muted">Люди, с которыми вы работаете. Откройте карточку, чтобы написать.</p>
       </header>
 
       <div className="contacts-toolbar">

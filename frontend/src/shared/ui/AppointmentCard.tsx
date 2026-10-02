@@ -28,6 +28,8 @@ export function AppointmentCard({
   startsAt,
   priceMinor,
   subtitle,
+  personName,
+  personInitials,
   actions,
 }: {
   to?: string
@@ -36,10 +38,17 @@ export function AppointmentCard({
   startsAt: string
   priceMinor?: number
   subtitle?: string
+  personName?: string
+  personInitials?: string
   actions?: ReactNode
 }) {
   const tone = appointmentTone(status)
   const when = formatWhen(startsAt)
+  const title = personName?.trim() || serviceName
+  const sub = personName?.trim()
+    ? [serviceName, subtitle].filter(Boolean).join(' · ')
+    : subtitle
+  const mark = personInitials || (personName ? personName.trim().slice(0, 1).toUpperCase() : '')
   const body = (
     <>
       <div className="appt-card-when">
@@ -47,8 +56,13 @@ export function AppointmentCard({
         <span>{when.date}</span>
       </div>
       <div className="appt-card-body">
-        <strong className="appt-card-title">{serviceName}</strong>
-        {subtitle ? <p className="appt-card-sub muted">{subtitle}</p> : null}
+        <div className="appt-card-who">
+          {mark ? <span className="appt-card-avatar" aria-hidden="true">{mark}</span> : null}
+          <div className="appt-card-who-text">
+            <strong className="appt-card-title">{title}</strong>
+            {sub ? <p className="appt-card-sub muted">{sub}</p> : null}
+          </div>
+        </div>
         <div className="appt-card-meta">
           <span className={`badge ${statusBadgeClass(status)}`}>{statusLabel(status)}</span>
           {typeof priceMinor === 'number' ? <span className="meta">{formatMoney(priceMinor)}</span> : null}

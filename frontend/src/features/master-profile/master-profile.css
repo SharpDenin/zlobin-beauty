@@ -13,19 +13,18 @@
   background: var(--gradient-hero);
   overflow: hidden;
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  display: grid;
+  gap: var(--space-3);
 }
 
 .mp-hero-photo {
-  position: absolute;
-  right: -8%;
-  top: -6%;
-  width: min(52vw, 220px);
-  aspect-ratio: 1;
-  border-radius: 50%;
+  position: relative;
+  width: min(42vw, 168px);
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  opacity: 0.92;
-  pointer-events: none;
-  mask-image: radial-gradient(circle at 50% 50%, #000 55%, transparent 78%);
+  margin-bottom: var(--space-3);
+  box-shadow: var(--shadow-md);
 }
 .mp-hero-photo img,
 .mp-hero-photo .media-fallback,
@@ -36,13 +35,7 @@
   object-fit: cover;
   display: block;
 }
-.mp-hero-photo::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, var(--color-background) 8%, transparent 55%);
-  pointer-events: none;
-}
+.mp-hero-photo::after { display: none; }
 
 .mp-hero-body {
   position: relative;
@@ -87,12 +80,8 @@
   min-height: 48px;
 }
 .mp-msg-btn {
-  flex: 0 0 48px;
-  width: 48px;
+  flex: 0 0 auto;
   min-height: 48px;
-  padding: 0;
-  display: inline-grid;
-  place-items: center;
 }
 
 .mp-stats {

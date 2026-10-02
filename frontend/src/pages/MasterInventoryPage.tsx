@@ -61,7 +61,7 @@ function MasterStockList() {
       <main className="page">
         <div className="empty-state">
           <h2>Нужен салон</h2>
-          <Link className="btn btn-primary" to="/master">Кабинет</Link>
+          <Link className="btn btn-primary" to="/master">Моя страница</Link>
         </div>
       </main>
     )
@@ -266,7 +266,7 @@ function ReceiptList() {
       <main className="page">
         <div className="empty-state">
           <h2>Нужен салон</h2>
-          <Link className="btn btn-primary" to="/master">Кабинет</Link>
+          <Link className="btn btn-primary" to="/master">Моя страница</Link>
         </div>
       </main>
     )

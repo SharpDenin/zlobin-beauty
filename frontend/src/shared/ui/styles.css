@@ -173,8 +173,10 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
 .app-shell {
   min-height: 100vh;
   min-height: 100dvh;
+  height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr;
+  overflow: hidden;
 }
 .shell-main {
   min-width: 0;
@@ -182,10 +184,20 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+}
+.shell-main > .topbar {
+  position: relative;
+  z-index: var(--z-sticky);
+  flex-shrink: 0;
 }
 .shell-main > :not(.topbar) {
   position: relative;
   z-index: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .topbar {
@@ -197,10 +209,6 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
-  position: sticky;
-  top: 0;
-  z-index: 25;
-  isolation: isolate;
 }
 .topbar-branch {
   max-width: 11rem;
@@ -496,7 +504,7 @@ p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
 .field { display: grid; gap: var(--space-2); min-width: 0; }
 .field label { font-size: var(--text-sm); font-weight: 600; }
 /* Required marker: one rule for the whole product. Mark inputs with `required` or aria-required="true". */
-.field:has(:is(input, select, textarea)[required], :is(input, select, textarea)[aria-required="true"]) > label:first-child::after,
+.field:has(:is(input, select, textarea)[required], :is(input, select, textarea)[aria-required="true"]) > :is(label, span.label-text, span:not(.visually-hidden)):first-child::after,
 .field:has(:is(input, select, textarea)[required], :is(input, select, textarea)[aria-required="true"]) > .label-text:first-child::after,
 fieldset[aria-required="true"] > legend::after,
 .required-mark::after {
@@ -1349,6 +1357,8 @@ button.list-item:hover {
   .app-shell {
     grid-template-columns: 240px minmax(0, 1fr);
     grid-template-rows: 1fr;
+    height: 100vh;
+    height: 100dvh;
   }
   .topbar { display: none; }
   .sidenav {
@@ -2568,6 +2578,24 @@ button.list-item:hover {
   text-transform: capitalize;
 }
 .appt-card-body { display: grid; gap: 8px; min-width: 0; }
+.appt-card-who {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+.appt-card-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+.appt-card-who-text { min-width: 0; }
 .appt-card-title { font-size: var(--text-lg); }
 .appt-card-meta {
   display: flex;
@@ -3137,7 +3165,23 @@ button.list-item:hover {
   border-top: 1px solid var(--color-border);
 }
 .nav-order-title { font-size: var(--text-sm); margin: 0; }
-.nav-order-row { gap: var(--space-2); }
+.nav-order-row { gap: var(--space-2); min-height: 48px; padding: var(--space-2) 0; }
+.nav-order-row.is-dragging { opacity: 0.55; }
+.nav-order-row.is-drop { box-shadow: inset 0 -2px 0 var(--color-primary); }
+.nav-order-handle {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-secondary);
+  touch-action: none;
+  cursor: grab;
+  border-radius: var(--radius-sm);
+}
+.nav-order-handle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
 .invite-qr-block img {
   border-radius: var(--radius-md);
   background: #fff;

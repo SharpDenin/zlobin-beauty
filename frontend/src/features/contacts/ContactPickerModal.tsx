@@ -4,6 +4,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { addContact, listContacts, searchPeople } from '@/features/contacts/api'
 import { ContactAvatar, ContactRoleBadges, ContactSearchRow } from '@/features/contacts/components'
+import { conversationStartBody, existingConversationId } from '@/features/contacts/startChat'
 import { filterContactsByQuery } from '@/features/contacts/roleLabels'
 import type { Contact, ContactSearchHit } from '@/features/contacts/types'
 import { userError } from '@/shared/lib/app-error'
@@ -92,21 +93,18 @@ export function ContactPickerModal({ open, onClose }: Props) {
   async function openContactChat(contact: Contact) {
     if (!messenger) return
     onClose()
-    if (contact.conversation_id) {
-      messenger.open(contact.conversation_id)
+    const existing = existingConversationId(contact)
+    if (existing) {
+      messenger.open(existing)
       return
     }
-    const roles = new Set(contact.roles)
+    const body = conversationStartBody(contact.roles, contact.user_id)
+    if (!body) {
+      toast.error('Нельзя начать чат с этим контактом')
+      return
+    }
     try {
-      if (roles.has('master')) {
-        await messenger.start({ type: 'client_master', master_user_id: contact.user_id })
-        return
-      }
-      if (roles.has('client')) {
-        await messenger.start({ type: 'client_master', client_user_id: contact.user_id })
-        return
-      }
-      toast.error('Пока нельзя начать чат с этим контактом')
+      await messenger.start(body)
     } catch {
       /* handled */
     }

@@ -192,7 +192,7 @@ export function CosmeticsSupplierPage() {
         <EmptyState
           title="Нужен салон"
           text="Создайте салон в кабинете мастера."
-          action={<Link className="btn btn-primary" to="/master">Кабинет</Link>}
+          action={<Link className="btn btn-primary" to="/master">Моя страница</Link>}
         />
       </main>
     )

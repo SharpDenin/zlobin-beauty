@@ -54,6 +54,8 @@ export type ListedAppointment = {
   visit_group_id?: string | null
   master_user_id?: string
   client_user_id?: string
+  client_display_name?: string
+  master_display_name?: string
 }
 
 export type VisitGroup = {

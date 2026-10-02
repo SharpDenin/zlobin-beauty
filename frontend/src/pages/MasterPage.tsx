@@ -316,11 +316,15 @@ export function MasterPage() {
   return (
     <main className="page mp-page">
       <section className="mp-hero" aria-label="Профиль мастера">
-        {master.photo_media_id && (
-          <div className="mp-hero-photo" aria-hidden="true">
-            <MediaImage mediaId={master.photo_media_id} token={accessToken} alt="" variant="cover" />
-          </div>
-        )}
+        <div className="mp-hero-photo">
+          <MediaImage
+            mediaId={master.photo_media_id}
+            token={accessToken}
+            alt={master.display_name}
+            fallback={master.display_name.slice(0, 1)}
+            variant="cover"
+          />
+        </div>
         <div className="mp-hero-body">
           <h1>
             {master.display_name}{' '}
@@ -363,7 +367,7 @@ export function MasterPage() {
                   }
                 }}
               >
-                ✉
+                Написать
               </button>
             )}
           </div>

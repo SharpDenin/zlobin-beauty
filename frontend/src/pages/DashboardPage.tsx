@@ -55,6 +55,8 @@ type Appointment = {
   ends_at?: string
   price_minor: number
   client_user_id?: string
+  client_display_name?: string
+  master_display_name?: string
   branch_id?: string
 }
 
@@ -541,6 +543,8 @@ export function DashboardPage() {
                           key={a.id}
                           to={`/appointments/${a.id}`}
                           serviceName={a.service_name}
+                          personName={a.client_display_name}
+                          subtitle={a.master_display_name}
                           status={a.status}
                           startsAt={a.starts_at}
                           priceMinor={a.price_minor}

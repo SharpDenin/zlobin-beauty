@@ -306,7 +306,7 @@ export function ServicesPage() {
         <EmptyState
           title="Профиль ещё не готов"
           text="Создайте профиль мастера, затем добавьте услуги."
-          action={<Link className="btn btn-primary" to="/master">Открыть кабинет</Link>}
+          action={<Link className="btn btn-primary" to="/master">Моя страница</Link>}
         />
       )}
       {!master.isLoading && !master.isError && services.length === 0 && (

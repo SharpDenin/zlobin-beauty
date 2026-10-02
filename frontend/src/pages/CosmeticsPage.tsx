@@ -25,8 +25,8 @@ export function CosmeticsPage() {
       <main className="page stack">
         <EmptyState
           title="Нужен салон"
-          text="Создайте салон в кабинете мастера, чтобы заказывать косметику."
-          action={<Link className="btn btn-primary" to="/master">Открыть кабинет</Link>}
+          text="Создайте салон на странице мастера, чтобы заказывать косметику."
+          action={<Link className="btn btn-primary" to="/master">Моя страница</Link>}
         />
       </main>
     )

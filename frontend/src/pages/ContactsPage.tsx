@@ -27,6 +27,7 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Modal } from '@/shared/ui/Modal'
 import { toast } from '@/shared/ui/Toast'
+import { moderationError } from '@/shared/lib/moderation'
 import '@/features/contacts/contacts.css'
 
 type NoteForm = { note: string }
@@ -212,12 +213,22 @@ export function ContactsPage() {
 
   function onAddHit(hit: ContactSearchHit) {
     const note = addForm.getValues('note') || ''
+    const banned = moderationError(note)
+    if (banned) {
+      toast.error(banned)
+      return
+    }
     addMut.mutate({ user_id: hit.id, note })
   }
 
   function onAddByQuery() {
     const query = addForm.getValues('query').trim()
     const note = addForm.getValues('note') || ''
+    const banned = moderationError(note)
+    if (banned) {
+      toast.error(banned)
+      return
+    }
     if (looksLikeEmail(query)) {
       addMut.mutate({ email: query, note })
       return
@@ -294,7 +305,14 @@ export function ContactsPage() {
             </div>
             <form
               className="stack-sm"
-              onSubmit={noteForm.handleSubmit((values) => noteMut.mutate({ id: selected.id, note: values.note }))}
+              onSubmit={noteForm.handleSubmit((values) => {
+                const banned = moderationError(values.note)
+                if (banned) {
+                  toast.error(banned)
+                  return
+                }
+                noteMut.mutate({ id: selected.id, note: values.note })
+              })}
             >
               <label className="field">
                 <span>Заметка</span>

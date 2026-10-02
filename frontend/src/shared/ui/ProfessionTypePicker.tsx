@@ -24,11 +24,11 @@ export function ProfessionTypePicker({ value, lockedIds = [], onChange, error }:
 
   return (
     <div className="field">
-      <span>Профессиональные типы</span>
+      <span className="required-mark">Тип мастера</span>
       <p className="muted">Можно выбрать несколько. Это не формат занятости и не режим записи.</p>
       {types.isLoading && <p className="muted">Загрузка типов…</p>}
       {types.isError && <p className="error">Не удалось загрузить справочник типов</p>}
-      <div className="check-grid">
+      <div className="check-grid" role="group" aria-required="true">
         {(types.data?.items ?? []).map((t) => {
           const checked = selected.has(t.id)
           const isLocked = locked.has(t.id) && checked

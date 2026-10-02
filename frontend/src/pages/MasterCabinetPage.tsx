@@ -16,6 +16,7 @@ import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { moderationError } from '@/shared/lib/moderation'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string; published: boolean; description: string }
@@ -579,7 +580,18 @@ export function MasterCabinetPage() {
             label="Загрузить фото профиля"
           />
         </div>
-        <form className="stack" onSubmit={masterForm.handleSubmit((v) => saveMaster.mutate(v))}>
+        <form className="stack" onSubmit={masterForm.handleSubmit((v) => {
+          const banned =
+            moderationError(v.display_name) ||
+            moderationError(v.bio ?? '') ||
+            moderationError(v.specializations ?? '') ||
+            moderationError(v.education ?? '')
+          if (banned) {
+            setError(banned)
+            return
+          }
+          saveMaster.mutate(v)
+        })}>
           <div className="field">
             <label htmlFor="display_name">Имя в поиске</label>
             <input id="display_name" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.display_name)} {...masterForm.register('display_name')} />

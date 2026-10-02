@@ -18,6 +18,8 @@ const ICONS: Record<string, string> = {
   schedule: 'M5 8h14M8 3v3M16 3v3M7 5h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7h2m3 0h4m-9 4h8',
   settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM4.5 11l2-1.5L6.5 6 9 6.5 10.7 5.5 11 3h2l.3 2.5 1.7 1L17.5 6l2 3.5-2 1.5a8 8 0 0 1 0 2l2 1.5-2 3.5-2.5-.5-1.7 1L13 21h-2l-.3-2.5-1.7-1L6.5 18l-2-3.5 2-1.5A8 8 0 0 1 4.5 11z',
   reports: 'M5 19V9m7 10V5m7 14v-7',
+  bottle: 'M9 3h6M10 3v3L7 12v7a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7l-3-6V3M9 14h6',
+  clipboard: 'M9 4h6a1 1 0 0 1 1 1v1h2v14H6V6h2V5a1 1 0 0 1 1-1zm0 2h6M9 12h6M9 16h4',
 }
 
 function iconFor(to: string) {
@@ -31,13 +33,13 @@ function iconFor(to: string) {
   if (to.startsWith('/admin/appointments')) return 'calendar'
   if (to.startsWith('/admin/orders')) return 'money'
   if (to.startsWith('/admin/disputes')) return 'chat'
-  if (to.startsWith('/admin/audit')) return 'more'
+  if (to.startsWith('/admin/audit')) return 'clipboard'
   if (to.startsWith('/calendar')) return 'calendar'
   if (to.startsWith('/schedule')) return 'schedule'
   if (to.startsWith('/appointments')) return 'clock'
   if (to.startsWith('/search')) return 'search'
   if (to.startsWith('/shop')) return 'bag'
-  if (to.startsWith('/cosmetics')) return 'bag'
+  if (to.startsWith('/cosmetics')) return 'bottle'
   if (to.startsWith('/knowledge')) return 'doc'
   if (to.startsWith('/messages')) return 'chat'
   if (to.startsWith('/contacts')) return 'contacts'

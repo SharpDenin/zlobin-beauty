@@ -52,6 +52,7 @@ const (
 	CodeInviteExhausted             Code = "invite_exhausted"
 	CodeContactExists               Code = "contact_exists"
 	CodeContactSelf                 Code = "contact_self"
+	CodeChairOwnSalonLease          Code = "chair_own_salon_lease"
 )
 
 type AppError struct {

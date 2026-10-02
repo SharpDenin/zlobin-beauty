@@ -23,7 +23,7 @@ export default defineConfig({
         id: '/',
         name: 'Salon-X',
         short_name: 'Salon-X',
-        description: 'Записи, мастера и салон — в одном кабинете.',
+        description: 'Записи, мастера и салон — в одном приложении.',
         lang: 'ru',
         start_url: '/',
         scope: '/',

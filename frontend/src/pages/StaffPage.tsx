@@ -190,7 +190,7 @@ export function StaffPage() {
 
   return (
     <main className="page stack">
-      <h1>Команда салона <Hint id="owner-staff" title="Команда">Приглашайте мастеров и администраторов. Расписание сотрудника открывается здесь, без входа в чужой кабинет.</Hint></h1>
+      <h1>Команда салона <Hint id="owner-staff" title="Команда">Приглашайте мастеров и администраторов. Расписание сотрудника открывается здесь, без входа в чужой профиль.</Hint></h1>
       <p className="muted" data-testid="staff-branch-context">{buyerOrg?.organization.name}{cabinet.selectedBranch ? ` · ${cabinet.selectedBranch.name}` : ''}</p>
       {cabinet.can('salon_settings') && (
         <p><Link to="/salon/settings">Настройки салона и контакты клиентов</Link></p>

@@ -16,6 +16,9 @@ import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
 import { Modal } from '@/shared/ui/Modal'
 import { Drawer } from '@/shared/ui/Drawer'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
+import { moderationError } from '@/shared/lib/moderation'
+import { useDraftState } from '@/shared/lib/useFormDraft'
+import { ApiError } from '@/shared/api/client'
 import '@/features/knowledge/knowledge-tones.css'
 
 type SupplierProduct = { id: string; brand?: string; name: string; category?: string; audience?: string }
@@ -43,6 +46,17 @@ const emptyDraft = (): Draft => ({
   categoryIds: [],
 })
 
+function docPlainText(doc: JSONContent): string {
+  const parts: string[] = []
+  const walk = (node: JSONContent | undefined) => {
+    if (!node) return
+    if (typeof node.text === 'string') parts.push(node.text)
+    node.content?.forEach(walk)
+  }
+  walk(doc)
+  return parts.join(' ')
+}
+
 export function KnowledgeEditorPage() {
   const { id } = useParams()
   const isNew = !id
@@ -50,7 +64,7 @@ export function KnowledgeEditorPage() {
   const { supplierOrgId } = useSupplierOrg()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [draft, setDraft] = useState<Draft>(emptyDraft())
+  const [draft, setDraft, clearDraft] = useDraftState<Draft>(`kb-editor:${id ?? 'new'}`, emptyDraft())
   const [hydrated, setHydrated] = useState(isNew)
   const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -69,13 +83,19 @@ export function KnowledgeEditorPage() {
   useEffect(() => {
     hydratedForId.current = null
     setHydrated(isNew)
-    if (isNew) setDraft(emptyDraft())
   }, [id, isNew])
 
   useEffect(() => {
     if (!existing.data) return
     if (hydratedForId.current === existing.data.id) return
     const a = existing.data
+    const keepLocal =
+      draft.title.trim().length > 0 || docHasText(draft.doc) || Boolean(draft.coverMediaId) || draft.productIds.length > 0
+    if (keepLocal) {
+      hydratedForId.current = a.id
+      setHydrated(true)
+      return
+    }
     setDraft({
       title: a.title,
       category: a.category,
@@ -88,7 +108,7 @@ export function KnowledgeEditorPage() {
     })
     hydratedForId.current = a.id
     setHydrated(true)
-  }, [existing.data])
+  }, [existing.data, draft.title, draft.doc, draft.coverMediaId, draft.productIds, setDraft])
 
   const products = useQuery({
     queryKey: ['knowledge-supplier-products', supplierOrgId],
@@ -122,6 +142,12 @@ export function KnowledgeEditorPage() {
 
   const save = useMutation({
     mutationFn: async (status: Draft['status']) => {
+      const banned =
+        moderationError(draft.title) ||
+        moderationError(draft.category) ||
+        moderationError(draft.brand) ||
+        moderationError(docPlainText(draft.doc))
+      if (banned) throw new ApiError(banned, 'content_not_allowed', 422)
       const body = {
         title: draft.title.trim(),
         category: draft.category.trim(),
@@ -143,6 +169,7 @@ export function KnowledgeEditorPage() {
       return apiRequest<KnowledgeArticle>('/v1/knowledge', { token: accessToken, body })
     },
     onSuccess: async (item, status) => {
+      clearDraft()
       setOk(status === 'published' ? 'Материал опубликован' : 'Черновик сохранён')
       setError(null)
       setDraft((d) => ({ ...d, status }))
@@ -243,6 +270,8 @@ export function KnowledgeEditorPage() {
               id="kb-title"
               value={draft.title}
               onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              aria-required="true"
+              required
               aria-invalid={draft.title.trim().length > 0 && draft.title.trim().length < 2}
             />
             {draft.title.trim().length > 0 && draft.title.trim().length < 2 && (

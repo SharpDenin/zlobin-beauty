@@ -17,6 +17,7 @@ import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone, isoToDatetimeLocal, wallTimeInTimezoneToUtcIso } from '@/shared/lib/time'
 import { formatMoney } from '@/shared/lib/money'
 import { formatUserError } from '@/shared/lib/app-error'
+import { moderationError } from '@/shared/lib/moderation'
 import { usePreference } from '@/shared/lib/preferences'
 import { Hint } from '@/shared/ui/Hint'
 import { Drawer } from '@/shared/ui/Drawer'
@@ -1068,6 +1069,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (!blockStart || !blockEnd) return
     if (blockEnd <= blockStart) {
       setError('Конец события должен быть позже начала')
+      return
+    }
+    const banned = moderationError(blockTitle)
+    if (banned) {
+      setError(banned)
       return
     }
     setError(null)

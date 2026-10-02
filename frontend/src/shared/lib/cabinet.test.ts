@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyNavOrder, moveNavPath, navForCabinet, type NavLink } from '@/shared/lib/cabinet'
+import { applyNavOrder, cabinetLabel, moveNavPath, navForCabinet, type NavLink } from '@/shared/lib/cabinet'
 
 describe('applyNavOrder', () => {
   const links: NavLink[] = [
@@ -29,5 +29,13 @@ describe('navForCabinet', () => {
   it('uses product labels for salon owner tabs', () => {
     const nav = navForCabinet('salon_owner')
     expect(nav.primary.map((l) => l.label)).toEqual(['Обзор', 'Расписание', 'Записи', 'Ещё'])
+  })
+})
+
+describe('cabinetLabel', () => {
+  it('never uses Кабинет', () => {
+    for (const kind of ['salon_owner', 'private_master', 'salon_employee', 'supplier', 'client'] as const) {
+      expect(cabinetLabel(kind)).not.toMatch(/Кабинет/i)
+    }
   })
 })

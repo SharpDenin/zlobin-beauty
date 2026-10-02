@@ -25,6 +25,14 @@ const schema = z.object({
   role: z.enum(['client', 'master', 'supplier']),
   work_type: z.enum(['independent', 'private_master', 'mobile_master', 'employee', 'renter', 'chair_master', 'owner', 'salon_owner']).optional(),
   profession_type_ids: z.array(z.string().uuid()).optional(),
+}).superRefine((data, ctx) => {
+  if (data.role === 'master' && (!data.profession_type_ids || data.profession_type_ids.length < 1)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Выберите хотя бы один тип мастера',
+      path: ['profession_type_ids'],
+    })
+  }
 })
 
 type Form = z.infer<typeof schema>
@@ -152,6 +160,7 @@ export function RegisterPage() {
               <ProfessionTypePicker
                 value={watch('profession_type_ids') ?? []}
                 onChange={(ids) => setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
+                error={errors.profession_type_ids?.message}
               />
               {!invite && (
                 <div className="field">

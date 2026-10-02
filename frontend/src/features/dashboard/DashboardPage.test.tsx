@@ -20,7 +20,7 @@ vi.mock('@/features/auth/AuthProvider', () => ({
 vi.mock('@/shared/lib/cabinet', () => ({
   useCabinet: () => ({
     kind: 'private_master',
-    label: 'Кабинет частного мастера',
+    label: 'Частный мастер',
     workType: 'independent',
     master: { display_name: 'Алексей Петров', city: 'Москва', work_type: 'independent' },
     orgs: [],

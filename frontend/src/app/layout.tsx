@@ -1,5 +1,5 @@
 import { Navigate, Outlet, Link, useLocation } from 'react-router-dom'
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet, applyNavOrder, moveNavPath, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { usePreference } from '@/shared/lib/preferences'
@@ -221,7 +221,21 @@ function AppShellInner() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [desktopNav, setDesktopNav] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : false,
+  )
   const cabinet = useCabinet()
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)')
+    const sync = () => {
+      setDesktopNav(mq.matches)
+      if (mq.matches) setMoreOpen(false)
+    }
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
 
   const primary = cabinet.primary
   const secondary = cabinet.secondary
@@ -333,12 +347,14 @@ function AppShellInner() {
           )
         })}
       </nav>
-      <MoreDrawer
-        open={moreOpen}
-        onClose={() => setMoreOpen(false)}
-        links={secondary}
-        pathname={location.pathname}
-      />
+      {!desktopNav && (
+        <MoreDrawer
+          open={moreOpen}
+          onClose={() => setMoreOpen(false)}
+          links={secondary}
+          pathname={location.pathname}
+        />
+      )}
     </div>
   )
 }

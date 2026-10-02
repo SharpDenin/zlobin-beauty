@@ -52,4 +52,6 @@
 
 .cart-line .cart-line-remove {
   min-height: var(--control-h);
+  min-width: var(--control-h);
+  padding-inline: var(--space-3);
 }

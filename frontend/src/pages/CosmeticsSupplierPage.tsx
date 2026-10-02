@@ -41,6 +41,8 @@ export function CosmeticsSupplierPage() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [branchQuery, setBranchQuery] = useState('')
   const [destinationBranchId, setDestinationBranchId] = useState('')
+  const destinationBranchIdRef = useRef(destinationBranchId)
+  destinationBranchIdRef.current = destinationBranchId
   const [paymentMethod, setPaymentMethod] = useState<string>('cash')
   const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -122,7 +124,8 @@ export function CosmeticsSupplierPage() {
   const createOrder = useMutation({
     mutationFn: async () => {
       if (!buyerOrgId) throw new ApiError('Нет организации салона', 'validation_error', 400)
-      if (!destinationBranchId) throw new ApiError('Выберите филиал для получения', 'validation_error', 400)
+      const branchId = destinationBranchIdRef.current
+      if (!branchId) throw new ApiError('Выберите филиал для получения', 'validation_error', 400)
       let loc = locationId || locations.data?.items[0]?.id
       if (!loc) {
         const created = await ensure.mutateAsync()
@@ -133,7 +136,7 @@ export function CosmeticsSupplierPage() {
       const items = cart.map((c) => ({ product_id: c.product.id, qty: c.qty }))
       const orderComment = comment.trim() || 'Заказ косметики'
       const idempotencyKey = idempotencyKeyFor(
-        JSON.stringify([buyerOrgId, supplierId, loc, destinationBranchId, paymentMethod, orderComment, items]),
+        JSON.stringify([buyerOrgId, supplierId, loc, branchId, paymentMethod, orderComment, items]),
       )
       return apiRequest<SupplierOrder>('/v1/commerce/supplier-orders', {
         token: accessToken,
@@ -142,7 +145,7 @@ export function CosmeticsSupplierPage() {
           buyer_org_id: buyerOrgId,
           supplier_org_id: supplierId,
           location_id: loc,
-          destination_branch_id: destinationBranchId,
+          destination_branch_id: branchId,
           payment_method: paymentMethod,
           comment: orderComment,
           items,
@@ -191,7 +194,7 @@ export function CosmeticsSupplierPage() {
       <main className="page">
         <EmptyState
           title="Нужен салон"
-          text="Создайте салон в кабинете мастера."
+          text="Создайте салон на странице мастера."
           action={<Link className="btn btn-primary" to="/master">Моя страница</Link>}
         />
       </main>

@@ -92,8 +92,8 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   content_not_allowed: {
     kind: 'validation',
-    title: 'Текст содержит недопустимые слова',
-    hint: 'Измените формулировку и попробуйте снова.',
+    title: 'Пожалуйста, измените текст — он содержит запрещённое выражение.',
+    hint: 'Уберите недопустимые слова и отправьте снова.',
   },
   forbidden: {
     kind: 'authorization',
@@ -192,8 +192,8 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   insufficient_stock: {
     kind: 'conflict',
-    title: 'Товара недостаточно на складе',
-    hint: 'Уменьшите количество или выберите другой товар.',
+    title: 'Недостаточно товара на выбранном складе.',
+    hint: 'Уменьшите количество или выберите другой склад.',
   },
   profession_types_required: {
     kind: 'validation',
@@ -204,6 +204,11 @@ const CATALOG: Record<string, CatalogEntry> = {
     kind: 'business',
     title: 'Эту специализацию нельзя убрать',
     hint: 'Она уже используется в услугах или записях.',
+  },
+  chair_own_salon_lease: {
+    kind: 'business',
+    title: 'Сотрудник салона не может арендовать кресло в этом салоне.',
+    hint: 'Аренда доступна мастерам других салонов.',
   },
   media_unsupported_type: {
     kind: 'upload',

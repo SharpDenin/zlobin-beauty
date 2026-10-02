@@ -2,13 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiRequest } from '@/shared/api/client'
 import { formatUserError } from '@/shared/lib/app-error'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { datetimeLocalToIso } from '@/shared/lib/time'
+import { useCabinet } from '@/shared/lib/cabinet'
 import { LEASE_LABELS, type ChairLease, type SalonChair } from '@/shared/lib/work-mode'
 
 export function ChairMarketplacePage() {
   const { accessToken } = useAuth()
+  const cabinet = useCabinet()
+  const ownOrgIds = new Set(cabinet.orgs.map((o) => o.organization.id))
   const qc = useQueryClient()
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
@@ -26,6 +30,8 @@ export function ChairMarketplacePage() {
     queryFn: () => apiRequest<{ items: ChairLease[] }>('/v1/me/chair-leases', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
+
+  const listed = (chairs.data?.items ?? []).filter((c) => !ownOrgIds.has(c.organization_id))
 
   const request = useMutation({
     mutationFn: () => apiRequest(`/v1/chairs/${selected}/leases`, {
@@ -46,7 +52,13 @@ export function ChairMarketplacePage() {
       <h1>Аренда кресел</h1>
       <p className="muted">Доступные кресла салонов. После одобрения владельцем кресло появится в вашем графике.</p>
       {error && <ErrorBanner error={error} />}
-      {(chairs.data?.items ?? []).map((c) => (
+      {!chairs.isLoading && listed.length === 0 && (
+        <EmptyState
+          title="Нет доступных кресел"
+          text="Сотрудник салона не может арендовать кресло в этом салоне. Предложения других салонов появятся здесь."
+        />
+      )}
+      {listed.map((c) => (
         <article key={c.id} className="card stack" data-testid="marketplace-chair">
           <strong>{c.name}</strong>
           {c.description && <p>{c.description}</p>}

@@ -25,6 +25,7 @@ import {
 import { MESSAGE_PAGE_SIZE, type ChatMessage, type Conversation, type MessageListResponse } from '@/features/messenger/types'
 import { uploadMedia, MEDIA_ACCEPT_IMAGE_OR_VIDEO, validateMediaFile } from '@/shared/lib/mediaUpload'
 import { toast } from '@/shared/ui/Toast'
+import { moderationError } from '@/shared/lib/moderation'
 
 type Props = {
   mode: 'page' | 'overlay'
@@ -205,6 +206,12 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
     const text = retry?.body ?? draft
     const attachment = retry?.file ?? file
     if (!canSendMessage(text, attachment)) return
+    const banned = moderationError(text)
+    if (banned) {
+      setError(banned)
+      toast.error(banned)
+      return
+    }
     const mimeErr = attachment ? validateMediaFile(attachment, { allowVideo: true }) : null
     if (mimeErr) {
       setError(mimeErr)

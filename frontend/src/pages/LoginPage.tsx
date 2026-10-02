@@ -5,7 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { homePathForUser, useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
-import { clearSessionEnded, peekSessionEnded } from '@/features/pwa/pwa'
+import { clearSessionEnded, consumeSessionEnded } from '@/features/pwa/pwa'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
@@ -21,7 +21,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
   const { login } = useAuth()
   const navigate = useNavigate()
   // A soft notice, shown only after a REAL expiry (never after a normal logout) and until dismissed.
-  const [sessionEnded, setSessionEnded] = useState(() => peekSessionEnded())
+  const [sessionEnded, setSessionEnded] = useState(() => consumeSessionEnded())
   const [error, setError] = useState<string | null>(null)
   const { register, handleSubmit, formState: { errors, isSubmitting }, setFocus } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -40,6 +40,8 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
             setError(null)
             try {
               const user = await login(values.email, values.password)
+              clearSessionEnded()
+              setSessionEnded(false)
               const fallback = homePathForUser(user)
               const target = redirectTo && redirectTo !== '/' ? redirectTo : fallback
               navigate(target)
@@ -61,7 +63,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
           </div>
           {sessionEnded && !error && (
             <div className="auth-notice" role="status" data-testid="session-expired-notice">
-              <span>Сессия истекла — войдите снова.</span>
+              <span>Сессия завершилась. Войдите снова.</span>
               <button
                 type="button"
                 className="btn btn-ghost btn-compact"

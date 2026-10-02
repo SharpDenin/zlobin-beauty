@@ -6,6 +6,7 @@ import { ApiError, apiRequest } from '@/shared/api/client'
 import { CosmeticsSupplierPage } from '@/pages/CosmeticsSupplierPage'
 import { saveCart } from '@/shared/lib/cart'
 import type { CommerceProduct } from '@/shared/lib/commerce'
+import { resetOverlayLockForTests } from '@/shared/ui/overlayLock'
 
 vi.mock('@/shared/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/shared/api/client')>()
@@ -85,6 +86,7 @@ function renderPage() {
 
 beforeEach(() => {
   sessionStorage.clear()
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   toastSuccess.mockReset()
   saveCart('sup-1', [{ product, qty: 2 }])
   mockedRequest.mockImplementation(async (path: string) => {
@@ -98,6 +100,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  resetOverlayLockForTests()
   vi.clearAllMocks()
 })
 
@@ -105,6 +108,7 @@ describe('CosmeticsSupplierPage checkout', () => {
   it('clears the cart, toasts and navigates after a successful order', async () => {
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Оформить' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Центр/ }))
     const confirm = await screen.findByRole('button', { name: 'Подтвердить заказ' })
     await waitFor(() => expect(confirm).not.toBeDisabled())
     fireEvent.click(confirm)
@@ -123,10 +127,11 @@ describe('CosmeticsSupplierPage checkout', () => {
     })
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Оформить' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Центр/ }))
     const confirm = await screen.findByRole('button', { name: 'Подтвердить заказ' })
     await waitFor(() => expect(confirm).not.toBeDisabled())
     fireEvent.click(confirm)
-    expect(await screen.findByText('Товара недостаточно на складе')).toBeTruthy()
+    expect(await screen.findByText('Недостаточно товара на выбранном складе.')).toBeTruthy()
     expect(toastSuccess).not.toHaveBeenCalled()
     expect(JSON.parse(sessionStorage.getItem('zb.cosmetics.cart.sup-1') || '[]')).toHaveLength(1)
   })
@@ -152,6 +157,7 @@ describe('CosmeticsSupplierPage checkout', () => {
 
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Оформить' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Центр/ }))
     const confirm = await screen.findByRole('button', { name: 'Подтвердить заказ' })
     await waitFor(() => expect(confirm).not.toBeDisabled())
     fireEvent.click(confirm)

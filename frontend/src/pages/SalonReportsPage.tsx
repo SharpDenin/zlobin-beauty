@@ -171,7 +171,7 @@ export function SalonReportsPage() {
     return (
       <main className="page">
         <div className="state-box">
-          Нет организации. Создайте салон в <Link to="/master">кабинете</Link>.
+          Нет организации. Создайте салон на <Link to="/master">странице мастера</Link>.
         </div>
       </main>
     )

@@ -13,6 +13,7 @@ import { Modal } from '@/shared/ui/Modal'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useToast } from '@/shared/ui/Toast'
+import { moderationError } from '@/shared/lib/moderation'
 import { PageHeader } from '@/app/layout'
 import {
   PortfolioCategoryChips,
@@ -282,6 +283,15 @@ export function PortfolioPage() {
           onSubmit={form.handleSubmit((values) => {
             if (!mediaId) {
               setFormError('Добавьте фото')
+              return
+            }
+            const banned =
+              moderationError(values.title) ||
+              moderationError(values.description || '') ||
+              moderationError(values.category) ||
+              moderationError(values.customCategory || '')
+            if (banned) {
+              setFormError(banned)
               return
             }
             save.mutate(values)

@@ -196,7 +196,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         const token = await getFreshAccessToken()
-        if (!token) return // refresh definitively failed: endSession('expired') already ran
+        if (!token) {
+          // Refresh returned a hard failure without clearing (e.g. 400). Treat as expiry.
+          if (sessionRef.current.accessToken || sessionRef.current.refreshToken) endSession('expired')
+          return
+        }
         let me: User
         try {
           me = await apiRequest<User>('/v1/auth/me', { token, skipAuthRefresh: true })

@@ -3,7 +3,7 @@
 .mp-page {
   display: grid;
   gap: var(--space-5);
-  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--nav-h) + 88px + env(safe-area-inset-bottom, 0px));
 }
 
 .mp-hero {

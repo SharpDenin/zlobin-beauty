@@ -1,7 +1,7 @@
 import { logAppError, payloadFromResponse } from '@/shared/lib/app-error'
 import { isTokenFresh, readStoredSession, type SessionEndReason } from '@/features/auth/session-storage'
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? '' : 'http://localhost:8090')
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export class ApiError extends Error {
   code: string
@@ -171,7 +171,7 @@ export async function getFreshAccessToken(): Promise<string | null> {
   try {
     return (await refreshAccessToken()) ?? null
   } catch {
-    // Offline or server hiccup: let the caller try with what we have; the request itself will report.
+    // Offline / gateway down: keep the stored access token so hydrate can stay signed-in.
     return session.accessToken
   }
 }

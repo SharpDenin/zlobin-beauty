@@ -72,6 +72,10 @@ func main() {
 	for _, a := range accounts {
 		u, err := loginOrRegister(client, base, a, password)
 		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "account_blocked") || strings.Contains(strings.ToLower(err.Error()), "blocked") {
+				log.Printf("warn skip blocked account %s: %v", a.Email, err)
+				continue
+			}
 			fatal("auth %s: %v", a.Email, err)
 		}
 		if a.Name != "" || a.City != "" {
@@ -160,7 +164,7 @@ func main() {
 	log.Printf("ok master3 city=Москва tz=Europe/Moscow work_type=employee")
 
 	_, _, m4Profile, _, err = seedMaster(client, base, master4, masterSeed{
-		OrgName: "Кабинет бровиста «Орлов»", BranchName: "Красноярск, Мира",
+		OrgName: "Студия бровей «Орлов»", BranchName: "Красноярск, Мира",
 		City: "Красноярск", Address: "ул. Мира, 12", Phone: "+79001234567", Timezone: "Asia/Krasnoyarsk",
 		Display: "Дмитрий Орлов", Bio: "Независимый мастер бровей и ресниц: архитектура формы, окрашивание и ламинирование.",
 		Specs: []string{"брови", "ресницы"}, Experience: 6, Education: "Brow Expert School",
@@ -199,7 +203,7 @@ func main() {
 		log.Printf("ok premium1 org=%s profile=%s service=%s", p1Org, p1Profile, p1Service)
 	}
 	_, _, e1Profile, e1Service, err := seedMaster(client, base, expired1, masterSeed{
-		OrgName: "Кабинет Светланы", BranchName: "Красноярск, Вавилова",
+		OrgName: "Студия Светланы", BranchName: "Красноярск, Вавилова",
 		City: "Красноярск", Address: "ул. Вавилова, 3", Phone: "+79006665544", Timezone: "Asia/Krasnoyarsk",
 		Display: "Светлана Егорова", Bio: "Колорист с истёкшим trial — дальше Free: схему на окрашивании заполняем полностью.",
 		Specs: []string{"колористика"}, Experience: 4, Education: "Estel Professional",
@@ -310,6 +314,25 @@ func main() {
 		log.Printf("warn calendar tasks: %v", err)
 	} else {
 		log.Printf("ok calendar planner tasks")
+	}
+
+	liveClients := []authUser{}
+	for _, email := range []string{"client1@demo.local"} {
+		if u, ok := users[email]; ok && u.ID != "" {
+			liveClients = append(liveClients, u)
+		}
+	}
+	if len(liveClients) == 0 && client1.ID != "" {
+		liveClients = []authUser{client1}
+	}
+	if err := seedLiveSalonSchedule(client, base, master1, m1Org, m1Profile, liveClients); err != nil {
+		log.Printf("warn live salon schedule: %v", err)
+	} else {
+		log.Printf("ok live salon schedule")
+	}
+	cutID, _ := lookupMasterServiceByName(client, base, master1, "Стрижка")
+	if err := seedBackdatedSalonDay(m1Org, m1Branch, master1.ID, m1Service, cutID, liveClients, "Asia/Krasnoyarsk"); err != nil {
+		log.Printf("warn backdated salon day: %v", err)
 	}
 
 	if err := seedOrders(client, base, master1, supplier1, m1Org, m1Branch, products1); err != nil {
@@ -556,6 +579,9 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 	}, &loginResp)
 	if err == nil && status < 300 {
 		return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles}, nil
+	}
+	if status == http.StatusForbidden {
+		return authUser{}, &apiError{Status: status, Body: "account_blocked " + a.Email}
 	}
 
 	reg := map[string]any{
@@ -1981,7 +2007,7 @@ func seedAppointments(c *http.Client, base string, client, master authUser, mast
 }
 
 func findSlot(c *http.Client, base, masterUserID string, durationMin int) (time.Time, error) {
-	day := time.Now().UTC().AddDate(0, 0, 1)
+	day := time.Now()
 	for i := 0; i < 14; i++ {
 		d := day.AddDate(0, 0, i)
 		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {

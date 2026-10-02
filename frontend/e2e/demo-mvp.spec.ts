@@ -68,7 +68,7 @@ test.describe('demo MVP flows', () => {
 
   test('flexible booking path still works', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
-    await loginUI(page, 'client2@demo.local')
+    await loginUI(page, 'client1@demo.local')
 
     await page.goto('/search')
     const city = page.getByRole('textbox', { name: 'Город', exact: true })
@@ -80,16 +80,12 @@ test.describe('demo MVP flows', () => {
     const anna = page.locator('a.list-item').filter({ hasText: /Анна/i }).first()
     await expect(anna).toBeVisible({ timeout: 15_000 })
     await anna.click()
-    await expect(page.locator('main h1, .service-card').first()).toBeVisible({ timeout: 15_000 })
+    await page.locator('#mp-booking').scrollIntoViewIfNeeded()
+    await expect(page.getByTestId('mp-service').first()).toBeVisible({ timeout: 15_000 })
 
-    const flexible = page.locator('.service-card').filter({ hasText: /Стрижка/i }).first()
-    if (await flexible.count()) {
-      await flexible.click()
-    } else {
-      const anyFlexible = page.locator('.service-card').filter({ hasNotText: /Фиксированное окно/i }).first()
-      await expect(anyFlexible).toBeVisible({ timeout: 10_000 })
-      await anyFlexible.click()
-    }
+    const flexible = page.getByTestId('mp-service').filter({ hasText: /Стрижка/i }).first()
+    await expect(flexible).toBeVisible({ timeout: 10_000 })
+    await flexible.click()
 
     const next = page.getByRole('button', { name: /Далее/i })
     if (await next.count()) await next.first().click()
@@ -128,7 +124,7 @@ test.describe('demo MVP flows', () => {
     await expect(anna).toBeVisible({ timeout: 15_000 })
     await anna.click()
 
-    const fixedCard = page.locator('.service-card').filter({ hasText: /Фиксированное окно|мастер-класс/i }).first()
+    const fixedCard = page.getByTestId('mp-service').filter({ hasText: /Фиксированное окно|мастер-класс|МК/i }).first()
     await expect(fixedCard).toBeVisible({ timeout: 15_000 })
     await fixedCard.click()
     const next = page.getByRole('button', { name: /Далее/i })

@@ -229,7 +229,7 @@ export function WorkSchedulePage() {
   return (
     <main className="page stack" data-testid="work-schedule-page">
       <h1>Установка графика</h1>
-      <p className="muted">Недельные часы, исключения на день и режимы работы. Часовой пояс: {tz}.</p>
+      <p className="muted">Недельные часы, исключения на день и режимы работы.</p>
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 

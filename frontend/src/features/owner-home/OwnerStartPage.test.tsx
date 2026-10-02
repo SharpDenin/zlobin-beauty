@@ -108,6 +108,7 @@ describe('OwnerStartPage', () => {
     expect(screen.getByRole('link', { name: 'Запасы' })).toHaveAttribute('href', '/inventory')
     expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/salon/settings')
     expect(screen.queryByText(/Кабинет/i)).toBeNull()
+    expect(screen.getByText(/2\s?000\s?₽/)).toBeInTheDocument()
   })
 
   it('lets the owner pick another day in the week strip', async () => {

@@ -44,6 +44,9 @@ func ValidateProductionEnv() {
 	if os.Getenv("ALLOW_DEV_BILLING") == "true" {
 		problems = append(problems, "ALLOW_DEV_BILLING must be false in production")
 	}
+	if strings.TrimSpace(os.Getenv("CORS_ORIGINS")) == "*" {
+		problems = append(problems, "CORS_ORIGINS must not be * in production")
+	}
 
 	if len(problems) > 0 {
 		panic(fmt.Sprintf("production env validation failed:\n- %s", strings.Join(problems, "\n- ")))

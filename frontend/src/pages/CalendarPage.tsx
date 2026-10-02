@@ -30,6 +30,7 @@ import {
   calendarColorClass,
   calendarColorCss,
   CALENDAR_COLOR_TOKENS,
+  CALENDAR_COLOR_LABELS,
   canDragAppointment,
   countEventsOutsideRange,
   DEFAULT_DISPLAY_RANGE,
@@ -1047,9 +1048,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     const ymd = zonedYmd(date, salonTimezone)
     const [year, month, day] = ymd.split('-').map(Number)
     const hoursToday = (hours.data?.items ?? []).find((h) => h.weekday === weekdayIndex(date, salonTimezone))
-    const startMin = Number.isFinite(date.getHours()) && (date.getHours() !== 0 || date.getMinutes() !== 0)
-      ? date.getHours() * 60 + date.getMinutes()
-      : (hoursToday ? hoursToday.start_minute : 10 * 60)
+    const workStart = hoursToday ? hoursToday.start_minute : 10 * 60
+    const workEnd = hoursToday ? hoursToday.end_minute : 19 * 60
+    const clockMin = date.getHours() * 60 + date.getMinutes()
+    const startMin = clockMin >= workStart && clockMin <= workEnd - 30 ? clockMin : workStart
     const startH = Math.floor(startMin / 60)
     const startM = startMin % 60
     try {
@@ -1184,7 +1186,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           type="button"
           role="option"
           aria-selected={value === token}
-          aria-label={token}
+          aria-label={CALENDAR_COLOR_LABELS[token]}
           className={`calendar-color-swatch cal-color-${token} ${value === token ? 'is-selected' : ''}`}
           onClick={() => onPick(token)}
         />
@@ -1277,18 +1279,13 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               <h1>{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
               {!compact ? (
                 <p className="muted">
-                  Часовой пояс: {salonTimezone}. Переносите события — при конфликте изменение отменится.
+                  Переносите события — при конфликте изменение отменится.
                   <Hint id="cal-dnd" title="Работа с расписанием">Личные события можно переносить и растягивать с начала и с конца. Записи клиента — только через подтверждение переноса. Завершённые и чужие события только для просмотра.</Hint>
                 </p>
-              ) : (
-                <p className="muted">Часовой пояс: {salonTimezone}</p>
-              )}
+              ) : null}
             </div>
           ) : (
-            <div className="stack-sm">
-              <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
-              <p className="muted cal-tz">Часовой пояс: {salonTimezone}</p>
-            </div>
+            <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
           )}
           <div className="row">
             <Link className="btn btn-secondary btn-compact" to="/schedule" data-testid="calendar-open-schedule">Установка графика</Link>
@@ -1471,9 +1468,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
+      {!showMobileDay ? (
       <div
         className="calendar-wrap"
-        hidden={showMobileDay}
         ref={wrapRef}
         style={{ ['--cal-slot-min-height' as string]: compact ? '44px' : '3.25em' } as CSSProperties}
       >
@@ -1550,6 +1547,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           buttonText={{ today: 'Сегодня' }}
         />
       </div>
+      ) : null}
 
       {compact ? (
         <Drawer open={editorOpen} onClose={() => setEditorOpen(false)} title={<div><p className="eyebrow">Календарь</p><h2>Новое событие</h2></div>}>

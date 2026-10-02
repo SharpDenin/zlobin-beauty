@@ -467,6 +467,7 @@ export function MasterPage() {
                 key={s.id}
                 type="button"
                 className={`mp-service-row ${serviceId === s.id ? 'is-selected' : ''}`}
+                data-testid="mp-service"
                 onClick={() => {
                   setServiceId(s.id)
                   setSlot('')
@@ -546,6 +547,16 @@ export function MasterPage() {
               <button className="btn btn-secondary" type="button" onClick={() => setStep(0)}>Назад</button>
               <button className="btn btn-primary" type="button" onClick={() => setStep(2)}>К времени</button>
             </div>
+            {accessToken && selectedService && canJoinMultiService(selectedService) && master.organization_id && (
+              <button
+                className="btn btn-secondary"
+                type="button"
+                data-testid="add-second-service"
+                onClick={() => setMultiOpen(true)}
+              >
+                Добавить вторую услугу
+              </button>
+            )}
           </div>
         )}
 

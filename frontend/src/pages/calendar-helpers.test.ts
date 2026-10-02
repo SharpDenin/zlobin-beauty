@@ -4,6 +4,7 @@ import {
   buildDayStrip,
   calendarColorClass,
   calendarColorCss,
+  CALENDAR_COLOR_LABELS,
   canDragAppointment,
   countEventsOutsideRange,
   detectHorizontalSwipe,
@@ -80,6 +81,11 @@ describe('calendar helpers', () => {
     expect(calendarColorCss('#abcdef')).toBe('#abcdef')
     expect(calendarColorClass('warning')).toBe('cal-color-warning')
     expect(calendarColorClass('#112233')).toBe('cal-color-hex')
+  })
+
+  it('exposes Russian labels for calendar color tokens', () => {
+    expect(CALENDAR_COLOR_LABELS.primary).toBe('Фиолетовый')
+    expect(CALENDAR_COLOR_LABELS.success).toBe('Зелёный')
   })
 
   it('swipes a month/week by period and a compact day by one day', () => {

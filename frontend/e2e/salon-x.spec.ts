@@ -1545,7 +1545,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
 
     await loginUI(page, email)
     await page.goto(`/masters/${aProf.master!.id}`)
-    await page.locator('.service-card').filter({ hasText: aService!.name }).first().click()
+    await page.locator('[data-testid="mp-service"]').filter({ hasText: aService!.name }).first().click()
     await page.getByRole('button', { name: 'Далее' }).click()
     await pickBookableSlot(page, masterAUserId!, aService!.duration_minutes ?? 60)
     await page.getByRole('button', { name: 'К подтверждению' }).click()
@@ -1553,7 +1553,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.getByText('Запись к этому мастеру сейчас недоступна.').first()).toBeVisible({ timeout: 15_000 })
 
     await page.goto(`/masters/${bProf.master!.id}`)
-    await page.locator('.service-card').first().click()
+    await page.locator('[data-testid="mp-service"]').first().click()
     await page.getByRole('button', { name: 'Далее' }).click()
     await pickBookableSlot(page, bProf.master!.user_id || masterAUserId!, bService!.duration_minutes ?? 60)
     await page.getByRole('button', { name: 'К подтверждению' }).click()
@@ -1578,7 +1578,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
     await loginUI(page, email)
     await page.goto(`/masters/${aProf.master!.id}`)
-    await page.locator('.service-card').filter({ hasText: aService!.name }).first().click()
+    await page.locator('[data-testid="mp-service"]').filter({ hasText: aService!.name }).first().click()
     await page.getByRole('button', { name: 'Далее' }).click()
     await pickBookableSlot(page, masterAUserId!, aService!.duration_minutes ?? 60)
     await page.getByRole('button', { name: 'К подтверждению' }).click()

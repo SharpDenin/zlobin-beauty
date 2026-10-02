@@ -37,14 +37,24 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,webmanifest}'],
+        globPatterns: ['**/*.{js,css,ico,png,svg,woff2,webmanifest}'],
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/v1\//],
+        navigateFallbackDenylist: [/^\/v1\//, /^\/api\//],
+        cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/v1/'),
+            urlPattern: ({ url }) => url.pathname.startsWith('/v1/') || url.pathname.startsWith('/api/'),
             handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'pages',
+              networkTimeoutSeconds: 3,
+              expiration: { maxEntries: 16, maxAgeSeconds: 24 * 60 * 60 },
+            },
           },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -65,7 +75,7 @@ export default defineConfig({
         ],
       },
       devOptions: {
-        enabled: true,
+        enabled: process.env.VITE_PWA_DEV === 'true',
         suppressWarnings: true,
         type: 'module',
         navigateFallback: 'index.html',

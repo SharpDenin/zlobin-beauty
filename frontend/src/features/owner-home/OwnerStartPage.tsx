@@ -36,14 +36,6 @@ type OwnerAppointment = {
   branch_id?: string
 }
 
-type SalonReport = {
-  current: {
-    turnover_minor: number
-    completed_count: number
-    master_load_percent?: number | null
-  }
-}
-
 type MasterHero = {
   display_name?: string
   photo_media_id?: string | null
@@ -89,19 +81,6 @@ export function OwnerStartPage() {
     enabled: Boolean(accessToken && orgID),
   })
 
-  const report = useQuery({
-    queryKey: ['owner-start-report', orgID],
-    queryFn: () => {
-      const from = new Date()
-      from.setHours(0, 0, 0, 0)
-      return apiRequest<SalonReport>(
-        `/v1/reports/salon?organization_id=${orgID}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(new Date().toISOString())}`,
-        { token: accessToken },
-      )
-    },
-    enabled: Boolean(accessToken && orgID && cabinet.can('reports')),
-  })
-
   const masterQ = useQuery({
     queryKey: ['me-master-owner-start'],
     queryFn: async () => {
@@ -133,12 +112,12 @@ export function OwnerStartPage() {
     return sum + Math.max(0, (new Date(a.ends_at).getTime() - new Date(a.starts_at).getTime()) / 60000)
   }, 0)
   const loadFromAppts = Math.min(100, Math.round((bookedMinutes / (9 * 60)) * 100))
-  const revenue = cabinet.can('reports')
-    ? (report.data?.current.turnover_minor ?? 0)
-    : todayItems.filter((a) => a.status === 'completed').reduce((sum, a) => sum + a.price_minor, 0)
-  const load = cabinet.can('reports') && report.data?.current.master_load_percent != null
-    ? Math.round(report.data.current.master_load_percent)
-    : loadFromAppts
+  // Operational KPIs follow today's calendar, not the reports window (which ends at "now"
+  // and would hide later-today visits and SQL-backdated demo rows).
+  const revenue = todayItems
+    .filter((a) => a.status === 'completed' || a.status === 'in_progress' || a.status === 'confirmed')
+    .reduce((sum, a) => sum + (a.price_minor || 0), 0)
+  const load = loadFromAppts
 
   const tiles = ownerManagementTiles((f) => cabinet.can(f))
   const displayName = masterQ.data?.master.display_name?.trim() || user?.display_name || 'Профиль'

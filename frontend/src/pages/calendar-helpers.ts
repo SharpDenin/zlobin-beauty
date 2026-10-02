@@ -110,6 +110,19 @@ export const CALENDAR_COLOR_TOKENS = [
 
 export type CalendarColorToken = (typeof CALENDAR_COLOR_TOKENS)[number]
 
+export const CALENDAR_COLOR_LABELS: Record<CalendarColorToken, string> = {
+  primary: 'Фиолетовый',
+  success: 'Зелёный',
+  warning: 'Жёлтый',
+  danger: 'Красный',
+  info: 'Синий',
+  neutral: 'Серый',
+  violet: 'Сиреневый',
+  teal: 'Бирюзовый',
+  rose: 'Розовый',
+  amber: 'Янтарный',
+}
+
 const TOKEN_SET = new Set<string>(CALENDAR_COLOR_TOKENS)
 
 const TOKEN_CSS: Record<string, string> = {

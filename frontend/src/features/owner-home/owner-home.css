@@ -117,17 +117,21 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .owner-start-day-head h2,
 .owner-start-manage h2 {
   margin: 0;
   font-size: var(--text-lg);
+  min-width: 0;
 }
 
 .owner-start-day-head a {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .owner-start-strip {

@@ -36,5 +36,23 @@ func TestValidateProductionEnv_acceptsStrongSecrets(t *testing.T) {
 	t.Setenv("MINIO_ROOT_PASSWORD", strings.Repeat("c", 12))
 	t.Setenv("POSTGRES_PASSWORD", strings.Repeat("d", 12))
 	t.Setenv("ALLOW_DEV_BILLING", "false")
+	t.Setenv("CORS_ORIGINS", "https://app.example.com")
+	ValidateProductionEnv()
+}
+
+func TestValidateProductionEnv_rejectsWildcardCORS(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+	t.Setenv("INTERNAL_TOKEN", strings.Repeat("b", 16))
+	t.Setenv("MINIO_ROOT_USER", "salonx-minio")
+	t.Setenv("MINIO_ROOT_PASSWORD", strings.Repeat("c", 12))
+	t.Setenv("POSTGRES_PASSWORD", strings.Repeat("d", 12))
+	t.Setenv("ALLOW_DEV_BILLING", "false")
+	t.Setenv("CORS_ORIGINS", "*")
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for wildcard CORS")
+		}
+	}()
 	ValidateProductionEnv()
 }

@@ -633,8 +633,20 @@ func patchUserProfile(c *http.Client, base string, user authUser, name, city str
 
 // --- master / org ---
 
+func workTypeNeedsSeedSalon(workType string) bool {
+	switch strings.TrimSpace(strings.ToLower(workType)) {
+	case "independent", "private_master", "mobile_master", "":
+		return false
+	default:
+		return true
+	}
+}
+
 func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (orgID, branchID, profileID, firstServiceID string, err error) {
 	cfg = withOptionalPortrait(c, base, user, cfg)
+	bindProfileOrg := workTypeNeedsSeedSalon(cfg.WorkType)
+
+	// Services still need an org membership workspace. Independent masters keep profile.organization_id empty.
 	orgID, branchID, err = ensureOrg(c, base, user, "salon", cfg.OrgName, cfg.BranchName, cfg.City, cfg.Address, cfg.Timezone)
 	if err != nil {
 		return "", "", "", "", err
@@ -647,8 +659,13 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 		"latitude": cityLat(cfg.City), "longitude": cityLng(cfg.City),
 	}, nil)
 
+	profileOrg, profileBranch := "", ""
+	if bindProfileOrg {
+		profileOrg, profileBranch = orgID, branchID
+	}
+
 	// Draft profile first (publication needs services + hours).
-	_, err = upsertMaster(c, base, user, orgID, branchID, cfg, false)
+	_, err = upsertMaster(c, base, user, profileOrg, profileBranch, cfg, false)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("upsert draft: %w", err)
 	}
@@ -675,11 +692,11 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 		log.Printf("warn working-hours status=%d", status)
 	}
 
-	profileID, err = upsertMaster(c, base, user, orgID, branchID, cfg, true)
+	profileID, err = upsertMaster(c, base, user, profileOrg, profileBranch, cfg, true)
 	if err != nil {
 		// Publish may fail if readiness incomplete; keep draft profile id.
 		log.Printf("warn publish master profile: %v", err)
-		profileID, _ = upsertMaster(c, base, user, orgID, branchID, cfg, false)
+		profileID, _ = upsertMaster(c, base, user, profileOrg, profileBranch, cfg, false)
 	}
 
 	pub := true
@@ -699,6 +716,10 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 	attachSalonPhotos(c, base, user, branchID, cfg.SalonPhotos...)
 	attachSeedPortfolio(c, base, user, cfg.Portfolio, cfg.PortfolioCaptions)
 
+	if !bindProfileOrg {
+		log.Printf("ok independent master %s — workspace org=%s not bound to profile", user.ID, orgID)
+		return "", "", profileID, firstServiceID, nil
+	}
 	return orgID, branchID, profileID, firstServiceID, nil
 }
 
@@ -707,8 +728,6 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		ID string `json:"id"`
 	}
 	body := map[string]any{
-		"organization_id":     orgID,
-		"branch_id":           branchID,
 		"display_name":        cfg.Display,
 		"bio":                 cfg.Bio,
 		"specializations":     cfg.Specs,
@@ -718,8 +737,15 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		"published":           published,
 		"profession_type_ids": professionTypeIDsForSeed(cfg),
 	}
+	if orgID != "" {
+		body["organization_id"] = orgID
+	}
+	if branchID != "" {
+		body["branch_id"] = branchID
+	}
 	if cfg.WorkType != "" {
 		body["work_type"] = cfg.WorkType
+		body["work_types"] = []string{cfg.WorkType}
 	}
 	if cfg.PhotoMediaID != "" {
 		body["photo_media_id"] = cfg.PhotoMediaID
@@ -815,6 +841,11 @@ func ensureOrg(c *http.Client, base string, user authUser, typ, name, branchName
 				_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
 					"name": name,
 				}, nil)
+				if branchID != "" && branchName != "" {
+					_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
+						"name": branchName, "city": city, "address_line": address, "timezone": tz,
+					}, nil)
+				}
 				return orgID, branchID, nil
 			}
 		}

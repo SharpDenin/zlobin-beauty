@@ -20,6 +20,7 @@ import { useCabinet } from '@/shared/lib/cabinet'
 import { formatMoney } from '@/shared/lib/money'
 import { initials } from '@/shared/lib/initials'
 import { workTypeLabel } from '@/shared/lib/status'
+import { workTypeNeedsSalon } from '@/shared/lib/work-types'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
@@ -240,7 +241,6 @@ export function DashboardPage() {
     const at = new Date(a.starts_at)
     return at >= startOfToday && at < endOfToday
   })
-  const clientsToday = new Set(today.map((a) => a.client_user_id).filter(Boolean)).size || today.length
   const pending = items.filter((a) => a.status === 'pending_confirmation')
   const cancellations = items.filter((a) => a.status.startsWith('cancelled_')).slice(0, 3)
   const upcoming = [...items]
@@ -282,7 +282,9 @@ export function DashboardPage() {
   const professionLine = master
     ? masterProfessionLabel(master, '')
     : ''
-  const salonName = cabinet.selectedOrg?.organization.name
+  const salonName = workTypeNeedsSalon(master?.work_type || cabinet.workType)
+    ? cabinet.selectedOrg?.organization.name
+    : undefined
   const showPortfolio = ['private_master', 'chair_master', 'mobile_master', 'salon_employee', 'salon_owner', 'chain_owner'].includes(cabinet.kind)
   const published = master?.published
   const ratingAvg = typeof master?.rating_avg === 'number' && master.rating_avg > 0 ? master.rating_avg : null
@@ -589,7 +591,6 @@ export function DashboardPage() {
                       </div>
                       <div className="analytics-kpis">
                         <div><span>Записи</span><strong>{cabinet.can('reports') ? (report.data?.current.completed_count ?? periodItems.length) : periodItems.length}</strong></div>
-                        <div data-testid="analytics-clients-today"><span>Клиенты сегодня</span><strong>{clientsToday}</strong></div>
                         <div><span>Клиенты</span><strong>{uniqueClients || periodItems.length}</strong></div>
                         <div><span>Загрузка</span><strong>{cabinet.can('reports') && report.data?.current.master_load_percent != null ? `${Math.round(report.data.current.master_load_percent)}%` : `${load}%`}</strong></div>
                         <div><span>Выручка</span><strong>{cabinet.can('reports') ? formatMoney(report.data?.current.turnover_minor ?? 0) : formatMoney(completed.reduce((sum, a) => sum + a.price_minor, 0))}</strong></div>

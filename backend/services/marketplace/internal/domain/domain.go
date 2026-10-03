@@ -39,6 +39,7 @@ type MasterProfile struct {
 	Education       string
 	PhotoMediaID    *uuid.UUID
 	WorkType        string
+	WorkTypes       []string
 	RatingAvg       float64
 	RatingCount     int
 	Published       bool

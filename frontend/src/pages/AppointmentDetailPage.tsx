@@ -241,18 +241,26 @@ export function AppointmentDetailPage() {
       </div>
 
       <section className="card stack-sm appt-summary" data-testid="appointment-summary">
-        <strong>
-          {shortPersonName(isMaster ? a.client_display_name : a.master_display_name)
-            || (isMaster ? 'Клиент' : 'Мастер')}
-        </strong>
-        <p>{a.service_name}</p>
-        <p>
-          {new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-          –
-          {new Date(a.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-          {' · '}
-          {new Date(a.starts_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
-        </p>
+        <div className="appt-summary-who">
+          <span className="appt-card-avatar" aria-hidden="true">
+            {(shortPersonName(isMaster ? a.client_display_name : a.master_display_name) || (isMaster ? 'К' : 'М')).trim().slice(0, 1).toUpperCase()}
+          </span>
+          <div className="stack-sm" style={{ minWidth: 0 }}>
+            <strong>
+              {shortPersonName(isMaster ? a.client_display_name : a.master_display_name)
+                || (isMaster ? 'Клиент' : 'Мастер')}
+            </strong>
+            <p>{a.service_name}</p>
+            <p>
+              {new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              –
+              {new Date(a.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              {' · '}
+              {new Date(a.starts_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+            </p>
+          </div>
+        </div>
+        <p><span className={`badge ${statusBadgeClass(a.status)}`}>{appointmentStatusLabel(a.status)}</span></p>
         {a.cancel_reason && <p>Причина отмены: {a.cancel_reason}</p>}
       </section>
 

@@ -30,8 +30,6 @@ export function StaffPage() {
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('master')
-  const [qrUrl, setQrUrl] = useState<string | null>(null)
-  const [inviteOrgId, setInviteOrgId] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [scheduleUserId, setScheduleUserId] = useState<string | null>(null)
@@ -126,23 +124,6 @@ export function StaffPage() {
     onError: (e) => setError(formatUserError(e, 'Не удалось добавить выходной')),
   })
 
-  const salonOrgs = (orgs.data?.items ?? []).filter((o) => o.organization.type !== 'supplier')
-  const qrOrgId = inviteOrgId || buyerOrgId || salonOrgs[0]?.organization.id
-
-  const createQr = useMutation({
-    mutationFn: () =>
-      apiRequest<{ url: string; token: string }>(`/v1/organizations/${qrOrgId}/invites`, {
-        token: accessToken,
-        body: { role: inviteRole, hours: 72, max_uses: 10 },
-      }),
-    onSuccess: (res) => {
-      setQrUrl(res.url)
-      setOk('QR-приглашение создано. Действует 72 часа.')
-      setError(null)
-    },
-    onError: (e) => setError(formatUserError(e, 'Не удалось создать приглашение')),
-  })
-
   const invite = useMutation({
     mutationFn: async () => {
       const lookup = await apiRequest<{ user: { id: string } }>('/v1/auth/lookup', {
@@ -199,32 +180,8 @@ export function StaffPage() {
       {ok && <div className="state-box success">{ok}</div>}
       <section className="card stack">
         <h2>Пригласить мастера по QR</h2>
-        <p className="muted">Мастер сканирует код, регистрируется и автоматически привязывается к выбранному салону.</p>
-        {salonOrgs.length > 1 && (
-          <div className="field">
-            <label htmlFor="invite-org">Салон</label>
-            <select id="invite-org" value={qrOrgId} onChange={(e) => setInviteOrgId(e.target.value)}>
-              {salonOrgs.map((o) => (
-                <option key={o.organization.id} value={o.organization.id}>{o.organization.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        <button className="btn btn-primary" type="button" disabled={createQr.isPending || !qrOrgId} onClick={() => createQr.mutate()}>
-          {createQr.isPending ? 'Создаём…' : 'Создать QR'}
-        </button>
-        {qrUrl && (
-          <div className="stack-sm invite-qr-block">
-            <img
-              alt="QR для регистрации мастера"
-              width={220}
-              height={220}
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(qrUrl)}`}
-            />
-            <p className="muted break-all">{qrUrl}</p>
-            <button className="btn btn-secondary" type="button" onClick={() => void navigator.clipboard.writeText(qrUrl)}>Скопировать ссылку</button>
-          </div>
-        )}
+        <p className="muted">Отдельный экран с крупным QR: мастер регистрируется и сразу попадает в ваш салон.</p>
+        <Link className="btn btn-primary" to="/staff/invite" data-testid="open-invite-master">Открыть страницу приглашения</Link>
       </section>
       <section className="card stack">
         <h2>Добавить сотрудника по email</h2>

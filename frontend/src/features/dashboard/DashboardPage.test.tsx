@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { apiRequest } from '@/shared/api/client'
@@ -141,7 +141,7 @@ afterEach(() => {
 })
 
 describe('DashboardPage', () => {
-  it('shows Главная hierarchy without Кабинет, and clients-today inside analytics', async () => {
+  it('shows Главная hierarchy without Кабинет; clients-today is not on dashboard', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('dashboard-hero')).toBeInTheDocument())
     expect(screen.getByText('Главная')).toBeInTheDocument()
@@ -151,11 +151,11 @@ describe('DashboardPage', () => {
     expect(document.querySelector('.trial-banner')).toBeNull()
     expect(screen.getByTestId('dashboard-premium-pill')).toHaveTextContent(/Пробный период до|Premium|Free/)
 
-    const analytics = await screen.findByTestId('dashboard-analytics')
-    expect(within(analytics).getByTestId('analytics-clients-today')).toHaveTextContent('Клиенты сегодня')
-    // Клиенты сегодня must not appear as a standalone metric tile widget.
+    await screen.findByTestId('dashboard-analytics')
+    // Клиенты сегодня живёт в разделе Аналитика, не на главном dashboard.
+    expect(screen.queryByTestId('analytics-clients-today')).toBeNull()
     expect(document.querySelector('[data-widget="clients_today"]')).toBeNull()
-    expect(screen.queryByText('Клиенты сегодня', { selector: '.dashboard-metric span' })).toBeNull()
+    expect(screen.queryByText('Клиенты сегодня')).toBeNull()
   })
 
   it('view mode has no drag handles; edit mode shows them and sticky bar', async () => {

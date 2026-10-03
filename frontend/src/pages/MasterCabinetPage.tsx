@@ -7,7 +7,8 @@ import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
-import { WORK_TYPE_OPTIONS, workTypeLabel } from '@/shared/lib/status'
+import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
+import { primaryWorkType, uniqueCanonicalWorkTypes, workTypeNeedsSalon, workTypesLabel } from '@/shared/lib/work-types'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
 import type { ProfessionType } from '@/shared/lib/profession-types'
 import { selectedProfessionIds } from '@/shared/lib/profession-types'
@@ -39,7 +40,7 @@ const masterSchema = z.object({
   specializations: z.string().optional(),
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
-  work_type: z.enum(['employee', 'renter', 'owner', 'salon_owner', 'independent', 'chain_owner', 'mobile_master', 'chair_master', 'private_master']),
+  work_types: z.array(z.string()).min(1, 'Выберите формат работы'),
   profession_type_ids: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один профессиональный тип'),
   published: z.boolean(),
 })
@@ -95,6 +96,7 @@ export function MasterCabinetPage() {
           published: boolean
           photo_media_id: string | null
           work_type?: string
+          work_types?: string[]
           display_name?: string
           city?: string
           bio?: string
@@ -152,30 +154,34 @@ export function MasterCabinetPage() {
       city: 'Красноярск',
       experience_years: 1,
       education: '',
-      work_type: 'independent',
+      work_types: ['independent'],
       profession_type_ids: [],
     },
   })
   const masterDraft = useFormDraft(masterForm, 'master-profile-form')
-  const watchedWorkType = masterForm.watch('work_type')
-  const needsSalon = ['employee', 'renter', 'chair_master', 'owner', 'salon_owner', 'chain_owner'].includes(watchedWorkType)
-  const hasSalon = Boolean(orgs.data?.items.length)
+  const watchedWorkTypes = masterForm.watch('work_types')
+  const needsSalon = workTypeNeedsSalon(watchedWorkTypes)
+  const hasSalon = Boolean(master.data?.master.organization_id || orgs.data?.items.some((o) => o.organization.type !== 'supplier'))
 
   useEffect(() => {
     const m = master.data?.master
     if (!m) {
       try {
         const types = JSON.parse(sessionStorage.getItem('sx.onboard.profession_types') || '[]') as string[]
+        const wts = JSON.parse(sessionStorage.getItem('sx.onboard.work_types') || 'null') as string[] | null
         const wt = sessionStorage.getItem('sx.onboard.work_type')
         if (Array.isArray(types) && types.length) {
           masterForm.setValue('profession_type_ids', types, { shouldDirty: true })
         }
-        if (wt) {
-          masterForm.setValue('work_type', wt as z.infer<typeof masterSchema>['work_type'])
+        if (Array.isArray(wts) && wts.length) {
+          masterForm.setValue('work_types', uniqueCanonicalWorkTypes(wts))
+        } else if (wt) {
+          masterForm.setValue('work_types', uniqueCanonicalWorkTypes([wt]))
         }
       } catch { /* ignore malformed onboard cache */ }
       return
     }
+    const types = uniqueCanonicalWorkTypes(m.work_types?.length ? m.work_types : [m.work_type || 'independent'])
     masterForm.reset({
       display_name: m.display_name || user?.display_name || '',
       city: m.city || 'Красноярск',
@@ -183,7 +189,7 @@ export function MasterCabinetPage() {
       specializations: (m.specializations ?? []).join(', '),
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
-      work_type: (m.work_type as z.infer<typeof masterSchema>['work_type']) || 'independent',
+      work_types: types.length ? types : ['independent'],
       profession_type_ids: selectedProfessionIds(m),
       published: Boolean(m.published),
     })
@@ -253,20 +259,30 @@ export function MasterCabinetPage() {
 
   const saveMaster = useMutation({
     mutationFn: (values: z.infer<typeof masterSchema>) => {
-      const org = orgs.data?.items[0]
-      if (needsSalon && !org) throw new ApiError('Для этого формата работы нужен салон. Создайте салон или примите приглашение.', 'validation_error', 400)
+      const banned = moderationError([values.display_name, values.bio ?? '', values.education ?? '', values.specializations ?? ''].join(' '))
+      if (banned) throw new ApiError(banned, 'content_not_allowed', 400)
+      const org = orgs.data?.items.find((o) => o.organization.type !== 'supplier') ?? orgs.data?.items[0]
+      const boundOrg = Boolean(master.data?.master.organization_id)
+      if (needsSalon && !org && !boundOrg) {
+        throw new ApiError('Для этого формата работы нужен салон. Создайте салон или примите приглашение.', 'validation_error', 400)
+      }
+      const types = uniqueCanonicalWorkTypes(values.work_types)
       return apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
         body: {
-          ...(org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
+          ...(needsSalon && org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
+          ...(!needsSalon && boundOrg && master.data?.master.organization_id
+            ? { organization_id: master.data.master.organization_id, branch_id: master.data.master.branch_id }
+            : {}),
           display_name: values.display_name,
           city: values.city,
           bio: values.bio ?? '',
           specializations: (values.specializations ?? '').split(',').map((s) => s.trim()).filter(Boolean),
           experience_years: values.experience_years,
           education: values.education ?? '',
-          work_type: values.work_type,
+          work_type: primaryWorkType(types),
+          work_types: types,
           profession_type_ids: values.profession_type_ids,
           published: values.published,
         },
@@ -278,6 +294,7 @@ export function MasterCabinetPage() {
       masterDraft.clear()
       sessionStorage.removeItem('sx.onboard.profession_types')
       sessionStorage.removeItem('sx.onboard.work_type')
+      sessionStorage.removeItem('sx.onboard.work_types')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
@@ -333,7 +350,8 @@ export function MasterCabinetPage() {
           experience_years: masterForm.getValues('experience_years') ?? 0,
           education: masterForm.getValues('education') ?? '',
           published: masterForm.getValues('published') ?? false,
-          work_type: masterForm.getValues('work_type') ?? 'independent',
+          work_type: primaryWorkType(masterForm.getValues('work_types') ?? ['independent']),
+          work_types: uniqueCanonicalWorkTypes(masterForm.getValues('work_types') ?? ['independent']),
           photo_media_id: mediaId,
         },
       })
@@ -454,9 +472,12 @@ export function MasterCabinetPage() {
       </section>
 
       <section className="card stack">
-        <h2>Салон {needsSalon ? '' : '(необязательно)'}</h2>
-        {!needsSalon && !hasSalon && (
-          <p className="muted">Частный, выездной и независимый мастер может работать без своего салона. Создайте салон, только если открываете собственную точку.</p>
+        <h2>{needsSalon ? 'Салон' : 'Формат работы'}</h2>
+        {!needsSalon && (
+          <p className="muted">
+            {workTypesLabel(watchedWorkTypes)} — свой салон не обязателен.
+            {!hasSalon ? ' Можно сразу заполнять профиль и принимать записи.' : ''}
+          </p>
         )}
         {needsSalon && !hasSalon && (
           <p className="muted">Для этого формата нужен салон: создайте свой или примите QR-приглашение владельца.</p>
@@ -491,7 +512,7 @@ export function MasterCabinetPage() {
               </form>
             )}
           </div>
-        ) : (!orgs.isLoading && !orgs.isError) ? (
+        ) : (!orgs.isLoading && !orgs.isError && needsSalon) ? (
           <form className="stack" onSubmit={orgForm.handleSubmit((v) => createOrg.mutate(v))}>
             <div className="field">
               <label>Название</label>
@@ -620,14 +641,12 @@ export function MasterCabinetPage() {
             {masterForm.formState.errors.experience_years && <span className="error">{masterForm.formState.errors.experience_years.message}</span>}
           </div>
           <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
-          <div className="field">
-            <label htmlFor="work_type">Формат занятости</label>
-            <select id="work_type" {...masterForm.register('work_type')}>
-              {WORK_TYPE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+          <WorkFormatPicker
+            value={watchedWorkTypes ?? ['independent']}
+            allowChainOwner
+            onChange={(ids) => masterForm.setValue('work_types', ids, { shouldValidate: true, shouldDirty: true })}
+            error={masterForm.formState.errors.work_types?.message}
+          />
           <label className="field-check"><input type="checkbox" {...masterForm.register('published')} /><span>Показать профиль в поиске</span></label>
           <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
         </form>
@@ -635,7 +654,7 @@ export function MasterCabinetPage() {
           <p className="muted">
             {master.data.master.published ? 'В поиске' : 'Скрыт'}
             {' · '}
-            {workTypeLabel(master.data.master.work_type)}
+            {workTypesLabel(master.data.master.work_types?.length ? master.data.master.work_types : [master.data.master.work_type || ''])}
             {' · услуг: '}
             {master.data.services.length}
           </p>

@@ -93,42 +93,50 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 		{colorID, 180},
 	}
 
-	days := demoWorkingDays(time.Now(), 6)
+	days := demoWorkingDays(time.Now(), 8)
 	booked := 0
 	for i, day := range days {
-		if countOrgDayAppointments(c, base, owner, orgID, day) >= 4 {
-			log.Printf("skip live volume %s — already has appointments", day.Format("2006-01-02"))
+		existing := countOrgDayAppointments(c, base, owner, orgID, day)
+		target := 4
+		if i == 0 {
+			target = 5 // denser “today” for calendar realism
+		}
+		if existing >= target {
+			log.Printf("skip live volume %s — already has %d appointments", day.Format("2006-01-02"), existing)
 			continue
 		}
-		client := clients[i%len(clients)]
-		svc := services[i%len(services)]
-		starts, err := findSlotOnDate(c, base, owner.ID, day, svc.duration)
-		if err != nil {
-			log.Printf("warn live volume slot %s: %v", day.Format("2006-01-02"), err)
-			continue
-		}
-		var appt struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		}
-		st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
-			"master_id": profileID, "service_id": svc.id, "starts_at": starts,
-		}, &appt)
-		if err != nil || st >= 300 || appt.ID == "" {
-			log.Printf("warn live volume book %s status=%d err=%v", day.Format("2006-01-02"), st, err)
-			continue
-		}
-		if appt.Status == "pending_confirmation" || appt.Status == "pending" || appt.Status == "" {
-			if i%4 == 3 {
-				log.Printf("ok live volume pending appt=%s day=%s", appt.ID, day.Format("2006-01-02"))
-			} else {
-				_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/confirm", owner.Token, map[string]any{}, &appt)
-				log.Printf("ok live volume confirmed appt=%s day=%s", appt.ID, day.Format("2006-01-02"))
+		needed := target - existing
+		for n := 0; n < needed; n++ {
+			client := clients[(i+n)%len(clients)]
+			svc := services[(i+n)%len(services)]
+			starts, err := findSlotOnDate(c, base, owner.ID, day, svc.duration)
+			if err != nil {
+				log.Printf("warn live volume slot %s: %v", day.Format("2006-01-02"), err)
+				break
 			}
-		} else {
-			log.Printf("ok live volume appt=%s status=%s day=%s", appt.ID, appt.Status, day.Format("2006-01-02"))
+			var appt struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			}
+			st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
+				"master_id": profileID, "service_id": svc.id, "starts_at": starts,
+			}, &appt)
+			if err != nil || st >= 300 || appt.ID == "" {
+				log.Printf("warn live volume book %s status=%d err=%v", day.Format("2006-01-02"), st, err)
+				break
+			}
+			if appt.Status == "pending_confirmation" || appt.Status == "pending" || appt.Status == "" {
+				if (i+n)%4 == 3 {
+					log.Printf("ok live volume pending appt=%s day=%s", appt.ID, day.Format("2006-01-02"))
+				} else {
+					_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/confirm", owner.Token, map[string]any{}, &appt)
+					log.Printf("ok live volume confirmed appt=%s day=%s", appt.ID, day.Format("2006-01-02"))
+				}
+			} else {
+				log.Printf("ok live volume appt=%s status=%s day=%s", appt.ID, appt.Status, day.Format("2006-01-02"))
+			}
+			booked++
 		}
-		booked++
 	}
 	log.Printf("ok live salon schedule booked=%d days=%d", booked, len(days))
 	return nil

@@ -1400,15 +1400,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <div className="calendar-view-tabs" aria-label="Режим календаря">
           {([
             ['timeGridDay', 'День'],
-            [compact ? 'timeGridThreeDay' : 'timeGridWeek', compact ? '3 дня' : 'Неделя'],
+            ['timeGridWeek', 'Неделя'],
             ['dayGridMonth', 'Месяц'],
-            ['listWeek', 'Список'],
           ] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
-              className={`chip ${currentView === id || (id === 'timeGridThreeDay' && currentView === 'timeGridWeek') || (id === 'timeGridWeek' && currentView === 'timeGridThreeDay') ? 'active' : ''}`}
-              aria-pressed={currentView === id}
+              className={`chip ${currentView === id || (id === 'timeGridWeek' && currentView === 'timeGridThreeDay') ? 'active' : ''}`}
+              aria-pressed={currentView === id || (id === 'timeGridWeek' && currentView === 'timeGridThreeDay')}
               onClick={() => changeView(id)}
             >
               {label}

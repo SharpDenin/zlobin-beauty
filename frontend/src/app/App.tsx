@@ -66,6 +66,7 @@ import { SupplierTeamPage } from '@/pages/SupplierTeamPage'
 import { SupplierRepDetailPage } from '@/pages/SupplierRepDetailPage'
 import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
+import { InviteMasterPage } from '@/pages/InviteMasterPage'
 import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
 import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
@@ -198,6 +199,7 @@ export function App() {
                   <Route path="/pickup-orders" element={<SalonPickupPage />} />
                   <Route element={<RequireCabinetFeature feature="staff" />}>
                     <Route path="/staff" element={<StaffPage />} />
+                    <Route path="/staff/invite" element={<InviteMasterPage />} />
                   </Route>
                   <Route element={<RequireCabinetFeature feature="reports" />}>
                     <Route path="/reports" element={<SalonReportsPage />} />

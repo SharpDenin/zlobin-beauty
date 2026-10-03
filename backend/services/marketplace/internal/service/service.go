@@ -16,6 +16,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type Service struct {
@@ -64,18 +65,98 @@ type UpsertMasterInput struct {
 	Education         string
 	PhotoMediaID      *uuid.UUID
 	WorkType          string
+	WorkTypes         []string
 	Published         bool
 	AccessToken       string
 	ProfessionTypeIDs *[]uuid.UUID
 }
 
+func normalizeWorkType(workType string) string {
+	switch strings.TrimSpace(strings.ToLower(workType)) {
+	case "chair_master":
+		return "renter"
+	case "private_master":
+		return "independent"
+	case "owner":
+		return "salon_owner"
+	default:
+		return strings.TrimSpace(workType)
+	}
+}
+
 func workTypeNeedsOrganization(workType string) bool {
-	switch workType {
-	case "employee", "renter", "chair_master", "owner", "salon_owner", "chain_owner":
+	switch normalizeWorkType(workType) {
+	case "employee", "renter", "salon_owner", "chain_owner":
 		return true
 	default:
 		return false
 	}
+}
+
+func workTypesNeedOrganization(types []string) bool {
+	for _, t := range types {
+		if workTypeNeedsOrganization(t) {
+			return true
+		}
+	}
+	return false
+}
+
+func primaryWorkType(types []string, fallback string) string {
+	priority := []string{"chain_owner", "salon_owner", "employee", "renter", "mobile_master", "independent"}
+	set := map[string]struct{}{}
+	for _, t := range types {
+		n := normalizeWorkType(t)
+		if n != "" {
+			set[n] = struct{}{}
+		}
+	}
+	for _, p := range priority {
+		if _, ok := set[p]; ok {
+			return p
+		}
+	}
+	fb := normalizeWorkType(fallback)
+	if fb == "" {
+		return "independent"
+	}
+	return fb
+}
+
+func normalizeWorkTypes(raw []string, fallback string) ([]string, string, error) {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(v string) error {
+		n := normalizeWorkType(v)
+		if n == "" {
+			return nil
+		}
+		switch n {
+		case "employee", "renter", "salon_owner", "chain_owner", "independent", "mobile_master":
+		default:
+			return apperr.Validation("invalid work_type")
+		}
+		if _, ok := seen[n]; ok {
+			return nil
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+		return nil
+	}
+	for _, t := range raw {
+		if err := add(t); err != nil {
+			return nil, "", err
+		}
+	}
+	if len(out) == 0 {
+		if err := add(fallback); err != nil {
+			return nil, "", err
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"independent"}
+	}
+	return out, primaryWorkType(out, fallback), nil
 }
 
 func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*domain.MasterProfile, error) {
@@ -87,14 +168,25 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	if in.ExperienceYears < 0 {
 		return nil, apperr.Validation("experience_years must be >= 0")
 	}
-	workType := strings.TrimSpace(in.WorkType)
-	if workType == "" {
-		workType = "independent"
+	fields := map[string]string{
+		"display_name": name,
+		"bio":          strings.TrimSpace(in.Bio),
+		"education":    strings.TrimSpace(in.Education),
+		"city":         city,
 	}
-	switch workType {
-	case "employee", "renter", "chair_master", "owner", "salon_owner", "chain_owner", "independent", "private_master", "mobile_master":
-	default:
-		return nil, apperr.Validation("invalid work_type")
+	if len(in.Specializations) > 0 {
+		fields["specializations"] = strings.Join(in.Specializations, " ")
+	}
+	if err := moderation.ValidateFields(fields); err != nil {
+		return nil, err
+	}
+	rawTypes := in.WorkTypes
+	if len(rawTypes) == 0 && strings.TrimSpace(in.WorkType) != "" {
+		rawTypes = []string{in.WorkType}
+	}
+	workTypes, workType, err := normalizeWorkTypes(rawTypes, in.WorkType)
+	if err != nil {
+		return nil, err
 	}
 	now := s.now().UTC()
 	existing, err := s.store.GetMasterByUser(ctx, in.UserID)
@@ -105,7 +197,7 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	if orgID == uuid.Nil && existing != nil {
 		orgID = existing.OrganizationID
 	}
-	if orgID == uuid.Nil && workTypeNeedsOrganization(workType) {
+	if orgID == uuid.Nil && workTypesNeedOrganization(workTypes) {
 		return nil, apperr.Validation("organization_id is required for this work type")
 	}
 	if orgID != uuid.Nil {
@@ -117,7 +209,7 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		UserID: in.UserID, OrganizationID: orgID, BranchID: in.BranchID,
 		DisplayName: name, Bio: strings.TrimSpace(in.Bio), Specializations: in.Specializations,
 		City: city, ExperienceYears: in.ExperienceYears, Education: strings.TrimSpace(in.Education),
-		PhotoMediaID: in.PhotoMediaID, WorkType: workType, Published: in.Published, UpdatedAt: now,
+		PhotoMediaID: in.PhotoMediaID, WorkType: workType, WorkTypes: workTypes, Published: in.Published, UpdatedAt: now,
 	}
 	if m.Specializations == nil {
 		m.Specializations = []string{}
@@ -133,10 +225,12 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		if in.PhotoMediaID == nil {
 			m.PhotoMediaID = existing.PhotoMediaID
 		}
-		if strings.TrimSpace(in.WorkType) == "" {
+		if len(in.WorkTypes) == 0 && strings.TrimSpace(in.WorkType) == "" {
 			m.WorkType = existing.WorkType
+			m.WorkTypes = existing.WorkTypes
 			if m.WorkType == "" {
 				m.WorkType = "independent"
+				m.WorkTypes = []string{"independent"}
 			}
 		}
 	}
@@ -517,6 +611,14 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 	if name == "" || category == "" {
 		return nil, apperr.Validation("name and category are required")
 	}
+	if err := moderation.ValidateFields(map[string]string{
+		"name":        name,
+		"category":    category,
+		"description": strings.TrimSpace(in.Description),
+		"notes":       strings.TrimSpace(in.Notes),
+	}); err != nil {
+		return nil, err
+	}
 	bookingMode, err := normalizeBookingMode(in.BookingMode)
 	if err != nil {
 		return nil, err
@@ -552,7 +654,8 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 		if master == nil {
 			return nil, apperr.Validation("create master profile before attaching services")
 		}
-		if master.OrganizationID != in.OrganizationID {
+		// Independent masters may attach services from a membership org without binding profile.organization_id.
+		if master.OrganizationID != uuid.Nil && master.OrganizationID != in.OrganizationID {
 			return nil, apperr.Forbidden("service organization mismatch")
 		}
 		if err := s.store.AttachService(ctx, master.ID, item.ID); err != nil {

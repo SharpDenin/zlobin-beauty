@@ -11,19 +11,22 @@ import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
-import { WORK_TYPE_OPTIONS } from '@/shared/lib/status'
+import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
+import { primaryWorkType, uniqueCanonicalWorkTypes } from '@/shared/lib/work-types'
+import { moderationError } from '@/shared/lib/moderation'
 import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { PageLoading } from '@/shared/ui/PageLoading'
 
 const ONBOARD_TYPES_KEY = 'sx.onboard.profession_types'
 const ONBOARD_WORK_KEY = 'sx.onboard.work_type'
+const ONBOARD_WORK_TYPES_KEY = 'sx.onboard.work_types'
 
 const schema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
   email: z.string().email('Введите корректный email'),
   password: z.string().min(8, 'Минимум 8 символов'),
   role: z.enum(['client', 'master', 'supplier']),
-  work_type: z.enum(['independent', 'private_master', 'mobile_master', 'employee', 'renter', 'chair_master', 'owner', 'salon_owner']).optional(),
+  work_types: z.array(z.string()).optional(),
   profession_type_ids: z.array(z.string().uuid()).optional(),
 }).superRefine((data, ctx) => {
   if (data.role === 'master' && (!data.profession_type_ids || data.profession_type_ids.length < 1)) {
@@ -31,6 +34,13 @@ const schema = z.object({
       code: z.ZodIssueCode.custom,
       message: 'Выберите хотя бы один тип мастера',
       path: ['profession_type_ids'],
+    })
+  }
+  if (data.role === 'master' && (!data.work_types || data.work_types.length < 1)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Выберите формат работы',
+      path: ['work_types'],
     })
   }
 })
@@ -45,7 +55,11 @@ export function RegisterPage() {
   const [error, setError] = useState<string | null>(null)
   const form = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { role: invite ? 'master' : 'client', work_type: invite ? 'employee' : 'independent', profession_type_ids: [] },
+    defaultValues: {
+      role: invite ? 'master' : 'client',
+      work_types: invite ? ['employee'] : ['independent'],
+      profession_type_ids: [],
+    },
   })
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = form
   const draft = useFormDraft(form, 'register-form', { exclude: ['password'] })
@@ -61,7 +75,7 @@ export function RegisterPage() {
   useEffect(() => {
     if (invite) {
       setValue('role', 'master')
-      setValue('work_type', 'employee')
+      setValue('work_types', ['employee'])
     }
   }, [invite, setValue])
 
@@ -91,10 +105,16 @@ export function RegisterPage() {
           onSubmit={handleSubmit(async (values) => {
             setError(null)
             try {
+              const banned = moderationError(values.display_name)
+              if (banned) {
+                setError(banned)
+                return
+              }
               if (values.role === 'master' && (!values.profession_type_ids || values.profession_type_ids.length < 1)) {
                 setError('Выберите хотя бы один тип мастера')
                 return
               }
+              const workTypes = uniqueCanonicalWorkTypes(values.work_types ?? ['independent'])
               await registerUser({
                 display_name: values.display_name,
                 email: values.email,
@@ -108,7 +128,8 @@ export function RegisterPage() {
               }
               if (values.role === 'master') {
                 sessionStorage.setItem(ONBOARD_TYPES_KEY, JSON.stringify(values.profession_type_ids ?? []))
-                sessionStorage.setItem(ONBOARD_WORK_KEY, values.work_type || 'independent')
+                sessionStorage.setItem(ONBOARD_WORK_TYPES_KEY, JSON.stringify(workTypes))
+                sessionStorage.setItem(ONBOARD_WORK_KEY, primaryWorkType(workTypes))
                 if (invite) {
                   navigate(`/invite/${invite}`, { replace: true })
                   return
@@ -163,15 +184,11 @@ export function RegisterPage() {
                 error={errors.profession_type_ids?.message}
               />
               {!invite && (
-                <div className="field">
-                  <label htmlFor="work_type">Формат работы</label>
-                  <select id="work_type" {...register('work_type')}>
-                    {WORK_TYPE_OPTIONS.filter((o) => !['chain_owner'].includes(o.value)).map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <p className="muted">Салон создавать не обязательно: можно работать частно, на дому или в чужом салоне.</p>
-                </div>
+                <WorkFormatPicker
+                  value={watch('work_types') ?? ['independent']}
+                  onChange={(ids) => setValue('work_types', ids, { shouldValidate: true, shouldDirty: true })}
+                  error={errors.work_types?.message}
+                />
               )}
             </>
           )}
@@ -186,4 +203,4 @@ export function RegisterPage() {
   )
 }
 
-export { ONBOARD_TYPES_KEY, ONBOARD_WORK_KEY }
+export { ONBOARD_TYPES_KEY, ONBOARD_WORK_KEY, ONBOARD_WORK_TYPES_KEY }

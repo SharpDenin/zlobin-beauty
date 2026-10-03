@@ -1,3 +1,8 @@
+import {
+  CANONICAL_WORK_TYPE_OPTIONS,
+  workTypeLabel as canonicalWorkTypeLabel,
+} from '@/shared/lib/work-types'
+
 const appointmentMap: Record<string, string> = {
   pending_confirmation: 'Ожидает подтверждения',
   confirmed: 'Подтверждена',
@@ -73,18 +78,6 @@ const stockStateMap: Record<string, string> = {
   out_of_stock: 'Нет в наличии',
 }
 
-const workTypeMap: Record<string, string> = {
-  employee: 'Сотрудник салона',
-  renter: 'Арендатор кресла',
-  chair_master: 'Арендатор кресла',
-  owner: 'Владелец точки',
-  salon_owner: 'Владелец салона',
-  chain_owner: 'Владелец сети',
-  independent: 'Частный мастер',
-  private_master: 'Частный мастер',
-  mobile_master: 'Выездной мастер',
-}
-
 /** Prefer Russian action labels over raw status enums in supplier order buttons. */
 export const supplierOrderActionLabel: Record<string, string> = {
   confirmed: 'Принять',
@@ -142,21 +135,14 @@ export function productStateLabel(state: string) {
 }
 
 export function workTypeLabel(workType: string | null | undefined) {
-  if (!workType) return 'Не указан'
-  return workTypeMap[workType] ?? workType
+  return canonicalWorkTypeLabel(workType)
 }
 
-export const WORK_TYPE_OPTIONS = [
-  { value: 'employee', label: workTypeMap.employee },
-  { value: 'renter', label: workTypeMap.renter },
-  { value: 'chair_master', label: workTypeMap.chair_master },
-  { value: 'owner', label: workTypeMap.owner },
-  { value: 'salon_owner', label: workTypeMap.salon_owner },
-  { value: 'chain_owner', label: workTypeMap.chain_owner },
-  { value: 'independent', label: workTypeMap.independent },
-  { value: 'private_master', label: workTypeMap.private_master },
-  { value: 'mobile_master', label: workTypeMap.mobile_master },
-] as const
+/** Canonical unique options — no duplicate labels. */
+export const WORK_TYPE_OPTIONS = CANONICAL_WORK_TYPE_OPTIONS.map((o) => ({
+  value: o.value,
+  label: o.label,
+}))
 
 export function statusBadgeClass(status: string) {
   if (

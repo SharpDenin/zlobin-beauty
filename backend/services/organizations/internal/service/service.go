@@ -12,6 +12,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type Service struct {
@@ -77,6 +78,11 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	if name == "" || branchName == "" || city == "" || address == "" {
 		return nil, apperr.Validation("name, branch_name, city and address_line are required")
 	}
+	if err := moderation.ValidateFields(map[string]string{
+		"name": name, "branch_name": branchName, "city": city, "address_line": address,
+	}); err != nil {
+		return nil, err
+	}
 	if orgType == "" {
 		orgType = "salon"
 	}
@@ -128,6 +134,11 @@ func (s *Service) AddBranch(ctx context.Context, actor, orgID uuid.UUID, in AddB
 	addr := strings.TrimSpace(in.AddressLine)
 	if name == "" || city == "" || addr == "" {
 		return nil, apperr.Validation("name, city and address_line are required")
+	}
+	if err := moderation.ValidateFields(map[string]string{
+		"name": name, "city": city, "address_line": addr, "phone": strings.TrimSpace(in.Phone),
+	}); err != nil {
+		return nil, err
 	}
 	tz := strings.TrimSpace(in.Timezone)
 	if tz == "" {
@@ -326,10 +337,16 @@ func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Org
 		if name == "" {
 			return nil, apperr.Validation("name cannot be empty")
 		}
+		if err := moderation.ValidateFields(map[string]string{"name": name}); err != nil {
+			return nil, err
+		}
 		org.Name = name
 	}
 	if in.Description != nil {
 		org.Description = strings.TrimSpace(*in.Description)
+		if err := moderation.ValidateFields(map[string]string{"description": org.Description}); err != nil {
+			return nil, err
+		}
 	}
 	if in.DeliveryNote != nil {
 		org.DeliveryNote = strings.TrimSpace(*in.DeliveryNote)
@@ -399,6 +416,9 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		name := strings.TrimSpace(*in.Name)
 		if name == "" {
 			return nil, apperr.Validation("name cannot be empty")
+		}
+		if err := moderation.ValidateFields(map[string]string{"name": name}); err != nil {
+			return nil, err
 		}
 		b.Name = name
 	}

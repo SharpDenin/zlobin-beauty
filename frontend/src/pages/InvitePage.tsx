@@ -22,8 +22,51 @@ export function InvitePage() {
   })
 
   const accept = useMutation({
-    mutationFn: () =>
-      apiRequest<Peek>(`/v1/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', token: accessToken }),
+    mutationFn: async () => {
+      const res = await apiRequest<Peek>(`/v1/invites/${encodeURIComponent(token)}/accept`, {
+        method: 'POST',
+        token: accessToken,
+      })
+      // Bind master profile to owner's salon (invite is server-validated; salon_id cannot be forged).
+      try {
+        const me = await apiRequest<{
+          master?: {
+            display_name?: string
+            city?: string
+            bio?: string
+            specializations?: string[]
+            experience_years?: number
+            education?: string
+            published?: boolean
+            profession_types?: Array<{ id: string }>
+            work_types?: string[]
+          }
+        }>('/v1/me/master', { token: accessToken })
+        const m = me.master
+        if (m && res.organization_id) {
+          await apiRequest('/v1/me/master', {
+            method: 'PUT',
+            token: accessToken,
+            body: {
+              organization_id: res.organization_id,
+              display_name: m.display_name || user?.display_name || 'Мастер',
+              city: m.city || 'Красноярск',
+              bio: m.bio ?? '',
+              specializations: m.specializations ?? [],
+              experience_years: m.experience_years ?? 0,
+              education: m.education ?? '',
+              published: Boolean(m.published),
+              work_type: 'employee',
+              work_types: ['employee'],
+              profession_type_ids: (m.profession_types ?? []).map((t) => t.id),
+            },
+          })
+        }
+      } catch {
+        // Membership already accepted; profile bind can be completed on /master.
+      }
+      return res
+    },
     onSuccess: () => navigate('/master', { replace: true }),
   })
 

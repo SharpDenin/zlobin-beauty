@@ -181,6 +181,7 @@ type upsertMasterReq struct {
 	Education         string    `json:"education"`
 	PhotoMediaID      string    `json:"photo_media_id"`
 	WorkType          string    `json:"work_type"`
+	WorkTypes         []string  `json:"work_types"`
 	Published         bool      `json:"published"`
 	ProfessionTypeIDs *[]string `json:"profession_type_ids"`
 }
@@ -274,7 +275,8 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 		UserID: claims.UserID, OrganizationID: orgID, BranchID: branchID,
 		DisplayName: req.DisplayName, Bio: req.Bio, Specializations: req.Specializations,
 		City: req.City, ExperienceYears: req.ExperienceYears, Education: req.Education,
-		PhotoMediaID: photoMediaID, WorkType: req.WorkType, Published: req.Published, AccessToken: token,
+		PhotoMediaID: photoMediaID, WorkType: req.WorkType, WorkTypes: req.WorkTypes,
+		Published: req.Published, AccessToken: token,
 		ProfessionTypeIDs: professionTypeIDs,
 	})
 	if err != nil {
@@ -450,11 +452,15 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	if m.OrganizationID != uuid.Nil {
 		orgID = m.OrganizationID.String()
 	}
+	workTypes := m.WorkTypes
+	if len(workTypes) == 0 {
+		workTypes = []string{workType}
+	}
 	return map[string]any{
 		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": orgID,
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
-		"photo_media_id": photoMediaID, "work_type": workType,
+		"photo_media_id": photoMediaID, "work_type": workType, "work_types": workTypes,
 		"profession_types": types,
 		"rating_avg":       m.RatingAvg, "rating_count": m.RatingCount, "published": m.Published,
 	}

@@ -315,7 +315,12 @@ function AppShellInner() {
             <PremiumStatusLink compact />
             <ThemeToggle />
             <span className="muted topbar-name">{user?.display_name}</span>
-            <button className="btn btn-secondary btn-compact" type="button" onClick={() => void logout()}>
+            <button
+              className="btn btn-secondary btn-compact topbar-logout"
+              type="button"
+              onClick={() => void logout()}
+              aria-label="Выйти"
+            >
               Выйти
             </button>
           </div>

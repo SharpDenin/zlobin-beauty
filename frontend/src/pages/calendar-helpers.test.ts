@@ -102,6 +102,13 @@ describe('calendar helpers', () => {
     expect(detectHorizontalSwipe(-40, 0)).toBe(null)
   })
 
+  it('accepts only buttons/swipe navigation modes', async () => {
+    const { isCalendarNavMode } = await import('./calendar-helpers')
+    expect(isCalendarNavMode('buttons')).toBe(true)
+    expect(isCalendarNavMode('swipe')).toBe(true)
+    expect(isCalendarNavMode('gesture')).toBe(false)
+  })
+
   it('maps a same-day range to schedule-exception minutes', () => {
     const tz = 'Asia/Krasnoyarsk'
     const start = new Date('2026-08-30T02:00:00Z') // 09:00 in +07

@@ -38,6 +38,7 @@ import {
   swipeStep,
   displayRangeToSlotTimes,
   extendDisplayRangeForEvents,
+  isCalendarNavMode,
   isCalendarViewId,
   isTerminalStatus,
   minutesFromMidnight,
@@ -47,6 +48,7 @@ import {
   prefersReducedMotion,
   rangeToDayInterval,
   staffRoleLabel,
+  type CalendarNavMode,
   type CalendarViewId,
   type DisplayRange,
   validateDisplayRange,
@@ -225,8 +227,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const defaultView: CalendarViewId = compact ? 'timeGridDay' : 'timeGridWeek'
   const [savedView, setSavedView] = usePreference<string>(viewPrefKey, defaultView)
   const [displayRangePref, setDisplayRangePref] = usePreference<DisplayRange>('calendar.displayRange', DEFAULT_DISPLAY_RANGE)
+  const [navModePref, setNavModePref] = usePreference<CalendarNavMode>('calendar.navMode', 'buttons')
+  const navMode: CalendarNavMode = isCalendarNavMode(navModePref) ? navModePref : 'buttons'
   const [rangeDraft, setRangeDraft] = useState<DisplayRange>(displayRangePref)
   const [rangeError, setRangeError] = useState<string | null>(null)
+  const [hoursEditorOpen, setHoursEditorOpen] = useState(false)
 
   const [range, setRange] = useState(initialRange)
   const [currentView, setCurrentView] = useState<CalendarViewId>(() => {
@@ -293,7 +298,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (!compact && mapped === 'timeGridThreeDay') mapped = 'timeGridWeek'
     if (mapped === currentView) return
     setCurrentView(mapped)
-    if (!(compact && (mapped === 'timeGridDay' || mapped === 'dayGridMonth'))) {
+    if (!(compact && mapped === 'dayGridMonth')) {
       calendarRef.current?.getApi().changeView(mapped)
     }
     // hydrate from preference when it arrives / changes externally
@@ -566,8 +571,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         title: b.title,
         start: b.starts_at,
         end: b.ends_at,
+        // Transparent fill — calendar.css paints token tints via --cal-event-accent.
         backgroundColor: 'transparent',
-        borderColor: 'transparent',
+        borderColor: colorCss,
         editable: own,
         startEditable: own,
         durationEditable: own,
@@ -1004,7 +1010,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           : id
     setCurrentView(mapped)
     setSavedView(mapped)
-    if (!(compact && (mapped === 'timeGridDay' || mapped === 'dayGridMonth'))) {
+    if (!(compact && mapped === 'dayGridMonth')) {
       calendarRef.current?.getApi().changeView(mapped)
     }
   }
@@ -1090,14 +1096,17 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
     setRangeError(null)
     setDisplayRangePref(result.value)
-    setOk('Диапазон отображения сохранён')
+    setHoursEditorOpen(false)
+    setOk('Рабочий день календаря сохранён')
   }
 
   function onPointerDownSwipe(e: ReactPointerEvent) {
+    if (navMode !== 'swipe') return
     if (e.pointerType === 'mouse') return
     const target = e.target as HTMLElement | null
     if (
       target?.closest('.fc-event') ||
+      target?.closest('.fc-event-resizer') ||
       target?.closest('button') ||
       target?.closest('a') ||
       target?.closest('input') ||
@@ -1114,9 +1123,21 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     swipeStart.current = { x: e.clientX, y: e.clientY, id: e.pointerId, t: Date.now(), blocked: false }
   }
 
+  function onPointerMoveSwipe(e: ReactPointerEvent) {
+    const start = swipeStart.current
+    if (!start || start.id !== e.pointerId || start.blocked) return
+    const dy = Math.abs(e.clientY - start.y)
+    const dx = Math.abs(e.clientX - start.x)
+    // Vertical scroll / drag intent cancels swipe navigation.
+    if (dy > 16 && dy > dx) {
+      swipeStart.current = { ...start, blocked: true }
+    }
+  }
+
   function onPointerUpSwipe(e: ReactPointerEvent) {
     const start = swipeStart.current
     swipeStart.current = null
+    if (navMode !== 'swipe') return
     if (!start || start.id !== e.pointerId || start.blocked) return
     if (Date.now() - start.t > 600) return
     const dir = detectHorizontalSwipe(e.clientX - start.x, e.clientY - start.y)
@@ -1128,23 +1149,31 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
   }
 
+  function openHoursEditor() {
+    setRangeDraft(displayRangePref)
+    setRangeError(null)
+    setHoursEditorOpen(true)
+  }
+
   const loading = appointments.isLoading || blocks.isLoading || hours.isLoading
-  const showMobileDay = compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth')
+  // Month keeps the compact custom grid; day/week use FullCalendar so drag/resize work on phone.
+  const showMobileMonth = compact && currentView === 'dayGridMonth'
+  const showMobileFc = compact && !showMobileMonth
   const apptId = selected?.kind === 'appointment' && selected.id.startsWith('appt:') ? selected.id.slice(5) : ''
 
   useEffect(() => {
-    if (showMobileDay) return
+    if (showMobileMonth) return
     const api = calendarRef.current?.getApi()
     if (!api) return
     api.setOption('slotMinTime', slotMinTime)
     api.setOption('slotMaxTime', slotMaxTime)
-  }, [showMobileDay, slotMinTime, slotMaxTime])
+  }, [showMobileMonth, slotMinTime, slotMaxTime])
 
   useEffect(() => {
-    if (showMobileDay) return
+    if (showMobileMonth) return
     const id = requestAnimationFrame(() => calendarRef.current?.getApi().updateSize())
     return () => cancelAnimationFrame(id)
-  }, [showMobileDay, currentView, loading])
+  }, [showMobileMonth, currentView, loading])
 
   useEffect(() => {
     const topbar = document.querySelector('.topbar') as HTMLElement | null
@@ -1162,7 +1191,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [])
 
   useEffect(() => {
-    if (scrolledOnce.current || loading || showMobileDay) return
+    if (scrolledOnce.current || loading || showMobileMonth) return
     scrolledOnce.current = true
     requestAnimationFrame(() => {
       const wrap = wrapRef.current
@@ -1176,7 +1205,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         wrap.querySelector('.fc-event')
       slot?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     })
-  }, [loading, showMobileDay, salonTimezone])
+  }, [loading, showMobileMonth, salonTimezone])
 
   const colorTokenPicker = (value: string, onPick: (token: string) => void) => (
     <div className="calendar-color-token-grid" role="listbox" aria-label="Цвет">
@@ -1263,17 +1292,50 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     </div>
   ) : null
 
+  const hoursEditorForm = (
+    <div className="stack" data-testid="calendar-hours-editor">
+      <p className="muted">Рабочий день задаёт диапазон сетки календаря. Это не создаёт записи в графике.</p>
+      <div className="calendar-display-range">
+        <div className="field">
+          <label htmlFor="cal-hours-from">Начало</label>
+          <input
+            id="cal-hours-from"
+            type="time"
+            step={1800}
+            value={rangeDraft.from}
+            onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))}
+            aria-required="true"
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="cal-hours-to">Конец</label>
+          <input
+            id="cal-hours-to"
+            type="time"
+            step={1800}
+            value={rangeDraft.to}
+            onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))}
+            aria-required="true"
+          />
+        </div>
+      </div>
+      {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
+      <button className="btn btn-primary" type="button" onClick={saveDisplayRange}>Сохранить</button>
+    </div>
+  )
+
   const body = (
     <div
-      className={`stack calendar-shell calendar-page-root ${showMobileDay ? 'is-mobile-day' : ''} ${currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''}`}
+      className={`stack calendar-shell ${showMobileMonth ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
       style={{ touchAction: 'pan-y' }}
       onPointerDown={onPointerDownSwipe}
+      onPointerMove={onPointerMoveSwipe}
       onPointerUp={onPointerUpSwipe}
       onPointerCancel={() => { swipeStart.current = null }}
     >
       {!embedded && (
         <div className="calendar-page-head calendar-toolbar-sticky">
-          {!showMobileDay ? (
+          {!showMobileMonth ? (
             <div className="stack-sm">
               <p className="eyebrow">Расписание</p>
               <h1>{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
@@ -1282,13 +1344,17 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                   Переносите события — при конфликте изменение отменится.
                   <Hint id="cal-dnd" title="Работа с расписанием">Личные события можно переносить и растягивать с начала и с конца. Записи клиента — только через подтверждение переноса. Завершённые и чужие события только для просмотра.</Hint>
                 </p>
-              ) : null}
+              ) : (
+                <p className="muted">Долгое нажатие — меню. Перетаскивайте задачи, чтобы менять время.</p>
+              )}
             </div>
           ) : (
             <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
           )}
-          <div className="row">
-            <Link className="btn btn-secondary btn-compact" to="/schedule" data-testid="calendar-open-schedule">Установка графика</Link>
+          <div className="row calendar-page-head-actions">
+            <button className="btn btn-secondary btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
+              Рабочий день
+            </button>
             {!readOnlyOverlay ? (
               <button className="btn btn-primary btn-compact" type="button" onClick={() => (blockStart && blockEnd ? setEditorOpen(true) : openCreateAt(selectedDate))}>+ Событие</button>
             ) : null}
@@ -1372,23 +1438,48 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       {settingsOpen && (
         <section className="card calendar-color-settings stack" data-testid="calendar-settings">
           <div>
-            <strong>Показывать с / до</strong>
-            <p className="muted">Календарь откроется в этом диапазоне. События раньше или позже всё равно можно открыть — сетка чуть расширится.</p>
+            <strong>Рабочий день</strong>
+            <p className="muted">Диапазон сетки, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится.</p>
           </div>
           <div className="calendar-display-range">
             <div className="field">
-              <label htmlFor="cal-range-from">С</label>
+              <label htmlFor="cal-range-from">Начало</label>
               <input id="cal-range-from" type="time" step={1800} value={rangeDraft.from} onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))} aria-required="true" />
             </div>
             <div className="field">
-              <label htmlFor="cal-range-to">До</label>
+              <label htmlFor="cal-range-to">Конец</label>
               <input id="cal-range-to" type="time" step={1800} value={rangeDraft.to} onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))} aria-required="true" />
             </div>
           </div>
           {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
-          <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить диапазон</button>
+          <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить рабочий день</button>
 
-          <div><strong>Цвета и категории</strong><p className="muted">Цвет записи нельзя менять. Для личных задач, перерывов и блокировок цвет сохраняется в вашем профиле.</p></div>
+          <div>
+            <strong>Навигация</strong>
+            <p className="muted">Свайп листает день / неделю / месяц. По умолчанию — кнопки, чтобы не мешать прокрутке и перетаскиванию.</p>
+          </div>
+          <div className="segmented segmented--2" role="radiogroup" aria-label="Навигация календаря" data-testid="calendar-nav-mode">
+            <label className={navMode === 'buttons' ? 'is-active' : undefined}>
+              <input
+                type="radio"
+                name="calendar-nav-mode"
+                checked={navMode === 'buttons'}
+                onChange={() => setNavModePref('buttons')}
+              />
+              Кнопками
+            </label>
+            <label className={navMode === 'swipe' ? 'is-active' : undefined}>
+              <input
+                type="radio"
+                name="calendar-nav-mode"
+                checked={navMode === 'swipe'}
+                onChange={() => setNavModePref('swipe')}
+              />
+              Свайпом
+            </label>
+          </div>
+
+          <div><strong>Цвета и категории</strong><p className="muted">Цвет записи клиента нельзя менять. Для личных задач цвет сохраняется в событии и в профиле категории.</p></div>
           <div className="calendar-color-grid stack">
             {palette.map((c) => (
               <div key={c.id} className={c.system ? 'is-disabled' : ''}>
@@ -1403,13 +1494,13 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           </div>
 
           <div className="row wrap gap">
-            <Link className="btn btn-primary" to="/schedule" data-testid="settings-open-schedule">Установка графика</Link>
+            <Link className="btn btn-secondary" to="/schedule" data-testid="settings-open-schedule">Установка графика</Link>
             <Link className="btn btn-secondary" to="/master">Рабочие часы пн–пт</Link>
           </div>
         </section>
       )}
 
-      {showMobileDay ? (
+      {showMobileMonth ? (
         <CalendarMobile
           events={events}
           timezone={salonTimezone}
@@ -1453,14 +1544,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileDay && loading ? (
+      {!showMobileMonth && loading ? (
         <div className="calendar-wrap" aria-busy="true">
           <div className="skeleton skeleton-card" />
           <div className="skeleton skeleton-card" />
         </div>
       ) : null}
 
-      {!showMobileDay && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
+      {!showMobileMonth && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
         <EmptyState
           title="Рабочий график пока не задан"
           text="Календарь покажет рабочие часы после того, как мастер сохранит расписание."
@@ -1468,7 +1559,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileDay ? (
+      {!showMobileMonth ? (
       <div
         className="calendar-wrap"
         ref={wrapRef}
@@ -1497,6 +1588,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           eventStartEditable={!readOnlyOverlay}
           eventResizableFromStart
           snapDuration="00:15:00"
+          eventDragMinDistance={compact ? 12 : 8}
+          selectMinDistance={compact ? 8 : 0}
           longPressDelay={500}
           eventLongPressDelay={500}
           slotLabelFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
@@ -1524,9 +1617,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           eventContent={eventCard}
           eventDidMount={(arg) => {
             const css = String(arg.event.extendedProps.colorCss ?? '')
-            if (css && arg.el.classList.contains('cal-color-hex')) {
+            if (!css || !arg.el.classList.contains('is-planner-block')) return
+            arg.el.style.setProperty('--cal-event-accent', css)
+            if (arg.el.classList.contains('cal-color-hex')) {
               arg.el.style.setProperty('--cal-hex', css)
-              arg.el.style.setProperty('--cal-event-accent', css)
             }
           }}
           eventDragStart={() => { interacting.current = true }}
@@ -1624,15 +1718,18 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         label="Действия календаря"
       >
         <div className="stack cal-action-sheet">
-          <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); if (sheetSlot) openCreateAt(sheetSlot) }}>Создать задачу</button>
+          <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); if (sheetSlot) openCreateAt(sheetSlot) }}>Добавить запись</button>
           <Link className="btn btn-secondary" to="/clients" onClick={() => setSheet(null)}>Записать клиента</Link>
-          <Link
+          <button
+            type="button"
             className="btn btn-secondary"
-            to={sheetSlot ? `/schedule?start=${encodeURIComponent(sheetSlot.toISOString())}&end=${encodeURIComponent(new Date(sheetSlot.getTime() + 60 * 60 * 1000).toISOString())}` : '/schedule'}
-            onClick={() => setSheet(null)}
+            onClick={() => {
+              setSheet(null)
+              openHoursEditor()
+            }}
           >
             Установить рабочие часы
-          </Link>
+          </button>
           <button
             type="button"
             className="btn btn-secondary"
@@ -1644,11 +1741,20 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               setOk('Выберите начало и конец интервала')
             }}
           >
-            Выбрать интервал
+            Запомнить интервалы работы
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => { setSheet(null); setSettingsOpen(true) }}>Настройки календаря</button>
           <button type="button" className="btn btn-ghost" onClick={() => setSheet(null)}>Отмена</button>
         </div>
+      </Drawer>
+
+      <Drawer
+        open={hoursEditorOpen}
+        onClose={() => setHoursEditorOpen(false)}
+        title={<div><p className="eyebrow">Календарь</p><h2>Рабочий день</h2></div>}
+        label="Рабочий день календаря"
+      >
+        {hoursEditorForm}
       </Drawer>
 
       {selected?.kind === 'appointment' && apptId ? (

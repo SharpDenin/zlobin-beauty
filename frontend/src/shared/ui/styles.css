@@ -273,9 +273,24 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   white-space: nowrap;
 }
 .topbar-actions {
-  flex-wrap: nowrap;
+  display: inline-flex !important;
+  align-items: center;
+  flex-wrap: nowrap !important;
+  flex-shrink: 0;
   min-width: 0;
+  max-width: 70%;
   gap: var(--space-2);
+}
+.topbar-actions .premium-status {
+  flex-shrink: 1;
+  max-width: 11rem;
+}
+.topbar-actions .theme-toggle,
+.topbar-actions .btn {
+  flex-shrink: 0;
+}
+.topbar-actions .btn-compact {
+  white-space: nowrap;
 }
 .sidenav-toolbar {
   display: flex;
@@ -339,12 +354,16 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
 }
 @media (max-width: 359px) {
   .topbar-cabinet { display: none; }
+  .topbar-actions {
+    max-width: 78%;
+    gap: 4px;
+  }
   .topbar-actions .btn-compact {
-    padding-inline: var(--space-2);
+    padding-inline: 8px;
     font-size: var(--text-xs);
   }
-  .premium-status--compact .premium-status__label {
-    max-width: 7ch;
+  .topbar-actions .premium-status--compact {
+    padding-inline: 6px;
   }
 }
 @media (min-width: 360px) {
@@ -2064,9 +2083,9 @@ button.list-item:hover {
 .calendar-wrap .fc-event.is-visit {
   box-shadow: inset 0 0 0 1px rgba(124, 130, 255, 0.28);
 }
+/* Planner block colors live in calendar.css (.calendar-shell … cal-color-*).
+   Keep this rule neutral so global styles do not flatten event accents. */
 .calendar-wrap .fc-event.is-planner-block {
-  background: var(--color-surface-2) !important;
-  border: 1px dashed var(--color-border) !important;
   color: var(--color-text-primary) !important;
 }
 .calendar-wrap .fc-event.is-work-mode {

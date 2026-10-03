@@ -17,7 +17,8 @@
 }
 
 @media (max-width: 599px) {
-  .page.calendar-page-root:has(.is-mobile-day) {
+  .page.calendar-page-root:has(.is-mobile-day),
+  .page.calendar-page-root:has(.is-mobile-fc) {
     width: 100%;
     max-width: none;
     padding-left: var(--space-4);
@@ -29,7 +30,8 @@
     height: 100%;
     overflow: hidden;
   }
-  .calendar-shell.is-mobile-day {
+  .calendar-shell.is-mobile-day,
+  .calendar-shell.is-mobile-fc {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -39,14 +41,55 @@
   .calendar-shell.is-mobile-day .calendar-page-head,
   .calendar-shell.is-mobile-day .calendar-resource-bar,
   .calendar-shell.is-mobile-day .calendar-controls,
-  .calendar-shell.is-mobile-day .calendar-category-row {
+  .calendar-shell.is-mobile-day .calendar-category-row,
+  .calendar-shell.is-mobile-fc .calendar-page-head,
+  .calendar-shell.is-mobile-fc .calendar-resource-bar,
+  .calendar-shell.is-mobile-fc .calendar-controls,
+  .calendar-shell.is-mobile-fc .calendar-category-row {
     flex-shrink: 0;
   }
   .calendar-shell.is-mobile-day .cal-mobile {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    padding-bottom: var(--space-4);
+    padding-bottom: calc(var(--space-4) + var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+  }
+  .calendar-shell.is-mobile-fc .calendar-page-head.calendar-toolbar-sticky {
+    position: static;
+  }
+  .calendar-shell.is-mobile-fc .calendar-category-row {
+    position: relative;
+    z-index: 0;
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap {
+    flex: 1 1 auto;
+    min-height: 12rem;
+    overflow: auto;
+    position: relative;
+    z-index: 0;
+    padding-bottom: calc(var(--space-3) + var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar-title {
+    font-size: 1.05rem;
+    overflow-wrap: anywhere;
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-timegrid-slot {
+    min-height: var(--cal-slot-min-height) !important;
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-event-resizer {
+    height: 14px;
+  }
+  .calendar-page-head-actions {
+    flex-wrap: wrap;
+    gap: var(--space-2);
   }
   .calendar-shell.is-mobile-day .cal-mobile-head,
   .calendar-shell.is-mobile-day .cal-day-strip {
@@ -66,6 +109,15 @@
   }
   .calendar-shell.is-mobile-day .cal-mobile-month {
     font-size: 1.05rem;
+  }
+  .calendar-view-tabs {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .calendar-view-tabs .chip {
+    flex: 1 0 auto;
+    min-height: 44px;
   }
 }
 
@@ -564,9 +616,9 @@
   text-align: left;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
+  border: 1px solid color-mix(in srgb, var(--cal-event-accent, var(--color-primary)) 35%, var(--color-border));
   border-left: 3px solid var(--cal-event-accent, var(--color-primary));
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--cal-event-accent, var(--color-primary)) 18%, var(--color-surface));
   color: inherit;
   min-height: 44px;
 }

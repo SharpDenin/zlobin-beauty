@@ -273,6 +273,12 @@ export function minutesFromMidnight(date: Date, timeZone: string) {
   return hour * 60 + minute
 }
 
+export type CalendarNavMode = 'buttons' | 'swipe'
+
+export function isCalendarNavMode(value: unknown): value is CalendarNavMode {
+  return value === 'buttons' || value === 'swipe'
+}
+
 /** Horizontal swipe that won't fight vertical scroll / drag. */
 /** Day swipe only on compact day view; week/month always move by period. */
 export function swipeStep(view: CalendarViewId, compact: boolean): 'day' | 'period' {

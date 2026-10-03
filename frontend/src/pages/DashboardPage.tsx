@@ -381,7 +381,7 @@ export function DashboardPage() {
       <section className="dash-profile-hero" data-testid="dashboard-hero" aria-label="Профиль">
         <div className="dash-profile-hero__photo" aria-hidden={!master?.photo_media_id}>
           {master?.photo_media_id ? (
-            <MediaImage mediaId={master.photo_media_id} token={accessToken} alt={displayName} fallback={initials(displayName)} />
+            <MediaImage mediaId={master.photo_media_id} token={accessToken} alt={displayName} fallback={initials(displayName)} variant="cover" />
           ) : (
             <div className="media-fallback" role="img" aria-label={displayName}>{initials(displayName)}</div>
           )}

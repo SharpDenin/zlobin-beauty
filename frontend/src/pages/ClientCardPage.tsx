@@ -14,6 +14,7 @@ import { Modal } from '@/shared/ui/Modal'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { userError, formatUserError } from '@/shared/lib/app-error'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type ClientCard = {
@@ -172,11 +173,14 @@ export function ClientCardPage() {
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
   const formulaForm = useForm<z.infer<typeof formulaSchema>>({ resolver: zodResolver(formulaSchema) })
+  const noteDraft = useFormDraft(noteForm, `client-note:${cardId}`)
+  const formulaDraft = useFormDraft(formulaForm, `client-formula:${cardId}`)
 
   const saveNote = useMutation({
     mutationFn: (v: z.infer<typeof noteSchema>) =>
       apiRequest(`/v1/clients/id/${cardId}/notes`, { token: accessToken, body: v }),
     onSuccess: async () => {
+      noteDraft.clear()
       setOk('Заметка сохранена')
       setError(null)
       noteForm.reset()
@@ -199,6 +203,7 @@ export function ClientCardPage() {
         },
       }),
     onSuccess: async () => {
+      formulaDraft.clear()
       setOk('Состав сохранён')
       setError(null)
       formulaForm.reset()

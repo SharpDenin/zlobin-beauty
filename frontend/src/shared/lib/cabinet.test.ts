@@ -17,6 +17,18 @@ describe('applyNavOrder', () => {
     const next = applyNavOrder(links, ['/appointments', '/', '/calendar'])
     expect(next.map((l) => l.to)).toEqual(['/appointments', '/', '/calendar', '/more'])
   })
+
+  it('reorders the full side menu and keeps unknown paths appended', () => {
+    const side: NavLink[] = [
+      { to: '/', label: 'Обзор', end: true },
+      { to: '/calendar', label: 'Расписание' },
+      { to: '/clients', label: 'Клиенты' },
+      { to: '/knowledge', label: 'База знаний' },
+      { to: '/profile', label: 'Профиль' },
+    ]
+    const next = applyNavOrder(side, ['/knowledge', '/', '/clients'])
+    expect(next.map((l) => l.to)).toEqual(['/knowledge', '/', '/clients', '/calendar', '/profile'])
+  })
 })
 
 describe('moveNavPath', () => {

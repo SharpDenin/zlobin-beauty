@@ -177,9 +177,11 @@ html {
 body {
   margin: 0;
   min-width: 0;
-  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: auto;
   background: var(--gradient-canvas);
   background-attachment: fixed;
+  -webkit-overflow-scrolling: touch;
 }
 *::-webkit-scrollbar {
   width: var(--scrollbar-size);
@@ -213,13 +215,14 @@ button {
 img { max-width: 100%; display: block; }
 h1, h2, h3, p, strong { overflow-wrap: anywhere; }
 
+/* Document scroll is the default. Only fill-viewport surfaces (calendar mobile,
+   messenger) opt into a locked shell — see .app-shell--fill below. */
 .app-shell {
   min-height: 100vh;
   min-height: 100dvh;
-  height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr;
-  overflow: hidden;
+  overflow: visible;
 }
 .shell-main {
   min-width: 0;
@@ -227,16 +230,34 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .shell-main > .topbar {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: var(--z-sticky);
   flex-shrink: 0;
 }
 .shell-main > :not(.topbar) {
   position: relative;
   z-index: 0;
+  min-width: 0;
+  /* Grow with content — do NOT trap page scroll in a nested overflow box. */
+  overflow: visible;
+}
+
+/* Opt-in viewport fill for surfaces that own their own internal scroll. */
+.app-shell.app-shell--fill {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+.app-shell.app-shell--fill .shell-main {
+  min-height: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+}
+.app-shell.app-shell--fill .shell-main > :not(.topbar) {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -250,15 +271,62 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--color-border);
   flex-wrap: nowrap;
   min-width: 0;
 }
-.topbar > :first-child {
+.topbar > :first-child,
+.topbar-leading {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
+}
+.topbar--compact {
+  padding: var(--space-2) var(--space-4);
+  padding-top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+  min-height: 52px;
+}
+.topbar--compact .brand {
+  padding: 0;
+}
+.topbar--compact .topbar-cabinet,
+.topbar--compact .topbar-desktop-only {
+  display: none;
+}
+.topbar-menu-btn {
+  min-height: 40px;
+}
+.more-account {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
+}
+.more-account-name {
+  margin: 0;
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+.more-nav-list a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+}
+.more-footer {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+@media (min-width: 768px) {
+  .topbar--compact .topbar-desktop-only {
+    display: contents;
+  }
+  .topbar-menu-btn {
+    display: none;
+  }
 }
 .topbar-branch {
   max-width: 11rem;
@@ -1602,8 +1670,14 @@ button.list-item:hover {
   .app-shell {
     grid-template-columns: 240px minmax(0, 1fr);
     grid-template-rows: 1fr;
-    height: 100vh;
+    min-height: 100dvh;
+    height: auto;
+    overflow: visible;
+  }
+  .app-shell.app-shell--fill {
     height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
   }
   .topbar { display: none; }
   .sidenav {
@@ -1613,11 +1687,11 @@ button.list-item:hover {
     gap: var(--space-2);
     padding: var(--space-5);
     border-right: 1px solid var(--color-border);
-    background: var(--color-surface);
     position: sticky;
     top: 0;
-    height: 100vh;
+    align-self: start;
     height: 100dvh;
+    max-height: 100dvh;
     overflow: auto;
   }
   .bottomnav { display: none; }
@@ -2612,15 +2686,24 @@ button.list-item:hover {
 .dropzone-progress { background: var(--color-surface); }
 .kb-lightbox { background: var(--overlay-scrim); }
 
-/* Image-first frames — use with MediaImage / covers. 1×1 PNG is not a valid visual. */
+/* Image-first frames — full-bleed canvas, no card gutters around the photo. */
 .media-frame {
+  position: relative;
   display: grid;
   place-items: center;
   overflow: hidden;
   background: var(--gradient-image-fallback);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: 0;
   min-width: 0;
+}
+.media-frame > .edge-media,
+.media-frame > img,
+.media-frame > .media-skeleton,
+.media-frame > .media-fallback {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .media-frame img,
 .media-frame .media-skeleton,
@@ -3021,6 +3104,7 @@ button.list-item:hover {
   height: 100%;
   overflow: hidden;
 }
+/* Messenger always owns its viewport (paired with .app-shell--fill from layout). */
 .app-shell:has(.messenger-page) {
   height: 100dvh;
   max-height: 100dvh;
@@ -3031,6 +3115,11 @@ button.list-item:hover {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.app-shell:has(.messenger-page) .shell-main > :not(.topbar) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .messenger-page {
   flex: 1;

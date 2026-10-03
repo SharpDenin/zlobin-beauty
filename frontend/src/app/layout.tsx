@@ -12,6 +12,7 @@ import { NavIcon } from '@/shared/ui/NavIcon'
 import { PageLoading } from '@/shared/ui/PageLoading'
 import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { PremiumStatusLink } from '@/features/dashboard/PremiumStatusLink'
+import { releaseOrphanedOverlayLock } from '@/shared/ui/overlayLock'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -94,7 +95,7 @@ function NavLinks({
           key={l.to}
           to={l.to === '/more' ? '#' : l.to}
           className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) || messagesActive ? 'active' : ''}`.trim()}
-          aria-current={linkActive(pathname, l.to, l.end) || messagesActive ? 'page' : undefined}
+          aria-current={linkActive(pathname, l.to, l.end) ? 'page' : undefined}
           onClick={(e) => {
             if (l.to === '/more') {
               e.preventDefault()
@@ -135,15 +136,21 @@ function MoreDrawer({
   links: NavLink[]
   pathname: string
 }) {
+  const { user, logout } = useAuth()
   const cabinet = useCabinet()
   const [navOrder, setNavOrder] = usePreference<string[]>('nav.order', [])
-  const primary = applyNavOrder(cabinet.primary, navOrder).filter((l) => l.to !== '/more')
+  const [editing, setEditing] = useState(false)
+  const ordered = applyNavOrder(links.filter((l) => l.to !== '/more'), navOrder)
   const drag = useRef<{ from: number; y: number } | null>(null)
   const [dragging, setDragging] = useState<number | null>(null)
   const [over, setOver] = useState<number | null>(null)
 
+  useEffect(() => {
+    if (!open) setEditing(false)
+  }, [open])
+
   function persistOrder(from: number, to: number) {
-    setNavOrder(moveNavPath(primary.map((l) => l.to), from, to))
+    setNavOrder(moveNavPath(ordered.map((l) => l.to), from, to))
   }
 
   function onHandlePointerDown(index: number, e: ReactPointerEvent<HTMLButtonElement>) {
@@ -176,23 +183,48 @@ function MoreDrawer({
   }
 
   return (
-    <Drawer open={open} onClose={onClose} title="Ещё" panelClassName="stack-sm">
-      <NavLinks links={links} pathname={pathname} onNavigate={onClose} />
-      {primary.length > 1 && (
-        <section className="stack-sm nav-order">
-          <h2 className="nav-order-title">Порядок вкладок</h2>
-          <p className="muted">Перетащите за ручку. Порядок сохранится после перезапуска.</p>
-          {primary.map((l, i) => (
+    <Drawer open={open} onClose={onClose} title="Меню" panelClassName="stack-sm more-menu-panel">
+      <section className="stack-sm more-account">
+        <p className="more-account-name">{user?.display_name}</p>
+        <p className="muted">{cabinet.label}{cabinet.workType ? ` · ${workTypeLabel(cabinet.workType)}` : ''}</p>
+        <div className="row wrap gap">
+          <Link className="btn btn-secondary btn-compact" to="/profile" onClick={onClose}>Профиль</Link>
+          <Link className="btn btn-secondary btn-compact" to="/profile/subscription" onClick={onClose} data-testid="more-premium">
+            Premium
+          </Link>
+          <ThemeToggle labelled />
+        </div>
+      </section>
+
+      <div className="row between">
+        <h2 className="nav-order-title">Навигация</h2>
+        <button
+          className="btn btn-ghost btn-compact"
+          type="button"
+          data-testid="menu-edit-order"
+          onClick={() => setEditing((v) => !v)}
+        >
+          {editing ? 'Готово' : 'Редактировать порядок'}
+        </button>
+      </div>
+
+      {editing ? (
+        <section className="stack-sm nav-order" data-testid="menu-order-editor">
+          <p className="muted">Перетащите за ручку. Порядок сохранится и для нижних вкладок.</p>
+          {ordered.map((l, i) => (
             <div
               key={l.to}
               data-nav-order-row
               className={`row between nav-order-row${dragging === i ? ' is-dragging' : ''}${over === i && dragging !== i ? ' is-drop' : ''}`}
             >
-              <span>{l.label}</span>
+              <span className="row gap">
+                <NavIcon to={l.to} />
+                <span>{l.label}</span>
+              </span>
               <button
                 className="nav-order-handle"
                 type="button"
-                aria-label={`Переместить вкладку ${l.label}`}
+                aria-label={`Переместить ${l.label}`}
                 onPointerDown={(e) => onHandlePointerDown(i, e)}
                 onPointerMove={onHandlePointerMove}
                 onPointerUp={onHandlePointerUp}
@@ -205,7 +237,24 @@ function MoreDrawer({
             </div>
           ))}
         </section>
+      ) : (
+        <nav className="stack-sm more-nav-list">
+          <NavLinks links={ordered} pathname={pathname} onNavigate={onClose} />
+        </nav>
       )}
+
+      <div className="stack-sm more-footer">
+        <button
+          className="btn btn-secondary btn-block"
+          type="button"
+          onClick={() => {
+            onClose()
+            void logout()
+          }}
+        >
+          Выйти
+        </button>
+      </div>
     </Drawer>
   )
 }
@@ -226,6 +275,7 @@ function AppShellInner() {
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : false,
   )
   const cabinet = useCabinet()
+  const messenger = useMessengerOptional()
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 768px)')
@@ -238,6 +288,10 @@ function AppShellInner() {
     return () => mq.removeEventListener('change', sync)
   }, [])
 
+  useEffect(() => {
+    releaseOrphanedOverlayLock()
+  }, [location.pathname])
+
   const primary = cabinet.primary
   const secondary = cabinet.secondary
   const sideLinks = cabinet.side
@@ -247,8 +301,16 @@ function AppShellInner() {
     [cabinet.orgs],
   )
 
+  const fillShell =
+    location.pathname.startsWith('/calendar')
+    || location.pathname.startsWith('/messages')
+    || Boolean(messenger?.overlayOpen)
+
   return (
-    <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
+    <div
+      className={`app-shell${fillShell ? ' app-shell--fill' : ''}`}
+      style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}
+    >
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
         <div className="sidenav-toolbar">
@@ -293,10 +355,9 @@ function AppShellInner() {
         </div>
       </aside>
       <div className="shell-main">
-        <header className="topbar">
-          <div>
+        <header className="topbar topbar--compact">
+          <div className="topbar-leading">
             <div className="brand"><BrandLogo size="sm" /></div>
-            <div className="muted topbar-cabinet">{cabinet.label}</div>
           </div>
           <div className="row topbar-actions">
             {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
@@ -312,17 +373,30 @@ function AppShellInner() {
                 ))}
               </select>
             )}
-            <PremiumStatusLink compact />
             <ThemeToggle />
-            <span className="muted topbar-name">{user?.display_name}</span>
             <button
-              className="btn btn-secondary btn-compact topbar-logout"
+              className="btn btn-secondary btn-compact topbar-menu-btn"
               type="button"
-              onClick={() => void logout()}
-              aria-label="Выйти"
+              aria-label="Открыть меню"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen(true)}
             >
-              Выйти
+              Меню
             </button>
+            {/* Desktop-only chrome kept for wide layouts where topbar is hidden anyway;
+                sidenav holds Premium / logout. Compact mobile keeps header short. */}
+            <span className="topbar-desktop-only">
+              <PremiumStatusLink compact />
+              <span className="muted topbar-name">{user?.display_name}</span>
+              <button
+                className="btn btn-secondary btn-compact topbar-logout"
+                type="button"
+                onClick={() => void logout()}
+                aria-label="Выйти"
+              >
+                Выйти
+              </button>
+            </span>
           </div>
         </header>
         <Outlet />
@@ -369,20 +443,12 @@ function AppShellInner() {
   )
 }
 
-export function PageHeader({
-  title,
-  subtitle,
-  actions,
-}: {
-  title: string
-  subtitle?: ReactNode
-  actions?: ReactNode
-}) {
+export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="page-toolbar">
-      <div className="stack-sm">
+    <div className="row between page-header">
+      <div>
         <h1>{title}</h1>
-        {subtitle}
+        {subtitle ? (typeof subtitle === 'string' ? <p className="muted">{subtitle}</p> : subtitle) : null}
       </div>
       {actions}
     </div>

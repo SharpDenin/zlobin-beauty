@@ -71,6 +71,8 @@ describe('knowledge-helpers', () => {
   it('uses role-aware empty copy', () => {
     expect(knowledgeEmptyTitle(false, false)).toBe('В базе знаний пока нет материалов для домашнего ухода.')
     expect(knowledgeEmptyTitle(true, false)).toBe('Материалы не найдены.')
+    expect(knowledgeEmptyTitle(true, true)).toBe('Ничего не найдено')
+    expect(knowledgeEmptyTitle(false, true)).toBe('Ничего не найдено')
   })
 
   it('clears article cover with empty string, not a placeholder id', () => {

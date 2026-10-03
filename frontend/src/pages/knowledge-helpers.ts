@@ -205,8 +205,8 @@ export function buildKnowledgeCategoryTree(facets: Array<{ value: string; count:
 }
 
 export function knowledgeEmptyTitle(professional: boolean, filtered: boolean) {
+  if (filtered) return 'Ничего не найдено'
   if (professional) return 'Материалы не найдены.'
-  if (filtered) return 'По выбранным фильтрам нет материалов для домашнего ухода.'
   return 'В базе знаний пока нет материалов для домашнего ухода.'
 }
 

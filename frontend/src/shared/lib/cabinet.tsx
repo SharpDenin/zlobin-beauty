@@ -322,7 +322,14 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
   const kind = resolveCabinetKind(user, masterQ.data?.master?.work_type)
   const nav = navForCabinet(kind)
   const [navOrder] = usePreference<string[]>('nav.order', [])
-  const primary = applyNavOrder(nav.primary, navOrder)
+  // One ordered menu; bottom nav is a projection of the same preference.
+  const side = applyNavOrder(nav.side, navOrder)
+  const primaryTargets = new Set(nav.primary.map((l) => l.to))
+  const primary = [
+    ...side.filter((l) => primaryTargets.has(l.to) && l.to !== '/more'),
+    ...nav.primary.filter((l) => l.to === '/more'),
+  ]
+  const secondary = side.filter((l) => l.to !== '/more')
   const orgItems = orgs.data?.items ?? []
   const [selectedOrgId, setSelectedOrgId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(ORG_KEY) : null))
   const [selectedBranchId, setSelectedBranchId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(BRANCH_KEY) : null))
@@ -360,8 +367,8 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
     ready,
     can: (feature) => canFeature(kind, feature),
     primary,
-    secondary: nav.secondary,
-    side: nav.side,
+    secondary,
+    side,
   }
 
   return <CabinetContext.Provider value={value}>{children}</CabinetContext.Provider>

@@ -155,7 +155,7 @@ export function KnowledgeArticlePage() {
       </div>
       {isPreview && <div className="state-box">Предпросмотр</div>}
       <div className={`article-cover ${a.category?.includes(' / ') ? 'article-cover--product' : ''}`}>
-        <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} fallback={(a.category || a.title).slice(0, 2)} />
+        <MediaImage mediaId={a.cover_media_id} token={accessToken} alt={a.title} variant="cover" fallback={(a.category || a.title).slice(0, 2)} />
       </div>
       <article className="kb-article-column stack">
         <div className={`stack-sm kb-article-header ${a.category ? knowledgeSectionToneClass(a.category) : ''}`}>

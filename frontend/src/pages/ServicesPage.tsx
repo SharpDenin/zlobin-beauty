@@ -21,6 +21,7 @@ import { Modal } from '@/shared/ui/Modal'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { PageHeader } from '@/app/layout'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 
 type Service = {
   id: string
@@ -117,6 +118,7 @@ export function ServicesPage() {
       booking_mode: 'flexible',
     },
   })
+  const draft = useFormDraft(form, id ? `service-form:${id}` : 'service-form:new')
 
   const bookingMode = form.watch('booking_mode')
 
@@ -182,6 +184,7 @@ export function ServicesPage() {
       })
     },
     onSuccess: async () => {
+      draft.clear()
       setOk(id ? 'Услуга обновлена' : 'Услуга создана')
       setError(null)
       toast.success(id ? 'Услуга обновлена' : 'Услуга создана')

@@ -8,6 +8,7 @@ import { apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { PageHeader } from '@/app/layout'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
@@ -45,6 +46,7 @@ export function ProfilePage() {
       city: user?.city ?? '',
     },
   })
+  const draft = useFormDraft(form, 'profile-form')
 
   const save = useMutation({
     mutationFn: (v: z.infer<typeof profileSchema>) =>
@@ -62,6 +64,7 @@ export function ProfilePage() {
         body: { display_name: v.display_name, city: (v.city ?? '').trim() },
       }),
     onSuccess: (me) => {
+      draft.clear()
       updateUser(me)
       setOk('Профиль сохранён')
       setError(null)

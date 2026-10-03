@@ -32,6 +32,7 @@ export function KnowledgeCard({ article: a, token, onFavorite, favoritePending, 
             token={token}
             alt=""
             className="product-photo"
+            variant="cover"
             fallback={(a.category || a.title || 'KB').slice(0, 2)}
           />
         </div>

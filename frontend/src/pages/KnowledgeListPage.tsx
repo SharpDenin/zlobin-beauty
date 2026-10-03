@@ -244,7 +244,7 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
                 data-testid="kb-search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Название статьи…"
+                placeholder="Поиск по базе знаний"
                 autoComplete="off"
                 enterKeyHint="search"
               />
@@ -477,7 +477,7 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
             action={
               filtersActive(filters) ? (
                 <button className="btn btn-secondary" type="button" onClick={() => { setSearch(''); setFilters(emptyFilters()) }}>
-                  Сбросить фильтры
+                  {filters.q ? 'Очистить поиск' : 'Сбросить фильтры'}
                 </button>
               ) : undefined
             }
@@ -551,7 +551,7 @@ function SupplierKnowledgeHome() {
               data-testid="kb-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Название статьи…"
+              placeholder="Поиск по базе знаний"
               autoComplete="off"
               enterKeyHint="search"
             />

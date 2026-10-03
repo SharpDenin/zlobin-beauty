@@ -586,7 +586,7 @@ export function MasterCabinetPage() {
           <h3>Фото профиля</h3>
           {master.data?.master.photo_media_id ? (
             <div className="avatar-circle" style={{ width: 120, height: 120 }}>
-              <MediaImage mediaId={master.data.master.photo_media_id} token={accessToken} alt="Профиль" />
+              <MediaImage mediaId={master.data.master.photo_media_id} token={accessToken} alt="Профиль" variant="cover" />
             </div>
           ) : (
             <p className="state-box">Фото профиля не загружено</p>

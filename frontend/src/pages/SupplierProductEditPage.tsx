@@ -13,6 +13,7 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { fieldErrors, formatUserError } from '@/shared/lib/app-error'
 import { supplierProductWriteBody } from '@/pages/supplier-helpers'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 
 const schema = z.object({
   name: z.string().min(2, 'Укажите название'),
@@ -81,6 +82,7 @@ export function SupplierProductEditPage() {
       audience: 'all' as const,
     },
   })
+  const draft = useFormDraft(form, isNew ? 'supplier-product:new' : `supplier-product:${id}`)
 
   useEffect(() => {
     if (!existing.data) return
@@ -124,6 +126,7 @@ export function SupplierProductEditPage() {
       })
     },
     onSuccess: async (res) => {
+      draft.clear()
       setError(null)
       toast.success('Товар сохранён')
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })

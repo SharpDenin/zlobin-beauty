@@ -80,7 +80,15 @@ func (s *Service) CreateConversation(ctx context.Context, in CreateConversationI
 	case domain.ConversationClientMaster:
 		return s.createClientMaster(ctx, in)
 	case domain.ConversationMasterSupplier:
-		return s.createMasterSupplier(ctx, in.ActorID, in.MasterUserID, in.SupplierOrganizationID)
+		orgID := in.SupplierOrganizationID
+		if orgID == nil && in.PeerUserID != nil {
+			resolved, err := s.fetchSupplierOrgForUser(ctx, *in.PeerUserID)
+			if err != nil {
+				return nil, err
+			}
+			orgID = &resolved
+		}
+		return s.createMasterSupplier(ctx, in.ActorID, in.MasterUserID, orgID)
 	case domain.ConversationMasterclass:
 		return s.createMasterclassChat(ctx, in.ActorID, in.EventID, in.PeerUserID)
 	case domain.ConversationModelRequest:
@@ -111,7 +119,14 @@ func (s *Service) createClientMaster(ctx context.Context, in CreateConversationI
 			return nil, err
 		}
 		if !related {
-			return nil, apperr.Forbidden("no booking relationship with this client")
+			// Address book is an explicit working relationship (USER_FLOWS: messages from contacts).
+			linked, linkErr := s.hasAddressBookLink(ctx, masterID, clientID)
+			if linkErr != nil {
+				return nil, linkErr
+			}
+			if !linked {
+				return nil, apperr.Forbidden("no booking relationship with this client")
+			}
 		}
 	} else {
 		if in.MasterUserID == nil {
@@ -562,6 +577,58 @@ func (s *Service) fetchMedia(ctx context.Context, id uuid.UUID) (*mediaMeta, err
 		return nil, apperr.Internal(err)
 	}
 	return &mediaMeta{OwnerUserID: owner, Purpose: body.Purpose, ContentType: body.ContentType}, nil
+}
+
+func (s *Service) hasAddressBookLink(ctx context.Context, a, b uuid.UUID) (bool, error) {
+	if s.store == nil {
+		return false, nil
+	}
+	c, err := s.store.GetContactByOwnerPair(ctx, a, b)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	if c != nil {
+		return true, nil
+	}
+	c, err = s.store.GetContactByOwnerPair(ctx, b, a)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return c != nil, nil
+}
+
+func (s *Service) fetchSupplierOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return uuid.Nil, apperr.Internal(fmt.Errorf("organizations is not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.organizationsURL+"/v1/internal/users/"+userID.String()+"/supplier-organization", nil)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return uuid.Nil, apperr.NotFound("supplier organization not found")
+	}
+	if resp.StatusCode >= 300 {
+		return uuid.Nil, apperr.Internal(fmt.Errorf("organizations status %d", resp.StatusCode))
+	}
+	var body struct {
+		OrganizationID string `json:"organization_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	id, err := uuid.Parse(body.OrganizationID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	return id, nil
 }
 
 func (s *Service) fetchBookingRelationship(ctx context.Context, masterUserID, clientUserID uuid.UUID) (bool, error) {

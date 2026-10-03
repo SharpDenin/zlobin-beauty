@@ -63,6 +63,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/suppliers", a.listSuppliers)
 	mux.HandleFunc("GET /v1/suppliers/{id}", a.getSupplier)
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
+	mux.HandleFunc("GET /v1/internal/users/{userID}/supplier-organization", a.internalSupplierOrgForUser)
 	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
@@ -92,6 +93,25 @@ func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"active": ok})
+}
+
+func (a *API) internalSupplierOrgForUser(w http.ResponseWriter, r *http.Request) {
+	expected := a.internalToken
+	if expected == "" || r.Header.Get("X-Internal-Token") != expected {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	orgID, err := a.svc.SupplierOrgForUser(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"organization_id": orgID.String()})
 }
 
 func (a *API) branchPublication(w http.ResponseWriter, r *http.Request) {

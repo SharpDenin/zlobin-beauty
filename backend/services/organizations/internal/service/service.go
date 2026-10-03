@@ -222,6 +222,40 @@ func (s *Service) HasActiveMembership(ctx context.Context, orgID, userID uuid.UU
 	return ok, nil
 }
 
+// SupplierOrgForUser resolves the supplier organization for a contact user (owner or active rep).
+func (s *Service) SupplierOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	memberships, err := s.store.ListMembershipsByUser(ctx, userID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	for _, m := range memberships {
+		if m.Role != "owner" && m.Role != "admin" {
+			continue
+		}
+		org, err := s.store.GetOrg(ctx, m.OrganizationID)
+		if err != nil {
+			return uuid.Nil, apperr.Internal(err)
+		}
+		if org != nil && org.Type == "supplier" {
+			return org.ID, nil
+		}
+	}
+	rep, err := s.store.GetRepresentativeByUserAny(ctx, userID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	if rep != nil && rep.Active {
+		org, err := s.store.GetOrg(ctx, rep.OrganizationID)
+		if err != nil {
+			return uuid.Nil, apperr.Internal(err)
+		}
+		if org != nil && org.Type == "supplier" {
+			return org.ID, nil
+		}
+	}
+	return uuid.Nil, apperr.NotFound("supplier organization not found")
+}
+
 func (s *Service) requireOwner(ctx context.Context, orgID, actorID uuid.UUID) error {
 	ok, err := s.store.HasMembership(ctx, orgID, actorID, "owner")
 	if err != nil {

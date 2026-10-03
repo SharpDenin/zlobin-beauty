@@ -1,3 +1,5 @@
+> Исторические сценарии (август 2026). Актуальный показ: [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md). Статус: [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md).
+
 # MANUAL_TEST.md — приёмочные сценарии Salon-X
 
 Дата: **2026-08-15**

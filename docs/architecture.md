@@ -1,112 +1,116 @@
 # Architecture
 
-## Repository discovery
-
-The repository at discovery was effectively empty:
-
-| Path | State |
-|------|--------|
-| `.gitignore` | Go-oriented ignore rules |
-| `backend/` | Only IntelliJ `.idea` metadata |
-| `frontend/` | Empty directory |
-| Application code, migrations, compose, docs | Absent |
-
-There was a single commit (`Initial commit`) with no production application. Target structure below is adopted without rewriting existing product code.
-
-## Goals
-
-Production multi-tenant beauty platform for clients, masters, salon owners/admins, suppliers, sales representatives, and system administrators. All user actions go through real HTTP APIs, PostgreSQL, and migrations. No stubs, seed business data, or fake server responses.
-
-## Target layout
+Фактическая схема текущей версии. Нет отдельного reporting-сервиса и нет BFF с бизнес-правилами.
 
 ```text
-/
-  frontend/                 # React + TypeScript + Vite
-  backend/
-    services/
-      identity/             # accounts, sessions, roles
-      organizations/        # orgs, salons, membership
-      marketplace/          # masters, services, search
-      booking/              # schedule, appointments
-      clients/              # client cards, visits, formulas
-      commerce/             # inventory, supplier/client orders
-      communications/       # reviews, notifications
-      reporting/            # read models, admin metrics
-    gateway/                # public BFF / API edge
-    shared/                 # infra-only helpers (no domain logic)
-    contracts/              # OpenAPI / event schemas
-  deploy/
-  docs/
-    adr/
-  scripts/
-  Makefile
-  docker-compose.yml
+Браузер (React SPA / PWA)
+        │  HTTPS или same-origin /v1
+        ▼
+   Gateway :8090
+        │  JWT на публичных маршрутах
+        │  /v1/internal/* снаружи не проксируется
+        ▼
+   Сервисы (каждый со своей PostgreSQL)
+        ├── identity
+        ├── organizations
+        ├── marketplace
+        ├── booking
+        ├── clients
+        ├── commerce
+        ├── communications
+        └── media ──► MinIO (объектное хранилище)
+
+   NATS — инфраструктура compose, не пользовательский канал чата
 ```
 
-## Service boundaries
-
-| Service | Owns | Notes |
-|---------|------|-------|
-| `identity` | users, credentials, sessions, system roles, security audit | Short-lived access JWT + rotating refresh tokens (hashed) |
-| `organizations` | organizations, branches, memberships, invitations, booking policy | Tenant boundary; other services receive org context, never join org tables |
-| `marketplace` | master profiles, services, categories, portfolio, salon cards, search index | Search filters: city, price, rating, availability (via booking), distance when maps configured |
-| `booking` | working hours, holds, appointments, status machine | Overlap prevented by transaction + exclusion constraint |
-| `clients` | client profiles per org, visit history, notes, formulas, media refs, consents | Access gated by org/master/appointment relationship |
-| `commerce` | products, stock, supplier orders, client shop orders, debts | Payment: cash on delivery / invoice / manual confirm until real PSP |
-| `communications` | reviews, notification templates, outbox delivery | External SMS/email only when provider configured |
-| `reporting` | projected read models from events | No heavy queries against operational DBs |
-| `gateway` | authn of bearer tokens, rate limits, routing, request IDs | No business rules |
-
-Shared Go packages may contain logging, config, DB connection helpers, HTTP middleware, auth token parse/verify, tracing, testcontainers helpers. Business rules stay inside owning services.
-
-## Data storage
-
-- PostgreSQL: one server in local/dev compose; separate databases (and credentials) per service.
-- Migrations live under each service (`migrations/`) and run before that service starts.
-- IDs: UUIDv7 (time-sortable, globally unique).
-- Timestamps: UTC (`timestamptz`).
-- Money: integer minor units (`amount_minor`, `currency` ISO 4217).
-- Soft retention for significant records where domain requires history.
-- No business seed data in migrations. System admin bootstrap is a one-shot CLI reading env vars.
-
-## Inter-service communication
-
-- Synchronous: HTTP JSON between gateway and services (gRPC may be added later for hot paths).
-- Asynchronous: NATS JetStream with transactional outbox, idempotent consumers, retries, DLQ, event versioning, `event_id` + `correlation_id`.
-- No distributed transactions across services.
-
-## Files
-
-Object storage compatible with S3 (MinIO locally). Metadata in the owning service DB: file id, owner, org, type, size, checksum, processing state, ACL, created_at. Private by default; temporary signed URLs; random object keys; MIME/size validation; do not trust file extensions.
+Gateway проверяет JWT, режет внутренние пути, выставляет CORS и security headers, маршрутизирует JSON. Доменные правила живут в сервисах.
 
 ## Frontend
 
-- React, TypeScript, Vite, React Router, TanStack Query, React Hook Form, Zod.
-- Feature-sliced layout: `app/`, `pages/`, `widgets/`, `features/`, `entities/`, `shared/`.
-- UI never calls network directly; API clients live in domain modules.
-- Incomplete features are not linked in primary navigation.
-- Design tokens (CSS variables): light background, purple accent, white cards, soft borders, responsive shell (bottom nav mobile / side nav desktop).
+- React 19 + Vite + React Router 7 + TanStack Query.
+- Сессия: `localStorage` ключ `zb.auth` (access + refresh + user).
+- Возможности UI: `cabinet.can()` по роли и формату занятости. Это навигация, не авторизация.
+- API-клиент: `frontend/src/shared/api/client.ts`. В production `VITE_API_BASE_URL` пустой — запросы идут на `/v1` того же origin (nginx проксирует gateway).
+- Ошибки пользователю: `app-error.ts` (русские формулировки, без stack / UUID / сырого SQL).
 
-## Security baseline
+## Gateway
 
-- Server-side validation; RBAC + org isolation; mass-assignment protection.
-- Rate limits on auth and sensitive routes; CORS allowlist; secure headers; body/file size limits.
-- Internal service ports not published externally in production compose profiles.
-- No PII or tokens in logs; structured logging + OpenTelemetry + Prometheus metrics.
+- Публичная точка `GET/POST /v1/*`.
+- `GET /v1/internal/*` с браузера отвечает **404** (маршрут не смонтирован наружу).
+- Сервисы вызывают друг друга с заголовком `X-Internal-Token`.
+- CORS: список из `CORS_ORIGINS`. При `APP_ENV=production` значение `*` запрещено и роняет процесс.
 
-## Local runtime
+## Authentication
 
-Docker Compose provides PostgreSQL, NATS, MinIO, and all backend services. Frontend uses Vite in development against the gateway. Production images are multi-stage builds running as non-root.
+- Access JWT + refresh (refresh хранится hashed в identity).
+- `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me`.
+- Просроченный или отозванный токен: frontend гасит сессию и один раз показывает «Сессия завершилась. Войдите снова.» Обычный заход на `/login` этого текста не показывает.
 
-## Stage 1 scope (first vertical slice)
+## Authorization
 
-Working path through real PostgreSQL:
+Каждый защищённый ресурс проверяется на стороне сервиса:
 
-1. Infra + migrations + bootstrap system admin  
-2. Register / login  
-3. Create organization + salon branch  
-4. Master profile + services + schedule  
-5. Client search → free slot → create appointment  
-6. Master confirms; both sides see appointment  
+- владелец объекта **или**
+- членство в организации с нужной ролью **или**
+- участник записи / диалога.
 
-Later stages follow `docs/implementation-plan.md`.
+Чужой UUID, чужой салон, клиент на ресурсах владельца, поставщик на календаре салона — **403/404**. Скрытие пункта меню не считается защитой.
+
+Подробности: [ROLES_AND_PERMISSIONS.md](ROLES_AND_PERMISSIONS.md), [SECURITY.md](SECURITY.md).
+
+## Сервисы
+
+| Сервис | Отвечает за |
+| --- | --- |
+| identity | Пользователи, роли, сессии, подписка |
+| organizations | Салоны и поставщики как организации, филиалы, membership, QR-invite, команда, задачи представителей |
+| marketplace | Профили мастеров, услуги, поиск, портфолио, типы профессий, база знаний, окна `fixed_window` |
+| booking | Рабочие часы, слоты, записи, календарь организации, planner blocks, схема визита, аренда кресел |
+| clients | Карточки клиентов в контуре салона |
+| commerce | Товары, склад, корзина, заказы мастера у поставщика, магазин клиента, самовывоз |
+| communications | Контакты, мессенджер, уведомления, отзывы |
+| media | Загрузка, метаданные, подпись URL, выдача байтов |
+
+## Media
+
+Один pipeline: `POST /v1/media`. Тип определяется по magic bytes, не по расширению. Ключ в бакете случайный. Удаляет только владелец файла. Публичные purpose (профиль, салон, портфолио, товар, статья, услуга, видео) читаются намеренно — это витрина, не IDOR. Сообщения и фото «до/после» — по доступу к диалогу или записи.
+
+[MEDIA.md](MEDIA.md)
+
+## Booking и calendar
+
+Booking владеет записями и пересечениями (exclusion constraint). Marketplace отдаёт слоты и фиксированные сеансы. Календарь салона (`/v1/calendar/appointments`) доступен owner/admin этой организации. Личный календарь мастера — свои записи и свои блоки планировщика.
+
+[BOOKING.md](BOOKING.md), [CALENDAR.md](CALENDAR.md)
+
+## Marketplace и knowledge
+
+Поиск мастеров, публичный профиль, портфолио. База знаний: автор или owner/admin организации-поставщика пишет; черновики не светятся посторонним (для них — 404).
+
+## Messaging
+
+HTTP communications: беседы, сообщения, вложения через media purpose `message`. Доступ — участники беседы.
+
+## Database
+
+Один Postgres в compose, **отдельные базы и учётки** на сервис: `identity`, `organizations`, `marketplace`, `booking`, `clients`, `commerce`, `communications`, `media`. Миграции: `backend/services/*/migrations`, накатываются при старте сервиса. Идентификаторы — UUIDv7. Деньги — минорные единицы.
+
+## Storage
+
+MinIO. Метаданные в БД media. Объектный ключ: `purpose/ownerId/id.ext`.
+
+## PWA
+
+VitePWA, `generateSW`. HTML — NetworkFirst, `/v1` и `/api` — NetworkOnly, `cleanupOutdatedCaches`. В dev service worker выключен, пока не задан `VITE_PWA_DEV=true`.
+
+[PWA.md](PWA.md)
+
+## Граница frontend / backend
+
+| Слой | Можно | Нельзя считать защитой |
+| --- | --- | --- |
+| Frontend | спрятать кнопку, редирект, `cabinet.can()` | доступ к чужим данным |
+| Backend | membership, owner, роль JWT | надежда, что клиент «не вызовет API» |
+| Gateway | отрезать internal, CORS, JWT parse | решать, чей это заказ |
+
+Исторический черновик «пустого репозитория» заменён этим файлом. ADR в `docs/adr/` описывают ранние решения (JWT, overlap, платежи без PSP) и остаются справкой, не картой текущего UI.

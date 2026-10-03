@@ -1,3 +1,5 @@
+> Исторический аудит Stage 1 (август 2026). Текущий статус: [RELEASE_REPORT.md](RELEASE_REPORT.md), [SECURITY.md](SECURITY.md).
+
 # Quality audit (Stage 1)
 
 Date: 2026-08-01. Based on code review, existing tests, and prior E2E against real PostgreSQL.

@@ -2,7 +2,7 @@
 
 This is the visual source of truth for Salon-X. Dark MIDNIGHT / SIGNAL is the default. A light theme uses the same components and tokens, with the values in `html[data-theme="light"]`.
 
-Use this document, plus CSS/JS tokens, for every UI change: new screens, new components, bugfixes, dashboards, tables, forms, and role-specific cabinets.
+Use this document, plus CSS/JS tokens, for every UI change: new screens, new components, bugfixes, dashboards, tables, forms, and role-specific surfaces.
 
 **Do not invent a second visual language.** If a new entity appears (product, service, master, supplier, order, appointment, client), express it with the card, overlay, image, motion, and form patterns defined here.
 
@@ -19,6 +19,25 @@ It must not feel like: a generic CRM, a cheap UI-kit template, typical purple Sa
 **MIDNIGHT / SIGNAL** is a dark-first interface with one expressive violet accent, now with **visual depth**: layered canvas light, reserved gradients, imagery, and meaningful motion. The light theme keeps that accent and the same spacing, type, and components on a cool paper canvas (`#F3F5FA` / `#FFFFFF`) with deeper ink (`#1C2130`) and a slightly deeper violet (`#545BE0`) so text and buttons stay readable. User choice is stored in `localStorage` (`zb.theme`) and wins over `prefers-color-scheme`.
 
 The product should communicate with **images, hierarchy, and space** first. Long instructional paragraphs are a last resort.
+
+Do not say «Кабинет» in the UI. Role labels come from `cabinetLabel` (владелец салона, частный мастер, поставщик, …).
+
+## Owner start
+
+Только домашняя страница владельца салона (`OwnerStartPage`, `owner-home.css`):
+
+- Фон — **глубокий teal / лесной градиент**, не фотография и не общий `--gradient-canvas` на всю композицию героя.
+- Композиция как у согласованного референса: крупное имя салона, дата, KPI, день операций, понятные CTA («Все записи», «Открыть расписание»).
+- Не переносить этот градиент на остальные экраны. Остальной продукт — MIDNIGHT / SIGNAL.
+
+## Product UX (обязательные правила)
+
+- Один очевидный primary action на вид.
+- Сложную сущность не вываливать целиком: карточка → деталь / drawer / modal.
+- Обязательные поля помечать `*`.
+- Тексты по-русски, без UUID, без внутренних кодов, без «undefined».
+- Mobile-first: 44px зоны нажатия, не сужать десктоп в столбик.
+- Меньше кликов: если шаг можно убрать без потери ясности — убрать.
 
 ## Tokens
 

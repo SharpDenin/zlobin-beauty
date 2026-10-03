@@ -1,3 +1,5 @@
+> Историческая приёмка. Актуальный статус: [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md).
+
 # FINAL_ACCEPTANCE.md — Salon-X
 
 ## Environment

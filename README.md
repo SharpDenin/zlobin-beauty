@@ -1,42 +1,80 @@
-# Salon-X
+# Salon X
 
-Адаптивное веб-приложение beauty-платформы (MVP): клиенты ищут мастеров (по умолчанию Красноярск, опционально другие города) и записываются в режиме **flexible** или **fixed_window**; мастера ведут услуги, расписание, клиентов и B2B-заказы косметики с **самовывозом в филиал** и **оплатой (mock / mark-paid)**; поставщики управляют каталогом, доставкой и **rich** базой знаний.
+Приложение для салонов красоты, частных мастеров, клиентов и поставщиков косметики. Записи, расписание, портфолио, переписка и закупки — в одном месте, без кабинета как отдельного мира.
 
-## Стек
+## Что это
+
+Salon X помогает владельцу видеть день салона, мастеру — вести расписание и профиль, клиенту — записаться, поставщику — публиковать знания и принимать заказы.
+
+Интерфейс тёмный (MIDNIGHT / SIGNAL). Стартовая страница владельца — отдельный глубокий teal-градиент, без фотографии на фоне.
+
+## Основные возможности
+
+- **Старт владельца** — имя салона, KPI дня, записи на выбранную дату, быстрые действия
+- **Обзор** — настраиваемые виджеты (просмотр и режим правки)
+- **Календарь** — день / 3 дня / неделя / месяц / список, рабочие часы, задачи и записи
+- **Записи** — статусы, деталь визита, перенос, чат с клиентом
+- **Профили мастеров** — публичная страница, услуги, портфолио, запись
+- **Портфолио** — сетка работ с категориями
+- **Контакты** — адресная книга и переход в переписку
+- **Сообщения** — чаты с вложениями
+- **Типы мастера** — профессии (колорист, парикмахер и др.), не путать с форматом занятости
+- **Салон и команда** — настройки, сотрудники, график
+- **QR-приглашение** — мастер сканирует код, регистрируется и сразу попадает в салон
+- **Поставщик** — каталог, заказы, склад, команда
+- **Косметика** — закупка мастером у поставщика, самовывоз в филиал
+- **База знаний** — статьи поставщика для мастеров
+- **PWA** — установка на домашний экран, кэш оболочки, API всегда из сети
+- **Адаптивный интерфейс** — боковое меню на широком экране, нижняя навигация на телефоне
+
+## Роли
+
+Роли не выдуманы: они совпадают с identity и членством в организации.
+
+| Кто | Что это |
+| --- | --- |
+| Владелец салона | Мастер с форматом занятости «владелец». Видит старт салона, команду, QR, аналитику |
+| Администратор салона | Операции салона, команда, выдача заказов. Не владеет салоном |
+| Мастер салона | Сотрудник. Своё расписание, записи, портфолио |
+| Частный мастер | Работает без обязательного салона. Профиль, календарь, запись клиентов |
+| Арендатор кресла / выездной | Работа в чужом салоне или на выезде. Своё кресло арендовать в *этом* салоне нельзя |
+| Клиент | Поиск мастера, запись, свои визиты, магазин, сообщения |
+| Поставщик | Каталог, склад, база знаний, заказы |
+| Представитель поставщика | Полевые задачи и склад поставщика |
+| Администратор платформы | Справочники и модерация (не публичная регистрация) |
+
+Публичная регистрация: клиент, мастер, поставщик.
+
+## Основные сценарии
+
+1. Владелец входит → видит день салона → открывает расписание или запись → пишет клиенту → создаёт QR для нового мастера.
+2. Мастер входит → правит профиль и типы → ведёт календарь и портфолио → принимает записи.
+3. Клиент ищет мастера в своём городе → выбирает услугу, день и время → подтверждает запись.
+4. Поставщик публикует статью и товары → мастер оформляет заказ с филиалом получения.
+
+Подробно: [docs/USER_FLOWS.md](docs/USER_FLOWS.md), показ заказчику: [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md).
+
+## Tech stack
+
+Фактический стек репозитория:
 
 | Слой | Технологии |
-|------|------------|
-| Frontend | React 19, TypeScript, Vite, React Router, TanStack Query |
-| Backend | Go 1.26, stdlib `net/http`, pgx |
-| DB | PostgreSQL 16 (отдельная БД на сервис) |
-| Infra | Docker Compose, NATS (заготовка), MinIO (медиа) |
+| --- | --- |
+| Frontend | React 19, TypeScript, Vite 6, React Router 7, TanStack Query 5, FullCalendar 6, TipTap |
+| Backend | Go 1.26, стандартный `net/http`, pgx |
+| API edge | Gateway на `:8090`, без бизнес-логики |
+| Данные | PostgreSQL 16, отдельная БД на сервис |
+| Файлы | MinIO (S3-совместимое хранилище) |
+| Сообщения | NATS (инфраструктура; пользовательский мессенджер идёт через HTTP communications) |
+| Сборка | Docker Compose, nginx для production SPA |
 
-## Архитектура (верхний уровень)
+Микросервисы: `identity`, `organizations`, `marketplace`, `booking`, `clients`, `commerce`, `communications`, `media`.
 
-```text
-browser → frontend (:5173)
-       → gateway (:8090)
-            → identity / organizations / marketplace / booking
-            → clients / commerce / communications / media
-            → postgres (per-service DBs)
-```
+## Local development
 
-Микросервисы владеют своими данными; gateway — HTTP edge без бизнес-логики.
-
-## Быстрый старт (Docker)
-
-### Требования
-
-- Docker Desktop / Docker Engine + Docker Compose
-- Свободные порты: **5173** (UI), **8090** (API), **5433** (Postgres), 9000/9001 (MinIO)
-
-> На этой машине порт `8080` часто занят другими контейнерами, поэтому API публикуется как **8090→8080**.
-
-### Команды
+Нужны Docker (порты **5173**, **8090**, **5433**, MinIO 9000/9001) и, для разработки без контейнера frontend, Node.js 20+.
 
 ```bash
-git clone <repo-url>
-cd zlobin-beauty
 cp .env.example .env
 docker compose up -d --build
 docker compose --profile seed run --rm seed
@@ -45,139 +83,120 @@ docker compose --profile seed run --rm seed
 PowerShell:
 
 ```powershell
-cd zlobin-beauty
 Copy-Item .env.example .env
 docker compose up -d --build
 .\scripts\seed.ps1
 ```
 
-Откройте:
+Открыть:
 
-- Frontend: http://localhost:5173
-- API gateway: http://localhost:8090
-- Health: http://localhost:8090/healthz
+- UI: http://127.0.0.1:5173
+- API: http://127.0.0.1:8090
+- Health: http://127.0.0.1:8090/healthz
 
-Swagger / OpenAPI UI в текущем MVP **нет**.
+Frontend в dev проксирует `/v1` на gateway. `VITE_API_BASE_URL` для локального Vite можно оставить пустым.
 
-### Переменные окружения (`.env`)
-
-| Переменная | Назначение | Пример |
-|------------|------------|--------|
-| `JWT_SECRET` | Подпись access JWT | `dev-change-me-in-production-32chars` |
-| `INTERNAL_TOKEN` | S2S вызовы между сервисами | `dev-internal-token` |
-| `VITE_API_BASE_URL` | URL API для браузера (bake в frontend image) | `http://localhost:8090` |
-| `SEED_PASSWORD` | Пароль demo-аккаунтов | `Password123!` |
-| `ALLOW_SEED` | Разрешить seed при `APP_ENV=production` | `false` (demo staging only) |
-| `BOOTSTRAP_ADMIN_*` | Опциональный system admin (`--profile bootstrap`) | см. `.env.example` |
-
-### PostgreSQL (из compose)
-
-| Параметр | Значение |
-|----------|----------|
-| Host | `localhost` (с хоста) / `postgres` (из сети Docker) |
-| Port | `5433` → `5432` |
-| Superuser | `postgres` / `postgres` |
-| Service DBs | `identity`, `organizations`, `marketplace`, `booking`, `clients`, `commerce`, `communications`, `media` (user и пароль = имя БД) |
-
-Миграции применяются **при старте каждого сервиса** из `backend/services/*/migrations`.
-
-### Seed
-
-Seed ходит в **gateway `:8090`** и создаёт multi-city демо (Красноярск / Новосибирск / Москва), flexible-услуги, fixed_window МК у Анны, товары, заказы и статьи KB.
+Без полного стека приложений:
 
 ```bash
-docker compose --profile seed run --rm seed
-# или
-./scripts/seed.ps1
-# локально Go:
-cd backend && GATEWAY_URL=http://localhost:8090 go run ./cmd/seed
+docker compose up -d postgres nats minio
+# поднять Go-сервисы (scripts/dev-local.ps1) → gateway :8090
+cd frontend
+npm install
+npm run dev
 ```
 
-Каталог косметики для мастера — карточки `GET /v1/suppliers` (UUID вводить не нужно). Checkout: филиал получения (`pickup`) + способ оплаты (онлайн-эквайринг не подключён).
-
-### Логи / перезапуск / сброс
+Сброс демо-данных (удаляет тома Postgres и MinIO):
 
 ```bash
-docker compose logs -f gateway
-docker compose restart
-docker compose down
-# полный сброс БД и томов:
 docker compose down -v
 docker compose up -d --build
 docker compose --profile seed run --rm seed
 ```
 
-## Demo аккаунты
+## Environment
 
-Пароль для всех: **`Password123!`**
+Шаблоны: [`.env.example`](.env.example) (локально), [`.env.production.example`](.env.production.example) (сервер). Реальные секреты не коммитить.
 
-| Role / тип | Login |
-|------------|-------|
-| Client | `client1@demo.local`, `client2@demo.local` |
-| Master (owner) | `master1@demo.local` |
-| Master (renter) | `master2@demo.local` |
-| Master (employee) | `master3@demo.local` |
-| Master (independent) | `master4@demo.local` |
-| Supplier | `supplier1@demo.local`, `supplier2@demo.local` |
+| Переменная | Назначение |
+| --- | --- |
+| `JWT_SECRET` | Подпись access JWT. В production ≥ 32 символа, не dev-значение |
+| `INTERNAL_TOKEN` | Вызовы сервис↔сервис. Не светить во frontend |
+| `CORS_ORIGINS` | Явный список origin. В production нельзя `*` |
+| `VITE_API_BASE_URL` | URL API, вшивается в сборку SPA. В production Docker — пустая строка (same-origin `/v1`) |
+| `PUBLIC_APP_URL` | Публичный origin приложения (ссылки QR) |
+| `APP_ENV` | `production` включает жёсткую проверку секретов |
+| `POSTGRES_PASSWORD` | Пароль суперпользователя Postgres |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Доступ к объектному хранилищу |
+| `SEED_PASSWORD` | Пароль demo-аккаунтов. Только стенд, не бой |
+| `ALLOW_SEED` | Seed при `APP_ENV=production`. На реальном бою — `false` |
+| `ALLOW_DEV_BILLING` | В production должно быть `false` |
 
-Сценарий показа заказчику: см. **`MANUAL_DEMO.md`**.  
-Подробный отчёт итераций: **`FINAL_REPORT.md`**.
+Значения по умолчанию из `.env.example` — только для локальной машины.
 
-## MVP роли и разделы UI
-
-- **Client:** главная, поиск (город + «другие города»), записи (flexible / fixed occurrence), профиль  
-- **Master:** записи, календарь, услуги/occurrences, клиенты, косметика (pickup + payment), база знаний, кабинет, профиль  
-- **Supplier:** товары/заказы (доставка + mark-paid), база знаний (rich editor), профиль  
-
-Скрыты из навигации (код/API сохранены): магазин клиента, склад, отчёты салона, доставки rep, admin-справочники.
-
-### Ключевые понятия
-
-| Понятие | Смысл в MVP |
-|---------|-------------|
-| `flexible` | Свободные слоты по working hours − busy |
-| `fixed_window` | Запись на заранее объявленный `service_occurrence` |
-| Pickup branch | Филиал салона с `pickup_enabled` как точка получения B2B-заказа |
-| Payment mock | Выбор метода + ручной `mark-paid` у поставщика (без PSP) |
-
-## Локальная разработка (без полного Docker app)
+## Tests
 
 ```bash
-docker compose up -d postgres nats minio
-# поднять Go-сервисы (см. scripts/dev-local.ps1) → gateway :8090
 cd frontend
-# VITE_API_BASE_URL=http://localhost:8090
-npm install
-npm run dev
-```
+npx tsc -b
+npx vitest run
+npx vite build
+npm audit --omit=dev
 
-## Основные команды
-
-```bash
-# Backend
-cd backend
+cd ../backend
 go test ./...
-go vet ./...
-go build ./...
-
-# Frontend
-cd frontend
-npm test
-npm run build
-
-# Docker
-docker compose config
-docker compose up -d --build
+# уязвимости стандартной библиотеки / модулей:
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
 
-## Документация
+Релиз-критичные e2e (нужен живой API и seed):
 
-- `FINAL_ACCEPTANCE.md` — final deployment acceptance record
-- `FINAL_REPORT.md` — phases, architecture, limitations
-- `README_DEPLOY.md` — server deployment (copy-paste commands)
-- `SERVER_DEPLOY_CHECKLIST.md` — operational checklist for demo day
-- `MANUAL_DEMO.md` — 15–20 min customer demo script
-- `REQUIREMENTS_ACCEPTANCE.md` — requirements 1–19
-- `POST_DEMO_BACKLOG.md` — post-demo ideas (not implemented)
-- `MANUAL_TEST.md` — detailed acceptance scenarios
-- `docs/` — historical architecture and ADRs
+```bash
+cd frontend
+npx playwright test e2e/security.spec.ts e2e/hardening.spec.ts e2e/demo-mvp.spec.ts e2e/pwa.spec.ts e2e/visit-plan.spec.ts --project=phone-390 --project=desktop-1920
+```
+
+Полный исторический `salon-x` suite не является критерием релиза: часть сценариев устарела относительно текущего UX.
+
+Последние зафиксированные результаты: [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md).
+
+## Production
+
+Кратко:
+
+1. Скопировать `.env.production.example` → `.env` и заменить все `REPLACE_ME`.
+2. `APP_ENV=production`, явный `CORS_ORIGINS`, HTTPS, уникальные секреты.
+3. Сборка и запуск через Docker Compose (frontend nginx отдаёт SPA и проксирует `/v1`).
+4. Миграции применяются при старте сервисов.
+5. Seed на боевом контуре не включать.
+
+Пошагово: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Чеклист: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
+
+На хостах сборки и рантайма — **Go 1.26.6+**.
+
+## Security
+
+Скрытие кнопки во frontend не является защитой. Права проверяет backend.
+
+Документ: [docs/SECURITY.md](docs/SECURITY.md).
+
+## Documentation
+
+| Документ | Содержание |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Слои, сервисы, границы безопасности |
+| [docs/ROLES_AND_PERMISSIONS.md](docs/ROLES_AND_PERMISSIONS.md) | Роли и возможности |
+| [docs/USER_FLOWS.md](docs/USER_FLOWS.md) | Пошаговые сценарии |
+| [docs/CALENDAR.md](docs/CALENDAR.md) | Календарь и жесты |
+| [docs/BOOKING.md](docs/BOOKING.md) | Запись и статусы |
+| [docs/MEDIA.md](docs/MEDIA.md) | Загрузка и доступ к файлам |
+| [docs/SECURITY.md](docs/SECURITY.md) | Auth, IDOR, CORS, секреты |
+| [docs/PWA.md](docs/PWA.md) | Manifest и service worker |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Выкат на сервер |
+| [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md) | Показ заказчику / фокус-группа |
+| [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) | Снимки актуального UI |
+| [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) | MIDNIGHT / SIGNAL |
+| [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | Чеклист выката |
+| [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md) | Фактический статус релиза |
+
+Исторические ADR — в `docs/adr/`. Старые отчёты в корне репозитория описывают прошлые итерации и не заменяют документы выше.

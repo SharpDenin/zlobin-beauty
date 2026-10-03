@@ -1,3 +1,5 @@
+> Исторический план срезов. Текущая архитектура: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 # Implementation plan
 
 ## Principles

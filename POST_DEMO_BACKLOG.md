@@ -1,3 +1,5 @@
+> Исторический бэклог после августовской приёмки. Не заменяет [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md).
+
 # POST_DEMO_BACKLOG.md
 
 Items discovered during final acceptance / deployment pass. **Do not implement before customer demo.**

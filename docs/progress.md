@@ -1,3 +1,5 @@
+> Исторический журнал разработки. Актуальная картина: [ARCHITECTURE.md](ARCHITECTURE.md), [RELEASE_REPORT.md](RELEASE_REPORT.md).
+
 # Progress
 
 ## Discovery (2026-08-01)

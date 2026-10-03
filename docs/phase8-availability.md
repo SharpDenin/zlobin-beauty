@@ -1,3 +1,5 @@
+> Историческая заметка фазы. Актуальное поведение записи: [BOOKING.md](BOOKING.md).
+
 # Phase 8 — Smart service provisioning
 
 Canonical availability analysis for a service against the **caller’s master warehouse**. Phases 5–7 stay the source of truth; this phase does not add a second inventory, order, formula, or calendar system.

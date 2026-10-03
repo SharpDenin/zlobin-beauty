@@ -2,8 +2,14 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
+import { assertProductionApiBase } from './src/shared/lib/production-api-base'
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  if (command === 'build') {
+    assertProductionApiBase(process.env.VITE_API_BASE_URL, mode)
+  }
+
+  return {
   plugins: [
     react(),
     ...(process.env.VITEST
@@ -99,4 +105,5 @@ export default defineConfig({
     setupFiles: ['./src/shared/lib/test-setup.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
   },
+}
 })

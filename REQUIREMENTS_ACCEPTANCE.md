@@ -1,3 +1,5 @@
+> Историческая приёмка Phase 6 (август 2026). Актуальный статус: [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md).
+
 # REQUIREMENTS_ACCEPTANCE.md — Salon-X Phase 6
 
 Дата: **2026-08-18**.  

@@ -1,3 +1,5 @@
+> Актуальная инструкция: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Ниже — исторический конспект.
+
 # README_DEPLOY.md — Salon-X на сервере
 
 Развёртывание через Docker Compose. SPA (nginx) + API gateway + микросервисы + PostgreSQL + MinIO + NATS.

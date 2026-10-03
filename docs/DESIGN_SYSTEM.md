@@ -26,9 +26,9 @@ Do not say «Кабинет» in the UI. Role labels come from `cabinetLabel` (�
 
 Только домашняя страница владельца салона (`OwnerStartPage`, `owner-home.css`):
 
-- Фон — **глубокий teal / лесной градиент**, не фотография и не общий `--gradient-canvas` на всю композицию героя.
-- Композиция как у согласованного референса: крупное имя салона, дата, KPI, день операций, понятные CTA («Все записи», «Открыть расписание»).
-- Не переносить этот градиент на остальные экраны. Остальной продукт — MIDNIGHT / SIGNAL.
+- Фон — **атмосферное лесное фото** (`/owner-atmosphere*.jpg`) + затемнение; поверх — glass panel (translucent + blur). Не общий `--gradient-canvas`.
+- Композиция как у референса B: левый strip фона, справа glass UI; крупный hero, KPI в одну полосу, день салона, appointment cards, mint CTA, management tiles 2×2.
+- Не переносить photo/glass атмосферу на остальные экраны. Остальной продукт — MIDNIGHT / SIGNAL.
 
 ## Product UX (обязательные правила)
 

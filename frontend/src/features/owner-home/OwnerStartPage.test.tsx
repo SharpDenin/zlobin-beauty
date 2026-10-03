@@ -97,7 +97,7 @@ describe('OwnerStartPage', () => {
     renderPage()
     expect(screen.getByTestId('owner-start-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Аура' })).toBeInTheDocument()
-    expect(screen.getByText('Владелец салона')).toBeInTheDocument()
+    expect(screen.getByText('Владелец')).toBeInTheDocument()
     expect(screen.getByText('Демо-данные')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('Мария К.')).toBeInTheDocument())
     expect(screen.getByText(/Стрижка · Анна/)).toBeInTheDocument()

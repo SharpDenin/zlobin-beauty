@@ -45,8 +45,7 @@
 .portfolio-tight-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px;
-  margin-inline: calc(var(--space-4) * -1);
+  gap: var(--space-2);
 }
 @media (max-width: 360px) {
   .portfolio-tight-grid {
@@ -60,7 +59,7 @@
   aspect-ratio: 3 / 4;
   border: 0;
   padding: 0;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--gradient-image-fallback);
   cursor: pointer;

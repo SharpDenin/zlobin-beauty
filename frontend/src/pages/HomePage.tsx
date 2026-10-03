@@ -57,15 +57,15 @@ function ClientHome() {
   ).sort((a, b) => a.items[0].starts_at.localeCompare(b.items[0].starts_at))[0]
 
   return (
-    <main className="page stack">
-      <section className="hero">
+    <main className="page stack client-home">
+      <section className="hero client-home-hero">
         <div className="stack">
           <BrandLogo size="md" />
-          <h1>{user?.display_name}</h1>
-          <p>Запись к мастеру за пару шагов.</p>
+          <h1 className="display">{user?.display_name || 'Салон'}</h1>
+          <p>Запись к мастеру за пару шагов — выберите специалиста, услугу и удобное время.</p>
           <div className="row">
             <Link className="btn btn-primary" to="/search">Найти мастера</Link>
-            <Link className="btn btn-secondary" to="/appointments">Записи</Link>
+            <Link className="btn btn-secondary" to="/appointments">Мои записи</Link>
           </div>
         </div>
       </section>
@@ -96,12 +96,12 @@ function ClientHome() {
       <section className="stack">
         <div className="row between">
           <h2>Мастера рядом</h2>
-          <Link className="btn-link" to="/search">Все</Link>
+          <Link className="btn-link" to="/search">Все ›</Link>
         </div>
         <div className="list">
           {masters.isLoading && <div className="skeleton skeleton-card" />}
           {masters.data?.items.slice(0, 4).map((m) => (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card media-first-card">
+            <Link key={m.id} to={`/masters/${m.id}`} className="list-item home-master-card media-first-card card-interactive">
               <ServiceCardMedia
                 mediaId={m.photo_media_id}
                 name={m.display_name}

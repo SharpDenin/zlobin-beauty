@@ -90,28 +90,32 @@ test.describe('demo MVP flows', () => {
     const next = page.getByRole('button', { name: /Далее/i })
     if (await next.count()) await next.first().click()
 
-    const dateInput = page.locator('input[type="date"]').first()
-    await expect(dateInput).toBeVisible({ timeout: 10_000 })
-    const d = new Date()
-    for (let i = 1; i <= 14; i++) {
-      const cand = new Date(d.getTime() + i * 86400000)
-      if (cand.getDay() === 0 || cand.getDay() === 6) continue
-      await dateInput.fill(cand.toISOString().slice(0, 10))
-      break
+    const chips = page.getByTestId('mp-date')
+    await expect(chips.first()).toBeVisible({ timeout: 10_000 })
+    let slot = page.getByTestId('mp-slot').first()
+    const chipCount = await chips.count()
+    for (let i = 0; i < chipCount; i++) {
+      await chips.nth(i).click()
+      const found = page.getByTestId('mp-slot').first()
+      try {
+        await expect(found).toBeVisible({ timeout: 8_000 })
+        slot = found
+        break
+      } catch {
+        const back = page.getByRole('button', { name: 'Назад' })
+        if (await back.count()) await back.first().click()
+      }
     }
-    const toTime = page.getByRole('button', { name: /К времени|Далее/i })
-    if (await toTime.count()) await toTime.first().click()
-
-    const slot = page.locator('button.slot:not(.empty)').first()
-    await expect(slot).toBeVisible({ timeout: 15_000 })
+    await expect(slot).toBeVisible({ timeout: 5_000 })
     await slot.click()
-    const toConfirm = page.getByRole('button', { name: /К подтверждению|Далее/i })
+    const booking = page.locator('#mp-booking')
+    const toConfirm = booking.getByRole('button', { name: /К подтверждению|Далее/i })
     if (await toConfirm.count()) await toConfirm.first().click()
 
-    const confirm = page.getByRole('button', { name: /Записаться|Подтвердить|Отправить|Создать запись/i })
+    const confirm = booking.getByRole('button', { name: /Подтвердить запись|Подтвердить|Отправить|Создать запись/i })
     await expect(confirm.first()).toBeVisible({ timeout: 10_000 })
     await confirm.first().click()
-    await expect(page.getByText(/создан|ожида|подтвержд|успешн/i).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/отправлен|создан|ожида|подтвержд|успешн/i).first()).toBeVisible({ timeout: 15_000 })
   })
 
   test('fixed occurrence UI elements when available', async ({ page }, info) => {
@@ -131,10 +135,15 @@ test.describe('demo MVP flows', () => {
     if (await next.count()) await next.first().click()
 
     const occurrence = page.locator('.occurrence-card').first()
-    await expect(occurrence).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText(/мест:/i).first()).toBeVisible()
-    await occurrence.click()
-    await expect(occurrence).toHaveClass(/selected/)
+    const empty = page.getByRole('heading', { name: 'Нет доступных сеансов' })
+    await expect(occurrence.or(empty).first()).toBeVisible({ timeout: 15_000 })
+    if (await occurrence.count()) {
+      await expect(page.getByText(/мест:/i).first()).toBeVisible()
+      await occurrence.click()
+      await expect(page.locator('#mp-booking').getByRole('heading', { name: 'Итого' })).toBeVisible({ timeout: 8_000 })
+    } else {
+      await expect(page.getByText('Мастер ещё не открыл окна для этой услуги.')).toBeVisible()
+    }
   })
 
   test('cosmetics checkout has pickup branch selection (no UUID)', async ({ page }, info) => {

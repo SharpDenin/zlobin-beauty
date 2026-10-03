@@ -1388,13 +1388,13 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
           <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить диапазон</button>
 
-          <div><strong>Цвета и категории</strong><p className="muted">Системный цвет записи фиксирован. Остальные сохраняются для вашего профиля как токены палитры.</p></div>
+          <div><strong>Цвета и категории</strong><p className="muted">Цвет записи нельзя менять. Для личных задач, перерывов и блокировок цвет сохраняется в вашем профиле.</p></div>
           <div className="calendar-color-grid stack">
             {palette.map((c) => (
               <div key={c.id} className={c.system ? 'is-disabled' : ''}>
                 <span>{c.label}</span>
                 {c.system ? (
-                  <span className="muted">системный</span>
+                  <span className="muted">нельзя менять</span>
                 ) : (
                   colorTokenPicker(normalizeCalendarColor(c.color, c.id), (token) => colorSave.mutate({ category: c.id, color: token }))
                 )}
@@ -1497,8 +1497,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           eventStartEditable={!readOnlyOverlay}
           eventResizableFromStart
           snapDuration="00:15:00"
-          longPressDelay={350}
-          eventLongPressDelay={350}
+          longPressDelay={500}
+          eventLongPressDelay={500}
           slotLabelFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
           eventAllow={(_span, movingEvent) => {
             if (!movingEvent) return true

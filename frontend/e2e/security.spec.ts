@@ -111,5 +111,90 @@ test.describe('object-level authorization', () => {
 
     const internal = await fetch(`${api}/v1/internal/appointments?organization_id=${orgID}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)
     expect(internal.status).toBe(404)
+
+    const portMedia = await fetch(`${api}/v1/me/master/portfolio`, { headers: { Authorization: `Bearer ${owner.access_token}` } })
+    const portBody = await portMedia.json() as { items?: Array<{ id: string; media_id?: string }> }
+    const mediaId = portBody.items?.find((it) => it.media_id)?.media_id
+    if (mediaId) {
+      const stolenMediaDel = await fetch(`${api}/v1/media/${mediaId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${stranger.access_token}` },
+      })
+      expect([403, 404]).toContain(stolenMediaDel.status)
+      const clientMediaDel = await fetch(`${api}/v1/media/${mediaId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${client.access_token}` },
+      })
+      expect([403, 404]).toContain(clientMediaDel.status)
+    }
+
+    const invites = await fetch(`${api}/v1/organizations/${orgID}/invites`, {
+      headers: { Authorization: `Bearer ${stranger.access_token}` },
+    })
+    expect(invites.status).toBe(403)
+    const clientInvites = await fetch(`${api}/v1/organizations/${orgID}/invites`, {
+      headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    expect(clientInvites.status).toBe(403)
+    const supplierInvites = await fetch(`${api}/v1/organizations/${orgID}/invites`, {
+      headers: { Authorization: `Bearer ${supplier.access_token}` },
+    })
+    expect(supplierInvites.status).toBe(403)
+
+    const kb = await fetch(`${api}/v1/knowledge?limit=5`, { headers: { Authorization: `Bearer ${owner.access_token}` } })
+    if (kb.ok) {
+      const articles = await kb.json() as { items?: Array<{ id: string }> }
+      const articleId = articles.items?.[0]?.id
+      if (articleId) {
+        const stolenKb = await fetch(`${api}/v1/knowledge/${articleId}`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'взлом', content: 'взлом' }),
+        })
+        expect([403, 404]).toContain(stolenKb.status)
+        const strangerKb = await fetch(`${api}/v1/knowledge/${articleId}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${stranger.access_token}` },
+        })
+        expect([403, 404, 405]).toContain(strangerKb.status)
+        const stealPublish = await fetch(`${api}/v1/knowledge/${articleId}/unpublish`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${client.access_token}` },
+        })
+        expect([403, 404]).toContain(stealPublish.status)
+      }
+    }
+
+    const orders = await fetch(`${api}/v1/commerce/supplier-orders`, {
+      headers: { Authorization: `Bearer ${owner.access_token}` },
+    })
+    if (orders.ok) {
+      const orderList = await orders.json() as { items?: Array<{ id: string }> }
+      const orderId = orderList.items?.[0]?.id
+      if (orderId) {
+        const stolenOrder = await fetch(`${api}/v1/commerce/supplier-orders/${orderId}`, {
+          headers: { Authorization: `Bearer ${client.access_token}` },
+        })
+        expect([403, 404]).toContain(stolenOrder.status)
+        const strangerOrder = await fetch(`${api}/v1/commerce/supplier-orders/${orderId}`, {
+          headers: { Authorization: `Bearer ${stranger.access_token}` },
+        })
+        expect([403, 404]).toContain(strangerOrder.status)
+      }
+    }
+
+    const shopOrders = await fetch(`${api}/v1/commerce/shop/orders`, {
+      headers: { Authorization: `Bearer ${owner.access_token}` },
+    })
+    if (shopOrders.ok) {
+      const shopList = await shopOrders.json() as { items?: Array<{ id: string }> }
+      const shopId = shopList.items?.[0]?.id
+      if (shopId) {
+        const stolenShop = await fetch(`${api}/v1/commerce/shop/orders/${shopId}`, {
+          headers: { Authorization: `Bearer ${client.access_token}` },
+        })
+        expect([403, 404]).toContain(stolenShop.status)
+      }
+    }
   })
 })

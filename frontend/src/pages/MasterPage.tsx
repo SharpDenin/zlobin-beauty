@@ -103,20 +103,30 @@ function bookingModeLabel(mode?: string) {
   return mode === 'fixed_window' ? 'Фиксированное окно' : 'Гибкая запись'
 }
 
+function nextOpenBookingDate(from = new Date()): string {
+  const d = new Date(from)
+  d.setHours(12, 0, 0, 0)
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
 function nearbyDates(centerISO: string, span = 7): string[] {
   const base = new Date(`${centerISO}T12:00:00`)
   const out: string[] = []
-  for (let i = -1; i < span - 1; i++) {
+  for (let i = -1; i < span + 6; i++) {
     const d = new Date(base)
     d.setDate(base.getDate() + i)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     if (d < today) continue
+    if (d.getDay() === 0 || d.getDay() === 6) continue
     out.push(d.toISOString().slice(0, 10))
+    if (out.length >= span) break
   }
   while (out.length < span) {
     const last = out[out.length - 1] ? new Date(`${out[out.length - 1]}T12:00:00`) : new Date()
     last.setDate(last.getDate() + 1)
+    if (last.getDay() === 0 || last.getDay() === 6) continue
     out.push(last.toISOString().slice(0, 10))
   }
   return out.slice(0, span)
@@ -139,7 +149,7 @@ export function MasterPage() {
   const toast = useToast()
   const [step, setStep] = useState(0)
   const [serviceId, setServiceId] = useState<string>('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => nextOpenBookingDate())
   const [slot, setSlot] = useState<string>('')
   const [occurrenceId, setOccurrenceId] = useState<string>('')
   const [message, setMessage] = useState<string | null>(null)
@@ -525,6 +535,7 @@ export function MasterPage() {
                     role="option"
                     aria-selected={date === d}
                     className={`mp-date-chip ${date === d ? 'is-active' : ''}`}
+                    data-testid="mp-date"
                     onClick={() => { setDate(d); setSlot(''); setStep(2) }}
                   >
                     <span>{weekday}</span>
@@ -578,6 +589,7 @@ export function MasterPage() {
                     key={s.starts_at}
                     type="button"
                     className={`slot ${slot === s.starts_at ? 'active' : ''}`}
+                    data-testid="mp-slot"
                     onClick={() => { setSlot(s.starts_at); setStep(3) }}
                   >
                     {label}

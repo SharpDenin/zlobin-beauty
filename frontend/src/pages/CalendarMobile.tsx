@@ -155,7 +155,7 @@ export function CalendarMobile({
       navigator.vibrate?.(10)
       onFire()
       longPressTimer.current = null
-    }, 350)
+    }, 500)
   }
 
   function suppressClickIfLongPress(e: { preventDefault: () => void; stopPropagation: () => void }) {
@@ -169,7 +169,7 @@ export function CalendarMobile({
   function onPressMove(e: ReactPointerEvent) {
     const origin = pressOrigin.current
     if (!origin || longPressTimer.current == null) return
-    if (Math.abs(e.clientX - origin.x) > 10 || Math.abs(e.clientY - origin.y) > 10) {
+    if (Math.abs(e.clientX - origin.x) > 16 || Math.abs(e.clientY - origin.y) > 16) {
       clearLongPress()
     }
   }

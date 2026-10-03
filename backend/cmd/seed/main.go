@@ -929,13 +929,23 @@ func seedFixedWindowWorkshop(c *http.Client, base string, user authUser, orgID, 
 
 	var existing struct {
 		Items []struct {
-			ID string `json:"id"`
+			ID        string `json:"id"`
+			StartsAt  string `json:"starts_at"`
+			Status    string `json:"status"`
+			Remaining int    `json:"remaining"`
 		} `json:"items"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/services/"+serviceID+"/occurrences", user.Token, nil, &existing)
-	if len(existing.Items) > 0 {
-		log.Printf("skip workshop occurrence — already %d for service=%s", len(existing.Items), serviceID)
-		return nil
+	nowUTC := time.Now().UTC()
+	for _, it := range existing.Items {
+		starts, err := time.Parse(time.RFC3339, it.StartsAt)
+		if err != nil {
+			continue
+		}
+		if it.Status == "scheduled" && it.Remaining > 0 && starts.After(nowUTC) {
+			log.Printf("skip workshop occurrence — future session %s already open", it.ID)
+			return nil
+		}
 	}
 
 	loc, err := time.LoadLocation("Asia/Krasnoyarsk")

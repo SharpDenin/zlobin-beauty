@@ -337,14 +337,43 @@ export function DashboardPage() {
           <h1>Сегодня</h1>
           <p className="muted">{roleTitle(cabinet.kind)}</p>
         </div>
-        {!editing ? (
-          <button className="btn btn-secondary" type="button" data-testid="dashboard-edit" onClick={beginEdit}>
-            Редактировать
-          </button>
-        ) : (
-          <span className="badge badge-default" data-testid="dashboard-edit-active">Режим редактирования</span>
-        )}
+        <div
+          className="segmented segmented--2 dashboard-mode-toggle"
+          role="group"
+          aria-label="Режим дашборда"
+          data-testid="dashboard-mode-toggle"
+        >
+          <label className={!editing ? 'is-active' : undefined}>
+            <input
+              type="radio"
+              name="dashboard-mode"
+              checked={!editing}
+              data-testid="dashboard-view"
+              onChange={() => {
+                if (editing) cancelEdit()
+              }}
+            />
+            Просмотр
+          </label>
+          <label className={editing ? 'is-active' : undefined}>
+            <input
+              type="radio"
+              name="dashboard-mode"
+              checked={editing}
+              data-testid="dashboard-edit"
+              onChange={() => {
+                if (!editing) beginEdit()
+              }}
+            />
+            Редактирование
+          </label>
+        </div>
       </header>
+      {editing && (
+        <p className="dashboard-edit-hint muted" data-testid="dashboard-edit-active" role="status">
+          Режим редактирования — можно менять размер и расположение виджетов
+        </p>
+      )}
 
       {/* 1. Profile hero */}
       <section className="dash-profile-hero" data-testid="dashboard-hero" aria-label="Профиль">

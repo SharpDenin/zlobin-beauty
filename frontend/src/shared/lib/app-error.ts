@@ -100,6 +100,31 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Нет доступа',
     hint: 'У вас нет доступа к этому разделу.',
   },
+  messenger_no_relationship: {
+    kind: 'authorization',
+    title: 'Пока нельзя написать',
+    hint: 'Нужна общая запись или контакт в адресной книге.',
+  },
+  messenger_master_unpublished: {
+    kind: 'authorization',
+    title: 'Мастер недоступен для сообщений',
+    hint: 'Профиль мастера ещё не опубликован в поиске.',
+  },
+  messenger_master_not_published_actor: {
+    kind: 'authorization',
+    title: 'Сначала опубликуйте профиль',
+    hint: 'Писать клиентам можно после публикации профиля мастера.',
+  },
+  messenger_supplier_unavailable: {
+    kind: 'authorization',
+    title: 'Поставщик недоступен',
+    hint: 'Организация поставщика не опубликована или недоступна.',
+  },
+  messenger_supplier_master_only: {
+    kind: 'authorization',
+    title: 'Нельзя написать поставщику',
+    hint: 'Писать поставщику может опубликованный мастер.',
+  },
   not_found: {
     kind: 'not_found',
     title: 'Объект больше не доступен',
@@ -346,6 +371,11 @@ const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
   { match: 'out of stock', code: 'insufficient_stock' },
   { match: 'cannot ship more than reserved', code: 'insufficient_stock' },
   { match: 'недостаточно товара', code: 'insufficient_stock' },
+  { match: 'no booking relationship with this client', code: 'messenger_no_relationship' },
+  { match: 'master is not available', code: 'messenger_master_unpublished' },
+  { match: 'only a published master can message a client', code: 'messenger_master_not_published_actor' },
+  { match: 'only a published master can message a supplier', code: 'messenger_supplier_master_only' },
+  { match: 'supplier is not available', code: 'messenger_supplier_unavailable' },
 ]
 
 const TECHNICAL_RE =

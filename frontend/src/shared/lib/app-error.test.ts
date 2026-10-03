@@ -63,6 +63,17 @@ describe('normalizeError', () => {
     expect(normalizeError({ code: 'error', status: 503, message: 'nope' }).kind).toBe('server')
   })
 
+  it('maps messenger relationship forbidden to a clear Russian message', () => {
+    const n = normalizeError({
+      code: 'forbidden',
+      status: 403,
+      message: 'no booking relationship with this client',
+    })
+    expect(n.code).toBe('messenger_no_relationship')
+    expect(formatUserError(n)).toContain('Пока нельзя написать')
+    expect(formatUserError(n)).not.toMatch(/insufficient|forbidden|booking relationship/i)
+  })
+
   it('maps network failures without Failed to fetch', () => {
     const n = normalizeError(new TypeError('Failed to fetch'))
     expect(n.kind).toBe('network')

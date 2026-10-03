@@ -24,9 +24,34 @@
   overflow-wrap: anywhere;
 }
 
+.dashboard-mode-toggle {
+  flex: 0 1 240px;
+  min-width: min(100%, 200px);
+}
+
+.dashboard-edit-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
 .dashboard-page--editing .dash-widget {
   outline: 1px dashed var(--color-primary);
   outline-offset: -1px;
+}
+
+/* VIEW: never expose resize chrome or block page pan gestures. */
+.dashboard-page:not(.dashboard-page--editing) .react-resizable-handle {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+.dashboard-page:not(.dashboard-page--editing) .react-grid-item {
+  touch-action: pan-y;
+}
+
+.dashboard-page--editing .react-resizable-handle {
+  touch-action: none;
+  z-index: 2;
 }
 
 /* ——— Profile hero (media-first, edge-to-edge photo) ——— */

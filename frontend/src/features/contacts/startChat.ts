@@ -6,6 +6,7 @@ export function conversationStartBody(roles: string[] | null | undefined, userId
   if (set.has('master') || set.has('salon_owner') || set.has('salon_admin')) {
     return { type: 'client_master', master_user_id: userId }
   }
+  // Backend resolves supplier_organization_id from peer_user_id via organizations.
   if (set.has('supplier') || set.has('supplier_rep')) {
     return { type: 'master_supplier', peer_user_id: userId }
   }

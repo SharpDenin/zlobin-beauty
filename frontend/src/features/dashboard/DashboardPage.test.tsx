@@ -160,11 +160,13 @@ describe('DashboardPage', () => {
 
   it('view mode has no drag handles; edit mode shows them and sticky bar', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByTestId('dashboard-edit')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('dashboard-mode-toggle')).toBeInTheDocument())
+    expect(screen.getByTestId('dashboard-view')).toBeChecked()
     expect(screen.queryByTestId('drag-handle-alerts')).toBeNull()
     expect(screen.queryByTestId('dashboard-edit-bar')).toBeNull()
 
     fireEvent.click(screen.getByTestId('dashboard-edit'))
+    expect(screen.getByTestId('dashboard-edit')).toBeChecked()
     expect(screen.getByTestId('dashboard-edit-bar')).toBeInTheDocument()
     expect(screen.getByTestId('dashboard-edit-active')).toBeInTheDocument()
     expect(screen.getByTestId('drag-handle-alerts')).toBeInTheDocument()

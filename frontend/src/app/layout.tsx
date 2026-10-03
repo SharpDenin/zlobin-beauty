@@ -11,6 +11,7 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { NavIcon } from '@/shared/ui/NavIcon'
 import { PageLoading } from '@/shared/ui/PageLoading'
 import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
+import { PremiumStatusLink } from '@/features/dashboard/PremiumStatusLink'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -250,7 +251,10 @@ function AppShellInner() {
     <div className="app-shell" style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}>
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
-        <ThemeToggle labelled />
+        <div className="sidenav-toolbar">
+          <ThemeToggle labelled />
+          <PremiumStatusLink />
+        </div>
         <p className="muted cabinet-label">{cabinet.label}</p>
         {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
         {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
@@ -294,7 +298,7 @@ function AppShellInner() {
             <div className="brand"><BrandLogo size="sm" /></div>
             <div className="muted topbar-cabinet">{cabinet.label}</div>
           </div>
-          <div className="row">
+          <div className="row topbar-actions">
             {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
               <select
                 className="topbar-branch"
@@ -308,6 +312,7 @@ function AppShellInner() {
                 ))}
               </select>
             )}
+            <PremiumStatusLink compact />
             <ThemeToggle />
             <span className="muted topbar-name">{user?.display_name}</span>
             <button className="btn btn-secondary btn-compact" type="button" onClick={() => void logout()}>

@@ -251,32 +251,36 @@
 
 .mp-service-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
-  gap: var(--space-3);
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: center;
   width: 100%;
-  min-height: 88px;
-  padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 16px;
-  background: var(--color-surface);
+  min-height: 76px;
+  padding: 10px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+  box-shadow: none;
+  transition: background var(--motion-fast);
 }
 .mp-service-row:hover {
-  border-color: var(--color-primary-soft);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 .mp-service-row.is-selected {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-glow);
+  border-color: transparent;
+  border-bottom-color: var(--color-primary);
+  box-shadow: none;
+  background: var(--color-primary-muted);
 }
 .mp-service-thumb {
-  width: 72px;
-  height: 72px;
-  border-radius: 14px;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
   overflow: hidden;
   background: var(--gradient-image-fallback);
 }
@@ -618,13 +622,28 @@
 
 html[data-theme="light"] .mp-hero-photo::after {
   background: linear-gradient(
-    105deg,
-    var(--color-background) 8%,
+    100deg,
+    var(--color-background) 0%,
+    color-mix(in srgb, var(--color-background) 35%, transparent) 22%,
     transparent 48%
   );
 }
 html[data-theme="light"] .mp-rating-header .mp-rating-num {
   color: var(--color-primary);
+}
+
+.mp-page .wizard-steps { gap: 8px; }
+.mp-page .wizard-step {
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  font-weight: 600;
+}
+.mp-page .wizard-step.active {
+  background: var(--color-primary);
+  color: var(--color-primary-ink);
+  border-color: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

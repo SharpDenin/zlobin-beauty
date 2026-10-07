@@ -2824,7 +2824,7 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	if err != nil {
 		return err
 	}
-	if status >= 300 && status != 409 {
+	if status >= 300 && status != 409 && status != 405 {
 		return fmt.Errorf("invite employee status %d", status)
 	}
 	elena := withOptionalPortrait(c, base, employee, masterSeed{

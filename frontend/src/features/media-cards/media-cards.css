@@ -89,8 +89,32 @@
   gap: 0;
   overflow: hidden;
 }
-.service-card--edge .media-first-cover {
+.cards-grid.services {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+.cards-grid.services .service-card--edge {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: stretch;
   border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: none;
+  background: transparent;
+}
+.cards-grid.services .service-card--edge .media-first-cover,
+.cards-grid.services .service-card--edge .media-first-cover--landscape {
+  aspect-ratio: 1;
+  min-height: 88px;
+  height: 100%;
+  border-radius: 14px;
+  margin: 10px;
+}
+.cards-grid.services .media-first-body {
+  padding: 12px 4px 12px 0;
+  align-content: center;
 }
 
 .home-master-card.media-first-card,

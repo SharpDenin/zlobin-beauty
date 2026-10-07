@@ -788,6 +788,19 @@
   overflow: hidden;
 }
 
+/* Phone time-grid: FullCalendar does not receive a definite height, so the wrap scrolls. */
+.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap .fc,
+.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-view-harness,
+.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-view-harness-active {
+  height: auto !important;
+  min-height: 0 !important;
+}
+
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc,
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-view-harness,
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-view-harness-active {

@@ -30,6 +30,29 @@ func demoWorkingDays(now time.Time, count int) []time.Time {
 	return out
 }
 
+// demoHorizonDays returns weekdays from today's calendar day through at least
+// `calendarDays` days ahead. If that date falls on a weekend, the window extends
+// to the next weekday so the horizon is never shorter than requested.
+func demoHorizonDays(now time.Time, calendarDays int) []time.Time {
+	if calendarDays < 0 {
+		return nil
+	}
+	loc := now.Location()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, loc)
+	end := start.AddDate(0, 0, calendarDays)
+	for end.Weekday() == time.Saturday || end.Weekday() == time.Sunday {
+		end = end.AddDate(0, 0, 1)
+	}
+	out := make([]time.Time, 0, calendarDays)
+	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 func findSlotOnDate(c *http.Client, base, masterUserID string, day time.Time, durationMin int) (time.Time, error) {
 	date := day.Format("2006-01-02")
 	url := fmt.Sprintf("%s/v1/masters/%s/slots?date=%s&duration_minutes=%d", base, masterUserID, date, durationMin)
@@ -97,7 +120,7 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 		{colorID, 180},
 	}
 
-	days := demoWorkingDays(time.Now(), 23)
+	days := demoHorizonDays(time.Now(), 31)
 	booked := 0
 	for i, day := range days {
 		existing := countOrgDayAppointments(c, base, owner, orgID, day)
@@ -112,10 +135,19 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 		needed := target - existing
 		for n := 0; n < needed; n++ {
 			client := clients[(i+n)%len(clients)]
-			svc := services[(i+n)%len(services)]
-			starts, err := findSlotOnDate(c, base, owner.ID, day, svc.duration)
-			if err != nil {
-				log.Printf("warn live volume slot %s: %v", day.Format("2006-01-02"), err)
+			var starts time.Time
+			var serviceID string
+			var slotErr error
+			for k := 0; k < len(services); k++ {
+				svc := services[(i+n+k)%len(services)]
+				starts, slotErr = findSlotOnDate(c, base, owner.ID, day, svc.duration)
+				if slotErr == nil {
+					serviceID = svc.id
+					break
+				}
+			}
+			if serviceID == "" {
+				log.Printf("warn live volume slot %s: %v", day.Format("2006-01-02"), slotErr)
 				break
 			}
 			var appt struct {
@@ -123,7 +155,7 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 				Status string `json:"status"`
 			}
 			st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
-				"master_id": profileID, "service_id": svc.id, "starts_at": starts,
+				"master_id": profileID, "service_id": serviceID, "starts_at": starts,
 			}, &appt)
 			if err != nil || st >= 300 || appt.ID == "" {
 				log.Printf("warn live volume book %s status=%d err=%v", day.Format("2006-01-02"), st, err)
@@ -142,7 +174,23 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 			booked++
 		}
 	}
-	log.Printf("ok live salon schedule booked=%d days=%d", booked, len(days))
+	if len(days) > 0 {
+		last := days[len(days)-1]
+		if countOrgDayAppointments(c, base, owner, orgID, last) == 0 {
+			client := clients[0]
+			starts, err := findSlotOnDate(c, base, owner.ID, last, 60)
+			if err == nil {
+				st, bookErr := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
+					"master_id": profileID, "service_id": cutID, "starts_at": starts,
+				}, nil)
+				if bookErr == nil && st < 300 {
+					booked++
+					log.Printf("ok horizon tail %s", last.Format("2006-01-02"))
+				}
+			}
+		}
+	}
+	log.Printf("ok live salon schedule booked=%d days=%d last=%s", booked, len(days), days[len(days)-1].Format("2006-01-02"))
 	return nil
 }
 
@@ -152,10 +200,10 @@ func seedStaffForward(c *http.Client, base string, master authUser, profileID st
 	if profileID == "" || len(serviceIDs) == 0 || len(clients) == 0 {
 		return nil
 	}
-	days := demoWorkingDays(time.Now(), 23)
+	days := demoHorizonDays(time.Now(), 31)
 	booked := 0
 	for i, day := range days {
-		if i%2 == 0 {
+		if i%2 == 0 && i != len(days)-1 {
 			continue
 		}
 		client := clients[i%len(clients)]

@@ -22,15 +22,21 @@ func TestDemoWorkingDaysIncludesTodayOnWeekday(t *testing.T) {
 	}
 }
 
-func TestDemoWorkingDaysCoversAMonth(t *testing.T) {
-	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC) // Monday
-	days := demoWorkingDays(start, 23)
-	if len(days) != 23 {
-		t.Fatalf("len=%d", len(days))
+func TestDemoHorizonReaches31CalendarDays(t *testing.T) {
+	start := time.Date(2026, 10, 7, 18, 0, 0, 0, time.UTC) // Wednesday
+	days := demoHorizonDays(start, 31)
+	if len(days) == 0 {
+		t.Fatal("empty horizon")
 	}
-	span := days[len(days)-1].Sub(days[0])
-	if span < 30*24*time.Hour {
-		t.Fatalf("working days do not reach a month ahead: %s", span)
+	last := days[len(days)-1]
+	minLast := time.Date(start.Year(), start.Month(), start.Day(), 12, 0, 0, 0, time.UTC).AddDate(0, 0, 31)
+	if last.Before(minLast) {
+		t.Fatalf("last booking %s is before %s", last.Format("2006-01-02"), minLast.Format("2006-01-02"))
+	}
+	for _, d := range days {
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			t.Fatalf("weekend leaked: %s", d.Format("2006-01-02"))
+		}
 	}
 }
 

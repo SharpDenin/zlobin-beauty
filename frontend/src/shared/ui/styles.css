@@ -556,6 +556,15 @@ h4 { font-size: var(--text-lg); font-weight: 600; color: var(--color-text-primar
   padding: var(--space-5) 0 calc(var(--nav-h) + var(--space-5) + env(safe-area-inset-bottom, 0px));
   min-width: 0;
 }
+.page-header {
+  align-items: flex-end;
+  gap: var(--space-3);
+  min-height: 44px;
+}
+.page-header h1 {
+  font-size: clamp(1.35rem, 4vw, 1.75rem);
+  letter-spacing: -0.03em;
+}
 .page-narrow { width: min(100% - 2 * var(--space-4), 480px); }
 
 .bottomnav {
@@ -1197,12 +1206,13 @@ button.list-item:hover {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 48px;
-  padding: 0 var(--space-4);
-  border-color: var(--color-primary);
-  background: transparent;
-  color: var(--color-primary);
-  border-radius: var(--radius-pill);
+  min-height: 52px;
+  padding: 0 18px;
+  border: 0;
+  background: var(--color-primary);
+  color: var(--color-primary-ink);
+  border-radius: 16px;
+  font-weight: 700;
 }
 .slot-list .slot::after {
   content: '›';

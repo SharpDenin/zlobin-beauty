@@ -13,6 +13,7 @@ import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { branchLabel } from '@/shared/lib/branch-label'
 import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone, isoToDatetimeLocal, wallTimeInTimezoneToUtcIso } from '@/shared/lib/time'
 import { formatMoney } from '@/shared/lib/money'
@@ -1389,7 +1390,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 data-testid="calendar-branch-switcher"
               >
                 <option value="">Все филиалы</option>
-                {salonBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                {salonBranches.map((b) => <option key={b.id} value={b.id}>{branchLabel(b, salonBranches)}</option>)}
               </select>
             </div>
           )}

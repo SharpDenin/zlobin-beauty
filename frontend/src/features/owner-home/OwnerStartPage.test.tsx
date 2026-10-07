@@ -105,7 +105,7 @@ describe('OwnerStartPage', () => {
     expect(screen.getByRole('link', { name: /Открыть расписание/ })).toHaveAttribute('href', '/calendar')
     expect(screen.getByRole('link', { name: 'Команда' })).toHaveAttribute('href', '/staff')
     expect(screen.getByRole('link', { name: 'Финансы' })).toHaveAttribute('href', '/reports')
-    expect(screen.getByRole('link', { name: 'Запасы' })).toHaveAttribute('href', '/inventory')
+	expect(screen.getByRole('link', { name: 'Склад' })).toHaveAttribute('href', '/inventory')
     expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/salon/settings')
     expect(screen.queryByText(/Кабинет/i)).toBeNull()
     expect(screen.getByText(/2\s?000\s?₽/)).toBeInTheDocument()

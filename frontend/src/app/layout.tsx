@@ -10,6 +10,7 @@ import { Drawer } from '@/shared/ui/Drawer'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { NavIcon } from '@/shared/ui/NavIcon'
 import { PageLoading } from '@/shared/ui/PageLoading'
+import { branchLabel } from '@/shared/lib/branch-label'
 import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { PremiumStatusLink } from '@/features/dashboard/PremiumStatusLink'
 import { releaseOrphanedOverlayLock } from '@/shared/ui/overlayLock'
@@ -323,6 +324,8 @@ function AppShellInner() {
           <label className="field" style={{ marginTop: 12 }}>
             <span className="muted">Салон</span>
             <select
+              className="location-select"
+              aria-label="Салон"
               value={cabinet.selectedOrg?.organization.id ?? ''}
               onChange={(e) => cabinet.setSelectedOrgId(e.target.value)}
             >
@@ -336,12 +339,14 @@ function AppShellInner() {
           <label className="field" style={{ marginTop: 12 }}>
             <span className="muted">Филиал</span>
             <select
+              className="location-select"
               data-testid="chain-branch-switcher"
+              aria-label="Филиал"
               value={cabinet.selectedBranch?.id ?? ''}
               onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
             >
               {(cabinet.selectedOrg?.branches ?? []).map((b) => (
-                <option key={b.id} value={b.id}>{b.name}</option>
+                <option key={b.id} value={b.id}>{branchLabel(b, cabinet.selectedOrg?.branches ?? [])}</option>
               ))}
             </select>
           </label>
@@ -362,14 +367,14 @@ function AppShellInner() {
           <div className="row topbar-actions">
             {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
               <select
-                className="topbar-branch"
+                className="topbar-branch location-select"
                 data-testid="chain-branch-switcher"
                 aria-label="Филиал"
                 value={cabinet.selectedBranch?.id ?? ''}
                 onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
               >
                 {(cabinet.selectedOrg?.branches ?? []).map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>{branchLabel(b, cabinet.selectedOrg?.branches ?? [])}</option>
                 ))}
               </select>
             )}
@@ -388,15 +393,15 @@ function AppShellInner() {
             <span className="topbar-desktop-only">
               <PremiumStatusLink compact />
               <span className="muted topbar-name">{user?.display_name}</span>
-              <button
-                className="btn btn-secondary btn-compact topbar-logout"
-                type="button"
-                onClick={() => void logout()}
-                aria-label="Выйти"
-              >
-                Выйти
-              </button>
             </span>
+            <button
+              className="btn btn-secondary btn-compact topbar-logout"
+              type="button"
+              onClick={() => void logout()}
+              aria-label="Выйти"
+            >
+              Выйти
+            </button>
           </div>
         </header>
         <Outlet />

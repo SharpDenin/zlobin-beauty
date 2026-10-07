@@ -12,6 +12,7 @@ import { SearchPage } from '@/pages/SearchPage'
 import { MasterPage } from '@/pages/MasterPage'
 import { AppointmentsPage } from '@/pages/AppointmentsPage'
 import { MasterCabinetPage } from '@/pages/MasterCabinetPage'
+import { DashboardPage } from '@/pages/DashboardPage'
 import { PortfolioPage } from '@/pages/PortfolioPage'
 import { AppointmentDetailPage } from '@/pages/AppointmentDetailPage'
 import { ClientCardPage } from '@/pages/ClientCardPage'
@@ -177,6 +178,7 @@ export function App() {
                 </Route>
                 <Route element={<RequireMaster />}>
                   <Route path="/master" element={<MasterCabinetPage />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
                   <Route path="/portfolio" element={<PortfolioPage />} />
                   <Route path="/masterclasses" element={<MasterclassListPage />} />
                   <Route path="/masterclasses/new" element={<MasterclassCreatePage />} />

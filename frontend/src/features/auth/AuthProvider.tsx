@@ -103,9 +103,6 @@ export function hasSystemAdmin(user: User | null | undefined): boolean {
 export function homePathForUser(user: User | null | undefined): string {
   if (!user) return '/'
   if (hasSystemAdmin(user)) return '/admin'
-  if (hasMasterAccess(user) || hasSalonAdmin(user)) return '/'
-  if (hasSupplierAccess(user)) return '/supplier'
-  if (hasSupplierRepAccess(user)) return '/rep'
   return '/'
 }
 

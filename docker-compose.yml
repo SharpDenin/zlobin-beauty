@@ -230,6 +230,9 @@ services:
       MARKETPLACE_URL: http://marketplace:8080
       MEDIA_URL: http://media:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@salonx.local}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -332,6 +335,8 @@ services:
       ALLOW_SEED: ${ALLOW_SEED:-false}
       SEED_PASSWORD: ${SEED_PASSWORD:-Password123!}
       BOOKING_DATABASE_URL: postgres://booking:booking@postgres:5432/booking?sslmode=disable
+      ORGANIZATIONS_DATABASE_URL: postgres://organizations:organizations@postgres:5432/organizations?sslmode=disable
+      MARKETPLACE_DATABASE_URL: postgres://marketplace:marketplace@postgres:5432/marketplace?sslmode=disable
     depends_on:
       - gateway
 

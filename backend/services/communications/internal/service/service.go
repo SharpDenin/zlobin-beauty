@@ -27,6 +27,9 @@ type Service struct {
 	internalToken    string
 	httpClient       *http.Client
 	now              func() time.Time
+	vapidPublic      string
+	vapidPrivate     string
+	vapidSubject     string
 }
 
 func New(st *store.Store, bookingURL string) *Service {
@@ -37,9 +40,13 @@ func New(st *store.Store, bookingURL string) *Service {
 }
 
 func (s *Service) CreateNotification(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID *uuid.UUID) error {
-	return wrap(s.store.CreateNotification(ctx, domain.Notification{
+	if err := wrap(s.store.CreateNotification(ctx, domain.Notification{
 		ID: ids.New(), UserID: userID, Type: typ, Title: title, Body: body, EntityType: entityType, EntityID: entityID, CreatedAt: s.now().UTC(),
-	}))
+	})); err != nil {
+		return err
+	}
+	s.dispatchPush(ctx, userID, title, body, entityType, entityID)
+	return nil
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {

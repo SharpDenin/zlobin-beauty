@@ -317,7 +317,7 @@ func main() {
 	}
 
 	liveClients := []authUser{}
-	for _, email := range []string{"client1@demo.local"} {
+	for _, email := range []string{"client1@demo.local", "client4@demo.local", "client2@demo.local"} {
 		if u, ok := users[email]; ok && u.ID != "" {
 			liveClients = append(liveClients, u)
 		}
@@ -377,6 +377,7 @@ func main() {
 			log.Printf("ok chain owner")
 		}
 	}
+	dedupeIdenticalBranches()
 	mobile := users["mobile1@demo.local"]
 	if mobile.ID != "" {
 		_, _, _, _, err = seedMaster(client, base, mobile, masterSeed{
@@ -2892,6 +2893,11 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	if stComplete >= 300 {
 		return fmt.Errorf("employee complete status %d", stComplete)
 	}
+	if len(services) > 0 && profileID != "" && client.ID != "" {
+		if err := seedStaffForward(c, base, employee, profileID, services, []authUser{client}); err != nil {
+			log.Printf("warn employee forward schedule: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -2930,6 +2936,11 @@ func seedChainOwner(c *http.Client, base string, user authUser) error {
 		"published": true,
 	}, nil)
 	lat, lng := 55.030199, 82.920430
+	if branchExists(c, base, user, orgID, "Новосибирск", "Новосибирск", "Красный проспект, 1") {
+		log.Printf("skip second branch — Новосибирск already exists for org=%s", orgID)
+		log.Printf("ok chain org=%s first_branch=%s", orgID, branchID)
+		return nil
+	}
 	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/branches", user.Token, map[string]any{
 		"name": "Новосибирск", "city": "Новосибирск", "address_line": "Красный проспект, 1",
 		"phone": "+79009990002", "timezone": "Asia/Novosibirsk", "latitude": lat, "longitude": lng,

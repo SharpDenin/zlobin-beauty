@@ -1072,7 +1072,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('salon admin lands on operational dashboard and can open staff', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'admin1@demo.local')
-    await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Записи на сегодня' })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('link', { name: 'Найти мастера' })).toHaveCount(0)
     await page.goto('/staff')
     await expect(page.getByRole('heading', { name: /Команда/ })).toBeVisible({ timeout: 15_000 })
@@ -1082,6 +1082,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('dashboard widget toggle survives reload', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')
+    await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
     await page.getByTestId('dashboard-edit').click()
     const messages = page.locator('.dash-edit-row').filter({ hasText: 'Сообщения' }).locator('input[type="checkbox"]')
@@ -1153,6 +1154,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('phase2 supplier dashboard analytics team and assign task', async ({ page }, info) => {
     test.skip(!['phone-390', 'phone-430', 'tablet-768', 'laptop-1366', 'desktop-1920'].includes(info.project.name), 'phase2 viewports')
     await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/supplier')
     await expect(page).toHaveURL(/\/supplier/, { timeout: 20_000 })
     await expect(page.getByText('Выручка сегодня').first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Ожидает оплаты').first()).toBeVisible()
@@ -1194,6 +1196,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('phase2 representative dashboard map finance analytics', async ({ page }, info) => {
     test.skip(!['phone-390', 'phone-430', 'tablet-768', 'laptop-1366', 'desktop-1920'].includes(info.project.name), 'phase2 viewports')
     await loginUI(page, 'rep1@demo.local')
+    await page.goto('/rep')
     await expect(page).toHaveURL(/\/rep/, { timeout: 20_000 })
     await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Задач сегодня')).toBeVisible()

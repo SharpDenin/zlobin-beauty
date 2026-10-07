@@ -185,12 +185,13 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   }
   if (kind === 'supplier') {
     const primary: NavLink[] = [
-      { to: '/supplier', label: 'Главная', end: true },
+      { to: '/', label: 'Главная', end: true },
       { to: '/supplier/products', label: 'Товары' },
       { to: '/warehouse', label: 'Склад' },
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
+      { to: '/supplier', label: 'Компания' },
       { to: '/supplier/orders', label: 'Заказы' },
       { to: '/supplier/client-orders', label: 'Заказы клиентов' },
       { to: '/supplier/analytics', label: 'Аналитика' },
@@ -205,11 +206,12 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   }
   if (kind === 'supplier_rep') {
     const primary: NavLink[] = [
-      { to: '/rep', label: 'Сегодня', end: true },
-      { to: '/rep/finance', label: 'Деньги' },
+      { to: '/', label: 'Главная', end: true },
+      { to: '/rep', label: 'Сегодня' },
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
+      { to: '/rep/finance', label: 'Деньги' },
       { to: '/calendar', label: 'Календарь' },
       { to: '/messages', label: 'Сообщения' },
       { to: '/contacts', label: 'Контакты' },
@@ -272,6 +274,9 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     secondary.push({ to: '/master', label: 'Профиль мастера' })
   }
   secondary.push({ to: '/profile', label: 'Профиль' })
+  if (kind === 'private_master' || kind === 'chair_master' || kind === 'mobile_master' || kind === 'salon_employee') {
+    secondary.push({ to: '/dashboard', label: 'Рабочий стол' })
+  }
   return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
 }
 

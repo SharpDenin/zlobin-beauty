@@ -757,3 +757,54 @@
     animation: none;
   }
 }
+
+/*
+  Fill shell locks the document. The calendar page must not also be a scrollport,
+  or wheel/touch land on a FullCalendar layer that has nothing to scroll.
+  One owner: the time-grid scroller, or the mobile day list.
+*/
+.app-shell.app-shell--fill .shell-main > .page.calendar-page-root {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+}
+
+.app-shell.app-shell--fill .page.calendar-page-root > .calendar-shell:not(.is-embedded) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: hidden;
+}
+
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc,
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-view-harness,
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-view-harness-active {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-scroller {
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-shell.app-shell--fill .calendar-shell.is-mobile-day .cal-mobile {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}

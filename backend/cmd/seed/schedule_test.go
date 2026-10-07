@@ -22,6 +22,18 @@ func TestDemoWorkingDaysIncludesTodayOnWeekday(t *testing.T) {
 	}
 }
 
+func TestDemoWorkingDaysCoversAMonth(t *testing.T) {
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC) // Monday
+	days := demoWorkingDays(start, 23)
+	if len(days) != 23 {
+		t.Fatalf("len=%d", len(days))
+	}
+	span := days[len(days)-1].Sub(days[0])
+	if span < 30*24*time.Hour {
+		t.Fatalf("working days do not reach a month ahead: %s", span)
+	}
+}
+
 func TestDemoWorkingDaysSkipsWeekendAnchor(t *testing.T) {
 	loc := time.FixedZone("test", 7*3600)
 	saturday := time.Date(2026, 10, 3, 10, 0, 0, 0, loc)

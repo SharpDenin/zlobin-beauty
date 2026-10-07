@@ -40,7 +40,7 @@ describe('owner-home-helpers', () => {
 
   it('picks compact management tiles from real capabilities', () => {
     const tiles = ownerManagementTiles((f) => ['staff', 'reports', 'cosmetics', 'salon_settings'].includes(f))
-    expect(tiles.map((t) => t.label)).toEqual(['Команда', 'Финансы', 'Запасы', 'Настройки'])
+    expect(tiles.map((t) => t.label)).toEqual(['Команда', 'Финансы', 'Склад', 'Настройки'])
   })
 
   it('labels pending confirmations in Russian', () => {

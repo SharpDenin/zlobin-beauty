@@ -34,6 +34,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/reviews", a.masterReviews)
 	a.registerMessengerRoutes(mux, auth)
 	a.registerContactRoutes(mux, auth)
+	a.registerPushRoutes(mux, auth)
 	mux.Handle("GET /v1/internal/media/{id}/access", internal(http.HandlerFunc(a.mediaAccess)))
 }
 

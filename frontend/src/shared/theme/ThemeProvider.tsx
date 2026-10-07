@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import { applyStoredBackground, useHomeBackground } from '@/shared/theme/backgrounds'
 import { applyTheme, readStoredTheme, systemTheme, writeStoredTheme, type ThemeChoice } from '@/shared/theme/theme'
 
 type ThemeContextValue = {
@@ -16,6 +17,11 @@ function initialTheme(): ThemeChoice {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeChoice>(initialTheme)
+  const background = useHomeBackground()
+
+  useLayoutEffect(() => {
+    applyStoredBackground()
+  }, [background.id, background.accent, theme])
 
   useEffect(() => {
     applyTheme(theme)

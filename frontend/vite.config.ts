@@ -48,6 +48,7 @@ export default defineConfig(({ command, mode }) => {
         navigateFallbackDenylist: [/^\/v1\//, /^\/api\//],
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        importScripts: ['sw-push.js'],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith('/v1/') || url.pathname.startsWith('/api/'),
@@ -60,6 +61,14 @@ export default defineConfig(({ command, mode }) => {
               cacheName: 'pages',
               networkTimeoutSeconds: 3,
               expiration: { maxEntries: 16, maxAgeSeconds: 24 * 60 * 60 },
+            },
+          },
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/backgrounds/'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'home-backgrounds',
+              expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 30 },
             },
           },
           {

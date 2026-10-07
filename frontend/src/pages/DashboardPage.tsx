@@ -17,6 +17,7 @@ import '@/features/dashboard/dashboard.css'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { branchLabel } from '@/shared/lib/branch-label'
 import { formatMoney } from '@/shared/lib/money'
 import { initials } from '@/shared/lib/initials'
 import { workTypeLabel } from '@/shared/lib/status'
@@ -428,7 +429,7 @@ export function DashboardPage() {
                 onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
               >
                 {(cabinet.selectedOrg?.branches ?? []).map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>{branchLabel(b, cabinet.selectedOrg?.branches ?? [])}</option>
                 ))}
               </select>
             </label>
@@ -446,56 +447,6 @@ export function DashboardPage() {
         {showPortfolio && <Link className="btn btn-secondary" to="/portfolio">Портфолио</Link>}
       </nav>
 
-      {editing && draft && (
-        <div className="dash-edit-bar" data-testid="dashboard-edit-bar">
-          <div className="dash-edit-bar__actions">
-            <button
-              className={`btn btn-primary${save.isPending ? ' btn-loading' : ''}`}
-              type="button"
-              data-testid="dashboard-save"
-              disabled={save.isPending || !dirty}
-              onClick={() => persist(draft)}
-            >
-              Сохранить
-            </button>
-            <button className="btn btn-secondary" type="button" data-testid="dashboard-cancel" onClick={cancelEdit}>
-              Отменить
-            </button>
-            <button
-              className="btn btn-secondary"
-              type="button"
-              data-testid="dashboard-reset"
-              onClick={() => patchDraft(defaultLayout())}
-            >
-              Сбросить по умолчанию
-            </button>
-          </div>
-          <div className="dash-edit-toggles">
-            {relevant.map((def) => {
-              const current = draft.find((x) => x.id === def.id)
-              return (
-                <article key={def.id} className="dash-edit-row">
-                  <label className="field-check">
-                    <input
-                      type="checkbox"
-                      checked={current?.enabled === true}
-                      onChange={(e) => toggleWidget(def.id, e.target.checked)}
-                    />
-                    <span><strong>{def.title}</strong></span>
-                  </label>
-                  <div className="chip-row compact">
-                    {([['compact', 'Компакт'], ['wide', 'Широкий'], ['large', 'Большой']] as const).map(([id, label]) => (
-                      <button key={id} className="chip" type="button" disabled={!current?.enabled} onClick={() => setPreset(def.id, id)}>{label}</button>
-                    ))}
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-          {save.isError && <ErrorBanner error={save.error} fallbackTitle="Не удалось сохранить раскладку" />}
-        </div>
-      )}
-
       {layoutQ.isLoading && (
         <div className="list">
           <div className="skeleton skeleton-card" />
@@ -504,6 +455,7 @@ export function DashboardPage() {
       )}
 
       {/* 3. Operational widgets · 4. analytics last */}
+      <div className={`dashboard-work${editing && draft ? ' is-editing' : ''}`}>
       <div ref={containerRef} className="dashboard-grid-container" data-testid="dashboard-grid">
         {mounted && (
           <Responsive<Breakpoint>
@@ -637,6 +589,56 @@ export function DashboardPage() {
             ))}
           </Responsive>
         )}
+      </div>
+      {editing && draft && (
+        <aside className="dash-edit-bar" data-testid="dashboard-edit-bar">
+          <div className="dash-edit-bar__actions">
+            <button
+              className={`btn btn-primary${save.isPending ? ' btn-loading' : ''}`}
+              type="button"
+              data-testid="dashboard-save"
+              disabled={save.isPending || !dirty}
+              onClick={() => persist(draft)}
+            >
+              Сохранить
+            </button>
+            <button className="btn btn-secondary" type="button" data-testid="dashboard-cancel" onClick={cancelEdit}>
+              Отменить
+            </button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              data-testid="dashboard-reset"
+              onClick={() => patchDraft(defaultLayout())}
+            >
+              Сбросить по умолчанию
+            </button>
+          </div>
+          <div className="dash-edit-toggles">
+            {relevant.map((def) => {
+              const current = draft.find((x) => x.id === def.id)
+              return (
+                <article key={def.id} className="dash-edit-row">
+                  <label className="field-check">
+                    <input
+                      type="checkbox"
+                      checked={current?.enabled === true}
+                      onChange={(e) => toggleWidget(def.id, e.target.checked)}
+                    />
+                    <span><strong>{def.title}</strong></span>
+                  </label>
+                  <div className="chip-row compact">
+                    {([['compact', 'Компакт'], ['wide', 'Широкий'], ['large', 'Большой']] as const).map(([id, label]) => (
+                      <button key={id} className="chip" type="button" disabled={!current?.enabled} onClick={() => setPreset(def.id, id)}>{label}</button>
+                    ))}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+          {save.isError && <ErrorBanner error={save.error} fallbackTitle="Не удалось сохранить раскладку" />}
+        </aside>
+      )}
       </div>
     </main>
   )

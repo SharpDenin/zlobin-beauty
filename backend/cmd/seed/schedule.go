@@ -16,7 +16,11 @@ func demoWorkingDays(now time.Time, count int) []time.Time {
 	loc := now.Location()
 	cursor := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, loc)
 	out := make([]time.Time, 0, count)
-	for i := 0; i < 21 && len(out) < count; i++ {
+	limit := count * 3
+	if limit < 50 {
+		limit = 50
+	}
+	for i := 0; i < limit && len(out) < count; i++ {
 		d := cursor.AddDate(0, 0, i)
 		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
 			continue
@@ -93,11 +97,11 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 		{colorID, 180},
 	}
 
-	days := demoWorkingDays(time.Now(), 8)
+	days := demoWorkingDays(time.Now(), 23)
 	booked := 0
 	for i, day := range days {
 		existing := countOrgDayAppointments(c, base, owner, orgID, day)
-		target := 4
+		target := 2 + (i % 3)
 		if i == 0 {
 			target = 5 // denser “today” for calendar realism
 		}
@@ -139,5 +143,46 @@ func seedLiveSalonSchedule(c *http.Client, base string, owner authUser, orgID, p
 		}
 	}
 	log.Printf("ok live salon schedule booked=%d days=%d", booked, len(days))
+	return nil
+}
+
+// seedStaffForward places a light, varied set of future visits for a second master
+// so the salon calendar is not a single-master clone for the month ahead.
+func seedStaffForward(c *http.Client, base string, master authUser, profileID string, serviceIDs []string, clients []authUser) error {
+	if profileID == "" || len(serviceIDs) == 0 || len(clients) == 0 {
+		return nil
+	}
+	days := demoWorkingDays(time.Now(), 23)
+	booked := 0
+	for i, day := range days {
+		if i%2 == 0 {
+			continue
+		}
+		client := clients[i%len(clients)]
+		serviceID := serviceIDs[i%len(serviceIDs)]
+		duration := 60
+		if i%3 == 0 {
+			duration = 90
+		}
+		starts, err := findSlotOnDate(c, base, master.ID, day, duration)
+		if err != nil {
+			continue
+		}
+		var appt struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		}
+		st, err := doJSON(c, http.MethodPost, base+"/v1/appointments", client.Token, map[string]any{
+			"master_id": profileID, "service_id": serviceID, "starts_at": starts,
+		}, &appt)
+		if err != nil || st >= 300 || appt.ID == "" {
+			continue
+		}
+		if i%4 != 0 && (appt.Status == "pending_confirmation" || appt.Status == "pending" || appt.Status == "") {
+			_, _ = doJSON(c, http.MethodPost, base+"/v1/appointments/"+appt.ID+"/confirm", master.Token, map[string]any{}, nil)
+		}
+		booked++
+	}
+	log.Printf("ok staff forward booked=%d master=%s", booked, master.Email)
 	return nil
 }

@@ -55,7 +55,7 @@ export function ownerManagementTiles(can: (feature: CabinetFeature) => boolean):
   const tiles: OwnerTile[] = []
   if (can('staff')) tiles.push({ to: '/staff', label: 'Команда', icon: 'staff' })
   if (can('reports')) tiles.push({ to: '/reports', label: 'Финансы', icon: 'money' })
-  if (can('cosmetics')) tiles.push({ to: '/inventory', label: 'Запасы', icon: 'warehouse' })
+  if (can('cosmetics')) tiles.push({ to: '/inventory', label: 'Склад', icon: 'warehouse' })
   if (can('salon_settings')) tiles.push({ to: '/salon/settings', label: 'Настройки', icon: 'settings' })
   if (tiles.length < 4 && can('clients')) tiles.push({ to: '/clients', label: 'Клиенты', icon: 'clients' })
   if (tiles.length < 4 && can('services')) tiles.push({ to: '/services', label: 'Услуги', icon: 'services' })
@@ -70,4 +70,72 @@ export function pendingConfirmLabel(count: number): string {
 
 export function isDemoAccount(email?: string | null): boolean {
   return Boolean(email && /@demo\.local$/i.test(email))
+}
+
+export type HomeAudience = 'salon' | 'master' | 'client' | 'supplier' | 'rep' | 'admin'
+
+export function homeAudience(kind: string): HomeAudience {
+  if (kind === 'salon_owner' || kind === 'chain_owner' || kind === 'salon_admin') return 'salon'
+  if (kind === 'supplier') return 'supplier'
+  if (kind === 'supplier_rep') return 'rep'
+  if (kind === 'platform_admin') return 'admin'
+  if (kind === 'client') return 'client'
+  return 'master'
+}
+
+export function homeShowsSchedule(kind: string): boolean {
+  const audience = homeAudience(kind)
+  return audience === 'salon' || audience === 'master' || audience === 'client'
+}
+
+export function homeTiles(kind: string, can: (feature: CabinetFeature) => boolean): OwnerTile[] {
+  const audience = homeAudience(kind)
+  if (audience === 'salon') return ownerManagementTiles(can)
+  if (audience === 'supplier') {
+    return [
+      { to: '/supplier/products', label: 'Товары', icon: 'warehouse' },
+      { to: '/warehouse', label: 'Склад', icon: 'warehouse' },
+      { to: '/supplier/orders', label: 'Заказы', icon: 'services' },
+      { to: '/supplier/analytics', label: 'Аналитика', icon: 'money' },
+    ]
+  }
+  if (audience === 'rep') {
+    return [
+      { to: '/rep', label: 'Смена', icon: 'staff' },
+      { to: '/calendar', label: 'Календарь', icon: 'services' },
+      { to: '/warehouse', label: 'Склад', icon: 'warehouse' },
+      { to: '/rep/finance', label: 'Деньги', icon: 'money' },
+    ]
+  }
+  if (audience === 'admin') {
+    return [
+      { to: '/admin', label: 'Сводка', icon: 'money' },
+      { to: '/admin/users', label: 'Пользователи', icon: 'staff' },
+      { to: '/admin/appointments', label: 'Записи', icon: 'services' },
+      { to: '/admin/orders', label: 'Заказы', icon: 'warehouse' },
+    ]
+  }
+  if (audience === 'client') {
+    return [
+      { to: '/search', label: 'Мастера', icon: 'staff' },
+      { to: '/appointments', label: 'Записи', icon: 'services' },
+      { to: '/shop', label: 'Магазин', icon: 'warehouse' },
+      { to: '/messages', label: 'Сообщения', icon: 'clients' },
+    ]
+  }
+  const tiles: OwnerTile[] = [{ to: '/appointments', label: 'Записи', icon: 'services' }]
+  if (can('clients')) tiles.push({ to: '/clients', label: 'Клиенты', icon: 'clients' })
+  if (can('services')) tiles.push({ to: '/services', label: 'Услуги', icon: 'settings' })
+  tiles.push({ to: '/dashboard', label: 'Рабочий стол', icon: 'money' })
+  if (tiles.length < 4) tiles.push({ to: '/calendar', label: 'Календарь', icon: 'services' })
+  return tiles.slice(0, 4)
+}
+
+export function scheduleHeading(selected: Date, today = new Date()): string {
+  const same = selected.getFullYear() === today.getFullYear()
+    && selected.getMonth() === today.getMonth()
+    && selected.getDate() === today.getDate()
+  if (same) return 'Записи на сегодня'
+  const rest = selected.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+  return `Записи · ${rest}`
 }

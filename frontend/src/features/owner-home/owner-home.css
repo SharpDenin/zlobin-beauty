@@ -15,7 +15,7 @@
   max-width: none;
   margin: 0;
   padding: 0;
-  min-height: 100%;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(64px, 26vw) minmax(0, 1fr);
   gap: 0;
@@ -26,11 +26,11 @@
 }
 
 .owner-start-bg {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 0;
   background:
-    linear-gradient(90deg, rgba(6, 14, 16, 0.08) 0%, rgba(6, 14, 16, 0.28) 38%, rgba(6, 14, 16, 0.48) 100%),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-background) 6%, transparent) 0%, color-mix(in srgb, var(--color-background) 16%, transparent) 100%),
     var(--owner-bg-image) center / cover no-repeat;
   pointer-events: none;
 }
@@ -44,21 +44,13 @@
   flex-direction: column;
   gap: 20px;
   min-width: 0;
-  min-height: 100%;
-  padding:
-    16px
-    16px
-    calc(var(--nav-h) + 28px + env(safe-area-inset-bottom, 0px));
-  background: linear-gradient(
-    180deg,
-    rgba(8, 22, 24, 0.22) 0%,
-    rgba(8, 20, 22, 0.36) 42%,
-    rgba(7, 16, 18, 0.5) 100%
-  );
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
-  border-left: 1px solid var(--owner-line);
-  box-shadow: -24px 0 48px rgba(0, 0, 0, 0.28);
+  min-height: 0;
+  padding: 16px 16px max(16px, env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--color-background) 16%, transparent);
+  backdrop-filter: blur(8px) saturate(1.05);
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  border-left: 0;
+  box-shadow: none;
 }
 
 /* —— Header —— */
@@ -478,28 +470,26 @@
 
 /* —— Shell chrome when owner home is open —— */
 body:has(.owner-start) {
-  background: #071012;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-background) 8%, transparent), color-mix(in srgb, var(--color-background) 18%, transparent)),
+    var(--owner-bg-image) center / cover no-repeat;
+  background-attachment: fixed;
 }
 
 body:has(.owner-start) .shell-main > .topbar {
-  background: color-mix(in srgb, var(--color-background) 18%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 0;
   box-shadow: none;
 }
 
-body:has(.owner-start) .bottomnav {
-  background: rgba(8, 18, 20, 0.72);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border-top-color: rgba(158, 232, 214, 0.12);
-}
-
-body:has(.owner-start) .bottomnav a.active,
-body:has(.owner-start) .bottomnav button.nav-tab.active {
-  color: #FFFFFF;
-  background: transparent;
+body:has(.owner-start) .sidenav {
+  background: color-mix(in srgb, var(--color-background) 14%, transparent);
+  backdrop-filter: blur(8px) saturate(1.05);
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  border-right: 1px solid color-mix(in srgb, var(--color-primary) 10%, transparent);
+  box-shadow: none;
 }
 
 /* Light theme: same composition, paper glass */
@@ -515,18 +505,16 @@ html[data-theme="light"] .owner-start {
 
 html[data-theme="light"] .owner-start-bg {
   background:
-    linear-gradient(90deg, rgba(232, 244, 238, 0.25) 0%, rgba(243, 245, 250, 0.72) 48%, rgba(243, 245, 250, 0.88) 100%),
-    var(--owner-bg-image) left center / cover no-repeat;
+    linear-gradient(90deg, color-mix(in srgb, var(--color-background) 12%, transparent) 0%, color-mix(in srgb, var(--color-background) 28%, transparent) 55%, transparent 100%),
+    var(--owner-bg-image) center / cover no-repeat;
 }
 
 html[data-theme="light"] .owner-start-panel {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.42) 0%,
-    rgba(243, 245, 250, 0.58) 100%
-  );
-  border-left-color: var(--owner-line);
-  box-shadow: -16px 0 40px rgba(28, 33, 48, 0.08);
+  background: color-mix(in srgb, var(--color-background) 22%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 html[data-theme="light"] .owner-start-brand-name,
@@ -574,7 +562,10 @@ html[data-theme="light"] .owner-start-tile svg {
 }
 
 html[data-theme="light"] body:has(.owner-start) {
-  background: #E8F4EE;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-background) 10%, transparent), transparent 40%),
+    var(--owner-bg-image) center / cover no-repeat;
+  background-attachment: fixed;
 }
 
 /* Tiny phones: keep forest strip visible but tighter */
@@ -625,12 +616,7 @@ html[data-theme="light"] body:has(.owner-start) {
   }
 
   body:has(.owner-start) .shell-main > :not(.topbar) {
-    background:
-      radial-gradient(900px 520px at 8% 10%, color-mix(in srgb, var(--color-primary) 18%, transparent), transparent 55%),
-      var(--color-background);
-  }
-  html[data-theme="light"] body:has(.owner-start) .shell-main > :not(.topbar) {
-    background: #E7EEF2;
+    background: transparent;
   }
 }
 

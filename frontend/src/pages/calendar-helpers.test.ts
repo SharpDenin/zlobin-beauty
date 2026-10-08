@@ -13,6 +13,8 @@ import {
   extendDisplayRangeForEvents,
   isCalendarViewId,
   isTerminalStatus,
+  longPressMoved,
+  LONG_PRESS_SLOP_PX,
   minutesToTime,
   normalizeCalendarColor,
   rangeToDayInterval,
@@ -22,6 +24,14 @@ import {
   weekdayIndex,
   zonedYmd,
 } from './calendar-helpers'
+
+describe('long press', () => {
+  it('cancels only after the finger moves more than 16px', () => {
+    expect(longPressMoved(0, LONG_PRESS_SLOP_PX)).toBe(false)
+    expect(longPressMoved(0, LONG_PRESS_SLOP_PX + 1)).toBe(true)
+    expect(longPressMoved(12, 12)).toBe(true)
+  })
+})
 
 describe('calendar helpers', () => {
   it('marks terminal appointments and blocks drag', () => {

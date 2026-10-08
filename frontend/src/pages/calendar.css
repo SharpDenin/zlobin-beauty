@@ -69,21 +69,22 @@
     border-bottom: 1px solid var(--color-border);
   }
   .calendar-shell.is-mobile-fc .calendar-wrap {
-    flex: 1 1 auto;
-    min-height: 12rem;
-    overflow: auto;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
     position: relative;
     z-index: 0;
     isolation: isolate;
-    padding-bottom: calc(var(--space-3) + var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0;
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-scrollgrid-section-sticky > * {
     top: 0;
     z-index: 1;
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: var(--space-2);
+    margin-bottom: 0 !important;
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar-title {
     font-size: 1.05rem;
@@ -270,8 +271,8 @@
 }
 
 .calendar-shell .calendar-wrap .fc .fc-timegrid-slot-label-cushion {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 650;
   color: var(--color-text-secondary);
 }
 
@@ -781,26 +782,87 @@
 }
 
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   height: auto;
   max-height: none;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
 }
 
-/* Phone time-grid: FullCalendar does not receive a definite height, so the wrap scrolls. */
-.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap {
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+@media (max-width: 767px) {
+  .app-shell.app-shell--fill .shell-main > .page.calendar-page-root {
+    padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  }
+  .app-shell.app-shell--fill .calendar-shell {
+    gap: 8px;
+  }
+  .app-shell.app-shell--fill .calendar-toolbar-sticky {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .calendar-page-head .eyebrow,
+  .calendar-page-head .muted { display: none; }
+  .calendar-page-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .calendar-page-head h1 {
+    font-size: 1.15rem;
+    margin: 0;
+    min-width: 0;
+  }
+  .calendar-page-head-actions { flex-wrap: nowrap; }
+  .calendar-shell.is-mobile-fc .calendar-resource-bar,
+  .calendar-shell.is-mobile-day .calendar-resource-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    padding-top: 0;
+  }
+  .calendar-shell.is-mobile-fc .calendar-resource-bar .field,
+  .calendar-shell.is-mobile-day .calendar-resource-bar .field {
+    margin: 0;
+  }
+  .calendar-shell.is-mobile-fc .calendar-controls,
+  .calendar-shell.is-mobile-day .calendar-controls {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .calendar-shell.is-mobile-fc .calendar-view-tabs,
+  .calendar-shell.is-mobile-day .calendar-view-tabs {
+    flex: 1 1 auto;
+    width: auto;
+  }
+  .calendar-category-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-height: 44px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
 }
-.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap .fc,
-.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-view-harness,
-.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-view-harness-active {
-  height: auto !important;
+
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap > .fc {
+  flex: 1 1 auto;
+  width: 100%;
   min-height: 0 !important;
 }
 
+/* Phone and desktop share one scroll owner: FullCalendar's time-grid scroller. */
+.app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap {
+  overflow: hidden;
+}
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc,
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-view-harness,
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-view-harness-active {
@@ -812,6 +874,16 @@
   overflow: auto !important;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+.calendar-shell > .calendar-page-head,
+.calendar-shell > .calendar-controls,
+.calendar-shell > .calendar-category-row,
+.calendar-shell > .calendar-resource-bar,
+.calendar-shell > .state-box,
+.calendar-shell > .calendar-outside-hint,
+.calendar-shell > .calendar-color-settings {
+  flex-shrink: 0;
 }
 
 .app-shell.app-shell--fill .calendar-shell.is-mobile-day .cal-mobile {

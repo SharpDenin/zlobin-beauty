@@ -306,10 +306,11 @@ function AppShellInner() {
     location.pathname.startsWith('/calendar')
     || location.pathname.startsWith('/messages')
     || Boolean(messenger?.overlayOpen)
+  const homeRoute = location.pathname === '/'
 
   return (
     <div
-      className={`app-shell${fillShell ? ' app-shell--fill' : ''}`}
+      className={`app-shell${fillShell ? ' app-shell--fill' : ''}${homeRoute ? ' app-shell--home' : ''}`}
       style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}
     >
       <aside className="sidenav">
@@ -406,6 +407,7 @@ function AppShellInner() {
         </header>
         <Outlet />
       </div>
+      {homeRoute ? null : (
       <nav className="bottomnav" aria-label="Основная навигация">
         {primary.map((l) => {
           if (l.to === '/more') {
@@ -436,6 +438,7 @@ function AppShellInner() {
           )
         })}
       </nav>
+      )}
       {!desktopNav && (
         <MoreDrawer
           open={moreOpen}

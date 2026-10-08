@@ -232,6 +232,27 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   min-height: 0;
   overflow: visible;
 }
+@media (max-width: 767px) {
+  .app-shell {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .shell-main {
+    grid-row: 1;
+    min-height: 100dvh;
+  }
+  .bottomnav {
+    grid-row: 1;
+    align-self: end;
+    height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+.app-shell--home .shell-main {
+  min-height: 100dvh;
+}
+.app-shell--home .owner-start {
+  padding-bottom: 0;
+}
 .shell-main > .topbar {
   position: sticky;
   top: 0;

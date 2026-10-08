@@ -1,3 +1,10 @@
+export const LONG_PRESS_MS = 500
+export const LONG_PRESS_SLOP_PX = 16
+
+export function longPressMoved(dx: number, dy: number, slop = LONG_PRESS_SLOP_PX) {
+  return Math.hypot(dx, dy) > slop
+}
+
 export function isTerminalStatus(status?: string) {
   if (!status) return false
   return status === 'completed' || status === 'no_show' || status.startsWith('cancelled_')

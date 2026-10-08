@@ -42,7 +42,10 @@ import {
   isCalendarNavMode,
   isCalendarViewId,
   isTerminalStatus,
+  LONG_PRESS_MS,
+  longPressMoved,
   minutesFromMidnight,
+  minutesToHHMM,
   minutesToTime,
   normalizeCalendarColor,
   parseHHMM,
@@ -210,6 +213,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const scrollPreserve = useRef<number | null>(null)
   const swipeStart = useRef<{ x: number; y: number; id: number; t: number; blocked: boolean } | null>(null)
   const interacting = useRef(false)
+  const suppressSelect = useRef(false)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
   const compact = useCompactCalendar()
   const wasCompact = useRef(compact)
@@ -228,6 +232,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const defaultView: CalendarViewId = compact ? 'timeGridDay' : 'timeGridWeek'
   const [savedView, setSavedView] = usePreference<string>(viewPrefKey, defaultView)
   const [displayRangePref, setDisplayRangePref] = usePreference<DisplayRange>('calendar.displayRange', DEFAULT_DISPLAY_RANGE)
+  const [rememberedInterval, setRememberedInterval] = usePreference<DisplayRange | null>('calendar.rememberedInterval', null)
   const [navModePref, setNavModePref] = usePreference<CalendarNavMode>('calendar.navMode', 'buttons')
   const navMode: CalendarNavMode = isCalendarNavMode(navModePref) ? navModePref : 'buttons'
   const [rangeDraft, setRangeDraft] = useState<DisplayRange>(displayRangePref)
@@ -776,7 +781,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       }
       return apiRequest('/v1/me/schedule-exceptions', { method: 'PUT', token: accessToken, body })
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, variables) => {
+      const interval = rangeToDayInterval(variables.start, variables.end, salonTimezone)
+      if (interval) {
+        setRememberedInterval({
+          from: minutesToHHMM(interval.start_minute),
+          to: minutesToHHMM(interval.end_minute),
+        })
+      }
       setOk('Рабочий интервал сохранён')
       setIntervalMode(false)
       setIntervalStartMin(null)
@@ -841,6 +853,76 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       if (scroller) scroller.scrollTop = top
     })
   }
+
+  useEffect(() => {
+    const api = calendarRef.current?.getApi()
+    const update = () => api?.updateSize()
+    update()
+    const id = window.setTimeout(update, 50)
+    window.addEventListener('resize', update)
+    return () => {
+      window.clearTimeout(id)
+      window.removeEventListener('resize', update)
+    }
+  }, [compact, currentView, embedded])
+
+  useEffect(() => {
+    const root = wrapRef.current
+    if (!root || embedded || readOnlyOverlay) return
+    let timer: number | null = null
+    let origin: { x: number; y: number } | null = null
+    let detachMove: (() => void) | null = null
+    const clear = () => {
+      if (timer != null) window.clearTimeout(timer)
+      timer = null
+      origin = null
+      detachMove?.()
+      detachMove = null
+    }
+    const onDown = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      const target = event.target as HTMLElement | null
+      if (!target || target.closest('.fc-event, .fc-button, a, button')) return
+      const slot = target.closest('.fc-timegrid-slot') as HTMLElement | null
+      const time = slot?.getAttribute('data-time')
+      if (!time) return
+      clear()
+      origin = { x: event.clientX, y: event.clientY }
+      const onMove = (move: PointerEvent) => {
+        if (!origin || timer == null || move.pointerId !== event.pointerId) return
+        if (longPressMoved(move.clientX - origin.x, move.clientY - origin.y)) clear()
+      }
+      const onUp = (up: PointerEvent) => {
+        if (up.pointerId !== event.pointerId) return
+        clear()
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+      detachMove = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+      }
+      timer = window.setTimeout(() => {
+        timer = null
+        suppressSelect.current = true
+        const [hh, mm] = time.split(':').map(Number)
+        const start = new Date(selectedDate)
+        start.setHours(hh || 0, mm || 0, 0, 0)
+        setSheetSlot(start)
+        setBlockStart(isoToDatetimeLocal(start.toISOString(), salonTimezone))
+        setBlockEnd(isoToDatetimeLocal(new Date(start.getTime() + 60 * 60 * 1000).toISOString(), salonTimezone))
+        setSheet('empty')
+        navigator.vibrate?.(10)
+      }, LONG_PRESS_MS)
+    }
+    root.addEventListener('pointerdown', onDown)
+    return () => {
+      clear()
+      root.removeEventListener('pointerdown', onDown)
+    }
+  }, [embedded, readOnlyOverlay, compact, selectedDate, salonTimezone])
 
   async function persistMove(id: string, start: Date | null, end: Date | null, resized: boolean) {
     if (!start || !end) return false
@@ -978,6 +1060,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function onSelectSlot(info: DateSelectArg) {
+    if (suppressSelect.current) {
+      suppressSelect.current = false
+      info.view.calendar.unselect()
+      return
+    }
     if (readOnlyOverlay) {
       info.view.calendar.unselect()
       return
@@ -990,10 +1077,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       return
     }
     if (compact) {
-      setSheetSlot(start)
-      setBlockStart(isoToDatetimeLocal(start.toISOString(), salonTimezone))
-      setBlockEnd(isoToDatetimeLocal(end.toISOString(), salonTimezone))
-      setSheet('empty')
+      // Phone opens the action sheet from a still long-press. A moved touch is a scroll.
       info.view.calendar.unselect()
       return
     }
@@ -1580,7 +1664,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
           locale={ruLocale}
           timeZone={salonTimezone}
-          height={embedded || compact ? 'auto' : '100%'}
+          height={embedded ? 'auto' : '100%'}
           editable={!readOnlyOverlay}
           selectable={!readOnlyOverlay}
           selectMirror
@@ -1588,10 +1672,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           eventStartEditable={!readOnlyOverlay}
           eventResizableFromStart
           snapDuration="00:15:00"
-          eventDragMinDistance={compact ? 12 : 8}
-          selectMinDistance={compact ? 8 : 0}
+          slotDuration="00:30:00"
+          eventDragMinDistance={16}
+          selectMinDistance={16}
           longPressDelay={500}
           eventLongPressDelay={500}
+          selectLongPressDelay={500}
           slotLabelFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
           eventAllow={(_span, movingEvent) => {
             if (!movingEvent) return true
@@ -1742,6 +1828,20 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             }}
           >
             Запомнить интервалы работы
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={!rememberedInterval}
+            onClick={() => {
+              if (!rememberedInterval) return
+              setDisplayRangePref(rememberedInterval)
+              setRangeDraft(rememberedInterval)
+              setSheet(null)
+              setOk(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
+            }}
+          >
+            Применить сохранённые интервалы
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => { setSheet(null); setSettingsOpen(true) }}>Настройки календаря</button>
           <button type="button" className="btn btn-ghost" onClick={() => setSheet(null)}>Отмена</button>

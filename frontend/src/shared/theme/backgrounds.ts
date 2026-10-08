@@ -76,7 +76,10 @@ export function setHomeBackground(id: string) {
 export function applyStoredBackground() {
   const bg = getHomeBackground()
   applyAccent(bg.accent)
-  if (typeof document !== 'undefined') document.documentElement.dataset.homeBg = bg.id
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.homeBg = bg.id
+    document.documentElement.style.setProperty('--owner-bg-image', `url('${bg.src}')`)
+  }
 }
 
 export function useHomeBackground(): HomeBackground {

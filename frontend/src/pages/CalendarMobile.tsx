@@ -8,6 +8,7 @@ import {
   calendarColorClass,
   displayRangeToSlotTimes,
   eventOverlapsDay,
+  longPressMoved,
   minutesFromMidnight,
   minutesToHHMM,
   type DisplayRange,
@@ -169,7 +170,7 @@ export function CalendarMobile({
   function onPressMove(e: ReactPointerEvent) {
     const origin = pressOrigin.current
     if (!origin || longPressTimer.current == null) return
-    if (Math.abs(e.clientX - origin.x) > 16 || Math.abs(e.clientY - origin.y) > 16) {
+    if (longPressMoved(e.clientX - origin.x, e.clientY - origin.y)) {
       clearLongPress()
     }
   }

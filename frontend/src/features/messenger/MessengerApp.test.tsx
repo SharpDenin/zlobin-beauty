@@ -76,6 +76,7 @@ beforeEach(() => {
     if (path === '/v1/conversations/c1/read') return undefined
     if (path === '/v1/conversations/c1') return conversation
     if (path.startsWith('/v1/conversations')) return { items: [conversation] }
+    if (path.startsWith('/v1/contacts')) return { items: [], total: 0, limit: 100, offset: 0 }
     throw new Error(`unexpected ${path}`)
   })
 })

@@ -12,7 +12,7 @@ test.describe('PWA', () => {
     await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
 
-    const manifestHref = await page.locator('link[rel="manifest"]').first().getAttribute('href')
+    const manifestHref = await page.locator('link[rel="manifest"]').first().getAttribute('href', { timeout: 15_000 })
     expect(manifestHref).toBeTruthy()
     const manifestUrl = new URL(manifestHref!, page.url()).toString()
     const manifestRes = await page.request.get(manifestUrl)

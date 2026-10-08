@@ -33,7 +33,11 @@ test.describe('production calendar', () => {
     await page.goto('/calendar')
     await expect(page.getByRole('heading', { name: /календарь/i }).first()).toBeVisible({ timeout: 20_000 })
     await expect(page.getByRole('button', { name: 'День', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
+    if (info.project.name === 'phone-390') {
+      await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
+    } else {
+      await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
+    }
     await assertNoPageOverflow(page)
 
     if (info.project.name === 'phone-390') {
@@ -41,7 +45,7 @@ test.describe('production calendar', () => {
       const dayChip = page.locator('.cal-day-chip').nth(4)
       await expect(dayChip).toBeVisible()
       await dayChip.click()
-      const block = page.locator('.cal-block').first()
+      const block = page.locator('.cal-slot-event').first()
       if (await block.count()) {
         await block.click()
         await expect(page.getByTestId('calendar-detail')).toBeVisible()
@@ -73,6 +77,10 @@ test.describe('production calendar', () => {
     await page.getByRole('button', { name: 'Добавить в календарь' }).click()
     await expect(page.getByRole('dialog').getByRole('alert').filter({ hasText: /позже начала|Не удалось/ })).toBeVisible()
     await page.getByRole('button', { name: 'Закрыть' }).click()
+
+    await page.getByRole('button', { name: 'Настройки календаря' }).click()
+    await expect(page.getByTestId('calendar-settings')).toBeVisible()
+    await expect(page.getByTestId('settings-open-schedule')).toHaveAttribute('href', '/schedule')
     await assertNoPageOverflow(page)
   })
 })

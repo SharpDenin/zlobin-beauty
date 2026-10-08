@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,19 +55,30 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	svc := service.New(st, storage).WithCommunications(getenv("COMMUNICATIONS_URL", "http://communications:8080"), os.Getenv("INTERNAL_TOKEN"))
+	svc := service.New(st, storage).
+		WithCommunications(getenv("COMMUNICATIONS_URL", "http://communications:8080"), os.Getenv("INTERNAL_TOKEN")).
+		WithBooking(getenv("BOOKING_URL", "http://booking:8080")).
+		WithSigningSecret(cfg.JWTSecret)
 	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))
 	api.Routes(mux, cfg.JWTSecret)
-	handler := httpx.WithRequestID(httpx.SecurityHeaders(httpx.CORS(cfg.CORSOrigins)(httpx.MaxBytes(52 << 20)(httpx.AccessLog(log)(mux)))))
+	// Uploads and video streaming need minutes on mobile links; server-wide timeouts are disabled
+	// and replaced by per-request deadlines (see httpx.Deadlines).
+	handler := httpx.WithRequestID(
+		httpx.SecurityHeaders(
+			httpx.CORS(cfg.CORSOrigins)(
+				httpx.Deadlines(30*time.Second, 60*time.Second, mediaDeadlines)(
+					httpx.AccessLog(log)(mux),
+				),
+			),
+		),
+	)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 	go func() {
@@ -82,6 +94,17 @@ func main() {
 	cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(cctx)
+}
+
+// mediaDeadlines gives uploads and content streaming the time a slow phone connection needs.
+func mediaDeadlines(r *http.Request) (read, write time.Duration, ok bool) {
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/media":
+		return 10 * time.Minute, 10 * time.Minute, true
+	case strings.HasSuffix(r.URL.Path, "/content"):
+		return 30 * time.Second, 30 * time.Minute, true
+	}
+	return 0, 0, false
 }
 
 func getenv(k, d string) string {

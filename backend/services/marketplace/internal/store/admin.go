@@ -31,11 +31,11 @@ type ServiceListFilter struct {
 }
 
 type MarketplaceStats struct {
-	MastersTotal     int
-	MastersPublished int
-	ServicesTotal    int
-	ArticlesTotal    int
-	ArticlesDraft    int
+	MastersTotal      int
+	MastersPublished  int
+	ServicesTotal     int
+	ArticlesTotal     int
+	ArticlesDraft     int
 	ArticlesPublished int
 }
 
@@ -103,12 +103,7 @@ WHERE ($1 = '' OR display_name ILIKE $2 OR city ILIKE $2)
 }
 
 func scanMasterRow(rows interface{ Scan(dest ...any) error }) (*domain.MasterProfile, error) {
-	var m domain.MasterProfile
-	if err := rows.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
-		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
-		return nil, err
-	}
-	return &m, nil
+	return scanMaster(rows)
 }
 
 func (s *Store) SetMasterPublished(ctx context.Context, id uuid.UUID, published bool, at time.Time) error {

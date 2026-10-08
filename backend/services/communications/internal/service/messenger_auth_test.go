@@ -71,6 +71,29 @@ func TestCreateClientMasterMasterRequiresBooking(t *testing.T) {
 	assertForbidden(t, err)
 }
 
+func TestFetchSupplierOrgForUser(t *testing.T) {
+	orgID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	ownerID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/supplier-organization") {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"organization_id": orgID.String()})
+	}))
+	t.Cleanup(ts.Close)
+	s := New(nil, "")
+	s.WithMessenger(MessengerDeps{OrganizationsURL: ts.URL, InternalToken: "tok"})
+	got, err := s.fetchSupplierOrgForUser(context.Background(), ownerID)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != orgID {
+		t.Fatalf("got %s want %s", got, orgID)
+	}
+}
+
 func TestCreateMasterSupplierRejectsNonMaster(t *testing.T) {
 	orgID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	ownerID := uuid.MustParse("44444444-4444-4444-4444-444444444444")

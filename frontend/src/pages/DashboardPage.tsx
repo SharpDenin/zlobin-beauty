@@ -1,21 +1,52 @@
-import { useMemo, useState } from 'react'
+/**
+ * Touch / pointer approach (dashboard grid):
+ * - VIEW (default): dragConfig.enabled=false, resizeConfig.enabled=false; no drag handles
+ *   rendered. The page uses touch-action: pan-y so native scroll is never blocked by RGL.
+ * - EDIT: dragging ONLY via `.widget-drag-handle` (dragConfig.handle). Handles set
+ *   touch-action: none so react-grid-layout can capture the gesture; everything outside
+ *   handles keeps pan-y. Unsaved layout edits live in local draft state until Save.
+ */
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Responsive, useContainerWidth } from 'react-grid-layout'
 import type { Layout } from 'react-grid-layout'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import 'react-grid-layout/css/styles.css'
+import '@/features/dashboard/dashboard.css'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { branchLabel } from '@/shared/lib/branch-label'
 import { formatMoney } from '@/shared/lib/money'
-import { Hint } from '@/shared/ui/Hint'
+import { initials } from '@/shared/lib/initials'
+import { workTypeLabel } from '@/shared/lib/status'
+import { workTypeNeedsSalon } from '@/shared/lib/work-types'
+import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
-import { Drawer } from '@/shared/ui/Drawer'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { MediaImage } from '@/shared/ui/MediaImage'
 import { CalendarPage } from '@/pages/CalendarPage'
-import { LIBRARY, makeLayouts, normalizeLayout, type Breakpoint, type WidgetId, type WidgetLayout } from '@/pages/dashboard-layout'
+import {
+  LIBRARY,
+  DASHBOARD_BREAKPOINTS,
+  DASHBOARD_COLS,
+  DASHBOARD_MARGIN,
+  applyGridLayout,
+  applyPreset,
+  breakpointForWidth,
+  cloneLayout,
+  defaultLayout,
+  layoutsEqual,
+  makeLayouts,
+  normalizeLayout,
+  type Breakpoint,
+  type WidgetId,
+  type WidgetLayout,
+} from '@/pages/dashboard-layout'
+import { roleTitle } from '@/features/dashboard/roleTitle'
+import { premiumLabel } from '@/features/dashboard/premiumLabel'
 import type { SupplierOrder } from '@/shared/lib/commerce'
 
 type Appointment = {
@@ -26,6 +57,8 @@ type Appointment = {
   ends_at?: string
   price_minor: number
   client_user_id?: string
+  client_display_name?: string
+  master_display_name?: string
   branch_id?: string
 }
 
@@ -48,6 +81,18 @@ type SalonReport = {
     master_load_percent?: number | null
     repeat_visit_percent?: number | null
   }
+}
+
+type MasterHero = {
+  display_name?: string
+  city?: string
+  work_type?: string
+  photo_media_id?: string | null
+  published?: boolean
+  rating_avg?: number
+  rating_count?: number
+  profession_types?: { id: string; slug: string; name: string }[]
+  specializations?: string[]
 }
 
 function notificationHref(n: Notification) {
@@ -78,10 +123,11 @@ export function DashboardPage() {
   const { user, accessToken } = useAuth()
   const cabinet = useCabinet()
   const qc = useQueryClient()
-  const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 1200 })
-  const [libraryOpen, setLibraryOpen] = useState(false)
-  const [breakpoint, setBreakpoint] = useState<Breakpoint>('lg')
+  const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 390 })
+  const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => breakpointForWidth(390))
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('week')
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<WidgetLayout[] | null>(null)
 
   const layoutQ = useQuery({
     queryKey: ['me-dashboard'],
@@ -94,12 +140,35 @@ export function DashboardPage() {
       apiRequest<{ status: string; trial_ends_at?: string; effective_plan: string }>('/v1/me/subscription', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
+  const masterQ = useQuery({
+    queryKey: ['me-master-dashboard-hero'],
+    queryFn: async () => {
+      try {
+        return await apiRequest<{ master: MasterHero }>('/v1/me/master', { token: accessToken })
+      } catch {
+        return { master: {} as MasterHero }
+      }
+    },
+    enabled: Boolean(accessToken && cabinet.kind !== 'client' && cabinet.kind !== 'supplier' && cabinet.kind !== 'supplier_rep'),
+    retry: false,
+  })
+
   const rawItems = Array.isArray(layoutQ.data?.widgets) ? layoutQ.data.widgets as Array<Record<string, unknown>> : []
   const calendarPrefs = rawItems.filter((x) => x.id === 'calendar_colors')
-  const layout = useMemo(() => normalizeLayout(layoutQ.data?.widgets), [layoutQ.data?.widgets])
+  const savedLayout = useMemo(() => normalizeLayout(layoutQ.data?.widgets), [layoutQ.data?.widgets])
+  const layout = draft ?? savedLayout
   const relevant = availableWidgets(cabinet)
   const visibleLayout = layout.filter((w) => relevant.some((d) => d.id === w.id))
   const responsiveLayouts = useMemo(() => makeLayouts(visibleLayout), [visibleLayout])
+  const dirty = editing && draft != null && !layoutsEqual(draft, savedLayout)
+
+  useEffect(() => {
+    if (!editing) setDraft(null)
+  }, [editing])
+
+  useEffect(() => {
+    setBreakpoint(breakpointForWidth(width))
+  }, [width])
 
   const save = useMutation({
     mutationFn: (widgets: WidgetLayout[]) => apiRequest('/v1/me/dashboard', {
@@ -107,7 +176,11 @@ export function DashboardPage() {
       token: accessToken,
       body: { widgets: [...widgets, ...calendarPrefs] },
     }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['me-dashboard'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me-dashboard'] })
+      setEditing(false)
+      setDraft(null)
+    },
   })
 
   const ownerMode = ['salon_owner', 'chain_owner', 'salon_admin'].includes(cabinet.kind)
@@ -203,44 +276,150 @@ export function DashboardPage() {
     }
   })
 
-  function updateLayout(current: Layout) {
-    const next = layout.map((widget) => {
-      const pos = current.find((item) => item.i === widget.id)
-      if (!pos) return widget
-      return {
-        ...widget,
-        positions: {
-          ...widget.positions,
-          [breakpoint]: { x: pos.x, y: pos.y, w: pos.w, h: pos.h },
-        },
-      }
-    })
+  const master = masterQ.data?.master
+  const displayName = master?.display_name?.trim() || user?.display_name || 'Профиль'
+  const city = master?.city?.trim() || user?.city?.trim() || ''
+  const workLabel = workTypeLabel(master?.work_type || cabinet.workType)
+  const professionLine = master
+    ? masterProfessionLabel(master, '')
+    : ''
+  const salonName = workTypeNeedsSalon(master?.work_type || cabinet.workType)
+    ? cabinet.selectedOrg?.organization.name
+    : undefined
+  const showPortfolio = ['private_master', 'chair_master', 'mobile_master', 'salon_employee', 'salon_owner', 'chain_owner'].includes(cabinet.kind)
+  const published = master?.published
+  const ratingAvg = typeof master?.rating_avg === 'number' && master.rating_avg > 0 ? master.rating_avg : null
+  const ratingCount = typeof master?.rating_count === 'number' ? master.rating_count : 0
+
+  function beginEdit() {
+    setDraft(cloneLayout(savedLayout))
+    setEditing(true)
+  }
+
+  function cancelEdit() {
+    if (dirty && !window.confirm('Отменить изменения раскладки?')) return
+    setDraft(null)
+    setEditing(false)
+  }
+
+  function persist(next: WidgetLayout[]) {
     save.mutate(next)
   }
 
-  function patchLayout(next: WidgetLayout[]) {
-    save.mutate(next)
+  function patchDraft(next: WidgetLayout[]) {
+    setDraft(next)
+  }
+
+  function updateLayoutPositions(current: Layout) {
+    if (!editing || !draft) return
+    setDraft(applyGridLayout(draft, breakpoint, current))
   }
 
   function setPreset(id: WidgetId, preset: 'compact' | 'wide' | 'large') {
-    const dims = preset === 'compact' ? { w: 3, h: 4 } : preset === 'wide' ? { w: 6, h: 6 } : { w: 12, h: id === 'calendar' ? 18 : 9 }
-    patchLayout(layout.map((w) => w.id === id ? {
-      ...w,
-      positions: { ...w.positions, lg: { ...(w.positions.lg ?? LIBRARY.find((d) => d.id === id)!.defaultPosition), ...dims } },
-    } : w))
+    if (!draft) return
+    patchDraft(applyPreset(draft, id, preset))
+  }
+
+  function toggleWidget(id: WidgetId, enabled: boolean) {
+    if (!draft) return
+    const current = draft.find((x) => x.id === id)
+    if (!current) {
+      const def = LIBRARY.find((d) => d.id === id)
+      if (!def) return
+      patchDraft([...draft, { id, enabled: true, positions: { lg: def.defaultPosition } }])
+      return
+    }
+    patchDraft(draft.map((x) => x.id === id ? { ...x, enabled } : x))
   }
 
   return (
-    <main className="page stack dashboard-page">
-      <section className="hero dashboard-hero">
+    <main className={`page stack dashboard-page${editing ? ' dashboard-page--editing' : ''}`} data-testid="dashboard-page">
+      <header className="dashboard-page-head">
         <div className="stack-sm">
-          <p className="eyebrow">{cabinet.label}</p>
-          <h1>{user?.display_name}</h1>
-          <p className="muted">
-            {cabinet.kind === 'chain_owner' && cabinet.selectedBranch
-              ? `${cabinet.selectedOrg?.organization.name ?? 'Сеть'} · ${cabinet.selectedBranch.name}`
-              : `${today.length} записей сегодня`}
+          <p className="eyebrow">Главная</p>
+          <h1>Сегодня</h1>
+          <p className="muted">{roleTitle(cabinet.kind)}</p>
+        </div>
+        <div
+          className="segmented segmented--2 dashboard-mode-toggle"
+          role="group"
+          aria-label="Режим дашборда"
+          data-testid="dashboard-mode-toggle"
+        >
+          <label className={!editing ? 'is-active' : undefined}>
+            <input
+              type="radio"
+              name="dashboard-mode"
+              checked={!editing}
+              data-testid="dashboard-view"
+              onChange={() => {
+                if (editing) cancelEdit()
+              }}
+            />
+            Просмотр
+          </label>
+          <label className={editing ? 'is-active' : undefined}>
+            <input
+              type="radio"
+              name="dashboard-mode"
+              checked={editing}
+              data-testid="dashboard-edit"
+              onChange={() => {
+                if (!editing) beginEdit()
+              }}
+            />
+            Редактирование
+          </label>
+        </div>
+      </header>
+      {editing && (
+        <p className="dashboard-edit-hint muted" data-testid="dashboard-edit-active" role="status">
+          Режим редактирования — можно менять размер и расположение виджетов
+        </p>
+      )}
+
+      {/* 1. Profile hero */}
+      <section className="dash-profile-hero" data-testid="dashboard-hero" aria-label="Профиль">
+        <div className="dash-profile-hero__photo" aria-hidden={!master?.photo_media_id}>
+          {master?.photo_media_id ? (
+            <MediaImage mediaId={master.photo_media_id} token={accessToken} alt={displayName} fallback={initials(displayName)} variant="cover" />
+          ) : (
+            <div className="media-fallback" role="img" aria-label={displayName}>{initials(displayName)}</div>
+          )}
+          <div className="dash-profile-hero__fade" />
+        </div>
+        <div className="dash-profile-hero__body">
+          <h2 className="dash-profile-hero__name">{displayName}</h2>
+          <p className="dash-profile-hero__role">
+            {workLabel}
+            {professionLine ? ` · ${professionLine}` : ''}
           </p>
+          {professionLine && (master?.profession_types?.length ?? 0) > 0 && (
+            <div className="dash-profile-hero__chips">
+              {master!.profession_types!.slice(0, 4).map((t) => (
+                <span key={t.id} className="chip">{t.name}</span>
+              ))}
+            </div>
+          )}
+          <ul className="dash-profile-hero__facts">
+            {city && <li>{city}</li>}
+            {salonName && <li><strong>{salonName}</strong></li>}
+            {ratingAvg != null && (
+              <li>★ {ratingAvg.toFixed(1)}{ratingCount > 0 ? ` (${ratingCount})` : ''}</li>
+            )}
+            {appointments.isFetched && <li>Сегодня: <strong>{today.length}</strong></li>}
+          </ul>
+          <div className="dash-profile-hero__meta">
+            <Link className="dash-premium-pill" to="/profile/subscription" data-testid="dashboard-premium-pill">
+              {premiumLabel(sub.data)}
+            </Link>
+            {typeof published === 'boolean' && (
+              <span className={`dash-visibility${published ? ' dash-visibility--on' : ''}`} data-testid="dashboard-visibility">
+                <span className="dash-visibility__dot" aria-hidden="true" />
+                {published ? 'В поиске' : 'Скрыт'}
+              </span>
+            )}
+          </div>
           {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
             <label className="field" style={{ maxWidth: 280 }}>
               <span className="muted">Филиал</span>
@@ -250,31 +429,23 @@ export function DashboardPage() {
                 onChange={(e) => cabinet.setSelectedBranchId(e.target.value)}
               >
                 {(cabinet.selectedOrg?.branches ?? []).map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>{branchLabel(b, cabinet.selectedOrg?.branches ?? [])}</option>
                 ))}
               </select>
             </label>
           )}
         </div>
-        <div className="stack-sm">
-          <div className="dashboard-quick">
-            {cabinet.can('calendar') && <Link className="btn btn-secondary btn-compact" to="/calendar">Календарь</Link>}
-            <Link className="btn btn-secondary btn-compact" to="/appointments">Записи</Link>
-            {cabinet.can('services') && <Link className="btn btn-secondary btn-compact" to="/services">Услуги</Link>}
-          </div>
-          <div className="row">
-            <button className="btn btn-secondary" type="button" onClick={() => setLibraryOpen(true)}>Настроить</button>
-            <Hint id="dash-layout" title="Рабочий стол">Перетаскивайте карточки за заголовок. Раскладка сохраняется сама.</Hint>
-          </div>
-        </div>
       </section>
-      {sub.data?.status === 'trial' && sub.data.trial_ends_at && (
-        <section className="card stack-sm trial-banner">
-          <p className="eyebrow">Premium</p>
-          <h2>Пробный период до {new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')}</h2>
-          <Link className="btn-link" to="/profile/subscription">Подписка</Link>
-        </section>
-      )}
+
+      {/* 2. Key actions */}
+      <nav className="dash-key-actions" aria-label="Быстрые действия" data-testid="dashboard-key-actions">
+        {cabinet.can('calendar') && <Link className="btn btn-secondary" to="/calendar">Календарь</Link>}
+        <Link className="btn btn-secondary" to="/appointments">Записи</Link>
+        {cabinet.can('clients') && <Link className="btn btn-secondary" to="/clients">Клиенты</Link>}
+        {cabinet.can('services') && <Link className="btn btn-secondary" to="/services">Услуги</Link>}
+        <Link className="btn btn-secondary" to="/messages">Сообщения</Link>
+        {showPortfolio && <Link className="btn btn-secondary" to="/portfolio">Портфолио</Link>}
+      </nav>
 
       {layoutQ.isLoading && (
         <div className="list">
@@ -283,24 +454,42 @@ export function DashboardPage() {
         </div>
       )}
 
-      <div ref={containerRef} className="dashboard-grid-container">
+      {/* 3. Operational widgets · 4. analytics last */}
+      <div className={`dashboard-work${editing && draft ? ' is-editing' : ''}`}>
+      <div ref={containerRef} className="dashboard-grid-container" data-testid="dashboard-grid">
         {mounted && (
           <Responsive<Breakpoint>
             width={width}
             layouts={responsiveLayouts}
-            breakpoints={{ lg: 1200, md: 768, sm: 480, xs: 0 }}
-            cols={{ lg: 12, md: 8, sm: 4, xs: 1 }}
+            breakpoints={DASHBOARD_BREAKPOINTS}
+            cols={DASHBOARD_COLS}
             rowHeight={36}
-            margin={{ lg: [18, 18], md: [14, 14], sm: [12, 12], xs: [10, 10] }}
-            dragConfig={{ handle: '.widget-drag-handle', cancel: 'a,button,input,select' }}
-            resizeConfig={{ handles: ['se'] }}
-            onBreakpointChange={(next) => setBreakpoint(next)}
-            onDragStop={(next) => updateLayout(next)}
-            onResizeStop={(next) => updateLayout(next)}
+            margin={DASHBOARD_MARGIN}
+            dragConfig={{
+              enabled: editing,
+              handle: '.widget-drag-handle',
+              cancel: 'a,button,input,select,.widget-content',
+            }}
+            resizeConfig={{
+              enabled: editing,
+              handles: editing ? ['se'] : [],
+            }}
+            onBreakpointChange={(next) => setBreakpoint(next as Breakpoint)}
+            onDragStop={(next) => updateLayoutPositions(next)}
+            onResizeStop={(next) => updateLayoutPositions(next)}
           >
             {visibleLayout.filter((w) => w.enabled).map((w) => (
-              <section key={w.id} className="dash-widget">
-                <div className="widget-drag-handle"><span>{LIBRARY.find((d) => d.id === w.id)?.title}</span><span aria-hidden="true">⠿</span></div>
+              <section
+                key={w.id}
+                className={`dash-widget${w.id === 'analytics' ? ' dash-widget--analytics' : ''}`}
+                data-widget={w.id}
+              >
+                {editing && (
+                  <div className="widget-drag-handle" data-testid={`drag-handle-${w.id}`}>
+                    <span>{LIBRARY.find((d) => d.id === w.id)?.title}</span>
+                    <span aria-hidden="true">⠿</span>
+                  </div>
+                )}
                 <div className="widget-content">
                   {w.id === 'alerts' && (
                     <div className="stack">
@@ -327,7 +516,6 @@ export function DashboardPage() {
                   {w.id === 'calendar' && <CalendarPage embedded />}
                   {w.id === 'today' && <MetricTile label="Сегодня" value={today.length} caption="записей" to="/calendar" />}
                   {w.id === 'pending' && <MetricTile label="Ожидают" value={pending.length} caption="подтверждения" to="/appointments" />}
-                  {w.id === 'clients_today' && <MetricTile label="Клиенты сегодня" value={new Set(today.map((a) => a.client_user_id).filter(Boolean)).size || today.length} caption="человек" to="/clients" />}
                   {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/messages" />}
                   {w.id === 'upcoming' && (
                     <div className="stack">
@@ -338,6 +526,8 @@ export function DashboardPage() {
                           key={a.id}
                           to={`/appointments/${a.id}`}
                           serviceName={a.service_name}
+                          personName={a.client_display_name}
+                          subtitle={a.master_display_name}
                           status={a.status}
                           startsAt={a.starts_at}
                           priceMinor={a.price_minor}
@@ -346,7 +536,7 @@ export function DashboardPage() {
                     </div>
                   )}
                   {w.id === 'analytics' && (
-                    <div className="stack analytics-widget">
+                    <div className="stack analytics-widget" data-testid="dashboard-analytics">
                       <div className="row between">
                         <h2>{cabinet.can('reports') ? 'Сводка салона' : 'Моя статистика'}</h2>
                         <div className="chip-row compact">{(['today', 'week', 'month'] as const).map((p) => <button key={p} className={`chip ${period === p ? 'active' : ''}`} type="button" onClick={() => setPeriod(p)}>{p === 'today' ? 'Сегодня' : p === 'week' ? 'Неделя' : 'Месяц'}</button>)}</div>
@@ -400,41 +590,56 @@ export function DashboardPage() {
           </Responsive>
         )}
       </div>
-
-      <Drawer
-        open={libraryOpen}
-        onClose={() => setLibraryOpen(false)}
-        title={<div><p className="eyebrow">Рабочий стол</p><h2>Настроить dashboard</h2></div>}
-        closeLabel="Готово"
-        panelClassName="dashboard-settings"
-      >
-            <p className="muted">Выберите нужные блоки. Порядок и размер также можно менять прямо на рабочем столе.</p>
+      {editing && draft && (
+        <aside className="dash-edit-bar" data-testid="dashboard-edit-bar">
+          <div className="dash-edit-bar__actions">
+            <button
+              className={`btn btn-primary${save.isPending ? ' btn-loading' : ''}`}
+              type="button"
+              data-testid="dashboard-save"
+              disabled={save.isPending || !dirty}
+              onClick={() => persist(draft)}
+            >
+              Сохранить
+            </button>
+            <button className="btn btn-secondary" type="button" data-testid="dashboard-cancel" onClick={cancelEdit}>
+              Отменить
+            </button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              data-testid="dashboard-reset"
+              onClick={() => patchDraft(defaultLayout())}
+            >
+              Сбросить по умолчанию
+            </button>
+          </div>
+          <div className="dash-edit-toggles">
             {relevant.map((def) => {
-              const current = layout.find((x) => x.id === def.id)
+              const current = draft.find((x) => x.id === def.id)
               return (
-                <article key={def.id} className="dashboard-setting-row">
+                <article key={def.id} className="dash-edit-row">
                   <label className="field-check">
                     <input
                       type="checkbox"
                       checked={current?.enabled === true}
-                      onChange={(e) => {
-                        if (!current) {
-                          patchLayout([...layout, { id: def.id, enabled: true, positions: { lg: def.defaultPosition } }])
-                        } else {
-                          patchLayout(layout.map((x) => x.id === def.id ? { ...x, enabled: e.target.checked } : x))
-                        }
-                      }}
+                      onChange={(e) => toggleWidget(def.id, e.target.checked)}
                     />
                     <span><strong>{def.title}</strong></span>
                   </label>
                   <div className="chip-row compact">
-                    {([['compact', 'Компакт'], ['wide', 'Широкий'], ['large', 'Большой']] as const).map(([id, label]) => <button key={id} className="chip" type="button" disabled={!current?.enabled} onClick={() => setPreset(def.id, id)}>{label}</button>)}
+                    {([['compact', 'Компакт'], ['wide', 'Широкий'], ['large', 'Большой']] as const).map(([id, label]) => (
+                      <button key={id} className="chip" type="button" disabled={!current?.enabled} onClick={() => setPreset(def.id, id)}>{label}</button>
+                    ))}
                   </div>
                 </article>
               )
             })}
-            {save.isError && <ErrorBanner error={save.error} fallbackTitle="Не удалось сохранить раскладку" />}
-      </Drawer>
+          </div>
+          {save.isError && <ErrorBanner error={save.error} fallbackTitle="Не удалось сохранить раскладку" />}
+        </aside>
+      )}
+      </div>
     </main>
   )
 }

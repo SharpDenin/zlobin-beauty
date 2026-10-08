@@ -8,9 +8,13 @@ import { apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
-import { initials } from '@/shared/lib/initials'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { PageHeader } from '@/app/layout'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { premiumLabel } from '@/features/dashboard/premiumLabel'
+import { roleTitle } from '@/features/dashboard/roleTitle'
+import '@/features/dashboard/dashboard.css'
 
 const profileSchema = z.object({
   display_name: z.string().min(2, 'Минимум 2 символа'),
@@ -42,6 +46,7 @@ export function ProfilePage() {
       city: user?.city ?? '',
     },
   })
+  const draft = useFormDraft(form, 'profile-form')
 
   const save = useMutation({
     mutationFn: (v: z.infer<typeof profileSchema>) =>
@@ -59,6 +64,7 @@ export function ProfilePage() {
         body: { display_name: v.display_name, city: (v.city ?? '').trim() },
       }),
     onSuccess: (me) => {
+      draft.clear()
       updateUser(me)
       setOk('Профиль сохранён')
       setError(null)
@@ -72,15 +78,17 @@ export function ProfilePage() {
 
   const cabinet = useCabinet()
   const showSubscription = cabinet.kind !== 'salon_admin' && cabinet.kind !== 'client'
+  const photoMediaId = (cabinet.master as { photo_media_id?: string | null } | null)?.photo_media_id ?? null
 
   return (
     <main className="page stack">
       <PageHeader title="Профиль" />
 
       <section className="card profile-hero">
-        <div className="avatar-circle" aria-hidden="true">{initials(user?.display_name)}</div>
+        <MasterPortrait mediaId={photoMediaId} name={user?.display_name ?? ''} token={accessToken} />
         <div className="stack-sm">
           <h2>{user?.display_name}</h2>
+          <p className="muted">{roleTitle(cabinet.kind)}</p>
           <p className="muted">{user?.email ?? 'Email не указан'}</p>
           <div className="appt-card-meta">
             {(user?.roles ?? []).map((r) => (
@@ -155,17 +163,12 @@ function SubscriptionHints() {
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['me-hints'] }),
   })
-  const plan = sub.data?.effective_plan === 'premium' ? 'Premium' : 'Free'
-  const trialUntil = sub.data?.status === 'trial' && sub.data.trial_ends_at
-    ? new Date(sub.data.trial_ends_at).toLocaleDateString('ru-RU')
-    : null
   return (
     <section className="card stack-sm">
       <h2>Подписка</h2>
-      <p>
-        <strong>{plan}</strong>
-        {trialUntil ? ` · пробный период до ${trialUntil}` : ''}
-      </p>
+      <Link className="dash-premium-pill" to="/profile/subscription" data-testid="profile-premium-pill">
+        {premiumLabel(sub.data)}
+      </Link>
       <label className="field-check">
         <input
           type="checkbox"

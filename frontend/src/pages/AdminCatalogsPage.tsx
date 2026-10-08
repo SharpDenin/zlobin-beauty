@@ -10,6 +10,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 
 type Category = { id: string; name: string; slug: string }
 type Unit = { id: string; code: string; name: string }
+type ProfessionType = { id: string; name: string; slug: string; is_active: boolean }
 
 const categorySchema = z.object({
   name: z.string().min(2),
@@ -45,6 +46,12 @@ export function AdminCatalogsPage() {
     enabled: Boolean(accessToken),
   })
 
+  const professionTypes = useQuery({
+    queryKey: ['admin-profession-types'],
+    queryFn: () => apiRequest<{ items: ProfessionType[] }>('/v1/admin/profession-types', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
   const serviceForm = useForm<z.infer<typeof categorySchema>>({
     resolver: zodResolver(categorySchema),
     defaultValues: { name: '', slug: '' },
@@ -58,6 +65,11 @@ export function AdminCatalogsPage() {
   const unitForm = useForm<z.infer<typeof unitSchema>>({
     resolver: zodResolver(unitSchema),
     defaultValues: { code: '', name: '' },
+  })
+
+  const professionForm = useForm<z.infer<typeof categorySchema>>({
+    resolver: zodResolver(categorySchema),
+    defaultValues: { name: '', slug: '' },
   })
 
   const createServiceCategory = useMutation({
@@ -98,6 +110,34 @@ export function AdminCatalogsPage() {
       setOk('Единица измерения создана')
       unitForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-units'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
+  })
+
+  const createProfession = useMutation({
+    mutationFn: (v: z.infer<typeof categorySchema>) =>
+      apiRequest('/v1/admin/profession-types', {
+        token: accessToken,
+        body: { name: v.name, slug: v.slug || undefined },
+      }),
+    onSuccess: async () => {
+      setOk('Тип мастера создан')
+      professionForm.reset()
+      await qc.invalidateQueries({ queryKey: ['admin-profession-types'] })
+      await qc.invalidateQueries({ queryKey: ['profession-types'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Ошибка')),
+  })
+
+  const toggleProfession = useMutation({
+    mutationFn: (row: ProfessionType) =>
+      apiRequest(`/v1/admin/profession-types/${row.id}/${row.is_active ? 'disable' : 'enable'}`, {
+        method: 'POST',
+        token: accessToken,
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['admin-profession-types'] })
+      await qc.invalidateQueries({ queryKey: ['profession-types'] })
     },
     onError: (e) => setError(formatUserError(e, 'Ошибка')),
   })
@@ -214,6 +254,29 @@ export function AdminCatalogsPage() {
                 onClick={() => deleteUnit.mutate(u.id)}
               >
                 Удалить
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2>Типы мастеров</h2>
+        <p className="muted">Не удаляйте тип, если он есть в исторических профилях — отключите его.</p>
+        <form className="stack" onSubmit={professionForm.handleSubmit((v) => createProfession.mutate(v))}>
+          <div className="field"><label htmlFor="pt-name">Название</label><input id="pt-name" required aria-required="true" {...professionForm.register('name')} /></div>
+          <div className="field"><label>Slug (опционально)</label><input {...professionForm.register('slug')} placeholder="cosmetologist" /></div>
+          <button className="btn btn-primary" type="submit" disabled={createProfession.isPending}>Добавить тип</button>
+        </form>
+        <div className="list">
+          {(professionTypes.data?.items ?? []).map((t) => (
+            <article key={t.id} className="list-item row between">
+              <div>
+                <strong>{t.name}</strong>
+                <p className="muted">{t.slug} · {t.is_active ? 'активен' : 'отключён'}</p>
+              </div>
+              <button className="btn btn-secondary btn-compact" type="button" onClick={() => toggleProfession.mutate(t)}>
+                {t.is_active ? 'Отключить' : 'Включить'}
               </button>
             </article>
           ))}

@@ -1,5 +1,5 @@
-import { Link, useParams } from 'react-router-dom'
-import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -13,6 +13,7 @@ import {
   useEnsureLocation,
   type BranchCard,
   type CommerceProduct,
+  type SupplierOrder,
 } from '@/shared/lib/commerce'
 import { addToCart, cartCount, cartTotal, clearCart, loadCart, saveCart, setCartQty, type CartLine } from '@/shared/lib/cart'
 import { availabilityLabel, unitLabel } from '@/shared/lib/labels'
@@ -21,13 +22,17 @@ import { MediaImage } from '@/shared/ui/MediaImage'
 import { Modal } from '@/shared/ui/Modal'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { useToast } from '@/shared/ui/Toast'
 import { productAudienceLabel } from '@/pages/knowledge-helpers'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
+import '@/features/cart/cart.css'
 
 export function CosmeticsSupplierPage() {
   const { supplierId = '' } = useParams()
   const { accessToken } = useAuth()
   const messenger = useMessenger()
+  const navigate = useNavigate()
+  const toast = useToast()
   const qc = useQueryClient()
   const { buyerOrgId, buyerOrg, orgs } = useBuyerOrg()
   const { locations, ensure, locationId } = useEnsureLocation(buyerOrgId)
@@ -36,9 +41,22 @@ export function CosmeticsSupplierPage() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [branchQuery, setBranchQuery] = useState('')
   const [destinationBranchId, setDestinationBranchId] = useState('')
+  const destinationBranchIdRef = useRef(destinationBranchId)
+  destinationBranchIdRef.current = destinationBranchId
   const [paymentMethod, setPaymentMethod] = useState<string>('cash')
   const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
+  // One idempotency key per distinct order payload. A retry of the same payload after an
+  // ambiguous failure (timeout, dropped response) reuses the key and the server dedupes it;
+  // editing the cart / branch / payment starts a new attempt with a new key.
+  const orderAttempt = useRef<{ fingerprint: string; key: string } | null>(null)
+  const submitLock = useRef(false)
+  const idempotencyKeyFor = (fingerprint: string): string => {
+    if (orderAttempt.current?.fingerprint !== fingerprint) {
+      orderAttempt.current = { fingerprint, key: newIdempotencyKey() }
+    }
+    return orderAttempt.current.key
+  }
 
   useEffect(() => {
     if (supplierId) setCart(loadCart(supplierId))
@@ -106,7 +124,8 @@ export function CosmeticsSupplierPage() {
   const createOrder = useMutation({
     mutationFn: async () => {
       if (!buyerOrgId) throw new ApiError('Нет организации салона', 'validation_error', 400)
-      if (!destinationBranchId) throw new ApiError('Выберите филиал для получения', 'validation_error', 400)
+      const branchId = destinationBranchIdRef.current
+      if (!branchId) throw new ApiError('Выберите филиал для получения', 'validation_error', 400)
       let loc = locationId || locations.data?.items[0]?.id
       if (!loc) {
         const created = await ensure.mutateAsync()
@@ -114,24 +133,28 @@ export function CosmeticsSupplierPage() {
       }
       if (!loc) throw new ApiError('Не удалось подготовить склад доставки', 'validation_error', 400)
       if (cart.length === 0) throw new ApiError('Корзина пуста', 'validation_error', 400)
-      const idempotencyKey = newIdempotencyKey()
-      return apiRequest('/v1/commerce/supplier-orders', {
+      const items = cart.map((c) => ({ product_id: c.product.id, qty: c.qty }))
+      const orderComment = comment.trim() || 'Заказ косметики'
+      const idempotencyKey = idempotencyKeyFor(
+        JSON.stringify([buyerOrgId, supplierId, loc, branchId, paymentMethod, orderComment, items]),
+      )
+      return apiRequest<SupplierOrder>('/v1/commerce/supplier-orders', {
         token: accessToken,
         idempotencyKey,
         body: {
           buyer_org_id: buyerOrgId,
           supplier_org_id: supplierId,
           location_id: loc,
-          destination_branch_id: destinationBranchId,
+          destination_branch_id: branchId,
           payment_method: paymentMethod,
-          comment: comment.trim() || 'Заказ косметики',
-          items: cart.map((c) => ({ product_id: c.product.id, qty: c.qty })),
-          // Backend currently reads idempotency_key from body; header is also sent via idempotencyKey.
+          comment: orderComment,
+          items,
           idempotency_key: idempotencyKey,
         },
       })
     },
-    onSuccess: async () => {
+    onSuccess: async (order) => {
+      submitLock.current = false
       setOk('Заказ оформлен')
       setError(null)
       setCart([])
@@ -141,11 +164,25 @@ export function CosmeticsSupplierPage() {
       setDestinationBranchId('')
       setPaymentMethod('cash')
       setBranchQuery('')
+      orderAttempt.current = null
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
+      toast.success('Заказ оформлен')
+      const highlight = order?.id ? `?highlight=${encodeURIComponent(order.id)}` : ''
+      navigate(`/cosmetics/orders${highlight}`)
     },
-    onError: (e) => setError(e),
+    // Failure keeps the cart, the form and the idempotency key: nothing was persisted
+    // (the server creates the order and reserves stock atomically), so a retry is safe.
+    onError: (e) => {
+      submitLock.current = false
+      setError(e)
+    },
   })
 
+  const submitOrder = () => {
+    if (createOrder.isPending || submitLock.current) return
+    submitLock.current = true
+    createOrder.mutate()
+  }
   const published = useMemo(
     () => (products.data?.items ?? []).filter((p) => p.published !== false),
     [products.data],
@@ -157,8 +194,8 @@ export function CosmeticsSupplierPage() {
       <main className="page">
         <EmptyState
           title="Нужен салон"
-          text="Создайте салон в кабинете мастера."
-          action={<Link className="btn btn-primary" to="/master">Кабинет</Link>}
+          text="Создайте салон на странице мастера."
+          action={<Link className="btn btn-primary" to="/master">Моя страница</Link>}
         />
       </main>
     )
@@ -263,25 +300,54 @@ export function CosmeticsSupplierPage() {
       )}
 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Оформление заказа" size="lg">
-            <div className="list">
+            {cart.length === 0 ? (
+              <EmptyState title="Корзина пуста" text="Добавьте товары из каталога поставщика." />
+            ) : (
+            <div className="list cart-lines">
               {cart.map((line) => (
-                <article key={line.product.id} className="list-item">
-                  <div className="row between">
-                    <strong>{line.product.brand ? `${line.product.brand} · ` : ''}{line.product.name}</strong>
+                <article key={line.product.id} className="cart-line" data-testid="cart-line">
+                  <div className="cart-line-head">
+                    <strong className="cart-line-title">
+                      {line.product.brand ? `${line.product.brand} · ` : ''}{line.product.name}
+                    </strong>
                     <span>{formatMoney(line.product.price_minor * line.qty)}</span>
                   </div>
-                  <div className="field">
-                    <label>Количество</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={line.qty}
-                      onChange={(e) => setCart((prev) => setCartQty(prev, line.product.id, Number(e.target.value)))}
-                    />
+                  <div className="cart-line-controls">
+                    <div className="cart-qty-stepper" role="group" aria-label={`Количество: ${line.product.name}`}>
+                      <button
+                        className="btn btn-secondary cart-qty-btn"
+                        type="button"
+                        aria-label="Уменьшить"
+                        disabled={createOrder.isPending}
+                        onClick={() => setCart((prev) => setCartQty(prev, line.product.id, line.qty - 1))}
+                      >
+                        −
+                      </button>
+                      <span className="cart-qty-value" aria-live="polite">{line.qty}</span>
+                      <button
+                        className="btn btn-secondary cart-qty-btn"
+                        type="button"
+                        aria-label="Увеличить"
+                        disabled={createOrder.isPending}
+                        onClick={() => setCart((prev) => setCartQty(prev, line.product.id, line.qty + 1))}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <button
+                      className="btn btn-secondary cart-line-remove"
+                      type="button"
+                      aria-label={`Удалить ${line.product.name}`}
+                      disabled={createOrder.isPending}
+                      onClick={() => setCart((prev) => setCartQty(prev, line.product.id, 0))}
+                    >
+                      Удалить
+                    </button>
                   </div>
                 </article>
               ))}
             </div>
+            )}
 
             <section className="stack-sm">
               <h3>Филиал получения</h3>
@@ -355,7 +421,7 @@ export function CosmeticsSupplierPage() {
               className="btn btn-primary btn-block"
               type="button"
               disabled={createOrder.isPending || cart.length === 0 || !destinationBranchId}
-              onClick={() => createOrder.mutate()}
+              onClick={submitOrder}
             >
               {createOrder.isPending ? 'Отправляем…' : 'Подтвердить заказ'}
             </button>

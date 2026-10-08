@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	chairBusyUserMsg  = "Это кресло уже занято в выбранный период"
+	chairBusyUserMsg    = "Это кресло уже занято в выбранный период"
 	leaseOverlapUserMsg = "Это кресло уже сдано в аренду на пересекающийся период"
 )
 
@@ -320,13 +320,24 @@ func (s *Service) ListOrgChairs(ctx context.Context, actor, orgID uuid.UUID) ([]
 	return items, nil
 }
 
-func (s *Service) ListMarketplaceChairs(ctx context.Context) ([]domain.SalonChair, error) {
+func (s *Service) ListMarketplaceChairs(ctx context.Context, actor uuid.UUID) ([]domain.SalonChair, error) {
 	_ = s.store.ExpireLeases(ctx, s.now().UTC())
 	items, err := s.store.ListMarketplaceChairs(ctx)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return items, nil
+	out := make([]domain.SalonChair, 0, len(items))
+	for _, c := range items {
+		if actor != uuid.Nil {
+			if err := s.requireMembership(ctx, c.OrganizationID, actor, "owner", "admin", "master", "staff"); err == nil {
+				continue
+			} else if !isForbidden(err) {
+				return nil, err
+			}
+		}
+		out = append(out, c)
+	}
+	return out, nil
 }
 
 func (s *Service) ListUsableChairs(ctx context.Context, actor, orgID uuid.UUID) ([]domain.SalonChair, error) {
@@ -399,8 +410,9 @@ func (s *Service) RequestChairLease(ctx context.Context, actor, chairID uuid.UUI
 	if chair == nil || chair.Status != domain.ChairStatusActive || !chair.ListedForRent {
 		return nil, apperr.NotFound("chair is not available for rent")
 	}
+	// Staff of this salon already work here and cannot rent its chairs.
 	if err := s.requireMembership(ctx, chair.OrganizationID, actor, "owner", "admin", "master", "staff"); err == nil {
-		return nil, apperr.Validation("сотрудник салона не арендует кресло своей организации")
+		return nil, apperr.ValidationCode(apperr.CodeChairOwnSalonLease, "Сотрудник салона не может арендовать кресло в этом салоне.")
 	} else if !isForbidden(err) {
 		return nil, err
 	}

@@ -42,6 +42,17 @@ const (
 	CodeMediaTooLarge               Code = "media_too_large"
 	CodeMediaEmpty                  Code = "media_empty"
 	CodePriceChanged                Code = "price_changed"
+	CodeContentNotAllowed           Code = "content_not_allowed"
+	CodeMediaInvalidContent         Code = "media_invalid_content"
+	CodeMediaTooManyRequests        Code = "media_rate_limited"
+	CodeSessionInvalid              Code = "session_invalid"
+	CodeInviteInvalid               Code = "invite_invalid"
+	CodeInviteExpired               Code = "invite_expired"
+	CodeInviteRevoked               Code = "invite_revoked"
+	CodeInviteExhausted             Code = "invite_exhausted"
+	CodeContactExists               Code = "contact_exists"
+	CodeContactSelf                 Code = "contact_self"
+	CodeChairOwnSalonLease          Code = "chair_own_salon_lease"
 )
 
 type AppError struct {
@@ -128,6 +139,20 @@ func InsufficientStock(msg string) *AppError {
 	return New(CodeInsufficientStock, http.StatusConflict, msg)
 }
 
+// ContentNotAllowed reports user text that violates the moderation policy.
+// fields are JSON field names; the offending words are never echoed back.
+func ContentNotAllowed(fields ...string) *AppError {
+	details := map[string]any{}
+	if len(fields) > 0 {
+		marks := make(map[string]string, len(fields))
+		for _, f := range fields {
+			marks[f] = "content_not_allowed"
+		}
+		details["fields"] = marks
+	}
+	return New(CodeContentNotAllowed, http.StatusUnprocessableEntity, "text contains words that are not allowed").WithDetails(details)
+}
+
 func RateLimited(msg string) *AppError {
 	return New(CodeRateLimited, http.StatusTooManyRequests, msg)
 }
@@ -146,6 +171,22 @@ func AccountBlocked() *AppError {
 
 func SessionExpired() *AppError {
 	return UnauthorizedCode(CodeSessionExpired, "session expired")
+}
+
+func InviteInvalid() *AppError {
+	return New(CodeInviteInvalid, http.StatusNotFound, "invite is not valid")
+}
+
+func InviteExpired() *AppError {
+	return New(CodeInviteExpired, http.StatusGone, "invite expired")
+}
+
+func InviteRevoked() *AppError {
+	return New(CodeInviteRevoked, http.StatusGone, "invite revoked")
+}
+
+func InviteExhausted() *AppError {
+	return New(CodeInviteExhausted, http.StatusConflict, "invite has no remaining uses")
 }
 
 func Internal(err error) *AppError {

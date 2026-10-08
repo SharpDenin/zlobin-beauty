@@ -1,3 +1,5 @@
+> Актуальные чеклисты: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 # SERVER_DEPLOY_CHECKLIST.md
 
 Operational checklist for demo server or production. Real project commands.

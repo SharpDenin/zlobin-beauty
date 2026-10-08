@@ -171,7 +171,13 @@ function ProductMedia({
 }) {
   return (
     <div className={`${frame} ${className ?? ''}`.trim()}>
-      <MediaImage mediaId={mediaId} token={token} alt={alt} fallback={alt.slice(0, 2).toUpperCase()} />
+      <MediaImage
+        mediaId={mediaId}
+        token={token}
+        alt={alt}
+        variant="cover"
+        fallback={alt.slice(0, 2).toUpperCase()}
+      />
     </div>
   )
 }
@@ -299,16 +305,6 @@ function CatalogView() {
     queryFn: () => apiRequest<{ items: Category[] }>('/v1/commerce/product-categories', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
-  const recommendations = useQuery({
-    queryKey: ['shop-recommendations'],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; comment: string; product: ShopProduct }> }>(
-        '/v1/commerce/shop/recommendations',
-        { token: accessToken },
-      ),
-    enabled: Boolean(accessToken),
-  })
-
   const addToCart = useMutation({
     mutationFn: (product_id: string) =>
       apiRequest<Cart>('/v1/commerce/shop/cart/items', {
@@ -346,7 +342,6 @@ function CatalogView() {
     return items
   }, [products.data, categoryId, sort])
 
-  const recs = recommendations.data?.items ?? []
   const activeFilters = shopHasActiveFilters(brand, categoryId, search)
 
   const filterFields = (
@@ -445,24 +440,6 @@ function CatalogView() {
 
       <ErrorBanner error={error} fallbackTitle="Не удалось добавить товар" />
       {ok && <div className="state-box success">{ok}</div>}
-
-      {recs.length > 0 && !search && !brand && !categoryId && (
-        <section className="stack-sm">
-          <h2>Рекомендации мастеров</h2>
-          <div className="product-grid">
-            {recs.map((r) => (
-              <ProductCard
-                key={r.id}
-                product={r.product}
-                token={accessToken}
-                categoryName={r.product.category_id ? catName[r.product.category_id] : undefined}
-                busy={addToCart.isPending}
-                onAdd={() => addToCart.mutate(r.product.id)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
 
       {products.isLoading && (
         <div className="product-grid" aria-busy="true" aria-label="Загрузка каталога">

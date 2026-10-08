@@ -14,7 +14,12 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
 import { Modal } from '@/shared/ui/Modal'
+import { Drawer } from '@/shared/ui/Drawer'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
+import { moderationError } from '@/shared/lib/moderation'
+import { useDraftState } from '@/shared/lib/useFormDraft'
+import { ApiError } from '@/shared/api/client'
+import '@/features/knowledge/knowledge-tones.css'
 
 type SupplierProduct = { id: string; brand?: string; name: string; category?: string; audience?: string }
 type ProductCategory = { id: string; name: string }
@@ -41,6 +46,17 @@ const emptyDraft = (): Draft => ({
   categoryIds: [],
 })
 
+function docPlainText(doc: JSONContent): string {
+  const parts: string[] = []
+  const walk = (node: JSONContent | undefined) => {
+    if (!node) return
+    if (typeof node.text === 'string') parts.push(node.text)
+    node.content?.forEach(walk)
+  }
+  walk(doc)
+  return parts.join(' ')
+}
+
 export function KnowledgeEditorPage() {
   const { id } = useParams()
   const isNew = !id
@@ -48,13 +64,14 @@ export function KnowledgeEditorPage() {
   const { supplierOrgId } = useSupplierOrg()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [draft, setDraft] = useState<Draft>(emptyDraft())
+  const [draft, setDraft, clearDraft] = useDraftState<Draft>(`kb-editor:${id ?? 'new'}`, emptyDraft())
   const [hydrated, setHydrated] = useState(isNew)
   const [error, setError] = useState<unknown>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [preview, setPreview] = useState(false)
   const [productQ, setProductQ] = useState('')
   const [confirmArchive, setConfirmArchive] = useState(false)
+  const [actionsDrawer, setActionsDrawer] = useState(false)
   const hydratedForId = useRef<string | null>(null)
 
   const existing = useQuery({
@@ -66,13 +83,19 @@ export function KnowledgeEditorPage() {
   useEffect(() => {
     hydratedForId.current = null
     setHydrated(isNew)
-    if (isNew) setDraft(emptyDraft())
   }, [id, isNew])
 
   useEffect(() => {
     if (!existing.data) return
     if (hydratedForId.current === existing.data.id) return
     const a = existing.data
+    const keepLocal =
+      draft.title.trim().length > 0 || docHasText(draft.doc) || Boolean(draft.coverMediaId) || draft.productIds.length > 0
+    if (keepLocal) {
+      hydratedForId.current = a.id
+      setHydrated(true)
+      return
+    }
     setDraft({
       title: a.title,
       category: a.category,
@@ -85,7 +108,7 @@ export function KnowledgeEditorPage() {
     })
     hydratedForId.current = a.id
     setHydrated(true)
-  }, [existing.data])
+  }, [existing.data, draft.title, draft.doc, draft.coverMediaId, draft.productIds, setDraft])
 
   const products = useQuery({
     queryKey: ['knowledge-supplier-products', supplierOrgId],
@@ -119,6 +142,12 @@ export function KnowledgeEditorPage() {
 
   const save = useMutation({
     mutationFn: async (status: Draft['status']) => {
+      const banned =
+        moderationError(draft.title) ||
+        moderationError(draft.category) ||
+        moderationError(draft.brand) ||
+        moderationError(docPlainText(draft.doc))
+      if (banned) throw new ApiError(banned, 'content_not_allowed', 422)
       const body = {
         title: draft.title.trim(),
         category: draft.category.trim(),
@@ -140,6 +169,7 @@ export function KnowledgeEditorPage() {
       return apiRequest<KnowledgeArticle>('/v1/knowledge', { token: accessToken, body })
     },
     onSuccess: async (item, status) => {
+      clearDraft()
       setOk(status === 'published' ? 'Материал опубликован' : 'Черновик сохранён')
       setError(null)
       setDraft((d) => ({ ...d, status }))
@@ -240,6 +270,8 @@ export function KnowledgeEditorPage() {
               id="kb-title"
               value={draft.title}
               onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              aria-required="true"
+              required
               aria-invalid={draft.title.trim().length > 0 && draft.title.trim().length < 2}
             />
             {draft.title.trim().length > 0 && draft.title.trim().length < 2 && (
@@ -354,34 +386,61 @@ export function KnowledgeEditorPage() {
 
         <section className="card stack kb-ed-actions kb-editor-actions">
           <h2>Действия</h2>
-          <div className="stack-sm kb-editor-action-list">
-            <button className="btn btn-secondary" type="button" disabled={!canSave || save.isPending} onClick={() => save.mutate('draft')}>
-              Сохранить черновик
-            </button>
-            <button className="btn btn-secondary" type="button" disabled={!canSave} onClick={() => setPreview(true)}>
-              Предпросмотр
-            </button>
-            <button className="btn btn-primary" type="button" disabled={!canSave || save.isPending} onClick={() => save.mutate('published')}>
+          <div className="kb-editor-actions-bar kb-editor-mobile-actions-trigger">
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={!canSave || save.isPending}
+              onClick={() => save.mutate('published')}
+            >
               Опубликовать
             </button>
-            {id && draft.status === 'published' && (
-              <button className="btn btn-ghost" type="button" disabled={setStatus.isPending} onClick={() => setStatus.mutate('draft')}>
-                Снять с публикации
-              </button>
-            )}
-            {id && draft.status === 'archived' && (
-              <button className="btn btn-secondary" type="button" disabled={setStatus.isPending} onClick={() => setStatus.mutate('draft')}>
-                Вернуть в черновики
-              </button>
-            )}
-            {id && draft.status !== 'archived' && (
-              <button className="btn btn-ghost" type="button" disabled={setStatus.isPending} onClick={() => setConfirmArchive(true)}>
-                В архив
-              </button>
-            )}
+            <button
+              className="btn btn-secondary"
+              type="button"
+              aria-haspopup="dialog"
+              onClick={() => setActionsDrawer(true)}
+            >
+              Ещё…
+            </button>
+          </div>
+          <div className="stack-sm kb-editor-action-list kb-editor-desktop-actions">
+            <EditorActionButtons
+              canSave={canSave}
+              savePending={save.isPending}
+              statusPending={setStatus.isPending}
+              id={id}
+              status={draft.status}
+              onDraft={() => save.mutate('draft')}
+              onPreview={() => setPreview(true)}
+              onPublish={() => save.mutate('published')}
+              onUnpublish={() => setStatus.mutate('draft')}
+              onRestore={() => setStatus.mutate('draft')}
+              onArchive={() => setConfirmArchive(true)}
+              includePublish
+            />
           </div>
         </section>
       </div>
+
+      <Drawer open={actionsDrawer} onClose={() => setActionsDrawer(false)} title="Действия" label="Действия со статьёй">
+        <div className="stack-sm">
+          <EditorActionButtons
+            canSave={canSave}
+            savePending={save.isPending}
+            statusPending={setStatus.isPending}
+            id={id}
+            status={draft.status}
+            onDraft={() => { setActionsDrawer(false); save.mutate('draft') }}
+            onPreview={() => { setActionsDrawer(false); setPreview(true) }}
+            onPublish={() => { setActionsDrawer(false); save.mutate('published') }}
+            onUnpublish={() => { setActionsDrawer(false); setStatus.mutate('draft') }}
+            onRestore={() => { setActionsDrawer(false); setStatus.mutate('draft') }}
+            onArchive={() => { setActionsDrawer(false); setConfirmArchive(true) }}
+            includePublish
+          />
+        </div>
+      </Drawer>
 
       <Modal open={confirmArchive} onClose={() => setConfirmArchive(false)} title="Архивировать материал?">
         <p>Статья исчезнет из публичной базы знаний. Её можно будет вернуть в черновики.</p>
@@ -400,5 +459,64 @@ export function KnowledgeEditorPage() {
         </div>
       </Modal>
     </main>
+  )
+}
+
+function EditorActionButtons({
+  canSave,
+  savePending,
+  statusPending,
+  id,
+  status,
+  onDraft,
+  onPreview,
+  onPublish,
+  onUnpublish,
+  onRestore,
+  onArchive,
+  includePublish = false,
+}: {
+  canSave: boolean
+  savePending: boolean
+  statusPending: boolean
+  id?: string
+  status: Draft['status']
+  onDraft: () => void
+  onPreview: () => void
+  onPublish?: () => void
+  onUnpublish: () => void
+  onRestore: () => void
+  onArchive: () => void
+  includePublish?: boolean
+}) {
+  return (
+    <>
+      <button className="btn btn-secondary" type="button" disabled={!canSave || savePending} onClick={onDraft}>
+        Сохранить черновик
+      </button>
+      <button className="btn btn-secondary" type="button" disabled={!canSave} onClick={onPreview}>
+        Предпросмотр
+      </button>
+      {includePublish && onPublish && (
+        <button className="btn btn-primary" type="button" disabled={!canSave || savePending} onClick={onPublish}>
+          Опубликовать
+        </button>
+      )}
+      {id && status === 'published' && (
+        <button className="btn btn-ghost" type="button" disabled={statusPending} onClick={onUnpublish}>
+          Снять с публикации
+        </button>
+      )}
+      {id && status === 'archived' && (
+        <button className="btn btn-secondary" type="button" disabled={statusPending} onClick={onRestore}>
+          Вернуть в черновики
+        </button>
+      )}
+      {id && status !== 'archived' && (
+        <button className="btn btn-ghost" type="button" disabled={statusPending} onClick={onArchive}>
+          В архив
+        </button>
+      )}
+    </>
   )
 }

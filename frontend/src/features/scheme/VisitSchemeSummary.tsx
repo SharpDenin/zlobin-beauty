@@ -14,6 +14,21 @@ type SchemePayload = {
   components?: Array<{ name: string; brand?: string; qty?: string; proportion?: string }>
 }
 
+const SCHEME_LABELS: Record<string, string> = {
+  technique: 'Техника',
+  dye: 'Краситель',
+  shades: 'Оттенки',
+  proportions: 'Пропорции',
+  oxidizer: 'Окислитель',
+  formula: 'Формула',
+  product: 'Продукт',
+  notes: 'Заметки',
+}
+
+function schemeLabel(key: string) {
+  return SCHEME_LABELS[key] ?? key
+}
+
 const FORMULA_KEY_SET = new Set<string>(FORMULA_FIELD_KEYS)
 
 export function VisitSchemeSummary({
@@ -71,7 +86,7 @@ export function VisitSchemeSummary({
           )}
           {schemeEntries.map(([key, value]) => (
             <p key={key}>
-              <span className="muted">{key}: </span>
+              <span className="muted">{schemeLabel(key)}: </span>
               {String(value)}
             </p>
           ))}
@@ -87,7 +102,7 @@ export function VisitSchemeSummary({
         <>
           {formulaEntries.map(([key, value]) => (
             <p key={key} data-testid="formula-field">
-              <span className="muted">{key}: </span>
+              <span className="muted">{schemeLabel(key)}: </span>
               {String(value)}
             </p>
           ))}

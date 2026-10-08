@@ -34,6 +34,11 @@ func TestValidateMessageContent(t *testing.T) {
 	if err := ValidateMessageContent("hello", false); err != nil {
 		t.Fatalf("text message must be allowed: %v", err)
 	}
+	if err := ValidateMessageContent("полный идиот", false); err == nil {
+		t.Fatal("moderated body must be rejected")
+	} else if ae, ok := apperr.As(err); !ok || ae.Code != apperr.CodeContentNotAllowed {
+		t.Fatalf("expected content_not_allowed, got %v", err)
+	}
 	long := strings.Repeat("я", domain.MaxMessageRunes+1)
 	err := ValidateMessageContent(long, false)
 	if err == nil {

@@ -213,7 +213,7 @@ export function RepPage() {
       <div className="row between">
         <div className="stack-sm">
           <p className="eyebrow">Представитель</p>
-          <h1>Кабинет представителя</h1>
+          <h1>Сегодня</h1>
           <p className="muted">Рабочий день: маршрут, доставки и инкассация. <Hint id="rep-home" title="Маршрут">Карта показывает рекомендованный порядок остановок с расстоянием и ETA.</Hint></p>
         </div>
       </div>

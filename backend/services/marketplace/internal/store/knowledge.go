@@ -280,7 +280,8 @@ func knowledgeWhere(f KnowledgeListFilter) (string, []any, int) {
 		n++
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
-		like := "%" + q + "%"
+		// escapeLike: a typed "%" or "_" is text, not a wildcard ("50%" must not match everything).
+		like := "%" + escapeLike(q) + "%"
 		b.WriteString(fmt.Sprintf(` AND (
   ka.title ILIKE $%d OR ka.brand ILIKE $%d OR ka.category ILIKE $%d OR ka.content ILIKE $%d
   OR to_tsvector('simple', coalesce(ka.title,'') || ' ' || coalesce(ka.brand,'') || ' ' || coalesce(ka.category,''))

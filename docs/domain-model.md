@@ -1,3 +1,5 @@
+> Историческая модель. Текущие границы сервисов: [ARCHITECTURE.md](ARCHITECTURE.md), роли: [ROLES_AND_PERMISSIONS.md](ROLES_AND_PERMISSIONS.md).
+
 # Domain model
 
 ## Tenancy

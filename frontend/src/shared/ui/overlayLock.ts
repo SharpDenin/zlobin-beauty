@@ -72,22 +72,20 @@ function restoreLock() {
   }
 }
 
-function isInsideOverlayScroll(target: EventTarget | null) {
-  if (!(target instanceof Element)) return false
-  const scroller = target.closest('[data-overlay-scroll]')
-  if (!scroller) return false
-  return scroller.scrollHeight > scroller.clientHeight + 1
+/** Allow native pan/wheel inside any open overlay; only block background bleed. */
+function isInsideOverlay(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('[data-overlay], [data-overlay-scroll]'))
 }
 
 function onTouchMove(e: TouchEvent) {
   if (lockCount === 0) return
-  if (isInsideOverlayScroll(e.target)) return
+  if (isInsideOverlay(e.target)) return
   e.preventDefault()
 }
 
 function onWheel(e: WheelEvent) {
   if (lockCount === 0) return
-  if (isInsideOverlayScroll(e.target)) return
+  if (isInsideOverlay(e.target)) return
   e.preventDefault()
 }
 
@@ -159,6 +157,18 @@ export function isOverlayLocked() {
 
 export function overlayEscapeDepth() {
   return escapeStack.length
+}
+
+/**
+ * Recover from a stuck lock after navigation / remount when no overlay remains in the DOM.
+ * Safe to call on route changes; no-op while overlays are open.
+ */
+export function releaseOrphanedOverlayLock() {
+  if (typeof document === 'undefined') return
+  if (document.querySelector('[data-overlay="true"]')) return
+  if (lockCount === 0 && !document.body.classList.contains('is-overlay-locked')) return
+  lockCount = 0
+  restoreLock()
 }
 
 /** Test-only: drop all locks and listeners. */

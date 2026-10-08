@@ -12,6 +12,9 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/domain"
 )
 
+// ErrSessionAlreadyRotated is returned when a refresh token was rotated by a concurrent request.
+var ErrSessionAlreadyRotated = errors.New("session already rotated")
+
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -111,18 +114,25 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 	return err
 }
 
-func (s *Store) GetSessionByRefreshHash(ctx context.Context, hash string) (*domain.Session, error) {
-	row := s.pool.QueryRow(ctx, `
-SELECT id, user_id, refresh_token_hash, family_id, user_agent, host(ip)::text, expires_at, revoked_at, created_at
-FROM sessions WHERE refresh_token_hash=$1`, hash)
+const sessionCols = `id, user_id, refresh_token_hash, family_id, user_agent, host(ip)::text, expires_at, revoked_at, rotated_at, replaced_by, created_at`
+
+func (s *Store) scanSession(row pgx.Row) (*domain.Session, error) {
 	var sess domain.Session
-	if err := row.Scan(&sess.ID, &sess.UserID, &sess.RefreshTokenHash, &sess.FamilyID, &sess.UserAgent, &sess.IP, &sess.ExpiresAt, &sess.RevokedAt, &sess.CreatedAt); err != nil {
+	if err := row.Scan(&sess.ID, &sess.UserID, &sess.RefreshTokenHash, &sess.FamilyID, &sess.UserAgent, &sess.IP, &sess.ExpiresAt, &sess.RevokedAt, &sess.RotatedAt, &sess.ReplacedBy, &sess.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	return &sess, nil
+}
+
+func (s *Store) GetSessionByRefreshHash(ctx context.Context, hash string) (*domain.Session, error) {
+	return s.scanSession(s.pool.QueryRow(ctx, `SELECT `+sessionCols+` FROM sessions WHERE refresh_token_hash=$1`, hash))
+}
+
+func (s *Store) GetSessionByID(ctx context.Context, id uuid.UUID) (*domain.Session, error) {
+	return s.scanSession(s.pool.QueryRow(ctx, `SELECT `+sessionCols+` FROM sessions WHERE id=$1`, id))
 }
 
 func (s *Store) RevokeSession(ctx context.Context, id uuid.UUID, at time.Time) error {
@@ -141,14 +151,20 @@ func (s *Store) RotateSession(ctx context.Context, oldID uuid.UUID, next domain.
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at=$2 WHERE id=$1 AND revoked_at IS NULL`, oldID, at); err != nil {
-		return err
-	}
+	// The successor must exist before the old row points at it.
 	if _, err := tx.Exec(ctx, `
 INSERT INTO sessions (id, user_id, refresh_token_hash, family_id, user_agent, ip, expires_at, created_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 		next.ID, next.UserID, next.RefreshTokenHash, next.FamilyID, next.UserAgent, next.IP, next.ExpiresAt, next.CreatedAt); err != nil {
 		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at=$2, rotated_at=$2, replaced_by=$3 WHERE id=$1 AND revoked_at IS NULL`, oldID, at, next.ID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Lost a concurrent rotation race: let the loser fail cleanly instead of forking the family.
+		return ErrSessionAlreadyRotated
 	}
 	return tx.Commit(ctx)
 }

@@ -498,7 +498,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'rep1@demo.local')
     await page.goto('/rep')
-    await expect(page.getByRole('heading', { name: 'Кабинет представителя' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible({ timeout: 15_000 })
     await page.goto('/rep/map')
     await expect(page.getByRole('heading', { name: 'Карта маршрута' })).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.leaflet-container')).toBeVisible({ timeout: 15_000 })
@@ -515,7 +515,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
 
     await loginUI(page, 'master1@demo.local')
     await page.goto('/master')
-    await expect(page.getByText('Профессиональные типы')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Тип мастера')).toBeVisible({ timeout: 15_000 })
     const colorist = page.getByRole('checkbox', { name: 'Колорист' })
     const hairdresser = page.getByRole('checkbox', { name: 'Парикмахер' })
     await expect(colorist).toBeChecked()
@@ -528,7 +528,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.evaluate(() => localStorage.clear())
     await loginUI(page, 'rep1@demo.local')
     await page.goto('/rep')
-    await expect(page.getByRole('heading', { name: 'Кабинет представителя' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('link', { name: 'Маршрут' })).toHaveCount(0)
     await expect(page.getByRole('link', { name: 'Открыть карту' })).toHaveCount(0)
     await page.goto('/rep/map')
@@ -1072,7 +1072,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('salon admin lands on operational dashboard and can open staff', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'admin1@demo.local')
-    await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Записи на сегодня' })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('link', { name: 'Найти мастера' })).toHaveCount(0)
     await page.goto('/staff')
     await expect(page.getByRole('heading', { name: /Команда/ })).toBeVisible({ timeout: 15_000 })
@@ -1082,15 +1082,17 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('dashboard widget toggle survives reload', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'master1@demo.local')
+    await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: 'Настроить' }).click()
-    const messages = page.locator('.dashboard-setting-row').filter({ hasText: 'Сообщения' }).locator('input[type="checkbox"]')
+    await page.getByTestId('dashboard-edit').click()
+    const messages = page.locator('.dash-edit-row').filter({ hasText: 'Сообщения' }).locator('input[type="checkbox"]')
     await expect(messages).toBeVisible()
     if (await messages.isChecked()) await messages.uncheck()
-    await page.getByRole('button', { name: 'Готово' }).click()
+    await page.getByTestId('dashboard-save').click()
     await page.reload()
     await expect(page.getByRole('heading', { name: /Сегодня/ })).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.widget-drag-handle', { hasText: 'Сообщения' })).toHaveCount(0)
+    await expect(page.locator('[data-widget="messages"]')).toHaveCount(0)
   })
 
   test('calendar planner block is clickable and editable', async ({ page }, info) => {
@@ -1152,6 +1154,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('phase2 supplier dashboard analytics team and assign task', async ({ page }, info) => {
     test.skip(!['phone-390', 'phone-430', 'tablet-768', 'laptop-1366', 'desktop-1920'].includes(info.project.name), 'phase2 viewports')
     await loginUI(page, 'supplier1@demo.local')
+    await page.goto('/supplier')
     await expect(page).toHaveURL(/\/supplier/, { timeout: 20_000 })
     await expect(page.getByText('Выручка сегодня').first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Ожидает оплаты').first()).toBeVisible()
@@ -1193,8 +1196,9 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
   test('phase2 representative dashboard map finance analytics', async ({ page }, info) => {
     test.skip(!['phone-390', 'phone-430', 'tablet-768', 'laptop-1366', 'desktop-1920'].includes(info.project.name), 'phase2 viewports')
     await loginUI(page, 'rep1@demo.local')
+    await page.goto('/rep')
     await expect(page).toHaveURL(/\/rep/, { timeout: 20_000 })
-    await expect(page.getByRole('heading', { name: 'Кабинет представителя' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Задач сегодня')).toBeVisible()
     await expect(page.getByText('К получению сегодня')).toBeVisible()
     await test.info().attach(`rep-dashboard-${info.project.name}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
@@ -1544,7 +1548,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
 
     await loginUI(page, email)
     await page.goto(`/masters/${aProf.master!.id}`)
-    await page.locator('.service-card').filter({ hasText: aService!.name }).first().click()
+    await page.locator('[data-testid="mp-service"]').filter({ hasText: aService!.name }).first().click()
     await page.getByRole('button', { name: 'Далее' }).click()
     await pickBookableSlot(page, masterAUserId!, aService!.duration_minutes ?? 60)
     await page.getByRole('button', { name: 'К подтверждению' }).click()
@@ -1552,7 +1556,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await expect(page.getByText('Запись к этому мастеру сейчас недоступна.').first()).toBeVisible({ timeout: 15_000 })
 
     await page.goto(`/masters/${bProf.master!.id}`)
-    await page.locator('.service-card').first().click()
+    await page.locator('[data-testid="mp-service"]').first().click()
     await page.getByRole('button', { name: 'Далее' }).click()
     await pickBookableSlot(page, bProf.master!.user_id || masterAUserId!, bService!.duration_minutes ?? 60)
     await page.getByRole('button', { name: 'К подтверждению' }).click()
@@ -1577,7 +1581,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
     await loginUI(page, email)
     await page.goto(`/masters/${aProf.master!.id}`)
-    await page.locator('.service-card').filter({ hasText: aService!.name }).first().click()
+    await page.locator('[data-testid="mp-service"]').filter({ hasText: aService!.name }).first().click()
     await page.getByRole('button', { name: 'Далее' }).click()
     await pickBookableSlot(page, masterAUserId!, aService!.duration_minutes ?? 60)
     await page.getByRole('button', { name: 'К подтверждению' }).click()
@@ -1654,7 +1658,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
       if (await more.isVisible()) await more.click()
     }
     await loginUI(page, 'master4@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет частного мастера', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Частный мастер', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
     await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
@@ -1662,21 +1666,21 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'master2@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет арендатора кресла', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Аренда кресла', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
     await closeMoreDrawer(page)
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'mobile1@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет выездного мастера', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Выездной мастер', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
     await closeMoreDrawer(page)
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'employee1@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет мастера салона', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Мастер салона', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
     await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
@@ -1684,7 +1688,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'master1@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет владельца салона', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Владелец салона', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toBeVisible()
     await expect(page.getByRole('link', { name: 'Настройки' })).toBeVisible()
@@ -1692,7 +1696,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'admin1@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет администратора', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Администратор салона', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toBeVisible()
     await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
@@ -1703,7 +1707,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'chain1@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Кабинет владельца сети', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Владелец сети', { timeout: 15_000 })
     await expect(page.getByTestId('chain-branch-switcher').locator('visible=true').first()).toBeVisible({ timeout: 15_000 })
   })
 

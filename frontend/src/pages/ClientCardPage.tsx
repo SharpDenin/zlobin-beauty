@@ -14,6 +14,7 @@ import { Modal } from '@/shared/ui/Modal'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { userError, formatUserError } from '@/shared/lib/app-error'
+import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type ClientCard = {
@@ -45,7 +46,7 @@ type Formula = {
   created_at: string
   redacted?: boolean
   omit_formula?: boolean
-  components?: Array<{ label?: string; amount?: string } | string>
+  components?: Array<{ label?: string; amount?: string; name?: string; code?: string; grams?: number | string; qty?: string; unit?: string; proportion?: string } | string>
 }
 
 const DISPUTE_FIELDS = [
@@ -71,12 +72,31 @@ const formulaSchema = z.object({
   comment: z.string().optional(),
 })
 
+type FormulaComponent = {
+  label?: string
+  name?: string
+  code?: string
+  amount?: string
+  grams?: number | string
+  qty?: string
+  unit?: string
+  proportion?: string
+}
+
+export function formatFormulaComponent(component: FormulaComponent | string): string {
+  if (typeof component === 'string') return component.trim()
+  const name = [component.label, component.name, component.code].find((part) => part && String(part).trim()) ?? ''
+  const grams = component.grams != null && String(component.grams).trim() !== '' ? `${component.grams} г` : ''
+  const amount = [component.amount, grams, component.qty, component.unit, component.proportion]
+    .map((part) => (part == null ? '' : String(part).trim()))
+    .filter(Boolean)
+    .join(' ')
+  return [String(name).trim(), amount].filter(Boolean).join(' · ')
+}
+
 function formulaComponents(f: Formula): string[] {
   if (!f.components || f.components.length === 0) return []
-  return f.components.map((c) => {
-    if (typeof c === 'string') return c
-    return [c.label, c.amount].filter(Boolean).join(' ')
-  }).filter(Boolean)
+  return f.components.map((c) => formatFormulaComponent(c)).filter(Boolean)
 }
 
 export function ClientCardPage() {
@@ -172,11 +192,14 @@ export function ClientCardPage() {
 
   const noteForm = useForm<z.infer<typeof noteSchema>>({ resolver: zodResolver(noteSchema) })
   const formulaForm = useForm<z.infer<typeof formulaSchema>>({ resolver: zodResolver(formulaSchema) })
+  const noteDraft = useFormDraft(noteForm, `client-note:${cardId}`)
+  const formulaDraft = useFormDraft(formulaForm, `client-formula:${cardId}`)
 
   const saveNote = useMutation({
     mutationFn: (v: z.infer<typeof noteSchema>) =>
       apiRequest(`/v1/clients/id/${cardId}/notes`, { token: accessToken, body: v }),
     onSuccess: async () => {
+      noteDraft.clear()
       setOk('Заметка сохранена')
       setError(null)
       noteForm.reset()
@@ -199,6 +222,7 @@ export function ClientCardPage() {
         },
       }),
     onSuccess: async () => {
+      formulaDraft.clear()
       setOk('Состав сохранён')
       setError(null)
       formulaForm.reset()
@@ -249,7 +273,9 @@ export function ClientCardPage() {
           {card.contacts_hidden ? (
             <p className="muted" data-testid="contacts-hidden">Контакты скрыты политикой салона</p>
           ) : (
-            <p data-testid="client-contacts">{card.phone || card.email || 'Контакты не указаны'}</p>
+            <p className="client-passport" data-testid="client-contacts">
+              {[card.phone, card.email].filter(Boolean).join(' · ') || 'Контакты не указаны'}
+            </p>
           )}
           {card.preferences && <p className="muted" data-testid="client-preferences">Предпочтения: {card.preferences}</p>}
           <button

@@ -1,3 +1,5 @@
+> Историческая заметка фазы. Актуальное поведение: [BOOKING.md](BOOKING.md), [USER_FLOWS.md](USER_FLOWS.md).
+
 # Phase 9 — Knowledge recommendations
 
 Knowledge stays in **marketplace**. Phase 8 remains the only availability analyzer. Phases 5–7 remain inventory, receiving, and repeat.

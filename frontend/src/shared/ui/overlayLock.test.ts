@@ -5,6 +5,7 @@ import {
   overlayEscapeDepth,
   overlayLockCount,
   registerOverlayEscape,
+  releaseOrphanedOverlayLock,
   resetOverlayLockForTests,
 } from '@/shared/ui/overlayLock'
 
@@ -65,6 +66,16 @@ describe('overlay scroll lock', () => {
     release()
     release()
     expect(overlayLockCount()).toBe(0)
+  })
+
+  it('releases orphaned locks when no overlay remains in the DOM', () => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+    acquireOverlayLock()
+    expect(isOverlayLocked()).toBe(true)
+    releaseOrphanedOverlayLock()
+    expect(overlayLockCount()).toBe(0)
+    expect(isOverlayLocked()).toBe(false)
+    expect(document.body.classList.contains('is-overlay-locked')).toBe(false)
   })
 })
 

@@ -72,6 +72,10 @@ func main() {
 	for _, a := range accounts {
 		u, err := loginOrRegister(client, base, a, password)
 		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "account_blocked") || strings.Contains(strings.ToLower(err.Error()), "blocked") {
+				log.Printf("warn skip blocked account %s: %v", a.Email, err)
+				continue
+			}
 			fatal("auth %s: %v", a.Email, err)
 		}
 		if a.Name != "" || a.City != "" {
@@ -160,7 +164,7 @@ func main() {
 	log.Printf("ok master3 city=Москва tz=Europe/Moscow work_type=employee")
 
 	_, _, m4Profile, _, err = seedMaster(client, base, master4, masterSeed{
-		OrgName: "Кабинет бровиста «Орлов»", BranchName: "Красноярск, Мира",
+		OrgName: "Студия бровей «Орлов»", BranchName: "Красноярск, Мира",
 		City: "Красноярск", Address: "ул. Мира, 12", Phone: "+79001234567", Timezone: "Asia/Krasnoyarsk",
 		Display: "Дмитрий Орлов", Bio: "Независимый мастер бровей и ресниц: архитектура формы, окрашивание и ламинирование.",
 		Specs: []string{"брови", "ресницы"}, Experience: 6, Education: "Brow Expert School",
@@ -199,7 +203,7 @@ func main() {
 		log.Printf("ok premium1 org=%s profile=%s service=%s", p1Org, p1Profile, p1Service)
 	}
 	_, _, e1Profile, e1Service, err := seedMaster(client, base, expired1, masterSeed{
-		OrgName: "Кабинет Светланы", BranchName: "Красноярск, Вавилова",
+		OrgName: "Студия Светланы", BranchName: "Красноярск, Вавилова",
 		City: "Красноярск", Address: "ул. Вавилова, 3", Phone: "+79006665544", Timezone: "Asia/Krasnoyarsk",
 		Display: "Светлана Егорова", Bio: "Колорист с истёкшим trial — дальше Free: схему на окрашивании заполняем полностью.",
 		Specs: []string{"колористика"}, Experience: 4, Education: "Estel Professional",
@@ -293,6 +297,44 @@ func main() {
 		log.Printf("ok messenger demo conversations")
 	}
 
+	if err := seedContacts(client, base, master1, client1, users["client2@demo.local"], supplier1); err != nil {
+		log.Printf("warn contacts: %v", err)
+	} else {
+		log.Printf("ok address book contacts")
+	}
+	if err := seedContacts(client, base, client1, master1, master2); err != nil {
+		log.Printf("warn client contacts: %v", err)
+	}
+	if err := seedPortfolio(client, base, master1); err != nil {
+		log.Printf("warn portfolio: %v", err)
+	} else {
+		log.Printf("ok master portfolio")
+	}
+	if err := seedCalendarTasks(client, base, master1); err != nil {
+		log.Printf("warn calendar tasks: %v", err)
+	} else {
+		log.Printf("ok calendar planner tasks")
+	}
+
+	liveClients := []authUser{}
+	for _, email := range []string{"client1@demo.local", "client4@demo.local", "client2@demo.local"} {
+		if u, ok := users[email]; ok && u.ID != "" {
+			liveClients = append(liveClients, u)
+		}
+	}
+	if len(liveClients) == 0 && client1.ID != "" {
+		liveClients = []authUser{client1}
+	}
+	if err := seedLiveSalonSchedule(client, base, master1, m1Org, m1Profile, liveClients); err != nil {
+		log.Printf("warn live salon schedule: %v", err)
+	} else {
+		log.Printf("ok live salon schedule")
+	}
+	cutID, _ := lookupMasterServiceByName(client, base, master1, "Стрижка")
+	if err := seedBackdatedSalonDay(m1Org, m1Branch, master1.ID, m1Service, cutID, liveClients, "Asia/Krasnoyarsk"); err != nil {
+		log.Printf("warn backdated salon day: %v", err)
+	}
+
 	if err := seedOrders(client, base, master1, supplier1, m1Org, m1Branch, products1); err != nil {
 		log.Printf("warn orders: %v", err)
 	} else {
@@ -335,6 +377,7 @@ func main() {
 			log.Printf("ok chain owner")
 		}
 	}
+	dedupeIdenticalBranches()
 	mobile := users["mobile1@demo.local"]
 	if mobile.ID != "" {
 		_, _, _, _, err = seedMaster(client, base, mobile, masterSeed{
@@ -538,6 +581,9 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 	if err == nil && status < 300 {
 		return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles}, nil
 	}
+	if status == http.StatusForbidden {
+		return authUser{}, &apiError{Status: status, Body: "account_blocked " + a.Email}
+	}
 
 	reg := map[string]any{
 		"email": a.Email, "password": password, "display_name": a.Name,
@@ -588,8 +634,20 @@ func patchUserProfile(c *http.Client, base string, user authUser, name, city str
 
 // --- master / org ---
 
+func workTypeNeedsSeedSalon(workType string) bool {
+	switch strings.TrimSpace(strings.ToLower(workType)) {
+	case "independent", "private_master", "mobile_master", "":
+		return false
+	default:
+		return true
+	}
+}
+
 func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (orgID, branchID, profileID, firstServiceID string, err error) {
 	cfg = withOptionalPortrait(c, base, user, cfg)
+	bindProfileOrg := workTypeNeedsSeedSalon(cfg.WorkType)
+
+	// Services still need an org membership workspace. Independent masters keep profile.organization_id empty.
 	orgID, branchID, err = ensureOrg(c, base, user, "salon", cfg.OrgName, cfg.BranchName, cfg.City, cfg.Address, cfg.Timezone)
 	if err != nil {
 		return "", "", "", "", err
@@ -602,8 +660,13 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 		"latitude": cityLat(cfg.City), "longitude": cityLng(cfg.City),
 	}, nil)
 
+	profileOrg, profileBranch := "", ""
+	if bindProfileOrg {
+		profileOrg, profileBranch = orgID, branchID
+	}
+
 	// Draft profile first (publication needs services + hours).
-	_, err = upsertMaster(c, base, user, orgID, branchID, cfg, false)
+	_, err = upsertMaster(c, base, user, profileOrg, profileBranch, cfg, false)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("upsert draft: %w", err)
 	}
@@ -630,11 +693,11 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 		log.Printf("warn working-hours status=%d", status)
 	}
 
-	profileID, err = upsertMaster(c, base, user, orgID, branchID, cfg, true)
+	profileID, err = upsertMaster(c, base, user, profileOrg, profileBranch, cfg, true)
 	if err != nil {
 		// Publish may fail if readiness incomplete; keep draft profile id.
 		log.Printf("warn publish master profile: %v", err)
-		profileID, _ = upsertMaster(c, base, user, orgID, branchID, cfg, false)
+		profileID, _ = upsertMaster(c, base, user, profileOrg, profileBranch, cfg, false)
 	}
 
 	pub := true
@@ -654,6 +717,10 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 	attachSalonPhotos(c, base, user, branchID, cfg.SalonPhotos...)
 	attachSeedPortfolio(c, base, user, cfg.Portfolio, cfg.PortfolioCaptions)
 
+	if !bindProfileOrg {
+		log.Printf("ok independent master %s — workspace org=%s not bound to profile", user.ID, orgID)
+		return "", "", profileID, firstServiceID, nil
+	}
 	return orgID, branchID, profileID, firstServiceID, nil
 }
 
@@ -662,8 +729,6 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		ID string `json:"id"`
 	}
 	body := map[string]any{
-		"organization_id":     orgID,
-		"branch_id":           branchID,
 		"display_name":        cfg.Display,
 		"bio":                 cfg.Bio,
 		"specializations":     cfg.Specs,
@@ -673,8 +738,15 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 		"published":           published,
 		"profession_type_ids": professionTypeIDsForSeed(cfg),
 	}
+	if orgID != "" {
+		body["organization_id"] = orgID
+	}
+	if branchID != "" {
+		body["branch_id"] = branchID
+	}
 	if cfg.WorkType != "" {
 		body["work_type"] = cfg.WorkType
+		body["work_types"] = []string{cfg.WorkType}
 	}
 	if cfg.PhotoMediaID != "" {
 		body["photo_media_id"] = cfg.PhotoMediaID
@@ -770,6 +842,11 @@ func ensureOrg(c *http.Client, base string, user authUser, typ, name, branchName
 				_, _ = doJSON(c, http.MethodPatch, base+"/v1/organizations/"+orgID, user.Token, map[string]any{
 					"name": name,
 				}, nil)
+				if branchID != "" && branchName != "" {
+					_, _ = doJSON(c, http.MethodPatch, base+"/v1/branches/"+branchID, user.Token, map[string]any{
+						"name": branchName, "city": city, "address_line": address, "timezone": tz,
+					}, nil)
+				}
 				return orgID, branchID, nil
 			}
 		}
@@ -884,13 +961,23 @@ func seedFixedWindowWorkshop(c *http.Client, base string, user authUser, orgID, 
 
 	var existing struct {
 		Items []struct {
-			ID string `json:"id"`
+			ID        string `json:"id"`
+			StartsAt  string `json:"starts_at"`
+			Status    string `json:"status"`
+			Remaining int    `json:"remaining"`
 		} `json:"items"`
 	}
 	_, _ = doJSON(c, http.MethodGet, base+"/v1/services/"+serviceID+"/occurrences", user.Token, nil, &existing)
-	if len(existing.Items) > 0 {
-		log.Printf("skip workshop occurrence — already %d for service=%s", len(existing.Items), serviceID)
-		return nil
+	nowUTC := time.Now().UTC()
+	for _, it := range existing.Items {
+		starts, err := time.Parse(time.RFC3339, it.StartsAt)
+		if err != nil {
+			continue
+		}
+		if it.Status == "scheduled" && it.Remaining > 0 && starts.After(nowUTC) {
+			log.Printf("skip workshop occurrence — future session %s already open", it.ID)
+			return nil
+		}
 	}
 
 	loc, err := time.LoadLocation("Asia/Krasnoyarsk")
@@ -1962,7 +2049,7 @@ func seedAppointments(c *http.Client, base string, client, master authUser, mast
 }
 
 func findSlot(c *http.Client, base, masterUserID string, durationMin int) (time.Time, error) {
-	day := time.Now().UTC().AddDate(0, 0, 1)
+	day := time.Now()
 	for i := 0; i < 14; i++ {
 		d := day.AddDate(0, 0, i)
 		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
@@ -2737,7 +2824,7 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	if err != nil {
 		return err
 	}
-	if status >= 300 && status != 409 {
+	if status >= 300 && status != 409 && status != 405 {
 		return fmt.Errorf("invite employee status %d", status)
 	}
 	elena := withOptionalPortrait(c, base, employee, masterSeed{
@@ -2806,6 +2893,11 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	if stComplete >= 300 {
 		return fmt.Errorf("employee complete status %d", stComplete)
 	}
+	if len(services) > 0 && profileID != "" && client.ID != "" {
+		if err := seedStaffForward(c, base, employee, profileID, services, []authUser{client}); err != nil {
+			log.Printf("warn employee forward schedule: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -2844,6 +2936,11 @@ func seedChainOwner(c *http.Client, base string, user authUser) error {
 		"published": true,
 	}, nil)
 	lat, lng := 55.030199, 82.920430
+	if branchExists(c, base, user, orgID, "Новосибирск", "Новосибирск", "Красный проспект, 1") {
+		log.Printf("skip second branch — Новосибирск already exists for org=%s", orgID)
+		log.Printf("ok chain org=%s first_branch=%s", orgID, branchID)
+		return nil
+	}
 	status, err := doJSON(c, http.MethodPost, base+"/v1/organizations/"+orgID+"/branches", user.Token, map[string]any{
 		"name": "Новосибирск", "city": "Новосибирск", "address_line": "Красный проспект, 1",
 		"phone": "+79009990002", "timezone": "Asia/Novosibirsk", "latitude": lat, "longitude": lng,

@@ -14,6 +14,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type Service struct {
@@ -26,6 +27,9 @@ type Service struct {
 	internalToken    string
 	httpClient       *http.Client
 	now              func() time.Time
+	vapidPublic      string
+	vapidPrivate     string
+	vapidSubject     string
 }
 
 func New(st *store.Store, bookingURL string) *Service {
@@ -36,9 +40,13 @@ func New(st *store.Store, bookingURL string) *Service {
 }
 
 func (s *Service) CreateNotification(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID *uuid.UUID) error {
-	return wrap(s.store.CreateNotification(ctx, domain.Notification{
+	if err := wrap(s.store.CreateNotification(ctx, domain.Notification{
 		ID: ids.New(), UserID: userID, Type: typ, Title: title, Body: body, EntityType: entityType, EntityID: entityID, CreatedAt: s.now().UTC(),
-	}))
+	})); err != nil {
+		return err
+	}
+	s.dispatchPush(ctx, userID, title, body, entityType, entityID)
+	return nil
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {
@@ -76,6 +84,10 @@ type CreateReviewInput struct {
 func (s *Service) CreateReview(ctx context.Context, in CreateReviewInput) (*domain.Review, error) {
 	if in.MasterRating < 1 || in.MasterRating > 5 || in.ResultRating < 1 || in.ResultRating > 5 {
 		return nil, apperr.Validation("ratings must be 1-5")
+	}
+	comment := strings.TrimSpace(in.Comment)
+	if err := moderation.ValidateFields(map[string]string{"comment": comment}); err != nil {
+		return nil, err
 	}
 	if s.bookingURL == "" {
 		return nil, apperr.Internal(fmt.Errorf("BOOKING_URL is not configured"))
@@ -119,7 +131,7 @@ func (s *Service) CreateReview(ctx context.Context, in CreateReviewInput) (*doma
 	}
 	r := domain.Review{
 		ID: ids.New(), AppointmentID: in.AppointmentID, ClientUserID: in.ActorID, MasterUserID: masterID,
-		MasterRating: in.MasterRating, ResultRating: in.ResultRating, Comment: strings.TrimSpace(in.Comment),
+		MasterRating: in.MasterRating, ResultRating: in.ResultRating, Comment: comment,
 		PublishAllowed: in.PublishAllowed, CreatedAt: s.now().UTC(),
 	}
 	if err := s.store.CreateReview(ctx, r); err != nil {

@@ -10,6 +10,7 @@ import { Video } from '@/shared/ui/tiptapVideo'
 import { Callout } from '@/shared/ui/tiptapCallout'
 import { sanitizeHref } from '@/shared/ui/richSanitize'
 import { Modal } from '@/shared/ui/Modal'
+import '@/features/knowledge/knowledge-tones.css'
 
 type Props = {
   value?: JSONContent | null
@@ -97,11 +98,28 @@ export function RichDocEditor({
     setInsertKind(null)
   }
 
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Stick the toolbar just under the mobile top bar (desktop has no top bar).
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const sync = () => {
+      const topbar = document.querySelector('.topbar') as HTMLElement | null
+      const visible = Boolean(topbar && getComputedStyle(topbar).display !== 'none')
+      const h = visible && topbar ? Math.ceil(topbar.getBoundingClientRect().height) : 0
+      root.style.setProperty('--editor-sticky-top', `${h}px`)
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    return () => window.removeEventListener('resize', sync)
+  }, [editor])
+
   if (!editor) return <div className="skeleton skeleton-card" aria-busy="true" aria-label="Загрузка редактора" />
 
   return (
-    <div className={`rich-doc-editor${disabled ? ' is-disabled' : ''}`}>
-      <div className="editor-toolbar" role="toolbar" aria-label="Форматирование">
+    <div ref={rootRef} className={`rich-doc-editor${disabled ? ' is-disabled' : ''}`}>
+      <div className="editor-toolbar kb-editor-toolbar-sticky" role="toolbar" aria-label="Форматирование">
         <button type="button" aria-label="Заголовок 1" aria-pressed={editor.isActive('heading', { level: 1 })} className={editor.isActive('heading', { level: 1 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>H1</button>
         <button type="button" aria-label="Заголовок 2" aria-pressed={editor.isActive('heading', { level: 2 })} className={editor.isActive('heading', { level: 2 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
         <button type="button" aria-label="Заголовок 3" aria-pressed={editor.isActive('heading', { level: 3 })} className={editor.isActive('heading', { level: 3 }) ? 'active' : ''} disabled={disabled} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>H3</button>

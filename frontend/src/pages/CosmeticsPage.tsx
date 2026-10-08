@@ -6,6 +6,16 @@ import { Hint } from '@/shared/ui/Hint'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
+function productCountLabel(count: number) {
+  const n = Math.abs(count) % 100
+  const n1 = n % 10
+  if (count === 0) return 'Каталог пока пуст'
+  if (n > 10 && n < 20) return `${count} товаров`
+  if (n1 === 1) return `${count} товар`
+  if (n1 >= 2 && n1 <= 4) return `${count} товара`
+  return `${count} товаров`
+}
+
 export function CosmeticsPage() {
   const { accessToken } = useAuth()
   const { buyerOrg, buyerOrgId, orgs } = useBuyerOrg()
@@ -25,8 +35,8 @@ export function CosmeticsPage() {
       <main className="page stack">
         <EmptyState
           title="Нужен салон"
-          text="Создайте салон в кабинете мастера, чтобы заказывать косметику."
-          action={<Link className="btn btn-primary" to="/master">Открыть кабинет</Link>}
+          text="Создайте салон на странице мастера, чтобы заказывать косметику."
+          action={<Link className="btn btn-primary" to="/master">Моя страница</Link>}
         />
       </main>
     )
@@ -61,7 +71,7 @@ export function CosmeticsPage() {
         {items.map((s) => {
           const count = s.product_count ?? s.products_count
           const hint = s.product_hint
-            || (typeof count === 'number' ? `${count} товар(ов)` : s.description)
+            || (typeof count === 'number' ? productCountLabel(count) : s.description)
             || 'Каталог профессиональной косметики'
           return (
             <Link key={s.id} to={`/cosmetics/${s.id}`} className="supplier-card">

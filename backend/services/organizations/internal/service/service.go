@@ -12,6 +12,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
 )
 
 type Service struct {
@@ -77,6 +78,11 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	if name == "" || branchName == "" || city == "" || address == "" {
 		return nil, apperr.Validation("name, branch_name, city and address_line are required")
 	}
+	if err := moderation.ValidateFields(map[string]string{
+		"name": name, "branch_name": branchName, "city": city, "address_line": address,
+	}); err != nil {
+		return nil, err
+	}
 	if orgType == "" {
 		orgType = "salon"
 	}
@@ -128,6 +134,11 @@ func (s *Service) AddBranch(ctx context.Context, actor, orgID uuid.UUID, in AddB
 	addr := strings.TrimSpace(in.AddressLine)
 	if name == "" || city == "" || addr == "" {
 		return nil, apperr.Validation("name, city and address_line are required")
+	}
+	if err := moderation.ValidateFields(map[string]string{
+		"name": name, "city": city, "address_line": addr, "phone": strings.TrimSpace(in.Phone),
+	}); err != nil {
+		return nil, err
 	}
 	tz := strings.TrimSpace(in.Timezone)
 	if tz == "" {
@@ -222,6 +233,40 @@ func (s *Service) HasActiveMembership(ctx context.Context, orgID, userID uuid.UU
 	return ok, nil
 }
 
+// SupplierOrgForUser resolves the supplier organization for a contact user (owner or active rep).
+func (s *Service) SupplierOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	memberships, err := s.store.ListMembershipsByUser(ctx, userID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	for _, m := range memberships {
+		if m.Role != "owner" && m.Role != "admin" {
+			continue
+		}
+		org, err := s.store.GetOrg(ctx, m.OrganizationID)
+		if err != nil {
+			return uuid.Nil, apperr.Internal(err)
+		}
+		if org != nil && org.Type == "supplier" {
+			return org.ID, nil
+		}
+	}
+	rep, err := s.store.GetRepresentativeByUserAny(ctx, userID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	if rep != nil && rep.Active {
+		org, err := s.store.GetOrg(ctx, rep.OrganizationID)
+		if err != nil {
+			return uuid.Nil, apperr.Internal(err)
+		}
+		if org != nil && org.Type == "supplier" {
+			return org.ID, nil
+		}
+	}
+	return uuid.Nil, apperr.NotFound("supplier organization not found")
+}
+
 func (s *Service) requireOwner(ctx context.Context, orgID, actorID uuid.UUID) error {
 	ok, err := s.store.HasMembership(ctx, orgID, actorID, "owner")
 	if err != nil {
@@ -292,10 +337,16 @@ func (s *Service) UpdateOrg(ctx context.Context, in UpdateOrgInput) (*domain.Org
 		if name == "" {
 			return nil, apperr.Validation("name cannot be empty")
 		}
+		if err := moderation.ValidateFields(map[string]string{"name": name}); err != nil {
+			return nil, err
+		}
 		org.Name = name
 	}
 	if in.Description != nil {
 		org.Description = strings.TrimSpace(*in.Description)
+		if err := moderation.ValidateFields(map[string]string{"description": org.Description}); err != nil {
+			return nil, err
+		}
 	}
 	if in.DeliveryNote != nil {
 		org.DeliveryNote = strings.TrimSpace(*in.DeliveryNote)
@@ -365,6 +416,9 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		name := strings.TrimSpace(*in.Name)
 		if name == "" {
 			return nil, apperr.Validation("name cannot be empty")
+		}
+		if err := moderation.ValidateFields(map[string]string{"name": name}); err != nil {
+			return nil, err
 		}
 		b.Name = name
 	}

@@ -171,7 +171,7 @@ export function StaffPage() {
 
   return (
     <main className="page stack">
-      <h1>Команда салона <Hint id="owner-staff" title="Команда">Приглашайте мастеров и администраторов. Расписание сотрудника открывается здесь, без входа в чужой кабинет.</Hint></h1>
+      <h1>Команда салона <Hint id="owner-staff" title="Команда">Приглашайте мастеров и администраторов. Расписание сотрудника открывается здесь, без входа в чужой профиль.</Hint></h1>
       <p className="muted" data-testid="staff-branch-context">{buyerOrg?.organization.name}{cabinet.selectedBranch ? ` · ${cabinet.selectedBranch.name}` : ''}</p>
       {cabinet.can('salon_settings') && (
         <p><Link to="/salon/settings">Настройки салона и контакты клиентов</Link></p>
@@ -179,7 +179,12 @@ export function StaffPage() {
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
       <section className="card stack">
-        <h2>Добавить сотрудника</h2>
+        <h2>Пригласить мастера по QR</h2>
+        <p className="muted">Отдельный экран с крупным QR: мастер регистрируется и сразу попадает в ваш салон.</p>
+        <Link className="btn btn-primary" to="/staff/invite" data-testid="open-invite-master">Открыть страницу приглашения</Link>
+      </section>
+      <section className="card stack">
+        <h2>Добавить сотрудника по email</h2>
         <p className="muted">Приглашение по email уже зарегистрированного пользователя.</p>
         <div className="field">
           <label htmlFor="invite-email">Email</label>

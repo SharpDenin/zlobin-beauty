@@ -54,6 +54,58 @@ func (s *Service) WithIntegrations(organizationsURL, clientsURL, communicationsU
 	return s
 }
 
+func (s *Service) DirectoryNames(ctx context.Context, ids []uuid.UUID) map[string]string {
+	out := map[string]string{}
+	if s.identityURL == "" || s.internalToken == "" || len(ids) == 0 {
+		return out
+	}
+	seen := map[string]struct{}{}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		key := id.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		parts = append(parts, key)
+	}
+	if len(parts) == 0 {
+		return out
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/users/batch?ids="+strings.Join(parts, ","), nil)
+	if err != nil {
+		return out
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return out
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return out
+	}
+	var parsed struct {
+		Items []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return out
+	}
+	for _, u := range parsed.Items {
+		if strings.TrimSpace(u.DisplayName) != "" {
+			out[u.ID] = u.DisplayName
+		}
+	}
+	return out
+}
+
 func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day time.Time, durationMinutes int, timezone string, excludeAppointmentID uuid.UUID) ([]Slot, error) {
 	if durationMinutes <= 0 {
 		return nil, apperr.Validation("duration_minutes must be positive")

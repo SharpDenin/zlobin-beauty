@@ -100,6 +100,7 @@ function renderEditor(path = '/knowledge/art1/edit') {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   mockedRequest.mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) => {
     if (path.endsWith('/archive')) return { ...article, status: 'archived', published: false }
@@ -117,6 +118,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   resetOverlayLockForTests()
+  sessionStorage.clear()
   vi.clearAllMocks()
 })
 

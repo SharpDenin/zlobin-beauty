@@ -103,6 +103,22 @@ export function SalonReportsPage() {
     enabled: Boolean(accessToken && orgId),
   })
 
+  const todayRange = useMemo(() => periodISO(1), [])
+  const todayAppts = useQuery({
+    queryKey: ['analytics-clients-today', orgId, todayRange.from, todayRange.to],
+    queryFn: () =>
+      apiRequest<{ items: Array<{ client_user_id?: string; client_display_name?: string }> }>(
+        `/v1/calendar/appointments?organization_id=${orgId}&from=${encodeURIComponent(todayRange.from)}&to=${encodeURIComponent(todayRange.to)}`,
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken && orgId),
+  })
+  const clientsToday = useMemo(() => {
+    const items = todayAppts.data?.items ?? []
+    const unique = new Set(items.map((a) => a.client_user_id).filter(Boolean))
+    return unique.size || items.length
+  }, [todayAppts.data])
+
   const network = useQuery({
     queryKey: ['salon-report-branches', orgId, branches.map((b) => b.id).join(','), range.from, range.to],
     queryFn: async () => {
@@ -171,7 +187,7 @@ export function SalonReportsPage() {
     return (
       <main className="page">
         <div className="state-box">
-          Нет организации. Создайте салон в <Link to="/master">кабинете</Link>.
+          Нет организации. Создайте салон на <Link to="/master">странице мастера</Link>.
         </div>
       </main>
     )
@@ -219,6 +235,11 @@ export function SalonReportsPage() {
       {report.data && (
         <>
           <div className="kpi-grid">
+            <article className="card" data-testid="analytics-clients-today">
+              <p className="muted">Клиенты сегодня</p>
+              <strong>{todayAppts.isLoading ? '…' : clientsToday}</strong>
+              <p className="muted">уникальные клиенты с записью на сегодня</p>
+            </article>
             <article className="card"><p className="muted">Оборот</p><strong>{formatMoney(report.data.current.turnover_minor)}</strong><p className="muted">{formatDelta(report.data.deltas.turnover_percent)}</p></article>
             <article className="card"><p className="muted">Записи</p><strong>{report.data.current.completed_count}</strong><p className="muted">{formatDelta(report.data.deltas.completed_count_percent)}</p></article>
             <article className="card"><p className="muted">Средний чек</p><strong>{formatAvgCheck(report.data.current.avg_check_minor)}</strong><p className="muted">{formatDelta(report.data.deltas.avg_check_percent)}</p></article>

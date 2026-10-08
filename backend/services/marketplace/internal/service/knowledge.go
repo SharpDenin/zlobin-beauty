@@ -79,6 +79,7 @@ type KnowledgeRankInput struct {
 	CategoryMatch     bool
 	BrandMatch        bool
 	TitleMatch        bool
+	TitlePrefixMatch  bool // title starts with the query: the strongest text signal
 	ViewCount         int
 	PublishedAt       *time.Time
 	CreatedAt         time.Time
@@ -97,6 +98,10 @@ func KnowledgeRankScore(in KnowledgeRankInput) float64 {
 		score += 30
 	}
 	if in.TitleMatch {
+		// Title-first: prefer title hits over brand/category-only matches.
+		score += 80
+	}
+	if in.TitlePrefixMatch {
 		score += 20
 	}
 	vc := in.ViewCount
@@ -177,8 +182,12 @@ func rankKnowledgeArticles(items []domain.KnowledgeArticle, q KnowledgeListQuery
 			}
 		}
 		if needle != "" {
-			if strings.Contains(strings.ToLower(a.Title), needle) {
+			title := strings.ToLower(strings.TrimSpace(a.Title))
+			if strings.Contains(title, needle) {
 				in.TitleMatch = true
+			}
+			if strings.HasPrefix(title, needle) {
+				in.TitlePrefixMatch = true
 			}
 			if strings.Contains(strings.ToLower(a.Brand), needle) {
 				in.BrandMatch = true

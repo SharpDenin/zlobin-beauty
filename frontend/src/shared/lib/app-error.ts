@@ -60,10 +60,70 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Аккаунт недоступен',
     hint: 'Обратитесь в поддержку, если это ошибка.',
   },
+  contact_self: {
+    kind: 'validation',
+    title: 'Нельзя добавить себя',
+    hint: 'Выберите другого человека для адресной книги.',
+  },
+  contact_exists: {
+    kind: 'conflict',
+    title: 'Контакт уже есть',
+    hint: 'Этот человек уже в вашей адресной книге.',
+  },
+  invite_invalid: {
+    kind: 'not_found',
+    title: 'Приглашение недействительно',
+    hint: 'Попросите новое приглашение у владельца салона.',
+  },
+  invite_expired: {
+    kind: 'business',
+    title: 'Срок приглашения истёк',
+    hint: 'Попросите владельца салона создать новый QR.',
+  },
+  invite_revoked: {
+    kind: 'business',
+    title: 'Приглашение отозвано',
+    hint: 'Это приглашение больше нельзя использовать.',
+  },
+  invite_exhausted: {
+    kind: 'conflict',
+    title: 'Приглашение уже использовано',
+    hint: 'Попросите новое приглашение.',
+  },
+  content_not_allowed: {
+    kind: 'validation',
+    title: 'Пожалуйста, измените текст — он содержит запрещённое выражение.',
+    hint: 'Уберите недопустимые слова и отправьте снова.',
+  },
   forbidden: {
     kind: 'authorization',
     title: 'Нет доступа',
     hint: 'У вас нет доступа к этому разделу.',
+  },
+  messenger_no_relationship: {
+    kind: 'authorization',
+    title: 'Пока нельзя написать',
+    hint: 'Нужна общая запись или контакт в адресной книге.',
+  },
+  messenger_master_unpublished: {
+    kind: 'authorization',
+    title: 'Мастер недоступен для сообщений',
+    hint: 'Профиль мастера ещё не опубликован в поиске.',
+  },
+  messenger_master_not_published_actor: {
+    kind: 'authorization',
+    title: 'Сначала опубликуйте профиль',
+    hint: 'Писать клиентам можно после публикации профиля мастера.',
+  },
+  messenger_supplier_unavailable: {
+    kind: 'authorization',
+    title: 'Поставщик недоступен',
+    hint: 'Организация поставщика не опубликована или недоступна.',
+  },
+  messenger_supplier_master_only: {
+    kind: 'authorization',
+    title: 'Нельзя написать поставщику',
+    hint: 'Писать поставщику может опубликованный мастер.',
   },
   not_found: {
     kind: 'not_found',
@@ -157,8 +217,8 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   insufficient_stock: {
     kind: 'conflict',
-    title: 'Товара недостаточно на складе',
-    hint: 'Уменьшите количество или выберите другой товар.',
+    title: 'Недостаточно товара на выбранном складе.',
+    hint: 'Уменьшите количество или выберите другой склад.',
   },
   profession_types_required: {
     kind: 'validation',
@@ -170,10 +230,45 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Эту специализацию нельзя убрать',
     hint: 'Она уже используется в услугах или записях.',
   },
+  chair_own_salon_lease: {
+    kind: 'business',
+    title: 'Сотрудник салона не может арендовать кресло в этом салоне.',
+    hint: 'Аренда доступна мастерам других салонов.',
+  },
   media_unsupported_type: {
     kind: 'upload',
     title: 'Этот формат файла не поддерживается',
-    hint: 'Загрузите JPG, PNG или WebP.',
+    hint: 'Загрузите фото JPG, PNG, WebP или GIF; видео — MP4, WebM или MOV.',
+  },
+  media_invalid_content: {
+    kind: 'upload',
+    title: 'Файл повреждён или не совпадает с форматом',
+    hint: 'Сохраните файл заново в JPG, PNG или MP4 и повторите загрузку.',
+  },
+  media_rate_limited: {
+    kind: 'rate_limited',
+    title: 'Слишком много загрузок подряд',
+    hint: 'Подождите минуту и повторите.',
+  },
+  upload_stalled: {
+    kind: 'network',
+    title: 'Загрузка остановилась',
+    hint: 'Связь нестабильна. Проверьте интернет и повторите — фото сожмётся автоматически.',
+  },
+  upstream_unavailable: {
+    kind: 'server',
+    title: 'Сервис временно недоступен',
+    hint: 'Попробуйте ещё раз через минуту.',
+  },
+  upstream_timeout: {
+    kind: 'server',
+    title: 'Сервер отвечает слишком долго',
+    hint: 'Попробуйте ещё раз через минуту.',
+  },
+  payload_too_large: {
+    kind: 'validation',
+    title: 'Слишком большой запрос',
+    hint: 'Сократите текст или размер файла и повторите.',
   },
   media_too_large: {
     kind: 'upload',
@@ -229,6 +324,16 @@ const FIELD_LABELS: Record<string, string> = {
   duration_minutes: 'Длительность',
   starts_at: 'Время начала',
   ends_at: 'Время окончания',
+  note: 'Заметка',
+  body: 'Сообщение',
+  comment: 'Комментарий',
+  title: 'Заголовок',
+  description: 'Описание',
+  text: 'Текст',
+  bio: 'О себе',
+  category: 'Категория',
+  content: 'Текст материала',
+  caption: 'Подпись',
 }
 
 const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
@@ -247,6 +352,12 @@ const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
   { match: 'planner block is outside working hours', code: 'planner_outside_hours' },
   { match: 'planner block overlaps', code: 'planner_overlap' },
   { match: 'unsupported content type', code: 'media_unsupported_type' },
+  { match: 'file content does not match its type', code: 'media_invalid_content' },
+  { match: 'image is corrupted', code: 'media_invalid_content' },
+  { match: 'image dimensions are too large', code: 'media_too_large' },
+  { match: 'too many uploads', code: 'media_rate_limited' },
+  { match: 'text contains words that are not allowed', code: 'content_not_allowed' },
+  { match: 'request body is too large', code: 'payload_too_large' },
   { match: 'file exceeds size limit', code: 'media_too_large' },
   { match: 'file field is required', code: 'media_empty' },
   { match: 'цена изменилась', code: 'price_changed' },
@@ -254,6 +365,17 @@ const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
   { match: 'invalid access token', code: 'session_expired' },
   { match: 'missing bearer', code: 'session_expired' },
   { match: 'account is blocked', code: 'account_blocked' },
+  { match: 'insufficient out of stock', code: 'insufficient_stock' },
+  { match: 'insufficient stock', code: 'insufficient_stock' },
+  { match: 'out of stock at location', code: 'insufficient_stock' },
+  { match: 'out of stock', code: 'insufficient_stock' },
+  { match: 'cannot ship more than reserved', code: 'insufficient_stock' },
+  { match: 'недостаточно товара', code: 'insufficient_stock' },
+  { match: 'no booking relationship with this client', code: 'messenger_no_relationship' },
+  { match: 'master is not available', code: 'messenger_master_unpublished' },
+  { match: 'only a published master can message a client', code: 'messenger_master_not_published_actor' },
+  { match: 'only a published master can message a supplier', code: 'messenger_supplier_master_only' },
+  { match: 'supplier is not available', code: 'messenger_supplier_unavailable' },
 ]
 
 const TECHNICAL_RE =
@@ -371,6 +493,36 @@ export function normalizeError(error: unknown): NormalizedError {
         kind: catalog.kind,
         title: catalog.title,
         hint: reason ? `Для этих услуг ${reason}.` : catalog.hint,
+        code,
+        status,
+        fields,
+        requestId,
+        technicalMessage: technical,
+      }
+    }
+
+    if (code === 'media_too_large') {
+      const max = Number(error.details?.max_bytes)
+      if (Number.isFinite(max) && max > 0) {
+        return {
+          kind: catalog.kind,
+          title: catalog.title,
+          hint: `Максимальный размер — ${Math.max(1, Math.round(max / (1024 * 1024)))} МБ.`,
+          code,
+          status,
+          fields,
+          requestId,
+          technicalMessage: technical,
+        }
+      }
+    }
+
+    if (code === 'content_not_allowed' && fields) {
+      const labels = Object.keys(fields).map((key) => FIELD_LABELS[key] ?? key)
+      return {
+        kind: catalog.kind,
+        title: catalog.title,
+        hint: `Проверьте поля: ${labels.join(', ')}. ${catalog.hint}`,
         code,
         status,
         fields,

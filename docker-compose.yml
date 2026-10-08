@@ -117,6 +117,7 @@ services:
       CLIENTS_URL: http://clients:8080
       COMMUNICATIONS_URL: http://communications:8080
       IDENTITY_URL: http://identity:8080
+      MEDIA_URL: http://media:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
@@ -229,6 +230,9 @@ services:
       MARKETPLACE_URL: http://marketplace:8080
       MEDIA_URL: http://media:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@salonx.local}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -310,7 +314,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8090}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     ports:
       - "5173:80"
     restart: unless-stopped
@@ -330,6 +334,9 @@ services:
       APP_ENV: ${APP_ENV:-development}
       ALLOW_SEED: ${ALLOW_SEED:-false}
       SEED_PASSWORD: ${SEED_PASSWORD:-Password123!}
+      BOOKING_DATABASE_URL: postgres://booking:booking@postgres:5432/booking?sslmode=disable
+      ORGANIZATIONS_DATABASE_URL: postgres://organizations:organizations@postgres:5432/organizations?sslmode=disable
+      MARKETPLACE_DATABASE_URL: postgres://marketplace:marketplace@postgres:5432/marketplace?sslmode=disable
     depends_on:
       - gateway
 

@@ -21,22 +21,30 @@ func isProfessional(roles []string) bool {
 		auth.HasRole(&auth.Claims{Roles: roles}, "system_admin")
 }
 
-func (s *Service) reserveOrderStock(ctx context.Context, actor uuid.UUID, o *domain.SupplierOrder, items []domain.SupplierOrderItem) error {
-	loc, err := s.store.GetOrCreateLocationByKind(ctx, o.SupplierOrgID, domain.LocationSupplier, "Склад поставщика")
-	if err != nil {
-		return apperr.Internal(err)
+// typedOrInternal keeps typed errors (insufficient_stock, validation, ...) and hides
+// anything else behind internal_error, so raw DB text never reaches the client.
+func typedOrInternal(err error) error {
+	if err == nil {
+		return nil
 	}
-	now := s.now().UTC()
+	if ae, ok := apperr.As(err); ok {
+		return ae
+	}
+	return apperr.Internal(err)
+}
+
+// reserveMovements builds the supplier-stock reservations for a new order. They are
+// applied by store.CreateOrderReserving in the same transaction as the order itself,
+// so an order that cannot be reserved is never persisted.
+func reserveMovements(actor, orderID, locationID uuid.UUID, items []domain.SupplierOrderItem, now time.Time) []domain.StockMovement {
+	out := make([]domain.StockMovement, 0, len(items))
 	for _, it := range items {
-		m := domain.StockMovement{
-			ID: ids.New(), LocationID: loc.ID, ProductID: it.ProductID, Kind: domain.MovementReserve,
-			Qty: it.QtyOrdered, Reason: "order reserve", ActorUserID: actor, RefType: "supplier_order", RefID: &o.ID, CreatedAt: now,
-		}
-		if _, err := s.store.CreateMovement(ctx, m); err != nil {
-			return err
-		}
+		out = append(out, domain.StockMovement{
+			ID: ids.New(), LocationID: locationID, ProductID: it.ProductID, Kind: domain.MovementReserve,
+			Qty: it.QtyOrdered, Reason: "order reserve", ActorUserID: actor, RefType: "supplier_order", RefID: &orderID, CreatedAt: now,
+		})
 	}
-	return nil
+	return out
 }
 
 func (s *Service) releaseOrderStock(ctx context.Context, actor uuid.UUID, o *domain.SupplierOrder) error {
@@ -55,7 +63,7 @@ func (s *Service) releaseOrderStock(ctx context.Context, actor uuid.UUID, o *dom
 			Qty: it.QtyOrdered, Reason: "order release", ActorUserID: actor, RefType: "supplier_order", RefID: &o.ID, CreatedAt: now,
 		}
 		if _, err := s.store.CreateMovement(ctx, m); err != nil {
-			return err
+			return typedOrInternal(err)
 		}
 	}
 	return nil
@@ -77,7 +85,7 @@ func (s *Service) shipOrderStock(ctx context.Context, actor uuid.UUID, o *domain
 			Qty: it.QtyOrdered, Reason: "order shipment", ActorUserID: actor, RefType: "supplier_order", RefID: &o.ID, CreatedAt: now,
 		}
 		if _, err := s.store.CreateMovement(ctx, m); err != nil {
-			return err
+			return typedOrInternal(err)
 		}
 	}
 	return nil

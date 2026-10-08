@@ -51,7 +51,8 @@ func (s *ObjectStorage) Put(ctx context.Context, key, contentType string, size i
 	return err
 }
 
-func (s *ObjectStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+// Get returns a seekable object so HTTP Range requests (video seeking, iOS playback) work.
+func (s *ObjectStorage) Get(ctx context.Context, key string) (io.ReadSeekCloser, error) {
 	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, err

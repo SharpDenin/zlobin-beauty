@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +34,11 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/organizations/{orgID}/branches", auth(http.HandlerFunc(a.createBranch)))
 	mux.Handle("POST /v1/organizations/{orgID}/masters", auth(http.HandlerFunc(a.addMaster)))
 	mux.Handle("GET /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.listStaff)))
-	mux.Handle("POST /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.inviteStaff)))
+	mux.Handle("POST /v1/organizations/{orgID}/invites", auth(http.HandlerFunc(a.createInvite)))
+	mux.Handle("GET /v1/organizations/{orgID}/invites", auth(http.HandlerFunc(a.listInvites)))
+	mux.Handle("POST /v1/organizations/{orgID}/invites/{id}/revoke", auth(http.HandlerFunc(a.revokeInvite)))
+	mux.HandleFunc("GET /v1/invites/{token}", a.peekInvite)
+	mux.Handle("POST /v1/invites/{token}/accept", auth(http.HandlerFunc(a.acceptInvite)))
 	mux.Handle("POST /v1/organizations/{orgID}/staff/disable", auth(http.HandlerFunc(a.disableStaff)))
 	mux.Handle("PATCH /v1/organizations/{orgID}/contact-policy", auth(http.HandlerFunc(a.setContactPolicy)))
 	mux.Handle("GET /v1/organizations/{orgID}/representatives", auth(http.HandlerFunc(a.listReps)))
@@ -58,6 +63,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/suppliers", a.listSuppliers)
 	mux.HandleFunc("GET /v1/suppliers/{id}", a.getSupplier)
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
+	mux.HandleFunc("GET /v1/internal/users/{userID}/supplier-organization", a.internalSupplierOrgForUser)
 	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
@@ -87,6 +93,25 @@ func (a *API) checkMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"active": ok})
+}
+
+func (a *API) internalSupplierOrgForUser(w http.ResponseWriter, r *http.Request) {
+	expected := a.internalToken
+	if expected == "" || r.Header.Get("X-Internal-Token") != expected {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	orgID, err := a.svc.SupplierOrgForUser(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"organization_id": orgID.String()})
 }
 
 func (a *API) branchPublication(w http.ResponseWriter, r *http.Request) {
@@ -418,7 +443,7 @@ func orgDTO(o domain.Organization) map[string]any {
 		"type": o.Type, "status": o.Status, "published": o.Published,
 		"logo_media_id": logo, "delivery_note": o.DeliveryNote,
 		"masters_see_client_contacts": o.MastersSeeClientContacts,
-		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
+		"created_at":                  o.CreatedAt, "updated_at": o.UpdatedAt,
 	}
 }
 
@@ -989,12 +1014,12 @@ func (a *API) recommendRoute(w http.ResponseWriter, r *http.Request) {
 		OriginLat        float64 `json:"origin_lat"`
 		OriginLng        float64 `json:"origin_lng"`
 		Stops            []struct {
-			Kind       string     `json:"kind"`
-			BranchID   *string    `json:"branch_id"`
-			Lat        *float64   `json:"latitude"`
-			Lng        *float64   `json:"longitude"`
-			Priority   string     `json:"priority"`
-			Duration   int        `json:"expected_duration_min"`
+			Kind        string     `json:"kind"`
+			BranchID    *string    `json:"branch_id"`
+			Lat         *float64   `json:"latitude"`
+			Lng         *float64   `json:"longitude"`
+			Priority    string     `json:"priority"`
+			Duration    int        `json:"expected_duration_min"`
 			WindowStart *time.Time `json:"window_start"`
 			WindowEnd   *time.Time `json:"window_end"`
 			DeadlineAt  *time.Time `json:"deadline_at"`
@@ -1065,4 +1090,123 @@ func (a *API) stopStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"id": st.ID.String(), "status": st.Status, "kind": st.Kind})
+}
+
+func publicAppOrigin(r *http.Request) string {
+	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_APP_URL")), "/"); v != "" {
+		return v
+	}
+	if v := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/"); v != "" {
+		return v
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+func invitePublicDTO(p *service.PublicInvite) map[string]any {
+	return map[string]any{
+		"organization_id":   p.OrganizationID.String(),
+		"organization_name": p.OrganizationName,
+		"role":              p.Role,
+		"expires_at":        p.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func inviteDTO(in domain.SalonInvite) map[string]any {
+	var revoked any
+	if in.RevokedAt != nil {
+		revoked = in.RevokedAt.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"id": in.ID.String(), "organization_id": in.OrganizationID.String(), "role": in.Role,
+		"expires_at": in.ExpiresAt.UTC().Format(time.RFC3339), "max_uses": in.MaxUses, "use_count": in.UseCount,
+		"revoked_at": revoked, "created_at": in.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func (a *API) createInvite(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	var req struct {
+		Role    string `json:"role"`
+		Hours   int    `json:"hours"`
+		MaxUses int    `json:"max_uses"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	ttl := time.Duration(req.Hours) * time.Hour
+	created, err := a.svc.CreateInvite(r.Context(), orgID, claims.UserID, req.Role, ttl, req.MaxUses)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	origin := publicAppOrigin(r)
+	url := origin + "/invite/" + created.Token
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"invite": inviteDTO(created.Invite),
+		"token":  created.Token,
+		"url":    url,
+	})
+}
+
+func (a *API) listInvites(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
+		return
+	}
+	items, err := a.svc.ListInvites(r.Context(), orgID, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, inviteDTO(it))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) revokeInvite(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	orgID, err := uuid.Parse(r.PathValue("orgID"))
+	id, err2 := uuid.Parse(r.PathValue("id"))
+	if err != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.RevokeInvite(r.Context(), orgID, claims.UserID, id); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) peekInvite(w http.ResponseWriter, r *http.Request) {
+	p, err := a.svc.PeekInvite(r.Context(), r.PathValue("token"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, invitePublicDTO(p))
+}
+
+func (a *API) acceptInvite(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	p, err := a.svc.AcceptInvite(r.Context(), r.PathValue("token"), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, invitePublicDTO(p))
 }

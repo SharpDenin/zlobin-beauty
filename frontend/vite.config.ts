@@ -2,8 +2,14 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
+import { assertProductionApiBase } from './src/shared/lib/production-api-base'
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  if (command === 'build') {
+    assertProductionApiBase(process.env.VITE_API_BASE_URL, mode)
+  }
+
+  return {
   plugins: [
     react(),
     ...(process.env.VITEST
@@ -23,7 +29,7 @@ export default defineConfig({
         id: '/',
         name: 'Salon-X',
         short_name: 'Salon-X',
-        description: 'Записи, мастера и салон — в одном кабинете.',
+        description: 'Записи, мастера и салон — в одном приложении.',
         lang: 'ru',
         start_url: '/',
         scope: '/',
@@ -37,14 +43,33 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,webmanifest}'],
+        globPatterns: ['**/*.{js,css,ico,png,svg,woff2,webmanifest}'],
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/v1\//],
+        navigateFallbackDenylist: [/^\/v1\//, /^\/api\//],
+        cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        importScripts: ['sw-push.js'],
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/v1/'),
+            urlPattern: ({ url }) => url.pathname.startsWith('/v1/') || url.pathname.startsWith('/api/'),
             handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'pages',
+              networkTimeoutSeconds: 3,
+              expiration: { maxEntries: 16, maxAgeSeconds: 24 * 60 * 60 },
+            },
+          },
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/backgrounds/'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'home-backgrounds',
+              expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            },
           },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -65,7 +90,7 @@ export default defineConfig({
         ],
       },
       devOptions: {
-        enabled: true,
+        enabled: process.env.VITE_PWA_DEV === 'true',
         suppressWarnings: true,
         type: 'module',
         navigateFallback: 'index.html',
@@ -89,4 +114,5 @@ export default defineConfig({
     setupFiles: ['./src/shared/lib/test-setup.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
   },
+}
 })

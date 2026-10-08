@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -166,76 +167,12 @@ SELECT qty_on_hand, qty_reserved FROM stock_balances WHERE location_id=$1 AND pr
 		onHand, reserved = 0, 0
 	}
 
-	switch m.Kind {
-	case domain.MovementReserve:
-		amount := m.Qty
-		if amount <= 0 {
-			return domain.StockMovement{}, apperr.Validation("qty must be positive for reserve")
-		}
-		if onHand-reserved < amount-1e-9 {
-			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
-		}
-		m.QtyBefore = reserved
-		reserved += amount
-		m.QtyAfter = reserved
-	case domain.MovementUnreserve, domain.MovementRelease:
-		amount := m.Qty
-		if amount <= 0 {
-			return domain.StockMovement{}, apperr.Validation("qty must be positive for unreserve")
-		}
-		m.QtyBefore = reserved
-		if amount > reserved {
-			amount = reserved
-		}
-		reserved -= amount
-		m.QtyAfter = reserved
-		m.Qty = amount
-	case domain.MovementShipment:
-		amount := m.Qty
-		if amount <= 0 {
-			return domain.StockMovement{}, apperr.Validation("qty must be positive for shipment")
-		}
-		if reserved+1e-9 < amount {
-			return domain.StockMovement{}, apperr.Validation("cannot ship more than reserved")
-		}
-		if onHand+1e-9 < amount {
-			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
-		}
-		m.QtyBefore = onHand
-		onHand -= amount
-		reserved -= amount
-		m.QtyAfter = onHand
-	case domain.MovementReceipt, domain.MovementReturn:
-		m.QtyBefore = onHand
-		onHand += m.Qty
-		if onHand < 0 {
-			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
-		}
-		m.QtyAfter = onHand
-	case domain.MovementConsumption, domain.MovementWriteOff:
-		m.QtyBefore = onHand
-		onHand += m.Qty
-		if onHand < 0 || onHand-reserved < -1e-9 {
-			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
-		}
-		m.QtyAfter = onHand
-	case domain.MovementAdjust:
-		m.QtyBefore = onHand
-		onHand += m.Qty
-		if onHand < 0 || onHand-reserved < -1e-9 {
-			return domain.StockMovement{}, apperr.InsufficientStock("Недостаточно товара на складе")
-		}
-		m.QtyAfter = onHand
-	case domain.MovementDamage, domain.MovementRejection:
-		amount := m.Qty
-		if amount <= 0 {
-			return domain.StockMovement{}, apperr.Validation("qty must be positive for " + m.Kind)
-		}
-		m.QtyBefore = onHand
-		m.QtyAfter = onHand
-	default:
-		return domain.StockMovement{}, apperr.Validation("unknown movement kind")
+	out, err := computeMovement(m, StockState{OnHand: onHand, Reserved: reserved})
+	if err != nil {
+		return domain.StockMovement{}, err
 	}
+	m.Qty, m.QtyBefore, m.QtyAfter = out.Qty, out.Before, out.After
+	onHand, reserved = out.State.OnHand, out.State.Reserved
 
 	if _, err := tx.Exec(ctx, `
 INSERT INTO stock_balances(location_id, product_id, qty_on_hand, qty_reserved, updated_at)
@@ -288,7 +225,7 @@ func (s *Store) CreateMovement(ctx context.Context, m domain.StockMovement) (*do
 			_ = tx.Rollback(ctx)
 			return s.GetMovementByIdempotencyKey(ctx, m.IdempotencyKey)
 		}
-		return nil, err
+		return nil, MapStockError(err, m.ProductID, m.LocationID)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -447,7 +384,19 @@ const deliveryColumns = `id, order_id, supplier_org_id, destination_branch_id, s
 planned_delivery_at, window_start, window_end, delivered_at,
 recipient_name, recipient_phone, comment, provider, tracking_code, created_at, updated_at`
 
+// ErrDuplicateOrderKey means another request already created a supplier order
+// with the same (created_by, idempotency_key); callers should load that order.
+var ErrDuplicateOrderKey = errors.New("duplicate supplier order idempotency key")
+
 func (s *Store) CreateOrder(ctx context.Context, o domain.SupplierOrder, items []domain.SupplierOrderItem, delivery *domain.OrderDelivery) (*domain.SupplierOrder, []domain.SupplierOrderItem, *domain.OrderDelivery, error) {
+	return s.CreateOrderReserving(ctx, o, items, delivery, nil)
+}
+
+// CreateOrderReserving inserts the order (items and optional delivery) and applies
+// the given stock movements (supplier reservations) in ONE transaction. If any
+// movement is rejected (insufficient stock) nothing is persisted: no orphan order
+// and no partial reservation is left behind.
+func (s *Store) CreateOrderReserving(ctx context.Context, o domain.SupplierOrder, items []domain.SupplierOrderItem, delivery *domain.OrderDelivery, movements []domain.StockMovement) (*domain.SupplierOrder, []domain.SupplierOrderItem, *domain.OrderDelivery, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, nil, err
@@ -459,6 +408,10 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`
 		o.ID, o.BuyerOrgID, o.SupplierOrgID, o.LocationID, o.Status, o.Currency, o.TotalMinor, o.Comment,
 		o.DesiredAt, o.EstimatedDeliveryAt, o.CreatedBy, o.CreatedAt, o.UpdatedAt,
 		o.DestinationBranchID, o.PaymentMethod, o.PaymentStatus, o.SubtotalMinor, o.DeliveryCostMinor, o.PaidAt, nullIfEmpty(o.IdempotencyKey)); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "supplier_orders_idempotency_key_uidx" {
+			return nil, nil, nil, ErrDuplicateOrderKey
+		}
 		return nil, nil, nil, err
 	}
 	for i := range items {
@@ -481,6 +434,19 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 			delivery.RecipientName, delivery.RecipientPhone, delivery.Comment, delivery.Provider, delivery.TrackingCode,
 			delivery.CreatedAt, delivery.UpdatedAt); err != nil {
 			return nil, nil, nil, err
+		}
+	}
+	// Lock balance rows in a stable order so two concurrent orders cannot deadlock.
+	ordered := append([]domain.StockMovement(nil), movements...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].LocationID != ordered[j].LocationID {
+			return ordered[i].LocationID.String() < ordered[j].LocationID.String()
+		}
+		return ordered[i].ProductID.String() < ordered[j].ProductID.String()
+	})
+	for _, m := range ordered {
+		if _, err := applyMovementTx(ctx, tx, m); err != nil {
+			return nil, nil, nil, MapStockError(err, m.ProductID, m.LocationID)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

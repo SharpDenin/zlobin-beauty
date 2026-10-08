@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -45,9 +43,12 @@ func main() {
 	mux.Handle("/v1/me/subscription/", identity)
 	mux.Handle("/v1/me/dashboard", identity)
 	mux.Handle("/v1/me/hints", identity)
-	mux.Handle("/v1/internal/entitlements/", identity)
-	mux.Handle("/v1/internal/users/", identity)
-	mux.Handle("/v1/internal/audit", identity)
+	mux.Handle("/v1/me/preferences", identity)
+	mux.Handle("/v1/me/preferences/", identity)
+	// /v1/internal/* is service-to-service only and is deliberately NOT routed through the edge.
+	mux.Handle("/v1/internal/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
 	mux.Handle("/v1/admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		switch {
@@ -55,7 +56,7 @@ func main() {
 			identity.ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/admin/organizations") || strings.HasPrefix(p, "/v1/admin/suppliers"):
 			organizations.ServeHTTP(w, r)
-		case strings.HasPrefix(p, "/v1/admin/masters") || strings.HasPrefix(p, "/v1/admin/services") || strings.HasPrefix(p, "/v1/admin/knowledge"):
+		case strings.HasPrefix(p, "/v1/admin/masters") || strings.HasPrefix(p, "/v1/admin/services") || strings.HasPrefix(p, "/v1/admin/knowledge") || strings.HasPrefix(p, "/v1/admin/profession-types"):
 			marketplace.ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/admin/products") || strings.HasPrefix(p, "/v1/admin/orders"):
 			commerce.ServeHTTP(w, r)
@@ -121,8 +122,13 @@ func main() {
 	mux.Handle("/v1/client-cards/", clients)
 	mux.Handle("/v1/notifications", communications)
 	mux.Handle("/v1/notifications/", communications)
+	mux.Handle("/v1/push/", communications)
 	mux.Handle("/v1/conversations", communications)
 	mux.Handle("/v1/conversations/", communications)
+	mux.Handle("/v1/contacts", communications)
+	mux.Handle("/v1/contacts/", communications)
+	mux.Handle("/v1/invites", organizations)
+	mux.Handle("/v1/invites/", organizations)
 	mux.Handle("/v1/reviews", communications)
 	mux.Handle("/v1/reviews/", communications)
 	mux.Handle("/v1/commerce/", commerce)
@@ -146,11 +152,20 @@ func main() {
 		marketplace.ServeHTTP(w, r)
 	}))
 
+	// Order (outermost first): request id -> panic guard -> security headers -> CORS -> rate limit ->
+	// per-request deadlines -> body limit -> access log -> routes. Server-wide Read/WriteTimeout are
+	// disabled on purpose: they kill slow mobile uploads; httpx.Deadlines applies per-route budgets.
 	handler := httpx.WithRequestID(
-		httpx.SecurityHeaders(
-			httpx.CORS(corsOrigins)(
-				maxBytesByPath(1<<20, 6<<20, "/v1/media")(
-					httpx.AccessLog(log)(mux),
+		recoverPanics(
+			httpx.SecurityHeaders(
+				httpx.CORS(corsOrigins)(
+					rateLimit()(
+						httpx.Deadlines(30*time.Second, 60*time.Second, edgeDeadlines)(
+							bodyLimit(
+								httpx.AccessLog(log)(mux),
+							),
+						),
+					),
 				),
 			),
 		),
@@ -158,8 +173,8 @@ func main() {
 
 	srv := &http.Server{
 		Addr: addr, Handler: handler,
-		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
-		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	go func() {
 		log.Info("listening", "addr", addr)
@@ -174,32 +189,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-}
-
-func mustProxy(raw string) http.Handler {
-	u, err := url.Parse(raw)
-	if err != nil {
-		panic(err)
-	}
-	p := httputil.NewSingleHostReverseProxy(u)
-	original := p.ModifyResponse
-	p.ModifyResponse = func(resp *http.Response) error {
-		// Gateway owns browser CORS; drop upstream CORS to avoid duplicate ACAO.
-		resp.Header.Del("Access-Control-Allow-Origin")
-		resp.Header.Del("Access-Control-Allow-Credentials")
-		resp.Header.Del("Access-Control-Allow-Headers")
-		resp.Header.Del("Access-Control-Allow-Methods")
-		resp.Header.Del("Access-Control-Expose-Headers")
-		resp.Header.Del("Access-Control-Max-Age")
-		if original != nil {
-			return original(resp)
-		}
-		return nil
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = u.Host
-		p.ServeHTTP(w, r)
-	})
 }
 
 func getenv(k, d string) string {
@@ -219,17 +208,4 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
-}
-
-func maxBytesByPath(defaultLimit, mediaLimit int64, mediaPrefix string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			limit := defaultLimit
-			if strings.HasPrefix(r.URL.Path, mediaPrefix) {
-				limit = mediaLimit
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
-			next.ServeHTTP(w, r)
-		})
-	}
 }

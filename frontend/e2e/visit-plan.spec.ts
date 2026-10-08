@@ -47,7 +47,8 @@ test.describe('multi-service visit plan', () => {
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
 
     await page.goto(`/masters/${prof.master!.id}`)
-    await page.locator('.service-card').filter({ has: page.getByText(cut!.name, { exact: true }) }).first().click()
+    await page.locator('#mp-booking').scrollIntoViewIfNeeded()
+    await page.getByTestId('mp-service').filter({ hasText: cut!.name }).first().click()
     await page.getByTestId('add-second-service').click()
     const dialog = page.getByTestId('multi-service-booking')
     await expect(dialog).toBeVisible({ timeout: 15_000 })

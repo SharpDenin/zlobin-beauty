@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,7 @@ type MasterProfile struct {
 	Education       string
 	PhotoMediaID    *uuid.UUID
 	WorkType        string
+	WorkTypes       []string
 	RatingAvg       float64
 	RatingCount     int
 	Published       bool
@@ -105,12 +107,25 @@ type Readiness struct {
 }
 
 type PortfolioItem struct {
-	ID        uuid.UUID
-	MasterID  uuid.UUID
-	MediaID   uuid.UUID
-	Caption   string
-	SortOrder int
-	CreatedAt time.Time
+	ID          uuid.UUID
+	MasterID    uuid.UUID
+	MediaID     uuid.UUID
+	Caption     string
+	Title       string
+	Description string
+	Category    string
+	MediaType   string // photo | gif | video
+	SortOrder   int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// DisplayTitle returns title, falling back to caption for legacy rows.
+func (p PortfolioItem) DisplayTitle() string {
+	if t := strings.TrimSpace(p.Title); t != "" {
+		return t
+	}
+	return strings.TrimSpace(p.Caption)
 }
 
 const (

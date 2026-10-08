@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
+	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
 type assignedProfessionType struct {
@@ -138,5 +140,43 @@ func (s *Service) applyProfessionTypes(ctx context.Context, m *domain.MasterProf
 		return apperr.Internal(err)
 	}
 	m.ProfessionTypes = types
+	return nil
+}
+
+func slugifyProfession(name string) string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	n = strings.ReplaceAll(n, " ", "_")
+	return n
+}
+
+func (s *Service) AdminListProfessionTypes(ctx context.Context) ([]domain.ProfessionType, error) {
+	items, err := s.store.ListAllProfessionTypes(ctx)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return items, nil
+}
+
+func (s *Service) AdminCreateProfessionType(ctx context.Context, name, slug string) (*domain.ProfessionType, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, apperr.Validation("name is required")
+	}
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		slug = slugifyProfession(name)
+	}
+	now := s.now().UTC()
+	t := domain.ProfessionType{ID: ids.New(), Slug: slug, Name: name, IsActive: true, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.CreateProfessionType(ctx, t); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return &t, nil
+}
+
+func (s *Service) AdminSetProfessionTypeActive(ctx context.Context, id uuid.UUID, active bool) error {
+	if err := s.store.SetProfessionTypeActive(ctx, id, active, s.now().UTC()); err != nil {
+		return apperr.Internal(err)
+	}
 	return nil
 }

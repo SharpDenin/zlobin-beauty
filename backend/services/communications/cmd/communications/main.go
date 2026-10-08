@@ -50,7 +50,7 @@ func main() {
 		MarketplaceURL:   getenv("MARKETPLACE_URL", "http://marketplace:8080"),
 		MediaURL:         getenv("MEDIA_URL", "http://media:8080"),
 		InternalToken:    os.Getenv("INTERNAL_TOKEN"),
-	})
+	}).WithPush(os.Getenv("VAPID_PUBLIC_KEY"), os.Getenv("VAPID_PRIVATE_KEY"), os.Getenv("VAPID_SUBJECT"))
 	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)

@@ -9,7 +9,8 @@ import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { formatMoney } from '@/shared/lib/money'
-import { statusBadgeClass, statusLabel } from '@/shared/lib/status'
+import { shortPersonName } from '@/features/owner-home/owner-home-helpers'
+import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
@@ -34,6 +35,8 @@ type Appointment = {
   duration_minutes: number
   master_user_id: string
   client_user_id: string
+  client_display_name?: string
+  master_display_name?: string
   organization_id: string
   cancel_reason?: string
   location_timezone?: string
@@ -71,6 +74,7 @@ export function AppointmentDetailPage() {
   const [skipConfirmed, setSkipConfirmed] = useState(false)
   const [omitFormula, setOmitFormula] = useState(false)
   const [rescheduleOpen, setRescheduleOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
 
   const query = useQuery({
     queryKey: ['appointment', id],
@@ -232,14 +236,31 @@ export function AppointmentDetailPage() {
               Написать
             </button>
           )}
-          <span className={`badge ${statusBadgeClass(a.status)}`}>{statusLabel(a.status)}</span>
+          <span className={`badge ${statusBadgeClass(a.status)}`}>{appointmentStatusLabel(a.status)}</span>
         </div>
       </div>
 
-      <section className="card stack-sm">
-        <strong>{a.service_name}</strong>
-        <p>{new Date(a.starts_at).toLocaleString('ru-RU')} — {new Date(a.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</p>
-        <p>{formatMoney(a.price_minor)} · {a.duration_minutes} мин</p>
+      <section className="card stack-sm appt-summary" data-testid="appointment-summary">
+        <div className="appt-summary-who">
+          <span className="appt-card-avatar" aria-hidden="true">
+            {(shortPersonName(isMaster ? a.client_display_name : a.master_display_name) || (isMaster ? 'К' : 'М')).trim().slice(0, 1).toUpperCase()}
+          </span>
+          <div className="stack-sm" style={{ minWidth: 0 }}>
+            <strong>
+              {shortPersonName(isMaster ? a.client_display_name : a.master_display_name)
+                || (isMaster ? 'Клиент' : 'Мастер')}
+            </strong>
+            <p>{a.service_name}</p>
+            <p>
+              {new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              –
+              {new Date(a.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              {' · '}
+              {new Date(a.starts_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+            </p>
+          </div>
+        </div>
+        <p><span className={`badge ${statusBadgeClass(a.status)}`}>{appointmentStatusLabel(a.status)}</span></p>
         {a.cancel_reason && <p>Причина отмены: {a.cancel_reason}</p>}
       </section>
 
@@ -261,7 +282,16 @@ export function AppointmentDetailPage() {
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
-      {isMaster && a.service_id && a.organization_id && (
+      <button
+        className="btn btn-ghost"
+        type="button"
+        aria-expanded={moreOpen}
+        onClick={() => setMoreOpen((v) => !v)}
+      >
+        {moreOpen ? 'Скрыть подробности' : 'Подробности'}
+      </button>
+
+      {moreOpen && isMaster && a.service_id && a.organization_id && (
         <section className="card stack">
           <h2>Наличие материалов</h2>
           <CalendarAvailability
@@ -273,11 +303,11 @@ export function AppointmentDetailPage() {
         </section>
       )}
 
-      {a.status === 'completed' && isMaster && (
+      {moreOpen && a.status === 'completed' && isMaster && (
         <AppointmentMaterialsForm appointmentId={a.id} orgId={a.organization_id} />
       )}
 
-      {a.status === 'completed' && (
+      {moreOpen && a.status === 'completed' && (
         <section className="card stack">
           <h2>Схема услуги</h2>
           <VisitSchemeSummary appointmentId={a.id} accessToken={accessToken} />
@@ -416,6 +446,7 @@ export function AppointmentDetailPage() {
         onSuccess={() => setOk('Запись перенесена')}
       />
 
+      {moreOpen && (
       <section className="card stack">
         <h2>Фото до / после</h2>
         <p className="muted">Видят мастер и клиент этой записи. Загрузка — только мастер.</p>
@@ -472,8 +503,9 @@ export function AppointmentDetailPage() {
           </div>
         )}
       </section>
+      )}
 
-      {canReview && (
+      {moreOpen && canReview && (
         <section className="card stack">
           <h2>Оставить отзыв</h2>
           <form className="stack" onSubmit={reviewForm.handleSubmit((v) => act.mutate({
@@ -507,6 +539,7 @@ export function AppointmentDetailPage() {
         </section>
       )}
 
+      {moreOpen && (
       <section className="card stack">
         <h2>История статусов</h2>
         {history.isLoading && <div className="state-box">Загрузка…</div>}
@@ -515,13 +548,14 @@ export function AppointmentDetailPage() {
         <div className="list">
           {history.data?.items.map((h, i) => (
             <div key={`${h.created_at}-${i}`} className="list-item">
-              <strong>{statusLabel(h.to_status)}</strong>
+              <strong>{appointmentStatusLabel(h.to_status)}</strong>
               <p>{new Date(h.created_at).toLocaleString('ru-RU')}</p>
               {h.reason && <p>{h.reason}</p>}
             </div>
           ))}
         </div>
       </section>
+      )}
     </main>
   )
 }

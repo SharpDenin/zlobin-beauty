@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { API_BASE_URL } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import {
-  MEDIA_ACCEPT_IMAGES,
-  MEDIA_ACCEPT_IMAGE_OR_VIDEO,
+  MEDIA_ACCEPT_ANY_VISUAL,
+  MEDIA_ACCEPT_IMAGES_GIF,
   MEDIA_MAX_BYTES_DEFAULT,
   MEDIA_MAX_VIDEO_BYTES,
   isVideoFile,
@@ -11,6 +10,7 @@ import {
   uploadMedia,
 } from '@/shared/lib/mediaUpload'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { MediaVideo } from '@/shared/ui/MediaVideo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 
 type DropzoneState = 'idle' | 'dragging' | 'uploading' | 'error' | 'preview'
@@ -22,6 +22,8 @@ type Props = {
   accept?: string
   maxBytes?: number
   allowVideo?: boolean
+  /** Animated GIF is accepted by default where the backend allows it for the purpose. */
+  allowGif?: boolean
   label?: string
   disabled?: boolean
   className?: string
@@ -34,6 +36,7 @@ export function MediaDropzone({
   accept,
   maxBytes = MEDIA_MAX_BYTES_DEFAULT,
   allowVideo = false,
+  allowGif = true,
   label = 'Перетащите файл или нажмите для выбора',
   disabled = false,
   className,
@@ -50,7 +53,7 @@ export function MediaDropzone({
   const [localIsVideo, setLocalIsVideo] = useState(false)
   const [remoteIsVideo, setRemoteIsVideo] = useState(false)
 
-  const resolvedAccept = accept ?? (allowVideo ? MEDIA_ACCEPT_IMAGE_OR_VIDEO : MEDIA_ACCEPT_IMAGES)
+  const resolvedAccept = accept ?? (allowVideo ? (allowGif ? MEDIA_ACCEPT_ANY_VISUAL : MEDIA_ACCEPT_ANY_VISUAL.replace(',image/gif', '')) : allowGif ? MEDIA_ACCEPT_IMAGES_GIF : 'image/jpeg,image/png,image/webp')
 
   useEffect(() => {
     if (value) {
@@ -87,6 +90,7 @@ export function MediaDropzone({
     if (disabled) return
     const validation = mediaFileApiError(file, {
       allowVideo,
+      allowGif,
       maxImageBytes: maxBytes,
       maxVideoBytes: MEDIA_MAX_VIDEO_BYTES,
     })
@@ -107,7 +111,7 @@ export function MediaDropzone({
     setObjectPreview(file)
 
     try {
-      const res = await uploadMedia(file, purpose, accessToken, setProgress, { allowVideo })
+      const res = await uploadMedia(file, purpose, accessToken, setProgress, { allowVideo, allowGif })
       const ct = res.content_type || res.mime_type || file.type
       setRemoteIsVideo(Boolean(ct?.startsWith('video/')))
       onChange(res.id, { contentType: ct })
@@ -179,9 +183,12 @@ export function MediaDropzone({
     className ?? '',
   ].filter(Boolean).join(' ')
 
+  const limitMb = Math.round(maxBytes / (1024 * 1024))
   const hint = allowVideo
-    ? `Фото или видео · до ${Math.round(MEDIA_MAX_VIDEO_BYTES / (1024 * 1024))} МБ`
-    : `JPEG, PNG или WebP · до ${Math.round(maxBytes / (1024 * 1024))} МБ`
+    ? `Фото, GIF или видео · видео до ${Math.round(MEDIA_MAX_VIDEO_BYTES / (1024 * 1024))} МБ`
+    : allowGif
+      ? `JPEG, PNG, WebP или GIF · до ${limitMb} МБ`
+      : `JPEG, PNG или WebP · до ${limitMb} МБ`
 
   return (
     <div className="dropzone-wrap stack-sm">
@@ -225,9 +232,9 @@ export function MediaDropzone({
               )
             ) : value ? (
               remoteIsVideo || purpose === 'video' ? (
-                <video src={`${API_BASE_URL}/v1/media/${value}/content`} controls playsInline />
+                <MediaVideo mediaId={value} />
               ) : (
-                <MediaImage mediaId={value} token={accessToken} alt="Загруженный файл" />
+                <MediaImage mediaId={value} token={accessToken} alt="Загруженный файл" loading="eager" />
               )
             ) : null}
           </div>
@@ -241,7 +248,7 @@ export function MediaDropzone({
         {state === 'uploading' && (
           <div className="dropzone-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
             <div className="dropzone-progress-bar" style={{ width: `${progress}%` }} />
-            <span>Загрузка… {progress}%</span>
+            <span>{progress < 2 ? 'Подготовка…' : `Загрузка… ${progress}%`}</span>
           </div>
         )}
       </div>

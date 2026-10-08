@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/domain"
+	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 )
 
 func TestCoveringWorkModeAdjacentAndOverlap(t *testing.T) {
@@ -53,5 +54,19 @@ func TestWorkModeLabel(t *testing.T) {
 	}
 	if domain.WorkModeLabel(domain.WorkModeOnsite) != "Выезд" {
 		t.Fatal(domain.WorkModeLabel(domain.WorkModeOnsite))
+	}
+}
+
+func TestChairOwnSalonLeaseError(t *testing.T) {
+	err := apperr.ValidationCode(apperr.CodeChairOwnSalonLease, "Сотрудник салона не может арендовать кресло в этом салоне.")
+	ae, ok := apperr.As(err)
+	if !ok {
+		t.Fatal("expected apperr")
+	}
+	if ae.Code != apperr.CodeChairOwnSalonLease {
+		t.Fatalf("code %s", ae.Code)
+	}
+	if ae.Message != "Сотрудник салона не может арендовать кресло в этом салоне." {
+		t.Fatalf("message %s", ae.Message)
 	}
 }

@@ -13,6 +13,8 @@ import {
   parseKnowledgeDoc,
   buildKnowledgeCategoryTree,
   knowledgeSeriesLabel,
+  knowledgeSectionTone,
+  knowledgeSectionToneClass,
 } from './knowledge-helpers'
 
 describe('knowledge-helpers', () => {
@@ -69,6 +71,8 @@ describe('knowledge-helpers', () => {
   it('uses role-aware empty copy', () => {
     expect(knowledgeEmptyTitle(false, false)).toBe('В базе знаний пока нет материалов для домашнего ухода.')
     expect(knowledgeEmptyTitle(true, false)).toBe('Материалы не найдены.')
+    expect(knowledgeEmptyTitle(true, true)).toBe('Ничего не найдено')
+    expect(knowledgeEmptyTitle(false, true)).toBe('Ничего не найдено')
   })
 
   it('clears article cover with empty string, not a placeholder id', () => {
@@ -99,5 +103,15 @@ describe('knowledge-helpers', () => {
     expect(tree[0]?.children[0]?.children.map((node) => node.name)).toEqual(['Крем краска', 'Гель краска'])
     expect(knowledgeSeriesLabel('COLORSHADE 7.1 Крем-краска русый пепельный')).toBe('COLORSHADE')
     expect(knowledgeSeriesLabel('Палитра оттенков краски COLORSHADE/COLORDREAM')).toBe('')
+  })
+
+  it('maps section labels to stable design-token tones', () => {
+    expect(knowledgeSectionTone('Окрашивание и осветление / Окрашивание')).toBe('primary')
+    expect(knowledgeSectionTone('Уход за волосами')).toBe('success')
+    expect(knowledgeSectionTone('Стайлинг')).toBe('warning')
+    expect(knowledgeSectionTone('Химическая завивка')).toBe('danger')
+    expect(knowledgeSectionTone('')).toBe('neutral')
+    expect(knowledgeSectionTone('Неизвестный раздел')).toBe(knowledgeSectionTone('Неизвестный раздел'))
+    expect(knowledgeSectionToneClass('Наборы')).toContain('kb-tone--warning')
   })
 })

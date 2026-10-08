@@ -13,6 +13,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/service"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
+	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 )
 
@@ -40,6 +41,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PUT /v1/me/dashboard", authMW(http.HandlerFunc(a.putDashboard)))
 	mux.Handle("GET /v1/me/hints", authMW(http.HandlerFunc(a.getHints)))
 	mux.Handle("PATCH /v1/me/hints", authMW(http.HandlerFunc(a.patchHints)))
+	a.registerPreferenceRoutes(mux, authMW)
 	a.registerAdminRoutes(mux, authMW)
 }
 
@@ -49,6 +51,7 @@ func (a *API) InternalRoutes(mux *http.ServeMux, internalToken string) {
 	mux.Handle("GET /v1/internal/users/{userID}", internal(http.HandlerFunc(a.internalUser)))
 	mux.Handle("POST /v1/internal/users/grant-role", internal(http.HandlerFunc(a.grantRole)))
 	mux.Handle("POST /v1/internal/audit", internal(http.HandlerFunc(a.ingestAudit)))
+	a.registerDirectoryRoutes(mux, internal)
 }
 
 func (a *API) internalUser(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +207,15 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) lookup(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.ClaimsFrom(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("unauthorized"))
+		return
+	}
+	if !auth.HasProfessionalRole(claims) {
+		httpx.WriteError(w, r, a.log, apperr.Forbidden("not allowed"))
+		return
+	}
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -368,14 +380,23 @@ func (a *API) internalEntitlements(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) grantRole(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email string `json:"email"`
-		Role  string `json:"role"`
+		Email  string `json:"email"`
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	user, err := a.svc.GrantRole(r.Context(), req.Email, req.Role)
+	var (
+		user *domain.User
+		err  error
+	)
+	if uid, parseErr := uuid.Parse(strings.TrimSpace(req.UserID)); parseErr == nil {
+		user, err = a.svc.GrantRoleToUser(r.Context(), uid, req.Role)
+	} else {
+		user, err = a.svc.GrantRole(r.Context(), req.Email, req.Role)
+	}
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

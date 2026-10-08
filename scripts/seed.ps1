@@ -5,6 +5,13 @@ Set-Location $root
 $gateway = if ($env:GATEWAY_URL) { $env:GATEWAY_URL } else { "http://localhost:8090" }
 $password = if ($env:SEED_PASSWORD) { $env:SEED_PASSWORD } else { "Password123!" }
 
+if ($args -contains "-Reset" -or $args -contains "--reset") {
+  Write-Host "Resetting demo volumes (postgres + minio) and reseeding..."
+  docker compose stop frontend 2>$null
+  docker compose down -v
+  docker compose up -d --scale frontend=0
+}
+
 Write-Host "Waiting for gateway health at $gateway/healthz ..."
 $ready = $false
 for ($i = 0; $i -lt 60; $i++) {
@@ -27,6 +34,9 @@ if ($args -contains "-Local" -or $args -contains "--local") {
   try {
     $env:GATEWAY_URL = $gateway
     $env:SEED_PASSWORD = $password
+    if (-not $env:BOOKING_DATABASE_URL) {
+      $env:BOOKING_DATABASE_URL = "postgres://booking:booking@127.0.0.1:5433/booking?sslmode=disable"
+    }
     go run ./cmd/seed
   } finally {
     Pop-Location

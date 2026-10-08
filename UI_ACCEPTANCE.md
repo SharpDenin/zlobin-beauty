@@ -1,3 +1,5 @@
+> Историческая приёмка UI (август 2026). Актуальные снимки: [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md). Сценарий показа: [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md).
+
 # UI_ACCEPTANCE.md — Salon-X
 
 Дата проверки: **2026-08-18** (Phase 6).  

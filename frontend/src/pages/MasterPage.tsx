@@ -5,19 +5,29 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
-import { workTypeLabel } from '@/shared/lib/status'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
 import { MediaImage } from '@/shared/ui/MediaImage'
-import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
-import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { useToast } from '@/shared/ui/Toast'
-import { Hint } from '@/shared/ui/Hint'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { MultiServiceBookingDialog } from '@/pages/MultiServiceBookingDialog'
 import { canJoinMultiService } from '@/pages/visit-plan-helpers'
+import {
+  PortfolioCategoryChips,
+  PortfolioGrid,
+  PortfolioViewer,
+} from '@/features/portfolio/PortfolioUI'
+import {
+  collectPortfolioCategories,
+  filterPortfolioByCategory,
+  teaserPortfolio,
+  type PortfolioListResponse,
+} from '@/features/portfolio/types'
+import '@/features/master-profile/master-profile.css'
+import '@/features/portfolio/portfolio.css'
+import '@/features/media-cards/media-cards.css'
 
 type BookingMode = 'flexible' | 'fixed_window'
 
@@ -45,6 +55,9 @@ type MasterDetails = {
     profession_types?: { id: string; slug: string; name: string }[]
     photo_media_id?: string | null
     organization_id?: string
+    experience_years?: number
+    rating_avg?: number
+    rating_count?: number
   }
   services: Service[]
 }
@@ -74,6 +87,14 @@ type BookedAppointment = {
   booking_mode?: string
 }
 
+type Review = {
+  id: string
+  master_rating: number
+  result_rating: number
+  comment: string
+  created_at: string
+}
+
 const FLEX_STEPS = ['Услуга', 'Дата', 'Время', 'Итого'] as const
 const FIXED_STEPS = ['Услуга', 'Сеанс', 'Итого'] as const
 
@@ -81,15 +102,53 @@ function bookingModeLabel(mode?: string) {
   return mode === 'fixed_window' ? 'Фиксированное окно' : 'Гибкая запись'
 }
 
+function nextOpenBookingDate(from = new Date()): string {
+  const d = new Date(from)
+  d.setHours(12, 0, 0, 0)
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+function nearbyDates(centerISO: string, span = 7): string[] {
+  const base = new Date(`${centerISO}T12:00:00`)
+  const out: string[] = []
+  for (let i = -1; i < span + 6; i++) {
+    const d = new Date(base)
+    d.setDate(base.getDate() + i)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (d < today) continue
+    if (d.getDay() === 0 || d.getDay() === 6) continue
+    out.push(d.toISOString().slice(0, 10))
+    if (out.length >= span) break
+  }
+  while (out.length < span) {
+    const last = out[out.length - 1] ? new Date(`${out[out.length - 1]}T12:00:00`) : new Date()
+    last.setDate(last.getDate() + 1)
+    if (last.getDay() === 0 || last.getDay() === 6) continue
+    out.push(last.toISOString().slice(0, 10))
+  }
+  return out.slice(0, span)
+}
+
+function ratingDistribution(reviews: Review[]): number[] {
+  const counts = [0, 0, 0, 0, 0]
+  for (const r of reviews) {
+    const star = Math.min(5, Math.max(1, Math.round(r.master_rating)))
+    counts[5 - star] += 1
+  }
+  return counts
+}
+
 export function MasterPage() {
   const { id } = useParams()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const messenger = useMessenger()
   const qc = useQueryClient()
   const toast = useToast()
   const [step, setStep] = useState(0)
   const [serviceId, setServiceId] = useState<string>('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => nextOpenBookingDate())
   const [slot, setSlot] = useState<string>('')
   const [occurrenceId, setOccurrenceId] = useState<string>('')
   const [message, setMessage] = useState<string | null>(null)
@@ -97,6 +156,12 @@ export function MasterPage() {
   const [done, setDone] = useState(false)
   const [booked, setBooked] = useState<BookedAppointment | null>(null)
   const [multiOpen, setMultiOpen] = useState(false)
+  const [aboutExpanded, setAboutExpanded] = useState(false)
+  const [portfolioCategory, setPortfolioCategory] = useState('Все')
+  const [serviceCategory, setServiceCategory] = useState('Все')
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerIndex, setViewerIndex] = useState(0)
+  const [bookingFocus, setBookingFocus] = useState(false)
 
   const masterQuery = useQuery({
     queryKey: ['master', id],
@@ -118,7 +183,7 @@ export function MasterPage() {
       apiRequest<{ items: Slot[] }>(
         `/v1/masters/${masterQuery.data!.master.user_id}/slots?date=${date}&duration_minutes=${selectedService!.duration_minutes}`,
       ),
-    enabled: Boolean(masterQuery.data?.master.user_id && selectedService && !isFixed && step >= 2),
+    enabled: Boolean(masterQuery.data?.master.user_id && selectedService && !isFixed && (step >= 2 || bookingFocus)),
   })
 
   const occurrencesQuery = useQuery({
@@ -135,18 +200,13 @@ export function MasterPage() {
   const reviewsQuery = useQuery({
     queryKey: ['master-reviews', masterQuery.data?.master.user_id],
     queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; master_rating: number; result_rating: number; comment: string; created_at: string }> }>(
-        `/v1/masters/${masterQuery.data!.master.user_id}/reviews`,
-      ),
+      apiRequest<{ items: Review[] }>(`/v1/masters/${masterQuery.data!.master.user_id}/reviews`),
     enabled: Boolean(masterQuery.data?.master.user_id),
   })
 
   const portfolioQuery = useQuery({
     queryKey: ['master-portfolio', id],
-    queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string }> }>(
-        `/v1/masters/${id}/portfolio`,
-      ),
+    queryFn: () => apiRequest<PortfolioListResponse>(`/v1/masters/${id}/portfolio`),
     enabled: Boolean(id),
   })
 
@@ -190,6 +250,16 @@ export function MasterPage() {
     },
   })
 
+  const portfolioItems = portfolioQuery.data?.items ?? []
+  const portfolioCategories = useMemo(() => collectPortfolioCategories(portfolioItems), [portfolioItems])
+  const filteredPortfolio = useMemo(
+    () => filterPortfolioByCategory(portfolioItems, portfolioCategory),
+    [portfolioItems, portfolioCategory],
+  )
+
+  const reviews = reviewsQuery.data?.items ?? []
+  const dist = useMemo(() => ratingDistribution(reviews), [reviews])
+
   if (masterQuery.isLoading) return <div className="page state-box">Загрузка профиля…</div>
   if (masterQuery.isError) {
     return (
@@ -207,12 +277,26 @@ export function MasterPage() {
   }
 
   const { master, services } = masterQuery.data
+  const ratingAvg = master.rating_avg ?? 0
+  const ratingCount = master.rating_count ?? 0
+  const experienceYears = master.experience_years ?? 0
 
   const summaryStartsAt = isFixed ? selectedOccurrence?.starts_at : slot
   const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || ''
   const summaryAddress = booked?.location_address
   const confirmStep = isFixed ? 2 : 3
   const canConfirm = isFixed ? Boolean(occurrenceId && selectedOccurrence) : Boolean(slot)
+
+  function scrollToBooking() {
+    setBookingFocus(true)
+    setStep(0)
+    document.getElementById('mp-booking')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  function starsLabel(n: number) {
+    const full = Math.max(0, Math.min(5, Math.round(n)))
+    return '★'.repeat(full) + '☆'.repeat(5 - full)
+  }
 
   if (done) {
     return (
@@ -243,55 +327,167 @@ export function MasterPage() {
     )
   }
 
+  const dates = nearbyDates(date)
+
+  const roleLabels = master.profession_types?.length
+    ? master.profession_types.map((t) => t.name)
+    : [masterProfessionLabel(master, 'Красота и уход')]
+  const serviceCategorySet = new Set<string>()
+  for (const s of services) {
+    const c = s.category?.trim()
+    if (c) serviceCategorySet.add(c)
+  }
+  const serviceCategories = ['Все', ...Array.from(serviceCategorySet)]
+  const filteredServices =
+    serviceCategory === 'Все' ? services : services.filter((s) => s.category === serviceCategory)
+
   return (
-    <main className="page stack">
-      <section className="hero">
-        <div className="row" style={{ alignItems: 'flex-start' }}>
-          <MasterPortrait mediaId={master.photo_media_id} name={master.display_name} token={accessToken} />
-          <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
-            <h1>{master.display_name} <Hint id="client-booking" title="Запись">Выберите услугу и время. Если мастер включил автоподтверждение, запись сразу станет подтверждённой.</Hint></h1>
-            <div className="row">
-              <span className="city-badge">{master.city}</span>
-              <span className="chip badge-default">{workTypeLabel(master.work_type)}</span>
+    <main className="page mp-page">
+      <section className="mp-hero" aria-label="Профиль мастера">
+        <div className="mp-hero-body">
+          <h1 className="mp-hero-name">
+            {master.display_name}
+            <span className="mp-verified" aria-hidden="true" title="Профиль">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12.5 10 17l9-10" />
+              </svg>
+            </span>
+          </h1>
+          <p className="mp-hero-role">{roleLabels.join(' • ')}</p>
+          <div className="mp-hero-meta">
+            <div className="mp-hero-meta-row">
+              {ratingCount > 0 && (
+                <span className="mp-hero-rating">
+                  <span className="mp-star" aria-hidden="true">★</span>
+                  <strong>{ratingAvg.toFixed(1)}</strong>
+                  <span>({ratingCount} {ratingCount === 1 ? 'отзыв' : 'отзывов'})</span>
+                </span>
+              )}
             </div>
-            <p>{masterProfessionLabel(master, 'Красота и уход')}</p>
-            <p>{master.bio || 'Мастер ещё не добавил описание.'}</p>
-            {accessToken && (
-              <button
-                className="btn btn-secondary btn-compact"
-                type="button"
-                data-testid="write-master"
-                onClick={async () => {
-                  try {
-                    await messenger.start({ type: 'client_master', master_user_id: master.user_id })
-                  } catch (e) {
-                    setError(userError(e, 'Не удалось открыть переписку'))
-                  }
-                }}
-              >
-                Написать
-              </button>
+            {master.city && (
+              <div className="mp-hero-meta-row">
+                <span className="mp-hero-loc">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11z" />
+                    <circle cx="12" cy="10" r="2.5" />
+                  </svg>
+                  {master.city}
+                </span>
+              </div>
             )}
           </div>
         </div>
+        <div className="mp-hero-photo">
+          <MediaImage
+            mediaId={master.photo_media_id}
+            token={accessToken}
+            alt={master.display_name}
+            fallback={master.display_name.slice(0, 1)}
+            variant="cover"
+          />
+        </div>
+        <div className="mp-hero-cta">
+          <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
+            Записаться
+          </button>
+          {accessToken && (
+            <button
+              className="btn btn-secondary mp-msg-btn"
+              type="button"
+              data-testid="write-master"
+              aria-label="Написать"
+              onClick={async () => {
+                try {
+                  await messenger.start({ type: 'client_master', master_user_id: master.user_id })
+                } catch (e) {
+                  setError(userError(e, 'Не удалось открыть переписку'))
+                }
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                <path d="M4 6h16v10H7l-3 3V6z" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+        </div>
       </section>
 
-      {(portfolioQuery.data?.items.length ?? 0) > 0 && (
-        <section className="stack">
-          <h2>Работы</h2>
-          <div className="portfolio-grid">
-            {portfolioQuery.data?.items.map((item) => (
-              <figure key={item.id} className="portfolio-item">
-                <MediaImage mediaId={item.media_id} token={accessToken} alt={item.caption || 'Работа'} className="portfolio-thumb" />
-                {item.caption && <figcaption>{item.caption}</figcaption>}
-              </figure>
-            ))}
-          </div>
+      {(experienceYears > 0 || ratingCount > 0 || services.length > 0) && (
+        <div className="mp-stats" aria-label="Показатели мастера">
+          {experienceYears > 0 && (
+            <div className="mp-stat">
+              <strong>{experienceYears}</strong>
+              <span>{experienceYears === 1 ? 'год опыта' : 'лет опыта'}</span>
+            </div>
+          )}
+          {ratingCount > 0 && (
+            <div className="mp-stat">
+              <strong>{ratingAvg.toFixed(1)}</strong>
+              <span>{ratingCount} отзывов</span>
+            </div>
+          )}
+          {services.length > 0 && (
+            <div className="mp-stat">
+              <strong>{services.length}</strong>
+              <span>услуг</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(master.bio?.trim().length ?? 0) > 0 && (
+        <section className={`mp-about ${aboutExpanded ? '' : 'is-collapsed'}`.trim()}>
+          <h2 className="mp-section-title">О мастере</h2>
+          <p>{master.bio}</p>
+          {master.bio.trim().length > 160 && (
+            <button
+              type="button"
+              className="btn-link"
+              onClick={() => setAboutExpanded((v) => !v)}
+            >
+              {aboutExpanded ? 'Свернуть' : 'Подробнее ›'}
+            </button>
+          )}
         </section>
       )}
 
-      <section className="card stack">
-        <h2>Запись</h2>
+      {portfolioItems.length > 0 && (
+        <section className="stack">
+          <div className="row between">
+            <h2 className="mp-section-title">Портфолио</h2>
+            {filteredPortfolio.length > 6 && (
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => {
+                  setViewerIndex(0)
+                  setViewerOpen(true)
+                }}
+              >
+                Все работы
+              </button>
+            )}
+          </div>
+          <PortfolioCategoryChips
+            categories={portfolioCategories}
+            value={portfolioCategory}
+            onChange={setPortfolioCategory}
+          />
+          <PortfolioGrid
+            items={teaserPortfolio(filteredPortfolio, 6)}
+            token={accessToken}
+            onOpen={(index) => {
+              setViewerIndex(index)
+              setViewerOpen(true)
+            }}
+          />
+        </section>
+      )}
+
+      <section id="mp-booking" className="stack">
+        <h2 className="mp-section-title">
+          {step === 0 ? 'Услуги' : step === 1 && selectedService ? selectedService.name : 'Запись'}
+        </h2>
         <div className="wizard-steps" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
           {steps.map((label, idx) => (
             <div
@@ -304,40 +500,151 @@ export function MasterPage() {
         </div>
 
         {step === 0 && (
-          <div className="cards-grid services">
+          <div className="stack">
             {services.length === 0 && <div className="state-box">Услуги пока не опубликованы</div>}
-            {services.map((s) => (
+            {serviceCategories.length > 2 && (
+              <div className="mp-service-filters" role="toolbar" aria-label="Категории услуг">
+                {serviceCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`portfolio-chip ${serviceCategory === cat ? 'is-active' : ''}`}
+                    aria-pressed={serviceCategory === cat}
+                    onClick={() => setServiceCategory(cat)}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
+            {filteredServices.map((s) => (
               <button
                 key={s.id}
                 type="button"
-                className={`service-card service-card--media ${serviceId === s.id ? 'selected' : ''}`}
+                className={`mp-service-row ${serviceId === s.id ? 'is-selected' : ''}`}
+                data-testid="mp-service"
                 onClick={() => {
                   setServiceId(s.id)
                   setSlot('')
                   setOccurrenceId('')
                   setError(null)
+                  setStep(1)
                 }}
               >
-                <ServiceCardMedia mediaId={s.photo_media_id} name={s.name} token={accessToken} />
-                <div className="service-card-body">
-                  <div className="row between">
-                    <strong>{s.name}</strong>
-                    <span>{s.price_display || formatMoney(s.price_minor)}</span>
-                  </div>
-                  <p>{s.category} · {s.duration_minutes} мин</p>
-                  <p className="muted">{bookingModeLabel(s.booking_mode)}</p>
-                  {s.description && <p className="muted">{s.description}</p>}
+                <div className="mp-service-thumb">
+                  <MediaImage
+                    mediaId={s.photo_media_id}
+                    token={accessToken}
+                    alt={s.name}
+                    fallback={s.name.slice(0, 2).toUpperCase()}
+                    variant="cover"
+                  />
                 </div>
+                <div className="mp-service-main">
+                  <strong>{s.name}</strong>
+                  <span className="mp-service-dur">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 7v5l3 2" strokeLinecap="round" />
+                    </svg>
+                    от {s.duration_minutes} мин
+                  </span>
+                </div>
+                <span className="mp-service-price">
+                  {s.price_display || formatMoney(s.price_minor)}
+                  <span className="mp-service-chevron" aria-hidden>›</span>
+                </span>
               </button>
             ))}
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={!serviceId}
-              onClick={() => setStep(1)}
-            >
-              Далее
-            </button>
+          </div>
+        )}
+
+        {!isFixed && step === 1 && selectedService && (
+          <div className="stack">
+            <article className="mp-service-detail">
+              <div className="mp-service-detail-hero">
+                <MediaImage
+                  mediaId={selectedService.photo_media_id}
+                  token={accessToken}
+                  alt={selectedService.name}
+                  fallback={selectedService.name.slice(0, 2).toUpperCase()}
+                  variant="cover"
+                />
+              </div>
+              <div className="mp-service-detail-body">
+                <h2>{selectedService.name}</h2>
+                <div className="mp-service-detail-meta">
+                  <span>{selectedService.price_display || formatMoney(selectedService.price_minor)}</span>
+                  <span className="mp-service-dur">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 7v5l3 2" strokeLinecap="round" />
+                    </svg>
+                    от {selectedService.duration_minutes} мин
+                  </span>
+                </div>
+                {selectedService.description && (
+                  <p className="mp-service-detail-desc">{selectedService.description}</p>
+                )}
+                <div className="mp-service-benefits" aria-hidden="true">
+                  <div className="mp-service-benefit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M4 9h16v10H4zM8 9V7a4 4 0 0 1 8 0v2" strokeLinejoin="round" />
+                    </svg>
+                    <span>Проф. материалы</span>
+                  </div>
+                  <div className="mp-service-benefit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <circle cx="12" cy="8" r="3.5" />
+                      <path d="M5 19a7 7 0 0 1 14 0" strokeLinecap="round" />
+                    </svg>
+                    <span>Индивидуальный подход</span>
+                  </div>
+                  <div className="mp-service-benefit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M12 3 4 6v6c0 5 3.5 8.5 8 9 4.5-.5 8-4 8-9V6l-8-3z" strokeLinejoin="round" />
+                      <path d="m9 12 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span>Гарантия результата</span>
+                  </div>
+                </div>
+              </div>
+            </article>
+            <p className="mp-schedule-hint">Выберите дату</p>
+            <div className="mp-date-strip" role="listbox" aria-label="Дата">
+              {dates.map((d) => {
+                const dt = new Date(`${d}T12:00:00`)
+                const weekday = dt.toLocaleDateString('ru-RU', { weekday: 'short' })
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    role="option"
+                    aria-selected={date === d}
+                    className={`mp-date-chip ${date === d ? 'is-active' : ''}`}
+                    data-testid="mp-date"
+                    onClick={() => { setDate(d); setSlot(''); setStep(2) }}
+                  >
+                    <span>{weekday}</span>
+                    <strong>{dt.getDate()}</strong>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="field">
+              <label htmlFor="date">Или выберите день</label>
+              <input
+                id="date"
+                type="date"
+                value={date}
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => { setDate(e.target.value); setSlot('') }}
+              />
+            </div>
+            <div className="row">
+              <button className="btn btn-secondary" type="button" onClick={() => setStep(0)}>Назад</button>
+              <button className="btn btn-primary" type="button" onClick={() => setStep(2)}>К времени</button>
+            </div>
             {accessToken && selectedService && canJoinMultiService(selectedService) && master.organization_id && (
               <button
                 className="btn btn-secondary"
@@ -351,25 +658,6 @@ export function MasterPage() {
           </div>
         )}
 
-        {!isFixed && step === 1 && (
-          <div className="stack">
-            <div className="field">
-              <label htmlFor="date">Выберите день</label>
-              <input
-                id="date"
-                type="date"
-                value={date}
-                min={new Date().toISOString().slice(0, 10)}
-                onChange={(e) => { setDate(e.target.value); setSlot('') }}
-              />
-            </div>
-            <div className="row">
-              <button className="btn btn-secondary" type="button" onClick={() => setStep(0)}>Назад</button>
-              <button className="btn btn-primary" type="button" onClick={() => setStep(2)}>К времени</button>
-            </div>
-          </div>
-        )}
-
         {!isFixed && step === 2 && (
           <div className="stack">
             {slotsQuery.isLoading && <div className="state-box">Загрузка слотов…</div>}
@@ -380,7 +668,17 @@ export function MasterPage() {
                 <p>Выберите другую дату.</p>
               </div>
             )}
-            <div className="slot-grid">
+            {slotsQuery.data && slotsQuery.data.items.length > 0 && (
+              <p className="mp-schedule-hint">
+                Свободное время на{' '}
+                {new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                })}
+              </p>
+            )}
+            <div className="slot-list">
               {slotsQuery.data?.items.map((s) => {
                 const label = new Date(s.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
                 return (
@@ -388,16 +686,14 @@ export function MasterPage() {
                     key={s.starts_at}
                     type="button"
                     className={`slot ${slot === s.starts_at ? 'active' : ''}`}
-                    onClick={() => setSlot(s.starts_at)}
+                    data-testid="mp-slot"
+                    onClick={() => { setSlot(s.starts_at); setStep(3) }}
                   >
                     {label}
                   </button>
                 )
               })}
             </div>
-            {(slotsQuery.data?.items.length ?? 0) === 0 && (
-              <button type="button" className="slot empty" disabled>—</button>
-            )}
             <div className="row">
               <button className="btn btn-secondary" type="button" onClick={() => setStep(1)}>Назад</button>
               <button className="btn btn-primary" type="button" disabled={!slot} onClick={() => setStep(3)}>К подтверждению</button>
@@ -426,7 +722,7 @@ export function MasterPage() {
                       type="button"
                       className={`occurrence-card ${occurrenceId === o.id ? 'selected' : ''}`}
                       disabled={disabled}
-                      onClick={() => setOccurrenceId(o.id)}
+                      onClick={() => { setOccurrenceId(o.id); setStep(2) }}
                     >
                       <div className="row between">
                         <strong>{o.title || 'Сеанс'}</strong>
@@ -452,6 +748,10 @@ export function MasterPage() {
             <article className="booking-summary">
               <h3>Итого</h3>
               <dl>
+                <div>
+                  <dt>Клиент</dt>
+                  <dd>{user?.display_name || user?.email || 'Вы'}</dd>
+                </div>
                 <div>
                   <dt>Мастер</dt>
                   <dd>{master.display_name}</dd>
@@ -525,23 +825,73 @@ export function MasterPage() {
       )}
 
       <section className="stack">
-        <h2>Отзывы</h2>
-        {reviewsQuery.data && reviewsQuery.data.items.length === 0 && (
+        <h2 className="mp-section-title">Отзывы</h2>
+        {ratingCount > 0 && (
+          <div className="mp-rating-header">
+            <span className="mp-rating-num">{ratingAvg.toFixed(1)}</span>
+            <div>
+              <div className="mp-rating-stars" aria-hidden="true">{starsLabel(ratingAvg)}</div>
+              <p className="muted caption">на основе {ratingCount} отзывов</p>
+            </div>
+          </div>
+        )}
+        {reviews.length > 0 && (
+          <div className="mp-rating-bars">
+            {dist.map((count, i) => {
+              const star = 5 - i
+              const pct = reviews.length ? Math.round((count / reviews.length) * 100) : 0
+              return (
+                <div key={star} className="mp-rating-bar-row">
+                  <span>{star}</span>
+                  <div className="mp-rating-bar-track">
+                    <div className="mp-rating-bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span>{pct}%</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {reviewsQuery.data && reviews.length === 0 && (
           <div className="state-box">Пока нет опубликованных отзывов</div>
         )}
-        <div className="list">
-          {reviewsQuery.data?.items.map((r) => (
-            <article key={r.id} className="list-item">
-              <div className="row between">
-                <strong>Мастер {r.master_rating}/5</strong>
-                <span className="muted">Результат {r.result_rating}/5</span>
+        <div className="stack-sm">
+          {reviews.map((r, idx) => (
+            <article key={r.id} className="mp-review">
+              <div className="mp-review-avatar" aria-hidden="true">
+                {['А', 'И', 'М', 'Е', 'К', 'О', 'С', 'Т'][idx % 8]}
               </div>
-              {r.comment && <p>{r.comment}</p>}
-              <p className="muted">{new Date(r.created_at).toLocaleDateString('ru-RU')}</p>
+              <div>
+                <div className="mp-review-head">
+                  <div>
+                    <strong>Клиент</strong>
+                    <p className="muted">{new Date(r.created_at).toLocaleDateString('ru-RU')}</p>
+                  </div>
+                  <span className="mp-review-stars" aria-label={`Оценка ${r.master_rating} из 5`}>
+                    {starsLabel(r.master_rating)}
+                  </span>
+                </div>
+                {r.comment && <p className="mp-review-body">{r.comment}</p>}
+              </div>
             </article>
           ))}
         </div>
       </section>
+
+      <PortfolioViewer
+        open={viewerOpen}
+        items={filteredPortfolio}
+        index={viewerIndex}
+        token={accessToken}
+        onClose={() => setViewerOpen(false)}
+        onIndexChange={setViewerIndex}
+      />
+
+      <div className="mp-sticky-cta">
+        <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
+          Записаться
+        </button>
+      </div>
     </main>
   )
 }

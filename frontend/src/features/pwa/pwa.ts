@@ -38,6 +38,7 @@ export function installWasDismissed(): boolean {
   }
 }
 
+/** Remember that a REAL session expired (never set on a normal logout). */
 export function markSessionEnded() {
   try {
     sessionStorage.setItem(SESSION_ENDED_KEY, '1')
@@ -46,14 +47,28 @@ export function markSessionEnded() {
   }
 }
 
-export function consumeSessionEnded(): boolean {
+/** True while the login screen should show the soft "session expired" notice. Does not consume it. */
+export function peekSessionEnded(): boolean {
   try {
-    if (sessionStorage.getItem(SESSION_ENDED_KEY) !== '1') return false
-    sessionStorage.removeItem(SESSION_ENDED_KEY)
-    return true
+    return sessionStorage.getItem(SESSION_ENDED_KEY) === '1'
   } catch {
     return false
   }
+}
+
+export function clearSessionEnded() {
+  try {
+    sessionStorage.removeItem(SESSION_ENDED_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @deprecated use peekSessionEnded + clearSessionEnded */
+export function consumeSessionEnded(): boolean {
+  const ended = peekSessionEnded()
+  if (ended) clearSessionEnded()
+  return ended
 }
 
 export function isChunkLoadFailure(error: unknown): boolean {

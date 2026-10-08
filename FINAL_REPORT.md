@@ -1,3 +1,5 @@
+> Актуальный статус релиза: [docs/RELEASE_REPORT.md](docs/RELEASE_REPORT.md). Этот файл — отчёт августа 2026.
+
 # FINAL_REPORT.md — Salon-X
 
 Дата: **2026-08-23** (final acceptance pass).  

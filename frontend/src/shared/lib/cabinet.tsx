@@ -11,6 +11,7 @@ import {
 } from '@/features/auth/AuthProvider'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useMyOrgs, type OrgItem } from '@/shared/lib/commerce'
+import { usePreference } from '@/shared/lib/preferences'
 import { workTypeLabel } from '@/shared/lib/status'
 
 export type CabinetKind =
@@ -101,23 +102,23 @@ export function cabinetLabel(kind: CabinetKind) {
     case 'platform_admin':
       return 'Администрирование платформы'
     case 'supplier':
-      return 'Кабинет поставщика'
+      return 'Поставщик'
     case 'supplier_rep':
-      return 'Кабинет представителя'
+      return 'Представитель'
     case 'salon_owner':
-      return 'Кабинет владельца салона'
+      return 'Владелец салона'
     case 'chain_owner':
-      return 'Кабинет владельца сети'
+      return 'Владелец сети'
     case 'salon_admin':
-      return 'Кабинет администратора'
+      return 'Администратор салона'
     case 'chair_master':
-      return 'Кабинет арендатора кресла'
+      return 'Аренда кресла'
     case 'mobile_master':
-      return 'Кабинет выездного мастера'
+      return 'Выездной мастер'
     case 'salon_employee':
-      return 'Кабинет мастера салона'
+      return 'Мастер салона'
     case 'private_master':
-      return 'Кабинет частного мастера'
+      return 'Частный мастер'
     default:
       return 'Salon-X'
   }
@@ -184,18 +185,20 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   }
   if (kind === 'supplier') {
     const primary: NavLink[] = [
-      { to: '/supplier', label: 'Главная', end: true },
+      { to: '/', label: 'Главная', end: true },
       { to: '/supplier/products', label: 'Товары' },
       { to: '/warehouse', label: 'Склад' },
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
+      { to: '/supplier', label: 'Компания' },
       { to: '/supplier/orders', label: 'Заказы' },
       { to: '/supplier/client-orders', label: 'Заказы клиентов' },
       { to: '/supplier/analytics', label: 'Аналитика' },
       { to: '/supplier/team', label: 'Команда' },
       { to: '/supplier/recurring', label: 'Регулярные' },
       { to: '/messages', label: 'Сообщения' },
+      { to: '/contacts', label: 'Контакты' },
       { to: '/knowledge', label: 'База знаний' },
       { to: '/profile', label: 'Профиль' },
     ]
@@ -203,13 +206,15 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   }
   if (kind === 'supplier_rep') {
     const primary: NavLink[] = [
-      { to: '/rep', label: 'Сегодня', end: true },
-      { to: '/rep/finance', label: 'Деньги' },
+      { to: '/', label: 'Главная', end: true },
+      { to: '/rep', label: 'Сегодня' },
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
+      { to: '/rep/finance', label: 'Деньги' },
       { to: '/calendar', label: 'Календарь' },
       { to: '/messages', label: 'Сообщения' },
+      { to: '/contacts', label: 'Контакты' },
       { to: '/rep/analytics', label: 'Аналитика' },
       { to: '/warehouse', label: 'Склад' },
       { to: '/profile', label: 'Профиль' },
@@ -226,6 +231,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     ]
     const secondary: NavLink[] = [
       { to: '/messages', label: 'Сообщения' },
+      { to: '/contacts', label: 'Контакты' },
       { to: '/profile', label: 'Профиль' },
       { to: '/models', label: 'Модели' },
       { to: '/orders', label: 'Мои заказы' },
@@ -234,14 +240,17 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
 
+  const ownerHome = kind === 'salon_owner' || kind === 'chain_owner' || kind === 'salon_admin'
   const primary: NavLink[] = [
-    { to: '/', label: 'Сегодня', end: true },
-    { to: '/calendar', label: 'Календарь' },
+    { to: '/', label: ownerHome ? 'Обзор' : 'Сегодня', end: true },
+    { to: '/calendar', label: ownerHome ? 'Расписание' : 'Календарь' },
     { to: '/appointments', label: 'Записи' },
     { to: '/more', label: 'Ещё' },
   ]
   const secondary: NavLink[] = []
   secondary.push({ to: '/messages', label: 'Сообщения' })
+  secondary.push({ to: '/contacts', label: 'Контакты' })
+  secondary.push({ to: '/portfolio', label: 'Портфолио' })
   secondary.push({ to: '/masterclasses', label: 'Мастер-классы' })
   secondary.push({ to: '/models', label: 'Модели' })
   if (canFeature(kind, 'clients')) secondary.push({ to: '/clients', label: 'Клиенты' })
@@ -253,6 +262,7 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
   }
   if (canFeature(kind, 'knowledge')) secondary.push({ to: '/knowledge', label: 'База знаний' })
   if (canFeature(kind, 'staff')) secondary.push({ to: '/staff', label: 'Команда' })
+  if (canFeature(kind, 'staff')) secondary.push({ to: '/staff/invite', label: 'Пригласить мастера' })
   if (canFeature(kind, 'pickup_orders')) secondary.push({ to: '/pickup-orders', label: 'Выдача заказов' })
   if (canFeature(kind, 'reports')) secondary.push({ to: '/reports', label: 'Аналитика' })
   if (canFeature(kind, 'salon_settings')) secondary.push({ to: '/salon/settings', label: 'Настройки' })
@@ -264,7 +274,37 @@ export function navForCabinet(kind: CabinetKind): { primary: NavLink[]; secondar
     secondary.push({ to: '/master', label: 'Профиль мастера' })
   }
   secondary.push({ to: '/profile', label: 'Профиль' })
+  if (kind === 'private_master' || kind === 'chair_master' || kind === 'mobile_master' || kind === 'salon_employee') {
+    secondary.push({ to: '/dashboard', label: 'Рабочий стол' })
+  }
   return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
+}
+
+export function applyNavOrder(links: NavLink[], order: string[]): NavLink[] {
+  if (!order.length) return links
+  const more = links.filter((l) => l.to === '/more')
+  const rest = links.filter((l) => l.to !== '/more')
+  const byTo = new Map(rest.map((l) => [l.to, l] as const))
+  const out: NavLink[] = []
+  for (const to of order) {
+    const item = byTo.get(to)
+    if (item) {
+      out.push(item)
+      byTo.delete(to)
+    }
+  }
+  for (const item of rest) {
+    if (byTo.has(item.to)) out.push(item)
+  }
+  return [...out, ...more]
+}
+
+export function moveNavPath(order: string[], from: number, to: number): string[] {
+  if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return order
+  const next = [...order]
+  const [item] = next.splice(from, 1)
+  next.splice(to, 0, item)
+  return next
 }
 
 export function CabinetProvider({ children }: { children: ReactNode }) {
@@ -286,6 +326,15 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
 
   const kind = resolveCabinetKind(user, masterQ.data?.master?.work_type)
   const nav = navForCabinet(kind)
+  const [navOrder] = usePreference<string[]>('nav.order', [])
+  // One ordered menu; bottom nav is a projection of the same preference.
+  const side = applyNavOrder(nav.side, navOrder)
+  const primaryTargets = new Set(nav.primary.map((l) => l.to))
+  const primary = [
+    ...side.filter((l) => primaryTargets.has(l.to) && l.to !== '/more'),
+    ...nav.primary.filter((l) => l.to === '/more'),
+  ]
+  const secondary = side.filter((l) => l.to !== '/more')
   const orgItems = orgs.data?.items ?? []
   const [selectedOrgId, setSelectedOrgId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(ORG_KEY) : null))
   const [selectedBranchId, setSelectedBranchId] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(BRANCH_KEY) : null))
@@ -322,9 +371,9 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
     },
     ready,
     can: (feature) => canFeature(kind, feature),
-    primary: nav.primary,
-    secondary: nav.secondary,
-    side: nav.side,
+    primary,
+    secondary,
+    side,
   }
 
   return <CabinetContext.Provider value={value}>{children}</CabinetContext.Provider>

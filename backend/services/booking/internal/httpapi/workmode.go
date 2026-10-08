@@ -279,7 +279,12 @@ func (a *API) patchChair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) marketplaceChairs(w http.ResponseWriter, r *http.Request) {
-	items, err := a.svc.ListMarketplaceChairs(r.Context())
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	var actor uuid.UUID
+	if claims != nil {
+		actor = claims.UserID
+	}
+	items, err := a.svc.ListMarketplaceChairs(r.Context(), actor)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

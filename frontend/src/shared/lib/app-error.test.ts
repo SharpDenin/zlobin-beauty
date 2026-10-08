@@ -63,6 +63,17 @@ describe('normalizeError', () => {
     expect(normalizeError({ code: 'error', status: 503, message: 'nope' }).kind).toBe('server')
   })
 
+  it('maps messenger relationship forbidden to a clear Russian message', () => {
+    const n = normalizeError({
+      code: 'forbidden',
+      status: 403,
+      message: 'no booking relationship with this client',
+    })
+    expect(n.code).toBe('messenger_no_relationship')
+    expect(formatUserError(n)).toContain('Пока нельзя написать')
+    expect(formatUserError(n)).not.toMatch(/insufficient|forbidden|booking relationship/i)
+  })
+
   it('maps network failures without Failed to fetch', () => {
     const n = normalizeError(new TypeError('Failed to fetch'))
     expect(n.kind).toBe('network')
@@ -114,8 +125,33 @@ describe('normalizeError', () => {
       status: 409,
       message: 'Недостаточно товара на складе',
     })
-    expect(stock.title).toBe('Товара недостаточно на складе')
+    expect(stock.title).toBe('Недостаточно товара на выбранном складе.')
     expect(formatUserError(stock)).toContain('Уменьшите количество')
+
+    const legacyStock = normalizeError({
+      code: 'conflict',
+      status: 409,
+      message: 'insufficient out of stock at location',
+    })
+    expect(legacyStock.code).toBe('insufficient_stock')
+    expect(legacyStock.title).toBe('Недостаточно товара на выбранном складе.')
+  })
+
+  it('maps content_not_allowed and chair lease of own salon', () => {
+    const words = normalizeError({
+      code: 'content_not_allowed',
+      status: 422,
+      message: 'text contains words that are not allowed',
+    })
+    expect(words.title).toBe('Пожалуйста, измените текст — он содержит запрещённое выражение.')
+    expect(formatUserError(words)).not.toMatch(/regex|content_not_allowed/i)
+
+    const chair = normalizeError({
+      code: 'chair_own_salon_lease',
+      status: 422,
+      message: 'Сотрудник салона не может арендовать кресло в этом салоне.',
+    })
+    expect(chair.title).toBe('Сотрудник салона не может арендовать кресло в этом салоне.')
   })
 
   it('uses unknown copy when nothing matches', () => {

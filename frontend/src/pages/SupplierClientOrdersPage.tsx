@@ -7,6 +7,7 @@ import { formatMoney } from '@/shared/lib/money'
 import { clientOrderLabel, statusBadgeClass } from '@/shared/lib/status'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 import { supplierOrderIsTerminal } from '@/pages/supplier-helpers'
 
 type ClientOrderRow = {
@@ -24,6 +25,7 @@ export function SupplierClientOrdersPage() {
   const { supplierOrgId } = useSupplierOrg()
   const qc = useQueryClient()
   const [error, setError] = useState<unknown>(null)
+  const [ok, setOk] = useState<string | null>(null)
 
   const orders = useQuery({
     queryKey: ['supplier-client-orders', supplierOrgId],
@@ -42,7 +44,13 @@ export function SupplierClientOrdersPage() {
         token: accessToken,
         body: { status: input.status },
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['supplier-client-orders'] }),
+    onSuccess: (_data, input) => {
+      void qc.invalidateQueries({ queryKey: ['supplier-client-orders'] })
+      setError(null)
+      const copy = input.status === 'confirmed' ? 'Заказ подтверждён' : 'Статус заказа обновлён'
+      setOk(copy)
+      toast.success(copy)
+    },
     onError: (e) => setError(e),
   })
 
@@ -53,6 +61,7 @@ export function SupplierClientOrdersPage() {
         <h1>Заказы клиентов</h1>
       </header>
       <ErrorBanner error={error} fallbackTitle="Не удалось обновить заказ" />
+      {ok && <p className="muted" role="status">{ok}</p>}
       {orders.isLoading && <div className="skeleton skeleton-card" aria-busy="true" />}
       {orders.isError && <ErrorBanner error={orders.error} fallbackTitle="Не удалось загрузить заказы" />}
       {!orders.isLoading && (orders.data?.items.length ?? 0) === 0 && (
@@ -70,13 +79,13 @@ export function SupplierClientOrdersPage() {
             <p className="muted">{o.delivery_address}</p>
             <div className="row">
               {o.status === 'submitted' && (
-                <button className="btn btn-primary btn-compact" type="button" onClick={() => transition.mutate({ id: o.id, status: 'confirmed' })}>Подтвердить</button>
+                <button className="btn btn-primary btn-compact" type="button" disabled={transition.isPending} onClick={() => transition.mutate({ id: o.id, status: 'confirmed' })}>Подтвердить</button>
               )}
               {o.status === 'confirmed' && (
-                <button className="btn btn-primary btn-compact" type="button" onClick={() => transition.mutate({ id: o.id, status: 'picking' })}>В сборку</button>
+                <button className="btn btn-primary btn-compact" type="button" disabled={transition.isPending} onClick={() => transition.mutate({ id: o.id, status: 'picking' })}>В сборку</button>
               )}
               {o.status === 'picking' && (
-                <button className="btn btn-primary btn-compact" type="button" onClick={() => transition.mutate({ id: o.id, status: 'in_delivery' })}>В доставку</button>
+                <button className="btn btn-primary btn-compact" type="button" disabled={transition.isPending} onClick={() => transition.mutate({ id: o.id, status: 'in_delivery' })}>В доставку</button>
               )}
             </div>
           </article>

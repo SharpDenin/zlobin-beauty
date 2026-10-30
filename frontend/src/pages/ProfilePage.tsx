@@ -8,9 +8,11 @@ import { apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { workTypesLabel } from '@/shared/lib/work-types'
 import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { PageHeader } from '@/app/layout'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { InteractionModeSwitch } from '@/shared/ui/InteractionModeSwitch'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
 import { premiumLabel } from '@/features/dashboard/premiumLabel'
 import { roleTitle } from '@/features/dashboard/roleTitle'
@@ -77,7 +79,7 @@ export function ProfilePage() {
   })
 
   const cabinet = useCabinet()
-  const showSubscription = cabinet.kind !== 'salon_admin' && cabinet.kind !== 'client'
+  const showSubscription = cabinet.capabilities.isMaster || cabinet.capabilities.isSalonOwner || cabinet.capabilities.isSupplier
   const photoMediaId = (cabinet.master as { photo_media_id?: string | null } | null)?.photo_media_id ?? null
 
   return (
@@ -89,6 +91,9 @@ export function ProfilePage() {
         <div className="stack-sm">
           <h2>{user?.display_name}</h2>
           <p className="muted">{roleTitle(cabinet.kind)}</p>
+          {cabinet.workTypes.length > 0 && (
+            <p className="muted">Форматы: {workTypesLabel(cabinet.workTypes)}</p>
+          )}
           <p className="muted">{user?.email ?? 'Email не указан'}</p>
           <div className="appt-card-meta">
             {(user?.roles ?? []).map((r) => (
@@ -97,6 +102,20 @@ export function ProfilePage() {
           </div>
         </div>
       </section>
+
+      {cabinet.canUseMasterMode && (
+        <section className="card stack">
+          <h2>Режим интерфейса</h2>
+          <InteractionModeSwitch
+            mode={cabinet.interactionMode}
+            onChange={cabinet.setInteractionMode}
+            canUseMasterMode={cabinet.canUseMasterMode}
+          />
+          {cabinet.capabilities.isMaster && (
+            <Link className="btn btn-secondary" to="/master">Форматы работы и профиль мастера</Link>
+          )}
+        </section>
+      )}
 
       <section className="card stack">
         <h2>Личные данные</h2>

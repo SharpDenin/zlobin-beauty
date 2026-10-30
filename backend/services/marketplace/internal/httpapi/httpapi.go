@@ -181,7 +181,7 @@ type upsertMasterReq struct {
 	Education         string    `json:"education"`
 	PhotoMediaID      string    `json:"photo_media_id"`
 	WorkType          string    `json:"work_type"`
-	WorkTypes         []string  `json:"work_types"`
+	WorkTypes         *[]string `json:"work_types"`
 	Published         bool      `json:"published"`
 	ProfessionTypeIDs *[]string `json:"profession_type_ids"`
 }
@@ -438,7 +438,7 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	}
 	workType := m.WorkType
 	if workType == "" {
-		workType = "independent"
+		workType = "private_practice"
 	}
 	specs := m.Specializations
 	if specs == nil {

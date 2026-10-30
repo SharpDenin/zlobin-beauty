@@ -20,8 +20,7 @@ import { useCabinet } from '@/shared/lib/cabinet'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { formatMoney } from '@/shared/lib/money'
 import { initials } from '@/shared/lib/initials'
-import { workTypeLabel } from '@/shared/lib/status'
-import { workTypeNeedsSalon } from '@/shared/lib/work-types'
+import { workTypesLabel } from '@/shared/lib/work-types'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
@@ -87,6 +86,7 @@ type MasterHero = {
   display_name?: string
   city?: string
   work_type?: string
+  work_types?: string[]
   photo_media_id?: string | null
   published?: boolean
   rating_avg?: number
@@ -279,14 +279,27 @@ export function DashboardPage() {
   const master = masterQ.data?.master
   const displayName = master?.display_name?.trim() || user?.display_name || 'Профиль'
   const city = master?.city?.trim() || user?.city?.trim() || ''
-  const workLabel = workTypeLabel(master?.work_type || cabinet.workType)
+  const workLabel = workTypesLabel(
+    master?.work_types?.length
+      ? master.work_types
+      : (cabinet.workTypes?.length ?? 0)
+        ? cabinet.workTypes
+        : master?.work_type
+          ? [master.work_type]
+          : [],
+  )
+  const showPortfolio = Boolean(
+    cabinet.capabilities?.isMaster
+    || cabinet.capabilities?.isSalonOwner
+    || cabinet.capabilities?.isSalonAdmin
+    || ['private_master', 'chair_master', 'mobile_master', 'salon_employee', 'salon_owner', 'chain_owner'].includes(cabinet.kind),
+  )
   const professionLine = master
     ? masterProfessionLabel(master, '')
     : ''
-  const salonName = workTypeNeedsSalon(master?.work_type || cabinet.workType)
+  const salonName = cabinet.selectedOrg?.organization.type !== 'supplier'
     ? cabinet.selectedOrg?.organization.name
     : undefined
-  const showPortfolio = ['private_master', 'chair_master', 'mobile_master', 'salon_employee', 'salon_owner', 'chain_owner'].includes(cabinet.kind)
   const published = master?.published
   const ratingAvg = typeof master?.rating_avg === 'number' && master.rating_avg > 0 ? master.rating_avg : null
   const ratingCount = typeof master?.rating_count === 'number' ? master.rating_count : 0

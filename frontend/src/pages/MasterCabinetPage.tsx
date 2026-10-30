@@ -8,7 +8,7 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
-import { primaryWorkType, uniqueCanonicalWorkTypes, workTypeNeedsSalon, workTypesLabel } from '@/shared/lib/work-types'
+import { hasLegacyEmployeeFormat, primaryWorkType, uniqueCanonicalWorkTypes, workTypesLabel } from '@/shared/lib/work-types'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
 import type { ProfessionType } from '@/shared/lib/profession-types'
 import { selectedProfessionIds } from '@/shared/lib/profession-types'
@@ -154,14 +154,18 @@ export function MasterCabinetPage() {
       city: 'Красноярск',
       experience_years: 1,
       education: '',
-      work_types: ['independent'],
+      work_types: ['private_practice'],
       profession_type_ids: [],
     },
   })
   const masterDraft = useFormDraft(masterForm, 'master-profile-form')
   const watchedWorkTypes = masterForm.watch('work_types')
-  const needsSalon = workTypeNeedsSalon(watchedWorkTypes)
   const hasSalon = Boolean(master.data?.master.organization_id || orgs.data?.items.some((o) => o.organization.type !== 'supplier'))
+  const legacyEmployee = hasLegacyEmployeeFormat(
+    master.data?.master.work_types?.length
+      ? master.data.master.work_types
+      : master.data?.master.work_type,
+  )
 
   useEffect(() => {
     const m = master.data?.master
@@ -181,7 +185,7 @@ export function MasterCabinetPage() {
       } catch { /* ignore malformed onboard cache */ }
       return
     }
-    const types = uniqueCanonicalWorkTypes(m.work_types?.length ? m.work_types : [m.work_type || 'independent'])
+    const types = uniqueCanonicalWorkTypes(m.work_types?.length ? m.work_types : [m.work_type || 'private_practice'])
     masterForm.reset({
       display_name: m.display_name || user?.display_name || '',
       city: m.city || 'Красноярск',
@@ -189,7 +193,7 @@ export function MasterCabinetPage() {
       specializations: (m.specializations ?? []).join(', '),
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
-      work_types: types.length ? types : ['independent'],
+      work_types: types.length ? types : ['private_practice'],
       profession_type_ids: selectedProfessionIds(m),
       published: Boolean(m.published),
     })
@@ -263,17 +267,16 @@ export function MasterCabinetPage() {
       if (banned) throw new ApiError(banned, 'content_not_allowed', 400)
       const org = orgs.data?.items.find((o) => o.organization.type !== 'supplier') ?? orgs.data?.items[0]
       const boundOrg = Boolean(master.data?.master.organization_id)
-      if (needsSalon && !org && !boundOrg) {
-        throw new ApiError('Для этого формата работы нужен салон. Создайте салон или примите приглашение.', 'validation_error', 400)
-      }
       const types = uniqueCanonicalWorkTypes(values.work_types)
       return apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
         body: {
-          ...(needsSalon && org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
-          ...(!needsSalon && boundOrg && master.data?.master.organization_id
-            ? { organization_id: master.data.master.organization_id, branch_id: master.data.master.branch_id }
+          ...(org || boundOrg
+            ? {
+                organization_id: org?.organization.id ?? master.data?.master.organization_id,
+                branch_id: org?.branches[0]?.id ?? master.data?.master.branch_id,
+              }
             : {}),
           display_name: values.display_name,
           city: values.city,
@@ -289,13 +292,15 @@ export function MasterCabinetPage() {
       })
     },
     onSuccess: async () => {
-      setOk('Профиль мастера сохранён')
+      setOk('Форматы и профиль мастера сохранены')
       setError(null)
+      toast.success('Форматы работы сохранены')
       masterDraft.clear()
       sessionStorage.removeItem('sx.onboard.profession_types')
       sessionStorage.removeItem('sx.onboard.work_type')
       sessionStorage.removeItem('sx.onboard.work_types')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
+      await qc.invalidateQueries({ queryKey: ['me-master-cabinet'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
     onError: (e) => setError(formatUserError(e, 'Ошибка профиля')),
@@ -330,12 +335,6 @@ export function MasterCabinetPage() {
     }
     if (!accessToken) return
     const org = orgs.data?.items[0]
-    if (needsSalon && !org) {
-      setError('Для этого формата работы нужен салон')
-      toast.error('Для этого формата работы нужен салон')
-      setProfilePhotoDraft(null)
-      return
-    }
     setError(null)
     try {
       await apiRequest('/v1/me/master', {
@@ -350,8 +349,8 @@ export function MasterCabinetPage() {
           experience_years: masterForm.getValues('experience_years') ?? 0,
           education: masterForm.getValues('education') ?? '',
           published: masterForm.getValues('published') ?? false,
-          work_type: primaryWorkType(masterForm.getValues('work_types') ?? ['independent']),
-          work_types: uniqueCanonicalWorkTypes(masterForm.getValues('work_types') ?? ['independent']),
+          work_type: primaryWorkType(masterForm.getValues('work_types') ?? ['private_practice']),
+          work_types: uniqueCanonicalWorkTypes(masterForm.getValues('work_types') ?? ['private_practice']),
           photo_media_id: mediaId,
         },
       })
@@ -472,16 +471,11 @@ export function MasterCabinetPage() {
       </section>
 
       <section className="card stack">
-        <h2>{needsSalon ? 'Салон' : 'Формат работы'}</h2>
-        {!needsSalon && (
-          <p className="muted">
-            {workTypesLabel(watchedWorkTypes)} — свой салон не обязателен.
-            {!hasSalon ? ' Можно сразу заполнять профиль и принимать записи.' : ''}
-          </p>
-        )}
-        {needsSalon && !hasSalon && (
-          <p className="muted">Для этого формата нужен салон: создайте свой или примите QR-приглашение владельца.</p>
-        )}
+        <h2>Салон</h2>
+        <p className="muted">
+          Членство в организации не зависит от формата работы.
+          {!hasSalon ? ' Салон можно создать здесь или принять приглашение владельца.' : ''}
+        </p>
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
         {orgs.isError && <ErrorBanner error={orgs.error} fallbackTitle="Не удалось загрузить организации" />}
         {orgs.data && orgs.data.items.length > 0 ? (
@@ -512,7 +506,7 @@ export function MasterCabinetPage() {
               </form>
             )}
           </div>
-        ) : (!orgs.isLoading && !orgs.isError && needsSalon) ? (
+        ) : (!orgs.isLoading && !orgs.isError) ? (
           <form className="stack" onSubmit={orgForm.handleSubmit((v) => createOrg.mutate(v))}>
             <div className="field">
               <label>Название</label>
@@ -642,11 +636,15 @@ export function MasterCabinetPage() {
           </div>
           <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
           <WorkFormatPicker
-            value={watchedWorkTypes ?? ['independent']}
-            allowChainOwner
+            value={watchedWorkTypes ?? ['private_practice']}
             onChange={(ids) => masterForm.setValue('work_types', ids, { shouldValidate: true, shouldDirty: true })}
             error={masterForm.formState.errors.work_types?.message}
           />
+          {legacyEmployee && (
+            <p className="muted" role="status">
+              В профиле осталось устаревшее значение «employee». Выберите актуальные форматы работы и сохраните — оно не преобразуется автоматически.
+            </p>
+          )}
           <label className="field-check"><input type="checkbox" {...masterForm.register('published')} /><span>Показать профиль в поиске</span></label>
           <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
         </form>

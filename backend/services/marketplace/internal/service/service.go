@@ -65,62 +65,64 @@ type UpsertMasterInput struct {
 	Education         string
 	PhotoMediaID      *uuid.UUID
 	WorkType          string
-	WorkTypes         []string
+	WorkTypes         *[]string // nil = field omitted (preserve existing); non-nil replaces formats
 	Published         bool
 	AccessToken       string
 	ProfessionTypeIDs *[]uuid.UUID
 }
 
+// Canonical master work formats (employment model). Ownership and org membership are separate.
+var canonicalWorkTypes = map[string]struct{}{
+	"private_practice":  {},
+	"percentage_based":  {},
+	"mobile_service":    {},
+	"chair_rental":      {},
+}
+
 func normalizeWorkType(workType string) string {
-	switch strings.TrimSpace(strings.ToLower(workType)) {
-	case "chair_master":
-		return "renter"
-	case "private_master":
-		return "independent"
-	case "owner":
-		return "salon_owner"
+	raw := strings.TrimSpace(strings.ToLower(workType))
+	switch raw {
+	case "independent", "private_master":
+		return "private_practice"
+	case "mobile_master":
+		return "mobile_service"
+	case "renter", "chair_master":
+		return "chair_rental"
+	case "private_practice", "percentage_based", "mobile_service", "chair_rental":
+		return raw
+	case "owner", "salon_owner", "chain_owner":
+		// Ownership is not a work format — strip on write path.
+		return ""
 	default:
-		return strings.TrimSpace(workType)
+		return raw
 	}
 }
 
+func isCanonicalWorkType(code string) bool {
+	_, ok := canonicalWorkTypes[code]
+	return ok
+}
+
+// workTypeNeedsOrganization is retained for tests/diagnostics; formats alone never require an org.
 func workTypeNeedsOrganization(workType string) bool {
-	switch normalizeWorkType(workType) {
-	case "employee", "renter", "salon_owner", "chain_owner":
-		return true
-	default:
-		return false
-	}
+	_ = workType
+	return false
 }
 
 func workTypesNeedOrganization(types []string) bool {
-	for _, t := range types {
-		if workTypeNeedsOrganization(t) {
-			return true
-		}
-	}
+	_ = types
 	return false
 }
 
 func primaryWorkType(types []string, fallback string) string {
-	priority := []string{"chain_owner", "salon_owner", "employee", "renter", "mobile_master", "independent"}
-	set := map[string]struct{}{}
-	for _, t := range types {
-		n := normalizeWorkType(t)
-		if n != "" {
-			set[n] = struct{}{}
-		}
-	}
-	for _, p := range priority {
-		if _, ok := set[p]; ok {
-			return p
-		}
+	if len(types) > 0 {
+		return types[0]
 	}
 	fb := normalizeWorkType(fallback)
-	if fb == "" {
-		return "independent"
+	if isCanonicalWorkType(fb) {
+		return fb
 	}
-	return fb
+	return "private_practice"
 }
 
 func normalizeWorkTypes(raw []string, fallback string) ([]string, string, error) {
@@ -131,9 +133,10 @@ func normalizeWorkTypes(raw []string, fallback string) ([]string, string, error)
 		if n == "" {
 			return nil
 		}
-		switch n {
-		case "employee", "renter", "salon_owner", "chain_owner", "independent", "mobile_master":
-		default:
+		if n == "employee" {
+			return apperr.Validation("employee is not a work format; use organization membership")
+		}
+		if !isCanonicalWorkType(n) {
 			return apperr.Validation("invalid work_type")
 		}
 		if _, ok := seen[n]; ok {
@@ -143,18 +146,22 @@ func normalizeWorkTypes(raw []string, fallback string) ([]string, string, error)
 		out = append(out, n)
 		return nil
 	}
+	hadInput := len(raw) > 0 || strings.TrimSpace(fallback) != ""
 	for _, t := range raw {
 		if err := add(t); err != nil {
 			return nil, "", err
 		}
 	}
-	if len(out) == 0 {
+	if len(out) == 0 && strings.TrimSpace(fallback) != "" {
 		if err := add(fallback); err != nil {
 			return nil, "", err
 		}
 	}
 	if len(out) == 0 {
-		out = []string{"independent"}
+		if hadInput {
+			return nil, "", apperr.Validation("invalid work_type")
+		}
+		out = []string{"private_practice"}
 	}
 	return out, primaryWorkType(out, fallback), nil
 }
@@ -180,25 +187,41 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	if err := moderation.ValidateFields(fields); err != nil {
 		return nil, err
 	}
-	rawTypes := in.WorkTypes
-	if len(rawTypes) == 0 && strings.TrimSpace(in.WorkType) != "" {
-		rawTypes = []string{in.WorkType}
-	}
-	workTypes, workType, err := normalizeWorkTypes(rawTypes, in.WorkType)
-	if err != nil {
-		return nil, err
-	}
 	now := s.now().UTC()
 	existing, err := s.store.GetMasterByUser(ctx, in.UserID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+
+	var workTypes []string
+	var workType string
+	preserveFormats := in.WorkTypes == nil && strings.TrimSpace(in.WorkType) == ""
+	if preserveFormats && existing != nil {
+		workTypes = existing.WorkTypes
+		workType = existing.WorkType
+		if len(workTypes) == 0 && workType != "" {
+			workTypes = []string{workType}
+		}
+		if workType == "" {
+			workType = "private_practice"
+			workTypes = []string{"private_practice"}
+		}
+	} else {
+		rawTypes := []string{}
+		if in.WorkTypes != nil {
+			rawTypes = *in.WorkTypes
+		} else if strings.TrimSpace(in.WorkType) != "" {
+			rawTypes = []string{in.WorkType}
+		}
+		workTypes, workType, err = normalizeWorkTypes(rawTypes, in.WorkType)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	orgID := in.OrganizationID
 	if orgID == uuid.Nil && existing != nil {
 		orgID = existing.OrganizationID
-	}
-	if orgID == uuid.Nil && workTypesNeedOrganization(workTypes) {
-		return nil, apperr.Validation("organization_id is required for this work type")
 	}
 	if orgID != uuid.Nil {
 		if err := s.requireMembership(ctx, orgID, in.UserID, "owner", "admin", "master"); err != nil {
@@ -224,14 +247,6 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		m.RatingCount = existing.RatingCount
 		if in.PhotoMediaID == nil {
 			m.PhotoMediaID = existing.PhotoMediaID
-		}
-		if len(in.WorkTypes) == 0 && strings.TrimSpace(in.WorkType) == "" {
-			m.WorkType = existing.WorkType
-			m.WorkTypes = existing.WorkTypes
-			if m.WorkType == "" {
-				m.WorkType = "independent"
-				m.WorkTypes = []string{"independent"}
-			}
 		}
 	}
 	if existing == nil && (in.ProfessionTypeIDs == nil || len(*in.ProfessionTypeIDs) == 0) {

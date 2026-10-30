@@ -12,6 +12,7 @@ import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Drawer } from '@/shared/ui/Drawer'
+import { SearchField } from '@/shared/ui/SearchField'
 import { CHART } from '@/shared/ui/chart-theme'
 import { productAudienceLabel } from '@/pages/knowledge-helpers'
 import {
@@ -385,11 +386,16 @@ function CatalogView() {
           setSearch(q.trim())
         }}
       >
-        <input
+        <SearchField
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={setQ}
           placeholder="Поиск по названию или бренду"
           aria-label="Поиск"
+          clearable
+          onClear={() => {
+            setQ('')
+            setSearch('')
+          }}
         />
         <button className="btn btn-primary" type="submit">Найти</button>
         {compact ? (

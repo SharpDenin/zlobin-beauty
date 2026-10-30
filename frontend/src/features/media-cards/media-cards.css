@@ -109,7 +109,7 @@
   aspect-ratio: 1;
   min-height: 88px;
   height: 100%;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   margin: 10px;
 }
 .cards-grid.services .media-first-body {

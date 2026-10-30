@@ -9,6 +9,7 @@ import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
+import { SearchField } from '@/shared/ui/SearchField'
 import '@/features/media-cards/media-cards.css'
 
 type Master = {
@@ -122,10 +123,14 @@ export function SearchPage() {
           <label htmlFor="city">Город</label>
           <input id="city" value={city} onChange={(e) => setCity(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="q">Имя или специализация</label>
-          <input id="q" value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
+        <SearchField
+          id="q"
+          label="Имя или специализация"
+          value={q}
+          onChange={setQ}
+          placeholder="Имя или специализация"
+          clearable
+        />
         <div className="field">
           <label htmlFor="service">Услуга</label>
           <input id="service" value={service} onChange={(e) => setService(e.target.value)} placeholder="Стрижка" />

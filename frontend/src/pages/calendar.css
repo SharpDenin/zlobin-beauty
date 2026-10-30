@@ -285,7 +285,7 @@
 
 .calendar-shell .calendar-wrap .fc-event {
   border: 0 !important;
-  border-radius: 8px !important;
+  border-radius: var(--radius-xs) !important;
   box-shadow: var(--shadow-sm);
   cursor: pointer;
   overflow: hidden;
@@ -581,7 +581,7 @@
   justify-content: center;
   min-height: 36px;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-primary);
   color: var(--color-primary-ink);
   font-weight: 750;
@@ -732,7 +732,7 @@
 .cal-month-dot {
   width: 6px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-primary);
 }
 

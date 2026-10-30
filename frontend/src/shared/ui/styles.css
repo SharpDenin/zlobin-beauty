@@ -559,7 +559,7 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   display: block;
   object-fit: contain;
   flex-shrink: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 .brand-logo--sm { width: 36px; height: 36px; }
 .brand-logo--md { width: 48px; height: 48px; }
@@ -1243,6 +1243,93 @@ button.list-item:hover {
   display: grid;
   gap: var(--space-3);
 }
+
+/* Shared SearchField — Search / Shop / Knowledge / Contacts / Clients */
+.search-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  width: 100%;
+}
+.search-field__label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.search-field__control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.search-field__icon {
+  position: absolute;
+  left: var(--space-3);
+  display: grid;
+  place-items: center;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+.search-field__input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-h);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: 0 calc(var(--control-h) + var(--space-1)) 0 calc(var(--space-3) + 22px);
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}
+.search-field__input::placeholder {
+  color: var(--color-text-secondary);
+}
+.search-field__input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-muted);
+}
+.search-field__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.search-field__clear {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  min-width: var(--control-h);
+  min-height: var(--control-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.search-field__clear:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+.search-field__spinner {
+  position: absolute;
+  right: calc(var(--space-3) + 2px);
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-pill);
+  animation: search-field-spin 0.7s linear infinite;
+}
+@keyframes search-field-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-field__spinner { animation: none; border-top-color: var(--color-border-strong); }
+}
 .slot-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
@@ -1271,7 +1358,7 @@ button.list-item:hover {
   border: 0;
   background: var(--color-primary);
   color: var(--color-primary-ink);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   font-weight: 700;
 }
 .slot-list .slot::after {
@@ -2283,7 +2370,7 @@ button.list-item:hover {
 .calendar-wrap .fc .fc-timegrid-slot { height: 3.25em; }
 .calendar-wrap .fc-event {
   border: 0 !important;
-  border-radius: 8px !important;
+  border-radius: var(--radius-xs) !important;
   box-shadow: var(--shadow-sm);
   cursor: pointer;
   overflow: hidden;
@@ -2656,8 +2743,11 @@ button.list-item:hover {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
+  align-items: stretch;
 }
-.shop-search input { flex: 1 1 12rem; min-width: 0; min-height: var(--control-h); }
+.shop-search .search-field { flex: 1 1 12rem; min-width: 0; }
+.shop-search .search-field__input { min-height: var(--control-h); }
+.shop-search .btn { flex: 0 0 auto; }
 .shop-filters {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3491,7 +3581,7 @@ button.list-item:hover {
 .admin-card-row { display: flex; justify-content: space-between; gap: 12px; min-height: 44px; align-items: center; }
 .admin-pagination { justify-content: center; }
 .admin-pagination .btn { min-height: 44px; min-width: 44px; }
-.admin-media { width: 100%; max-width: 360px; border-radius: 14px; overflow: hidden; }
+.admin-media { width: 100%; max-width: 360px; border-radius: var(--radius-md); overflow: hidden; }
 .admin-article-body { white-space: pre-wrap; }
 .admin-audit-preview { list-style: none; padding: 0; margin: 0; }
 .admin-audit-preview li { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--color-border); }

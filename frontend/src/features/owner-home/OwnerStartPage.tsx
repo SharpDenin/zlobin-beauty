@@ -9,6 +9,7 @@ import { initials } from '@/shared/lib/initials'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { uploadMedia } from '@/shared/lib/mediaUpload'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { AppIcon, type AppIconName } from '@/shared/ui/AppIcon'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
@@ -69,13 +70,13 @@ type NotificationItem = {
   entity_id?: string | null
 }
 
-const TILE_PATHS: Record<string, string> = {
-  staff: 'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20a5 5 0 0 1 10 0M13 20a5 5 0 0 1 8 0',
-  money: 'M4 8h16v10H4zm4 5h8M8 8V6h8v2',
-  warehouse: 'M3 20V9l9-5 9 5v11H3zm5-4h8',
-  settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a7.8 7.8 0 0 0 .1-2l2-1.5-2-3.5-2.4.5a8 8 0 0 0-1.7-1L15 3h-6l-.4 2.5a8 8 0 0 0-1.7 1L6.5 6 4.5 9.5 6.5 11a7.8 7.8 0 0 0 0 2l-2 1.5 2 3.5 2.4-.5a8 8 0 0 0 1.7 1L9 21h6l.4-2.5a8 8 0 0 0 1.7-1l2.4.5 2-3.5z',
-  clients: 'M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-7.5 9a7.5 7.5 0 0 1 15 0',
-  services: 'M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6.5 9.5 20 20M6.5 20.5 14 14',
+const TILE_ICONS: Record<string, AppIconName> = {
+  staff: 'staff',
+  money: 'money',
+  warehouse: 'warehouse',
+  settings: 'settings',
+  clients: 'clients',
+  services: 'services',
 }
 
 function ClientMasters({ city }: { city?: string | null }) {
@@ -542,9 +543,7 @@ export function OwnerStartPage() {
               {tiles.map((tile) => (
                 <Link key={tile.to} className="owner-start-tile" to={tile.to}>
                   <span className="owner-start-chevron" aria-hidden="true">›</span>
-                  <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                    <path d={TILE_PATHS[tile.icon]} />
-                  </svg>
+                  <AppIcon name={TILE_ICONS[tile.icon] ?? 'home'} size={26} />
                   <span>{tile.label}</span>
                 </Link>
               ))}

@@ -806,6 +806,33 @@ fieldset[aria-required="true"] > legend::after,
 .required-note { font-size: var(--text-xs); color: var(--color-text-muted); }
 .required-note::before { content: "* "; color: var(--color-danger); font-weight: 700; }
 .field .hint { font-size: var(--text-xs); color: var(--color-text-muted); font-weight: 500; }
+.hint.field-need {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+.master-readiness-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+#display_name,
+#master-city,
+#master-bio,
+#master-specializations,
+#master-experience,
+#master-profession-types,
+#master-services,
+#master-schedule,
+#master-profile,
+#branch-phone {
+  scroll-margin-top: calc(72px + env(safe-area-inset-top, 0px));
+}
+.master-profile-form .btn-block {
+  min-height: 44px;
+}
 .field input, .field select, .field textarea,
 .location-select {
   min-height: var(--control-h);

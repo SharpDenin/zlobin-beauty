@@ -18,6 +18,11 @@ import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { moderationError } from '@/shared/lib/moderation'
+import {
+  incompleteChecks,
+  readinessAnchor,
+  readinessFieldHint,
+} from '@/shared/lib/master-profile-readiness'
 
 type OrgItem = {
   organization: { id: string; name: string; type: string; published: boolean; description: string }
@@ -166,6 +171,14 @@ export function MasterCabinetPage() {
       ? master.data.master.work_types
       : master.data?.master.work_type,
   )
+  const missingChecks = incompleteChecks(readiness.data?.checks)
+  const fieldHint = (key: string) => readinessFieldHint(readiness.data?.checks, key)
+
+  useEffect(() => {
+    if (primaryBranch) {
+      branchForm.reset({ phone: primaryBranch.phone ?? '' })
+    }
+  }, [primaryBranch, branchForm])
 
   useEffect(() => {
     const m = master.data?.master
@@ -232,13 +245,19 @@ export function MasterCabinetPage() {
       })
     },
     onSuccess: async () => {
-      setOk('Данные филиала сохранены')
+      setOk('Телефон филиала сохранён')
       setError(null)
+      toast.success('Телефон филиала сохранён')
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(formatUserError(e, 'Ошибка сохранения филиала')),
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось сохранить телефон')
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   const publishBranch = useMutation({
@@ -292,9 +311,9 @@ export function MasterCabinetPage() {
       })
     },
     onSuccess: async () => {
-      setOk('Форматы и профиль мастера сохранены')
+      setOk('Профиль мастера сохранён')
       setError(null)
-      toast.success('Форматы работы сохранены')
+      toast.success('Профиль мастера сохранён')
       masterDraft.clear()
       sessionStorage.removeItem('sx.onboard.profession_types')
       sessionStorage.removeItem('sx.onboard.work_type')
@@ -303,7 +322,12 @@ export function MasterCabinetPage() {
       await qc.invalidateQueries({ queryKey: ['me-master-cabinet'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(formatUserError(e, 'Ошибка профиля')),
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось сохранить профиль')
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   const saveHours = useMutation({
@@ -322,10 +346,16 @@ export function MasterCabinetPage() {
     onSuccess: async () => {
       setOk('Расписание: пн–пт 10:00–19:00 (часовой пояс филиала)')
       setError(null)
+      toast.success('Расписание сохранено')
       await qc.invalidateQueries({ queryKey: ['working-hours'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(formatUserError(e, 'Ошибка расписания')),
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось сохранить расписание')
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   async function attachProfilePhoto(mediaId: string | null) {
@@ -334,31 +364,56 @@ export function MasterCabinetPage() {
       return
     }
     if (!accessToken) return
-    const org = orgs.data?.items[0]
+    const org = orgs.data?.items.find((o) => o.organization.type !== 'supplier') ?? orgs.data?.items[0]
+    const existing = master.data?.master
+    const formSpecs = (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+    // Prefer form values when present; otherwise keep server specializations so photo upload
+    // does not wipe tags or require specialization in the same step (PROF-03).
+    const specializations = formSpecs.length ? formSpecs : (existing?.specializations ?? [])
+    const workTypes = uniqueCanonicalWorkTypes(
+      (masterForm.getValues('work_types')?.length
+        ? masterForm.getValues('work_types')
+        : existing?.work_types?.length
+          ? existing.work_types
+          : [existing?.work_type || 'private_practice']) ?? ['private_practice'],
+    )
     setError(null)
+    setOk(null)
     try {
       await apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
         body: {
-          ...(org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
-          display_name: masterForm.getValues('display_name') || user?.display_name || '',
-          city: masterForm.getValues('city') || 'Красноярск',
-          bio: masterForm.getValues('bio') ?? '',
-          specializations: (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-          experience_years: masterForm.getValues('experience_years') ?? 0,
-          education: masterForm.getValues('education') ?? '',
-          published: masterForm.getValues('published') ?? false,
-          work_type: primaryWorkType(masterForm.getValues('work_types') ?? ['private_practice']),
-          work_types: uniqueCanonicalWorkTypes(masterForm.getValues('work_types') ?? ['private_practice']),
+          ...(org || existing?.organization_id
+            ? {
+                organization_id: org?.organization.id ?? existing?.organization_id,
+                branch_id: org?.branches[0]?.id ?? existing?.branch_id,
+              }
+            : {}),
+          display_name: masterForm.getValues('display_name') || existing?.display_name || user?.display_name || 'Мастер',
+          city: masterForm.getValues('city') || existing?.city || 'Красноярск',
+          bio: masterForm.getValues('bio') ?? existing?.bio ?? '',
+          specializations,
+          experience_years: masterForm.getValues('experience_years') ?? existing?.experience_years ?? 0,
+          // Education stays in API payload for compatibility; field is hidden in UI (PROF-04).
+          education: existing?.education ?? masterForm.getValues('education') ?? '',
+          published: masterForm.getValues('published') ?? Boolean(existing?.published),
+          work_type: primaryWorkType(workTypes),
+          work_types: workTypes,
           photo_media_id: mediaId,
+          // Omit profession_type_ids when profile already exists → backend preserves them.
+          ...(!existing?.id && (masterForm.getValues('profession_type_ids')?.length ?? 0) > 0
+            ? { profession_type_ids: masterForm.getValues('profession_type_ids') }
+            : {}),
         },
       })
       setProfilePhotoDraft(null)
       setOk('Фото профиля сохранено')
       toast.success('Фото профиля сохранено')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
+      await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     } catch (e) {
+      setOk(null)
       const msg = userError(e, 'Не удалось загрузить фото')
       setError(msg)
       toast.error(msg)
@@ -442,7 +497,7 @@ export function MasterCabinetPage() {
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
-      <section className="card stack">
+      <section className="card stack" id="master-readiness">
         <h2>Что ещё заполнить</h2>
         {readiness.isLoading && <div className="state-box">Проверяем профиль…</div>}
         {readiness.isError && <ErrorBanner error={readiness.error} fallbackTitle="Не удалось проверить готовность" />}
@@ -451,17 +506,26 @@ export function MasterCabinetPage() {
             <p>
               {readiness.data.ready
                 ? 'Всё готово — можно публиковать профиль в поиске.'
-                : 'Отметьте пункты ниже, чтобы открыть запись клиентам.'}
+                : 'Не хватает пунктов ниже. Можно сохранять профиль по частям — обязательные поля отмечены у формы.'}
             </p>
-            <div className="list">
-              {readiness.data.checks.filter((c) => !c.ok).slice(0, 4).map((c) => (
-                <div key={c.key} className="list-item">
-                  <div className="row between">
-                    <strong>{c.label}</strong>
-                    <span className="badge badge-warning">Нужно</span>
+            <div className="list" data-testid="master-readiness-missing">
+              {missingChecks.map((c) => {
+                const anchor = readinessAnchor(c.key)
+                return (
+                  <div key={c.key} className="list-item">
+                    <div className="row between gap wrap">
+                      {anchor ? (
+                        <a className="master-readiness-link" href={`#${anchor}`}>
+                          <strong>{c.label}</strong>
+                        </a>
+                      ) : (
+                        <strong>{c.label}</strong>
+                      )}
+                      <span className="badge badge-warning">Нужно</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
               {readiness.data.ready && (
                 <div className="state-box success">Профиль готов к публикации</div>
               )}
@@ -491,17 +555,33 @@ export function MasterCabinetPage() {
               </div>
             ))}
             {primaryBranch && (
-              <form className="stack" onSubmit={branchForm.handleSubmit((v) => saveBranch.mutate(v))}>
-                <div className="field">
-                  <label>Телефон филиала</label>
+              <form
+                className="stack"
+                onSubmit={branchForm.handleSubmit((v) => {
+                  setOk(null)
+                  setError(null)
+                  saveBranch.mutate(v)
+                })}
+              >
+                <div className="field" id="branch-phone">
+                  <label htmlFor="branch-phone-input">Телефон филиала</label>
                   <input
-                    defaultValue={primaryBranch.phone ?? ''}
+                    id="branch-phone-input"
                     {...branchForm.register('phone')}
                     placeholder="+7 999 000-00-00"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    aria-invalid={saveBranch.isError ? true : undefined}
                   />
+                  {saveBranch.isError && (
+                    <span className="error" role="alert">
+                      {formatUserError(saveBranch.error, 'Не удалось сохранить телефон')}
+                    </span>
+                  )}
+                  <p className="hint">Сохраняется отдельно от профиля мастера.</p>
                 </div>
                 <button className="btn btn-primary btn-block" type="submit" disabled={saveBranch.isPending}>
-                  Сохранить телефон
+                  {saveBranch.isPending ? 'Сохраняем…' : 'Сохранить телефон'}
                 </button>
               </form>
             )}
@@ -573,8 +653,9 @@ export function MasterCabinetPage() {
         </section>
       )}
 
-      <section className="card stack">
+      <section className="card stack" id="master-profile">
         <h2>Профиль мастера</h2>
+        <p className="muted">Можно заполнять постепенно: фото, имя и город сохраняются отдельно от необязательных полей.</p>
         {master.isError && <div className="state-box">Профиль ещё не создан — заполните форму ниже</div>}
         <div className="stack-sm">
           <h3>Фото профиля</h3>
@@ -594,47 +675,75 @@ export function MasterCabinetPage() {
             }}
             label="Загрузить фото профиля"
           />
+          <p className="hint">Фото можно сохранить без специализации и описания.</p>
         </div>
-        <form className="stack" onSubmit={masterForm.handleSubmit((v) => {
-          const banned =
-            moderationError(v.display_name) ||
-            moderationError(v.bio ?? '') ||
-            moderationError(v.specializations ?? '') ||
-            moderationError(v.education ?? '')
-          if (banned) {
-            setError(banned)
-            return
-          }
-          saveMaster.mutate(v)
-        })}>
+        <form
+          className="stack master-profile-form"
+          onSubmit={masterForm.handleSubmit((v) => {
+            const banned =
+              moderationError(v.display_name) ||
+              moderationError(v.bio ?? '') ||
+              moderationError(v.specializations ?? '') ||
+              moderationError(v.education ?? '')
+            if (banned) {
+              setOk(null)
+              setError(banned)
+              toast.error(banned)
+              return
+            }
+            setOk(null)
+            setError(null)
+            saveMaster.mutate(v)
+          })}
+        >
+          {/* Keep education in form state for API compat; UI hidden (PROF-04). */}
+          <input type="hidden" {...masterForm.register('education')} />
           <div className="field">
             <label htmlFor="display_name">Имя в поиске</label>
             <input id="display_name" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.display_name)} {...masterForm.register('display_name')} />
             {masterForm.formState.errors.display_name && <span className="error">{masterForm.formState.errors.display_name.message}</span>}
+            {!masterForm.formState.errors.display_name && fieldHint('display_name') && (
+              <span className="hint field-need" role="status">{fieldHint('display_name')}</span>
+            )}
           </div>
           <div className="field">
             <label htmlFor="master-city">Город</label>
             <input id="master-city" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.city)} {...masterForm.register('city')} />
             {masterForm.formState.errors.city && <span className="error">{masterForm.formState.errors.city.message}</span>}
+            {!masterForm.formState.errors.city && fieldHint('city') && (
+              <span className="hint field-need" role="status">{fieldHint('city')}</span>
+            )}
           </div>
-          <div className="field"><label>О себе</label><textarea {...masterForm.register('bio')} /></div>
-          <ProfessionTypePicker
-            value={masterForm.watch('profession_type_ids') ?? []}
-            lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
-            onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
-            error={masterForm.formState.errors.profession_type_ids?.message}
-          />
           <div className="field">
-            <label>Дополнительные теги</label>
-            <input {...masterForm.register('specializations')} placeholder="Свадебные укладки, мужские стрижки" />
+            <label htmlFor="master-bio">О себе</label>
+            <textarea id="master-bio" {...masterForm.register('bio')} />
+            {fieldHint('bio') && <span className="hint field-need" role="status">{fieldHint('bio')}</span>}
+          </div>
+          <div id="master-profession-types">
+            <ProfessionTypePicker
+              value={masterForm.watch('profession_type_ids') ?? []}
+              lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
+              onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
+              error={masterForm.formState.errors.profession_type_ids?.message}
+            />
+            {!masterForm.formState.errors.profession_type_ids && fieldHint('profession_types') && (
+              <span className="hint field-need" role="status">{fieldHint('profession_types')}</span>
+            )}
+          </div>
+          <div className="field">
+            <label htmlFor="master-specializations">Дополнительные теги</label>
+            <input id="master-specializations" {...masterForm.register('specializations')} placeholder="Свадебные укладки, мужские стрижки" />
             <p className="muted">Свободные теги для поиска. Не дублируют профессиональный тип.</p>
+            {fieldHint('specializations') && <span className="hint field-need" role="status">{fieldHint('specializations')}</span>}
           </div>
           <div className="field">
-            <label>Опыт, лет</label>
-            <input type="number" {...masterForm.register('experience_years')} />
+            <label htmlFor="master-experience">Опыт, лет</label>
+            <input id="master-experience" type="number" inputMode="numeric" {...masterForm.register('experience_years')} />
             {masterForm.formState.errors.experience_years && <span className="error">{masterForm.formState.errors.experience_years.message}</span>}
+            {!masterForm.formState.errors.experience_years && fieldHint('experience') && (
+              <span className="hint field-need" role="status">{fieldHint('experience')}</span>
+            )}
           </div>
-          <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
           <WorkFormatPicker
             value={watchedWorkTypes ?? ['private_practice']}
             onChange={(ids) => masterForm.setValue('work_types', ids, { shouldValidate: true, shouldDirty: true })}
@@ -646,7 +755,9 @@ export function MasterCabinetPage() {
             </p>
           )}
           <label className="field-check"><input type="checkbox" {...masterForm.register('published')} /><span>Показать профиль в поиске</span></label>
-          <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
+          <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>
+            {saveMaster.isPending ? 'Сохраняем…' : 'Сохранить профиль'}
+          </button>
         </form>
         {master.data && (
           <p className="muted">
@@ -734,17 +845,19 @@ export function MasterCabinetPage() {
         />
       </section>
 
-      <section className="card stack">
+      <section className="card stack" id="master-services">
         <h2>3. Услуги</h2>
         <p className="muted">Прайс и длительности удобнее вести на отдельной странице.</p>
-        <div className="row">
+        {fieldHint('service') && <span className="hint field-need" role="status">{fieldHint('service')}</span>}
+        <div className="row wrap gap">
           <Link className="btn btn-primary" to="/services">Управлять услугами</Link>
           <span className="muted">Сейчас: {master.data?.services.length ?? 0}</span>
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" id="master-schedule">
         <h2>4. Расписание</h2>
+        {fieldHint('schedule') && <span className="hint field-need" role="status">{fieldHint('schedule')}</span>}
         <p>Рабочие часы по умолчанию: пн–пт 10:00–19:00. Исключения дней — в календаре.</p>
         {hours.isError && <ErrorBanner error={hours.error} fallbackTitle="Не удалось загрузить расписание" />}
         <div className="row">

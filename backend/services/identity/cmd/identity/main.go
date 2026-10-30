@@ -47,7 +47,7 @@ func main() {
 
 	st := store.New(pool)
 	allowDev := os.Getenv("ALLOW_DEV_BILLING") == "true" || os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == ""
-	svc := service.New(st, cfg.JWTSecret).WithDevBilling(allowDev)
+	svc := service.New(st, cfg.JWTSecret).WithDevBilling(allowDev).WithMedia(os.Getenv("MEDIA_URL"), os.Getenv("INTERNAL_TOKEN"))
 	api := httpapi.New(svc, log)
 
 	mux := http.NewServeMux()

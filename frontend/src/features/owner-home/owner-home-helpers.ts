@@ -56,7 +56,7 @@ export function ownerManagementTiles(can: (feature: CabinetFeature) => boolean):
   if (can('staff')) tiles.push({ to: '/staff', label: 'Команда', icon: 'staff' })
   if (can('reports')) tiles.push({ to: '/reports', label: 'Финансы', icon: 'money' })
   if (can('cosmetics')) tiles.push({ to: '/inventory', label: 'Склад', icon: 'warehouse' })
-  if (can('salon_settings')) tiles.push({ to: '/salon/settings', label: 'Настройки', icon: 'settings' })
+  if (can('salon_settings')) tiles.push({ to: '/salon/settings', label: 'Настройки салона', icon: 'settings' })
   if (tiles.length < 4 && can('clients')) tiles.push({ to: '/clients', label: 'Клиенты', icon: 'clients' })
   if (tiles.length < 4 && can('services')) tiles.push({ to: '/services', label: 'Услуги', icon: 'services' })
   return tiles.slice(0, 4)

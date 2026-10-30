@@ -69,6 +69,8 @@ import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
 import { InviteMasterPage } from '@/pages/InviteMasterPage'
 import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
+import { SettingsLayout } from '@/pages/settings/SettingsLayout'
+import { SettingsAppearancePage } from '@/pages/settings/SettingsAppearancePage'
 import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
@@ -132,6 +134,10 @@ export function App() {
                 <Route path="/models/:id" element={<ModelRequestDetailPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/subscription" element={<SubscriptionPage />} />
+                <Route path="/settings" element={<SettingsLayout />}>
+                  <Route index element={<Navigate to="appearance" replace />} />
+                  <Route path="appearance" element={<SettingsAppearancePage />} />
+                </Route>
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/shop/cart" element={<ShopPage />} />
                 <Route path="/shop/checkout" element={<ShopPage />} />

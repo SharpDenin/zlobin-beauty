@@ -8,7 +8,6 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
 import { apiRequest } from '@/shared/api/client'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
-import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
 import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
@@ -92,7 +91,6 @@ export function RegisterPage() {
   return (
     <div className="app-shell app-shell--auth">
       <div className="page page-narrow stack auth-screen">
-        <div className="auth-theme-bar"><ThemeToggle labelled /></div>
         <BrandLogo size="lg" />
         <h1>Регистрация</h1>
         {inviteQ.data ? (

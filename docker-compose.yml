@@ -66,6 +66,7 @@ services:
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      MEDIA_URL: http://media:8080
       ALLOW_DEV_BILLING: ${ALLOW_DEV_BILLING:-true}
       APP_ENV: ${APP_ENV:-development}
       MIGRATIONS_DIR: /migrations

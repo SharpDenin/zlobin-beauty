@@ -5,7 +5,6 @@ import { useCabinet, applyNavOrder, moveNavPath, type CabinetFeature, type NavLi
 import { usePreference } from '@/shared/lib/preferences'
 import { workTypeLabel } from '@/shared/lib/status'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
-import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { Drawer } from '@/shared/ui/Drawer'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { NavIcon } from '@/shared/ui/NavIcon'
@@ -14,6 +13,7 @@ import { branchLabel } from '@/shared/lib/branch-label'
 import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { PremiumStatusLink } from '@/features/dashboard/PremiumStatusLink'
 import { releaseOrphanedOverlayLock } from '@/shared/ui/overlayLock'
+import { HomeBackgroundPreferenceSync } from '@/features/settings/HomeBackgroundPreferenceSync'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -190,10 +190,10 @@ function MoreDrawer({
         <p className="muted">{cabinet.label}{cabinet.workType ? ` · ${workTypeLabel(cabinet.workType)}` : ''}</p>
         <div className="row wrap gap">
           <Link className="btn btn-secondary btn-compact" to="/profile" onClick={onClose}>Профиль</Link>
+          <Link className="btn btn-secondary btn-compact" to="/settings" onClick={onClose}>Настройки</Link>
           <Link className="btn btn-secondary btn-compact" to="/profile/subscription" onClick={onClose} data-testid="more-premium">
             Premium
           </Link>
-          <ThemeToggle labelled />
         </div>
       </section>
 
@@ -263,6 +263,7 @@ function MoreDrawer({
 export function AppShell() {
   return (
     <MessengerProvider>
+      <HomeBackgroundPreferenceSync />
       <AppShellInner />
     </MessengerProvider>
   )
@@ -316,7 +317,6 @@ function AppShellInner() {
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
         <div className="sidenav-toolbar">
-          <ThemeToggle labelled />
           <PremiumStatusLink />
         </div>
         <p className="muted cabinet-label">{cabinet.label}</p>
@@ -379,7 +379,6 @@ function AppShellInner() {
                 ))}
               </select>
             )}
-            <ThemeToggle />
             <button
               className="btn btn-secondary btn-compact topbar-menu-btn"
               type="button"

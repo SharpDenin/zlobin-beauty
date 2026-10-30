@@ -12,7 +12,7 @@ import { MediaImage } from '@/shared/ui/MediaImage'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
-import { HOME_BACKGROUNDS, setHomeBackground, useHomeBackground } from '@/shared/theme/backgrounds'
+import { useHomeBackground } from '@/shared/theme/backgrounds'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { enableDevicePush } from '@/features/pwa/push'
 import {
@@ -131,7 +131,6 @@ export function OwnerStartPage() {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [selectedDay, setSelectedDay] = useState(() => new Date())
-  const [bgOpen, setBgOpen] = useState(false)
   const [photoBusy, setPhotoBusy] = useState(false)
   const days = useMemo(() => weekDays(new Date()), [])
   const audience = homeAudience(cabinet.kind)
@@ -311,42 +310,12 @@ export function OwnerStartPage() {
                 <span className="owner-start-badge">{messenger!.unreadTotal > 9 ? '9+' : messenger!.unreadTotal}</span>
               )}
             </button>
-            <div className="owner-start-bg-anchor">
-              <button
-                className="owner-start-icon-btn"
-                type="button"
-                aria-label="Выбрать фон"
-                aria-expanded={bgOpen}
-                onClick={() => setBgOpen((v) => !v)}
-              >
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-                  <rect x="4" y="5" width="16" height="14" rx="2" />
-                  <path d="m8 15 2.5-3 2 2.2L15 11l3 4" strokeLinejoin="round" />
-                </svg>
-              </button>
-              {bgOpen && (
-                <div className="owner-start-bg-pop" role="dialog" aria-label="Фон главной">
-                  <p>Фон главной</p>
-                  <div className="owner-start-bg-grid">
-                    {HOME_BACKGROUNDS.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`owner-start-bg-option${item.id === background.id ? ' is-selected' : ''}`}
-                        aria-pressed={item.id === background.id}
-                        onClick={() => {
-                          setHomeBackground(item.id)
-                          setBgOpen(false)
-                        }}
-                      >
-                        <img src={item.src} alt="" />
-                        <span>{item.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <Link className="owner-start-icon-btn" to="/settings/appearance" aria-label="Оформление и фон">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2" />
+                <path d="m8 15 2.5-3 2 2.2L15 11l3 4" strokeLinejoin="round" />
+              </svg>
+            </Link>
             <div className="owner-start-avatar-wrap">
               <Link className="owner-start-avatar" to="/profile" aria-label="Открыть профиль">
                 {photo ? (

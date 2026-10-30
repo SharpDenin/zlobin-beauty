@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -76,6 +79,11 @@ func (s *Service) SetPreference(ctx context.Context, userID uuid.UUID, key strin
 	if err := ValidatePreferenceValue(value); err != nil {
 		return nil, err
 	}
+	if key == "ui.home_bg" {
+		if err := s.validateHomeBgPreference(ctx, userID, value); err != nil {
+			return nil, err
+		}
+	}
 	exists, err := s.store.PreferenceExists(ctx, userID, key)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -105,4 +113,73 @@ func (s *Service) DeletePreference(ctx context.Context, userID uuid.UUID, key st
 		return apperr.Internal(err)
 	}
 	return nil
+}
+
+var homeBgSystemIDs = map[string]struct{}{
+	"forest-water": {},
+	"mist-canyon":  {},
+	"pebble-shore": {},
+}
+
+type homeBgPreferenceValue struct {
+	Source  string `json:"source"`
+	ID      string `json:"id"`
+	MediaID string `json:"media_id"`
+}
+
+func (s *Service) validateHomeBgPreference(ctx context.Context, userID uuid.UUID, value []byte) error {
+	var pref homeBgPreferenceValue
+	if err := json.Unmarshal(value, &pref); err != nil {
+		return apperr.Validation("invalid home background preference")
+	}
+	switch strings.TrimSpace(pref.Source) {
+	case "system":
+		id := strings.TrimSpace(pref.ID)
+		if _, ok := homeBgSystemIDs[id]; !ok {
+			return apperr.Validation("unknown system wallpaper")
+		}
+		return nil
+	case "custom":
+		mediaID, err := uuid.Parse(strings.TrimSpace(pref.MediaID))
+		if err != nil {
+			return apperr.Validation("invalid wallpaper media_id")
+		}
+		if s.mediaURL == "" || s.internalToken == "" {
+			return apperr.Validation("wallpaper media validation is unavailable")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.mediaURL+"/v1/internal/media/"+mediaID.String(), nil)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		req.Header.Set("X-Internal-Token", s.internalToken)
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		if resp.StatusCode == http.StatusNotFound {
+			return apperr.Validation("wallpaper media not found")
+		}
+		if resp.StatusCode >= 300 {
+			return apperr.Internal(fmt.Errorf("media lookup status %d", resp.StatusCode))
+		}
+		var meta struct {
+			OwnerUserID string `json:"owner_user_id"`
+			Purpose     string `json:"purpose"`
+		}
+		if err := json.Unmarshal(body, &meta); err != nil {
+			return apperr.Internal(err)
+		}
+		if meta.Purpose != "wallpaper" {
+			return apperr.Validation("media is not a wallpaper")
+		}
+		owner, err := uuid.Parse(meta.OwnerUserID)
+		if err != nil || owner != userID {
+			return apperr.Forbidden("wallpaper media is not owned by the current user")
+		}
+		return nil
+	default:
+		return apperr.Validation("invalid home background source")
+	}
 }

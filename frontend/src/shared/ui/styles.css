@@ -510,6 +510,45 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   display: flex;
   justify-content: flex-end;
 }
+.settings-page .settings-nav {
+  margin-bottom: var(--space-2);
+}
+.settings-bg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+.settings-bg-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-bg-option img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+.settings-bg-option.is-selected {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-glow);
+}
+.settings-bg-preview {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--radius-md);
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--color-border);
+}
 .auth-screen { position: relative; }
 .brand {
   display: flex;

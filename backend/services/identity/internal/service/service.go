@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -22,15 +23,25 @@ type Service struct {
 	store           *store.Store
 	jwtSecret       string
 	allowDevBilling bool
+	mediaURL        string
+	internalToken   string
+	httpClient      *http.Client
 	now             func() time.Time
 }
 
 func New(st *store.Store, jwtSecret string) *Service {
-	return &Service{store: st, jwtSecret: jwtSecret, now: time.Now}
+	return &Service{store: st, jwtSecret: jwtSecret, now: time.Now, httpClient: &http.Client{Timeout: 5 * time.Second}}
 }
 
 func (s *Service) WithDevBilling(allow bool) *Service {
 	s.allowDevBilling = allow
+	return s
+}
+
+// WithMedia enables ownership checks for ui.home_bg custom wallpapers via media internal API.
+func (s *Service) WithMedia(mediaURL, internalToken string) *Service {
+	s.mediaURL = strings.TrimRight(strings.TrimSpace(mediaURL), "/")
+	s.internalToken = strings.TrimSpace(internalToken)
 	return s
 }
 

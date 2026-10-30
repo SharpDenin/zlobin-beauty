@@ -130,6 +130,7 @@ export function ProfilePage() {
           {showSubscription && <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>}
           <Link className="btn btn-secondary" to="/messages">Сообщения</Link>
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
+          <Link className="btn btn-secondary" to="/settings">Настройки</Link>
           <button className="btn btn-danger" type="button" onClick={() => void logout()}>Выйти</button>
         </div>
       </section>

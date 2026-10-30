@@ -13,6 +13,7 @@ describe('navForCabinet', () => {
     const client = navForCabinet('client')
     expect(client.primary.some((l) => l.to === '/more')).toBe(true)
     expect(client.secondary.some((l) => l.to === '/messages' && l.label === 'Сообщения')).toBe(true)
+    expect(client.secondary.some((l) => l.to === '/settings' && l.label === 'Настройки')).toBe(true)
     expect(client.secondary.some((l) => l.to === '/profile')).toBe(true)
     expect(client.secondary.some((l) => l.to === '/models')).toBe(true)
     const master = navForCabinet('private_master')
@@ -22,6 +23,15 @@ describe('navForCabinet', () => {
     expect(master.secondary.some((l) => l.to === '/inventory' && l.label === 'Мой склад')).toBe(true)
     expect(master.secondary.some((l) => l.to === '/inventory/receipts' && l.label === 'На приёмке')).toBe(true)
     expect(master.secondary.some((l) => l.to === '/knowledge' && l.label === 'База знаний')).toBe(true)
+    expect(master.secondary.some((l) => l.to === '/settings' && l.label === 'Настройки')).toBe(true)
+    expect(master.secondary.filter((l) => l.label === 'Настройки')).toHaveLength(1)
+  })
+
+  it('keeps salon settings distinct from app settings for owners', () => {
+    const owner = navForCabinet('salon_owner')
+    expect(owner.secondary.some((l) => l.to === '/settings' && l.label === 'Настройки')).toBe(true)
+    expect(owner.secondary.some((l) => l.to === '/salon/settings' && l.label === 'Настройки салона')).toBe(true)
+    expect(owner.secondary.filter((l) => l.label === 'Настройки')).toHaveLength(1)
   })
 
   it('does not put personal warehouse on supplier nav', () => {

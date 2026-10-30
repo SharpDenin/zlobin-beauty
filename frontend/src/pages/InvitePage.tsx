@@ -5,7 +5,6 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { PageLoading } from '@/shared/ui/PageLoading'
-import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 
 type Peek = { organization_id: string; organization_name: string; role: string; expires_at: string }
 
@@ -75,7 +74,6 @@ export function InvitePage() {
   return (
     <div className="app-shell app-shell--auth">
       <div className="page page-narrow stack auth-screen">
-        <div className="auth-theme-bar"><ThemeToggle labelled /></div>
         <BrandLogo size="md" />
         <h1>Приглашение в салон</h1>
         {peek.isLoading && <div className="state-box">Проверяем приглашение…</div>}

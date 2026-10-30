@@ -47,6 +47,7 @@ function iconFor(to: string) {
   if (to.startsWith('/messages')) return 'chat'
   if (to.startsWith('/contacts')) return 'contacts'
   if (to.startsWith('/portfolio')) return 'portfolio'
+  if (to.startsWith('/settings')) return 'settings'
   if (to.startsWith('/salon/settings')) return 'settings'
   if (to.startsWith('/subscription')) return 'crown'
   if (to.startsWith('/profile')) return 'user'

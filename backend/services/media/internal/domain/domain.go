@@ -20,6 +20,7 @@ const (
 	PurposeVideo       = "video"
 	PurposeService     = "service"
 	PurposeMessage     = "message"
+	PurposeWallpaper   = "wallpaper"
 )
 
 // Size ceilings. The browser compresses photos before upload, so these are generous limits for
@@ -46,7 +47,7 @@ type MediaObject struct {
 
 func ValidPurpose(p string) bool {
 	switch p {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService, PurposeMessage:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService, PurposeMessage, PurposeWallpaper:
 		return true
 	default:
 		return false

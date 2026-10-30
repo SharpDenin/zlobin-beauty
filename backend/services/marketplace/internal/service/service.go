@@ -378,8 +378,12 @@ func (s *Service) PopularServices(ctx context.Context) ([]domain.ServiceItem, er
 }
 
 type SearchHit struct {
-	Master domain.MasterProfile
-	Onsite *OnsiteMatch
+	Master        domain.MasterProfile
+	Onsite        *OnsiteMatch
+	ServiceNames  []string
+	PriceMinMinor *int64
+	PriceMaxMinor *int64
+	CityRank      int
 }
 
 type OnsiteMatch struct {
@@ -390,28 +394,76 @@ type OnsiteMatch struct {
 	Badge     string
 }
 
-func (s *Service) Search(ctx context.Context, city, q, service string, priceMin, priceMax *int64, availableOn *time.Time, includeOtherCities bool, districtID *uuid.UUID) ([]SearchHit, error) {
-	if districtID != nil && availableOn == nil {
+type SearchInput struct {
+	City               string
+	Q                  string
+	Service            string
+	PriceMin           *int64
+	PriceMax           *int64
+	AvailableOn        *time.Time
+	IncludeOtherCities bool
+	DistrictID         *uuid.UUID
+	Limit              int
+	Cursor             *store.SearchCursor
+}
+
+type SearchResult struct {
+	Items      []SearchHit
+	NextCursor *store.SearchCursor
+	HasMore    bool
+}
+
+const searchDefaultLimit = 50
+const searchMaxLimit = 50
+
+func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchResult, error) {
+	if in.DistrictID != nil && in.AvailableOn == nil {
 		return nil, apperr.Validation("available_on is required when district_id is set")
 	}
-	items, err := s.store.SearchMasters(ctx, strings.TrimSpace(city), strings.TrimSpace(q), strings.TrimSpace(service), priceMin, priceMax, includeOtherCities, 50)
+	limit := in.Limit
+	if limit <= 0 {
+		limit = searchDefaultLimit
+	}
+	if limit > searchMaxLimit {
+		limit = searchMaxLimit
+	}
+	city := strings.TrimSpace(in.City)
+	rows, err := s.store.SearchMasters(ctx, store.SearchMastersParams{
+		City: city, Q: strings.TrimSpace(in.Q), Service: strings.TrimSpace(in.Service),
+		PriceMin: in.PriceMin, PriceMax: in.PriceMax, IncludeOtherCities: in.IncludeOtherCities,
+		Limit: limit + 1, Cursor: in.Cursor,
+	})
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if items == nil {
-		return []SearchHit{}, nil
+	hasMoreSQL := len(rows) > limit
+	if hasMoreSQL {
+		rows = rows[:limit]
 	}
-	filtered := make([]domain.MasterProfile, 0, len(items))
-	for _, m := range items {
-		visible, err := s.isMasterPubliclyVisible(ctx, m)
+	var nextCursor *store.SearchCursor
+	if hasMoreSQL && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		nextCursor = &store.SearchCursor{
+			CityRank: last.CityRank, RatingAvg: last.Master.RatingAvg,
+			RatingCount: last.Master.RatingCount, ID: last.Master.ID,
+		}
+	}
+
+	matches := map[uuid.UUID]OnsiteMatch{}
+	if in.DistrictID != nil && in.AvailableOn != nil {
+		got, err := s.fetchOnsiteMatches(ctx, city, *in.DistrictID, *in.AvailableOn)
 		if err != nil {
 			return nil, err
 		}
-		if !visible {
-			continue
-		}
-		if availableOn != nil && s.bookingURL != "" && districtID == nil {
-			ok, err := s.hasAnySlotOn(ctx, m.UserID, *availableOn)
+		matches = got
+	}
+
+	hits := make([]SearchHit, 0, len(rows))
+	ptrs := make([]*domain.MasterProfile, 0, len(rows))
+	for i := range rows {
+		row := rows[i]
+		if in.AvailableOn != nil && s.bookingURL != "" && in.DistrictID == nil {
+			ok, err := s.hasAnySlotOn(ctx, row.Master.UserID, *in.AvailableOn)
 			if err != nil {
 				return nil, err
 			}
@@ -419,36 +471,30 @@ func (s *Service) Search(ctx context.Context, city, q, service string, priceMin,
 				continue
 			}
 		}
-		filtered = append(filtered, m)
-	}
-	ptrs := make([]*domain.MasterProfile, 0, len(filtered))
-	for i := range filtered {
-		ptrs = append(ptrs, &filtered[i])
-	}
-	if err := s.attachProfessionTypes(ctx, ptrs...); err != nil {
-		return nil, err
-	}
-	matches := map[uuid.UUID]OnsiteMatch{}
-	if districtID != nil && availableOn != nil {
-		got, err := s.fetchOnsiteMatches(ctx, strings.TrimSpace(city), *districtID, *availableOn)
-		if err != nil {
-			return nil, err
+		hit := SearchHit{
+			Master:        row.Master,
+			ServiceNames:  row.ServiceNames,
+			PriceMinMinor: row.PriceMinMinor,
+			PriceMaxMinor: row.PriceMaxMinor,
+			CityRank:      row.CityRank,
 		}
-		matches = got
-	}
-	out := make([]SearchHit, 0, len(filtered))
-	for _, m := range filtered {
-		hit := SearchHit{Master: m}
-		if districtID != nil {
-			match, ok := matches[m.UserID]
+		if hit.ServiceNames == nil {
+			hit.ServiceNames = []string{}
+		}
+		if in.DistrictID != nil {
+			match, ok := matches[row.Master.UserID]
 			if !ok {
 				continue
 			}
 			hit.Onsite = &match
 		}
-		out = append(out, hit)
+		hits = append(hits, hit)
+		ptrs = append(ptrs, &hits[len(hits)-1].Master)
 	}
-	return out, nil
+	if err := s.attachProfessionTypes(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+	return &SearchResult{Items: hits, NextCursor: nextCursor, HasMore: hasMoreSQL}, nil
 }
 
 func (s *Service) fetchOnsiteMatches(ctx context.Context, city string, districtID uuid.UUID, day time.Time) (map[uuid.UUID]OnsiteMatch, error) {
@@ -535,14 +581,7 @@ func (s *Service) GetMaster(ctx context.Context, id uuid.UUID) (*domain.MasterPr
 	if err != nil {
 		return nil, nil, apperr.Internal(err)
 	}
-	if m == nil || !m.Published {
-		return nil, nil, apperr.NotFound("master not found")
-	}
-	visible, err := s.isMasterPubliclyVisible(ctx, *m)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !visible {
+	if m == nil {
 		return nil, nil, apperr.NotFound("master not found")
 	}
 	services, err := s.store.ListMasterServices(ctx, m.ID)
@@ -817,17 +856,6 @@ func (s *Service) GetService(ctx context.Context, id uuid.UUID) (*domain.Service
 		return nil, apperr.NotFound("service not found")
 	}
 	return item, nil
-}
-
-func (s *Service) isMasterPubliclyVisible(ctx context.Context, m domain.MasterProfile) (bool, error) {
-	if !m.Published {
-		return false, nil
-	}
-	if m.BranchID == nil {
-		// Masters without branch binding rely on master.published only (Stage1).
-		return true, nil
-	}
-	return s.isBranchPublished(ctx, *m.BranchID)
 }
 
 func (s *Service) isBranchPublished(ctx context.Context, branchID uuid.UUID) (bool, error) {

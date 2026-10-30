@@ -133,6 +133,14 @@ describe('MasterCabinetPage PROF-01..05', () => {
     expect(screen.queryByLabelText('Образование')).not.toBeInTheDocument()
   })
 
+  it('does not expose publish-in-search toggle or visibility status', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('master-readiness-missing')).toBeInTheDocument())
+    expect(screen.queryByText('Показать профиль в поиске')).not.toBeInTheDocument()
+    expect(screen.queryByText('В поиске')).not.toBeInTheDocument()
+    expect(screen.queryByText('Скрыт')).not.toBeInTheDocument()
+  })
+
   it('saves phone with success feedback and keeps validation path on error', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByLabelText('Телефон филиала')).toBeInTheDocument())

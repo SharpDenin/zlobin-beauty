@@ -64,7 +64,7 @@ test.describe('UI unification adaptive smoke', () => {
 
       // Search (also leaves owner-home chrome so shell nav is visible)
       await page.goto('/search')
-      await assertSearchField(page, { label: 'Имя или специализация' })
+      await assertSearchField(page, { label: 'Имя, специализация или работа' })
       await assertNoHorizontalOverflow(page)
 
       // Navigation icons — bottomnav on phone, sidenav on wider layouts

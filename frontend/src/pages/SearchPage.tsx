@@ -1,11 +1,11 @@
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { Hint } from '@/shared/ui/Hint'
-import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { type GeoCity, type GeoDistrict } from '@/shared/lib/work-mode'
+import { formatMoney } from '@/shared/lib/money'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
@@ -22,6 +22,9 @@ type Master = {
   rating_avg: number
   rating_count: number
   photo_media_id?: string | null
+  service_names?: string[]
+  price_min_minor?: number | null
+  price_max_minor?: number | null
   onsite_match?: { city: string; districts: string[]; badge: string }
 }
 
@@ -36,11 +39,19 @@ type Filters = {
   district_id: string
 }
 
-const DEFAULT_CITY = 'Красноярск'
+type SearchResponse = {
+  items: Master[]
+  has_more?: boolean
+  next_cursor?: string
+}
 
-function buildMastersUrl(f: Filters): string {
+const DEFAULT_CITY = 'Красноярск'
+const PAGE_LIMIT = 20
+
+function buildMastersUrl(f: Filters, cursor?: string): string {
   const params = new URLSearchParams()
   params.set('city', f.city)
+  params.set('limit', String(PAGE_LIMIT))
   if (f.q) params.set('q', f.q)
   if (f.service) params.set('service', f.service)
   const minRub = f.price_min.trim() === '' ? null : Number(f.price_min)
@@ -50,7 +61,34 @@ function buildMastersUrl(f: Filters): string {
   if (f.available_on) params.set('available_on', f.available_on)
   if (f.district_id) params.set('district_id', f.district_id)
   if (f.include_other_cities) params.set('include_other_cities', 'true')
+  if (cursor) params.set('cursor', cursor)
   return `/v1/masters?${params.toString()}`
+}
+
+function masterDisplayName(m: Master): string {
+  const name = m.display_name?.trim()
+  return name || 'Мастер'
+}
+
+function servicesLine(m: Master): string | null {
+  const names = (m.service_names ?? []).map((n) => n.trim()).filter(Boolean)
+  if (!names.length) return null
+  return names.join(' · ')
+}
+
+function priceRangeLine(m: Master): string | null {
+  const min = m.price_min_minor
+  const max = m.price_max_minor
+  if (min == null || max == null) return null
+  if (min === max) return formatMoney(min)
+  return `${formatMoney(min)} – ${formatMoney(max)}`
+}
+
+function locationLine(m: Master, selectedCity: string): { city: string; district?: string; otherCity: boolean } {
+  const city = m.city?.trim() || 'Город не указан'
+  const otherCity = city.toLowerCase() !== selectedCity
+  const districts = (m.onsite_match?.districts ?? []).map((d) => d.trim()).filter(Boolean)
+  return { city, district: districts[0], otherCity }
 }
 
 export function SearchPage() {
@@ -83,9 +121,11 @@ export function SearchPage() {
       : { ...prev, city: next }))
   }, [user?.city])
 
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: ['masters', submitted],
-    queryFn: () => apiRequest<{ items: Master[] }>(buildMastersUrl(submitted)),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => apiRequest<SearchResponse>(buildMastersUrl(submitted, pageParam)),
+    getNextPageParam: (last) => (last.has_more && last.next_cursor ? last.next_cursor : undefined),
   })
   const cities = useQuery({
     queryKey: ['geo-cities'],
@@ -99,10 +139,11 @@ export function SearchPage() {
   })
 
   const selectedCity = submitted.city.trim().toLowerCase()
+  const items = query.data?.pages.flatMap((p) => p.items) ?? []
 
   return (
     <main className="page stack">
-      <h1>Поиск мастеров <Hint id="client-booking" title="Запись">Найдите мастера по городу и услуге, затем выберите время на карточке.</Hint></h1>
+      <h1>Поиск мастера <Hint id="client-booking" title="Запись">Найдите мастера по городу и услуге, затем выберите время на карточке.</Hint></h1>
       <form
         className="card search-form"
         onSubmit={(e) => {
@@ -125,10 +166,10 @@ export function SearchPage() {
         </div>
         <SearchField
           id="q"
-          label="Имя или специализация"
+          label="Имя, специализация или работа"
           value={q}
           onChange={setQ}
-          placeholder="Имя или специализация"
+          placeholder="Имя, специализация или работа"
           clearable
         />
         <div className="field">
@@ -175,28 +216,39 @@ export function SearchPage() {
 
       {query.isLoading && <div className="state-box">Ищем мастеров…</div>}
       {query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить список" />}
-      {query.data && query.data.items.length === 0 && (
-        <EmptyState title="Мастера не найдены" text="Пока нет опубликованных мастеров в этом городе." />
+      {query.isSuccess && items.length === 0 && (
+        <EmptyState title="Мастера не найдены" text="Попробуйте изменить город или сбросить фильтры." />
       )}
       <div className="list">
-        {query.data?.items.map((m) => {
-          const otherCity = m.city.trim().toLowerCase() !== selectedCity
+        {items.map((m) => {
+          const name = masterDisplayName(m)
+          const services = servicesLine(m)
+          const prices = priceRangeLine(m)
+          const loc = locationLine(m, selectedCity)
           return (
             <Link key={m.id} to={`/masters/${m.id}`} className="list-item search-master-card media-first-card">
               <ServiceCardMedia
                 mediaId={m.photo_media_id}
-                name={m.display_name}
+                name={name}
                 aspect="hero"
                 overlay={{
-                  title: m.display_name,
-                  meta: `★ ${m.rating_avg.toFixed(1)} (${m.rating_count}) · ${m.city}`,
+                  title: name,
+                  meta: `★ ${m.rating_avg.toFixed(1)} (${m.rating_count})`,
                 }}
               />
               <div className="media-first-body stack-sm">
-                <div className="row between">
-                  <p>{masterProfessionLabel(m, 'Специализации не указаны')}</p>
-                  <span className={`city-badge${otherCity ? ' city-badge--other' : ''}`}>{m.city}</span>
+                <div className="search-master-location">
+                  {loc.district && (
+                    <span className="search-master-district" data-testid="search-onsite-district">{loc.district}</span>
+                  )}
+                  <span className={`city-badge${loc.otherCity ? ' city-badge--other' : ''}`}>{loc.city}</span>
                 </div>
+                {services && (
+                  <p className="search-master-services" data-testid="search-master-services">{services}</p>
+                )}
+                {prices && (
+                  <p className="search-master-price" data-testid="search-master-price">{prices}</p>
+                )}
                 {m.onsite_match && (
                   <p className="badge badge-success" data-testid="onsite-badge">{m.onsite_match.badge || 'Выезд в вашем районе'}</p>
                 )}
@@ -205,6 +257,19 @@ export function SearchPage() {
           )
         })}
       </div>
+      {query.hasNextPage && (
+        <button
+          type="button"
+          className="btn btn-secondary btn-block"
+          data-testid="search-load-more"
+          disabled={query.isFetchingNextPage}
+          onClick={() => void query.fetchNextPage()}
+        >
+          {query.isFetchingNextPage ? 'Загружаем…' : 'Показать ещё'}
+        </button>
+      )}
     </main>
   )
 }
+
+export const searchPageHelpers = { masterDisplayName, servicesLine, priceRangeLine, locationLine, buildMastersUrl }

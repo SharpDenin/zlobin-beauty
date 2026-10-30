@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   dayKey,
   formatOwnerDate,
+  homeTiles,
   isDemoAccount,
   isOwnerStartKind,
   ownerManagementTiles,
@@ -56,5 +57,10 @@ describe('owner-home-helpers', () => {
 
   it('formats today as a human date line', () => {
     expect(formatOwnerDate(new Date())).toMatch(/^Сегодня · /)
+  })
+
+  it('labels client search tile as Поиск мастера', () => {
+    const tiles = homeTiles('client', () => false)
+    expect(tiles.find((t) => t.to === '/search')?.label).toBe('Поиск мастера')
   })
 })

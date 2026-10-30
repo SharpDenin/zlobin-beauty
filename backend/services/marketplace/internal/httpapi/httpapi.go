@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/service"
+	"github.com/zlobin/zlobin-beauty/backend/services/marketplace/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 )
@@ -95,14 +97,43 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 		}
 		districtID = &id
 	}
-	hits, err := a.svc.Search(r.Context(), city, q, serviceQ, priceMin, priceMax, availableOn, includeOtherCities, districtID)
+	limit := 0
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid limit"))
+			return
+		}
+		limit = n
+	}
+	var cursor *store.SearchCursor
+	if v := strings.TrimSpace(r.URL.Query().Get("cursor")); v != "" {
+		c, err := decodeSearchCursor(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid cursor"))
+			return
+		}
+		cursor = c
+	}
+	res, err := a.svc.Search(r.Context(), service.SearchInput{
+		City: city, Q: q, Service: serviceQ, PriceMin: priceMin, PriceMax: priceMax,
+		AvailableOn: availableOn, IncludeOtherCities: includeOtherCities, DistrictID: districtID,
+		Limit: limit, Cursor: cursor,
+	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(hits))
-	for _, h := range hits {
+	out := make([]map[string]any, 0, len(res.Items))
+	for _, h := range res.Items {
 		dto := masterDTO(h.Master)
+		dto["service_names"] = h.ServiceNames
+		if h.PriceMinMinor != nil {
+			dto["price_min_minor"] = *h.PriceMinMinor
+		}
+		if h.PriceMaxMinor != nil {
+			dto["price_max_minor"] = *h.PriceMaxMinor
+		}
 		if h.Onsite != nil {
 			dto["onsite_match"] = map[string]any{
 				"city": h.Onsite.City, "districts": h.Onsite.Districts,
@@ -111,7 +142,42 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, dto)
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	body := map[string]any{"items": out, "has_more": res.HasMore}
+	if res.NextCursor != nil {
+		body["next_cursor"] = encodeSearchCursor(*res.NextCursor)
+	}
+	httpx.JSON(w, http.StatusOK, body)
+}
+
+type searchCursorDTO struct {
+	CityRank    int       `json:"cr"`
+	RatingAvg   float64   `json:"ra"`
+	RatingCount int       `json:"rc"`
+	ID          uuid.UUID `json:"id"`
+}
+
+func encodeSearchCursor(c store.SearchCursor) string {
+	raw, _ := json.Marshal(searchCursorDTO{
+		CityRank: c.CityRank, RatingAvg: c.RatingAvg, RatingCount: c.RatingCount, ID: c.ID,
+	})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeSearchCursor(s string) (*store.SearchCursor, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, err
+	}
+	var dto searchCursorDTO
+	if err := json.Unmarshal(raw, &dto); err != nil {
+		return nil, err
+	}
+	if dto.ID == uuid.Nil {
+		return nil, apperr.Validation("invalid cursor")
+	}
+	return &store.SearchCursor{
+		CityRank: dto.CityRank, RatingAvg: dto.RatingAvg, RatingCount: dto.RatingCount, ID: dto.ID,
+	}, nil
 }
 
 func (a *API) getMaster(w http.ResponseWriter, r *http.Request) {

@@ -754,15 +754,12 @@ export function MasterCabinetPage() {
               В профиле осталось устаревшее значение «employee». Выберите актуальные форматы работы и сохраните — оно не преобразуется автоматически.
             </p>
           )}
-          <label className="field-check"><input type="checkbox" {...masterForm.register('published')} /><span>Показать профиль в поиске</span></label>
           <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>
             {saveMaster.isPending ? 'Сохраняем…' : 'Сохранить профиль'}
           </button>
         </form>
         {master.data && (
           <p className="muted">
-            {master.data.master.published ? 'В поиске' : 'Скрыт'}
-            {' · '}
             {workTypesLabel(master.data.master.work_types?.length ? master.data.master.work_types : [master.data.master.work_type || ''])}
             {' · услуг: '}
             {master.data.services.length}

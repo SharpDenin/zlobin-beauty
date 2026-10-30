@@ -415,7 +415,7 @@ export function navForCabinet(
   if (kind === 'client') {
     const primary: NavLink[] = [
       { to: '/', label: 'Главная', end: true },
-      { to: '/search', label: 'Мастера' },
+      { to: '/search', label: 'Поиск мастера' },
       { to: '/shop', label: 'Магазин' },
       { to: '/appointments', label: 'Записи' },
       { to: '/more', label: 'Ещё' },

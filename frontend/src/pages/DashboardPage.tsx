@@ -300,7 +300,6 @@ export function DashboardPage() {
   const salonName = cabinet.selectedOrg?.organization.type !== 'supplier'
     ? cabinet.selectedOrg?.organization.name
     : undefined
-  const published = master?.published
   const ratingAvg = typeof master?.rating_avg === 'number' && master.rating_avg > 0 ? master.rating_avg : null
   const ratingCount = typeof master?.rating_count === 'number' ? master.rating_count : 0
 
@@ -426,12 +425,6 @@ export function DashboardPage() {
             <Link className="dash-premium-pill" to="/profile/subscription" data-testid="dashboard-premium-pill">
               {premiumLabel(sub.data)}
             </Link>
-            {typeof published === 'boolean' && (
-              <span className={`dash-visibility${published ? ' dash-visibility--on' : ''}`} data-testid="dashboard-visibility">
-                <span className="dash-visibility__dot" aria-hidden="true" />
-                {published ? 'В поиске' : 'Скрыт'}
-              </span>
-            )}
           </div>
           {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
             <label className="field" style={{ maxWidth: 280 }}>

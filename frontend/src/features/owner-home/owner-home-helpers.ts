@@ -117,7 +117,7 @@ export function homeTiles(kind: string, can: (feature: CabinetFeature) => boolea
   }
   if (audience === 'client') {
     return [
-      { to: '/search', label: 'Мастера', icon: 'staff' },
+      { to: '/search', label: 'Поиск мастера', icon: 'staff' },
       { to: '/appointments', label: 'Записи', icon: 'services' },
       { to: '/shop', label: 'Магазин', icon: 'warehouse' },
       { to: '/messages', label: 'Сообщения', icon: 'clients' },

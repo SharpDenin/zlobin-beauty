@@ -80,6 +80,24 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 				log.Info("request error", "code", ae.Code, "status", ae.HTTPStatus, "message", ae.Message, "request_id", rid)
 			}
 		}
+		if ae.Code == apperr.CodeRateLimited && ae.Details != nil {
+			if v, ok := ae.Details["retry_after"]; ok {
+				switch n := v.(type) {
+				case int:
+					if n > 0 {
+						w.Header().Set("Retry-After", strconv.Itoa(n))
+					}
+				case int64:
+					if n > 0 {
+						w.Header().Set("Retry-After", strconv.FormatInt(n, 10))
+					}
+				case float64:
+					if n > 0 {
+						w.Header().Set("Retry-After", strconv.Itoa(int(n)))
+					}
+				}
+			}
+		}
 		JSON(w, ae.HTTPStatus, ErrorBody{Error: ErrorDetail{
 			Code:      string(ae.Code),
 			Message:   ae.Message,

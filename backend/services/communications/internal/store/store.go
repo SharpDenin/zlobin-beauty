@@ -25,9 +25,23 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, n.ID, n.UserID, n.Type, n.Title, n.Body, n.En
 }
 
 func (s *Store) ListNotifications(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT id, user_id, type, title, body, entity_type, entity_id, read_at, created_at
-FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`, userID)
+	return s.listNotifications(ctx, userID, false)
+}
+
+// ListBubbleNotifications excludes hidden and deleted rows.
+func (s *Store) ListBubbleNotifications(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {
+	return s.listNotifications(ctx, userID, true)
+}
+
+func (s *Store) listNotifications(ctx context.Context, userID uuid.UUID, bubblesOnly bool) ([]domain.Notification, error) {
+	q := `
+SELECT id, user_id, type, title, body, entity_type, entity_id, read_at, hidden_at, deleted_at, created_at
+FROM notifications WHERE user_id=$1 AND deleted_at IS NULL`
+	if bubblesOnly {
+		q += ` AND hidden_at IS NULL`
+	}
+	q += ` ORDER BY created_at DESC LIMIT 100`
+	rows, err := s.pool.Query(ctx, q, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +49,7 @@ FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`, userID)
 	var out []domain.Notification
 	for rows.Next() {
 		var n domain.Notification
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Body, &n.EntityType, &n.EntityID, &n.ReadAt, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Body, &n.EntityType, &n.EntityID, &n.ReadAt, &n.HiddenAt, &n.DeletedAt, &n.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -44,7 +58,35 @@ FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`, userID)
 }
 
 func (s *Store) MarkRead(ctx context.Context, id, userID uuid.UUID, at time.Time) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE notifications SET read_at=$3 WHERE id=$1 AND user_id=$2 AND read_at IS NULL`, id, userID, at)
+	tag, err := s.pool.Exec(ctx, `
+UPDATE notifications SET read_at=$3
+WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL AND read_at IS NULL`, id, userID, at)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("notification not found")
+	}
+	return nil
+}
+
+func (s *Store) HideNotification(ctx context.Context, id, userID uuid.UUID, at time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE notifications SET hidden_at=COALESCE(hidden_at, $3)
+WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, id, userID, at)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("notification not found")
+	}
+	return nil
+}
+
+func (s *Store) SoftDeleteNotification(ctx context.Context, id, userID uuid.UUID, at time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE notifications SET deleted_at=COALESCE(deleted_at, $3)
+WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, id, userID, at)
 	if err != nil {
 		return err
 	}

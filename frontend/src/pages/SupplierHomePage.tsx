@@ -9,6 +9,8 @@ import { formatMoney } from '@/shared/lib/money'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { premiumLabel } from '@/features/dashboard/premiumLabel'
+import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
+import { NotificationFeed } from '@/features/notifications/NotificationFeed'
 import '@/features/dashboard/dashboard.css'
 
 type Analytics = {
@@ -145,6 +147,7 @@ export function SupplierHomePage() {
 
   return (
     <main className="page stack">
+      <NotificationBubbles />
       <section className="hero">
         <div className="stack">
           <p className="eyebrow">Главная</p>
@@ -189,6 +192,8 @@ export function SupplierHomePage() {
           ))}
         </section>
       )}
+
+      <NotificationFeed className="card stack" />
 
       <div className="tile-grid">
         <Link className="dashboard-tile" to="/supplier/orders">

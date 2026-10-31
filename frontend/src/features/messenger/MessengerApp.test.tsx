@@ -96,6 +96,18 @@ describe('MessengerApp', () => {
     expect(screen.getByLabelText('1 непрочитанных')).toBeTruthy()
   })
 
+  it('passes q/type/unread query params to conversations API', async () => {
+    renderApp()
+    await screen.findByTestId('messenger-filters')
+    fireEvent.change(screen.getByPlaceholderText('Поиск по имени'), { target: { value: 'Анна' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Клиент ↔ мастер' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Непрочитанные' }))
+    await waitFor(() => {
+      const calls = mockedRequest.mock.calls.map(([path]) => String(path))
+      expect(calls.some((p) => p.includes('q=%D0%90%D0%BD%D0%BD%D0%B0') && p.includes('type=client_master') && p.includes('unread=1'))).toBe(true)
+    })
+  })
+
   it('opens a chat and sends text', async () => {
     renderApp('c1')
     const history = await screen.findByTestId('message-history')

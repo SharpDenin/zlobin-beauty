@@ -67,6 +67,7 @@ func (a *API) internalUser(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"id": user.ID.String(), "email": user.Email, "phone": user.Phone, "display_name": user.DisplayName,
+		"status": user.Status,
 	})
 }
 

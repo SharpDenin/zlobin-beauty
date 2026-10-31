@@ -60,8 +60,41 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]domain.Notifica
 	return items, nil
 }
 
+func (s *Service) ListBubbles(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {
+	items, err := s.store.ListBubbleNotifications(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Notification{}
+	}
+	return items, nil
+}
+
 func (s *Service) MarkRead(ctx context.Context, id, userID uuid.UUID) error {
 	err := s.store.MarkRead(ctx, id, userID, s.now().UTC())
+	if ae, ok := apperr.As(err); ok {
+		return ae
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) HideNotification(ctx context.Context, id, userID uuid.UUID) error {
+	err := s.store.HideNotification(ctx, id, userID, s.now().UTC())
+	if ae, ok := apperr.As(err); ok {
+		return ae
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) DeleteNotification(ctx context.Context, id, userID uuid.UUID) error {
+	err := s.store.SoftDeleteNotification(ctx, id, userID, s.now().UTC())
 	if ae, ok := apperr.As(err); ok {
 		return ae
 	}

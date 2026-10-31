@@ -33,8 +33,30 @@ export function NotificationsPage() {
     onSuccess: async () => {
       setError(null)
       await qc.invalidateQueries({ queryKey: ['notifications'] })
+      await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
     },
     onError: (e) => setError(formatUserError(e, 'Не удалось отметить')),
+  })
+
+  const hide = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/notifications/${id}`, { method: 'PATCH', token: accessToken, body: { hidden: true } }),
+    onSuccess: async () => {
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
+      await qc.invalidateQueries({ queryKey: ['notifications'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось скрыть')),
+  })
+
+  const remove = useMutation({
+    mutationFn: (id: string) => apiRequest(`/v1/notifications/${id}`, { method: 'DELETE', token: accessToken }),
+    onSuccess: async () => {
+      setError(null)
+      await qc.invalidateQueries({ queryKey: ['notifications'] })
+      await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось удалить')),
   })
 
   return (
@@ -68,11 +90,19 @@ export function NotificationsPage() {
             {n.entity_type === 'client_order' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/orders/${n.entity_id}`}>Открыть заказ</Link>
             )}
-            {!n.read_at && (
-              <button className="btn btn-secondary btn-compact" type="button" disabled={markRead.isPending} onClick={() => markRead.mutate(n.id)}>
-                Прочитано
+            <div className="row gap wrap">
+              {!n.read_at && (
+                <button className="btn btn-secondary btn-compact" type="button" disabled={markRead.isPending} onClick={() => markRead.mutate(n.id)}>
+                  Прочитано
+                </button>
+              )}
+              <button className="btn btn-ghost btn-compact" type="button" disabled={hide.isPending} onClick={() => hide.mutate(n.id)}>
+                Скрыть из пузырей
               </button>
-            )}
+              <button className="btn btn-ghost btn-compact" type="button" disabled={remove.isPending} onClick={() => remove.mutate(n.id)}>
+                Удалить
+              </button>
+            </div>
           </article>
         ))}
       </div>

@@ -15,6 +15,8 @@ type Notification struct {
 	EntityType string
 	EntityID   *uuid.UUID
 	ReadAt     *time.Time
+	HiddenAt   *time.Time
+	DeletedAt  *time.Time
 	CreatedAt  time.Time
 }
 

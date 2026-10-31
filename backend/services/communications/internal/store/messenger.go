@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,20 +58,86 @@ VALUES ($1,$2,$3,$4)`, p.ConversationID, p.UserID, p.ParticipantRole, p.JoinedAt
 	return tx.Commit(ctx)
 }
 
+type ListConversationsFilter struct {
+	Type       string
+	// PeerIDs, when non-nil, restricts to conversations that include at least one of these peers
+	// (other than the requesting user). An empty non-nil slice means "no matches".
+	PeerIDs    []uuid.UUID
+	UnreadOnly bool
+	Limit      int
+	Offset     int
+}
+
 func (s *Store) ListConversationsForUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]domain.Conversation, error) {
+	return s.ListConversationsForUserFiltered(ctx, userID, ListConversationsFilter{Limit: limit, Offset: offset})
+}
+
+// ListPeerUserIDs returns distinct other participants across the user's conversations.
+func (s *Store) ListPeerUserIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT peer.user_id
+FROM conversation_participants me
+JOIN conversation_participants peer
+  ON peer.conversation_id = me.conversation_id AND peer.user_id <> me.user_id
+WHERE me.user_id=$1`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListConversationsForUserFiltered(ctx context.Context, userID uuid.UUID, f ListConversationsFilter) ([]domain.Conversation, error) {
+	if f.PeerIDs != nil && len(f.PeerIDs) == 0 {
+		return []domain.Conversation{}, nil
+	}
+	limit, offset := f.Limit, f.Offset
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := s.pool.Query(ctx, `
+	q := `
 SELECT c.id, c.type, c.context_key, c.context_type, c.context_id, c.created_at, c.updated_at
 FROM conversations c
 JOIN conversation_participants p ON p.conversation_id = c.id
-WHERE p.user_id=$1
-ORDER BY c.updated_at DESC
-LIMIT $2 OFFSET $3`, userID, limit, offset)
+WHERE p.user_id=$1`
+	args := []any{userID}
+	if strings.TrimSpace(f.Type) != "" {
+		args = append(args, strings.TrimSpace(f.Type))
+		q += ` AND c.type=$` + itoa(len(args))
+	}
+	if f.PeerIDs != nil {
+		args = append(args, f.PeerIDs)
+		q += ` AND EXISTS (
+  SELECT 1 FROM conversation_participants peer
+  WHERE peer.conversation_id = c.id
+    AND peer.user_id <> p.user_id
+    AND peer.user_id = ANY($` + itoa(len(args)) + `)
+)`
+	}
+	if f.UnreadOnly {
+		q += `
+ AND EXISTS (
+  SELECT 1 FROM messages m
+  WHERE m.conversation_id = c.id
+    AND m.deleted_at IS NULL
+    AND m.sender_user_id <> p.user_id
+    AND (p.last_read_at IS NULL OR m.created_at > p.last_read_at)
+)`
+	}
+	q += ` ORDER BY c.updated_at DESC LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
+	args = append(args, limit, offset)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +151,87 @@ LIMIT $2 OFFSET $3`, userID, limit, offset)
 		out = append(out, *c)
 	}
 	return out, rows.Err()
+}
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
+}
+
+const (
+	RateKindConversationCreate = "conversation_create"
+	RateKindFirstMessage       = "first_message"
+)
+
+// ConsumeRateSlot atomically counts events in [since, now] and inserts one if under limit.
+// Uses a transaction advisory lock so parallel requests cannot bypass the cap.
+func (s *Store) ConsumeRateSlot(ctx context.Context, userID uuid.UUID, kind string, conversationID *uuid.UUID, since, now time.Time, limit int) (bool, time.Duration, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	defer tx.Rollback(ctx)
+	// Hash user+kind into two int keys for pg_advisory_xact_lock.
+	var k1, k2 int32
+	for i, b := range userID {
+		if i < 4 {
+			k1 = k1<<8 | int32(b)
+		} else if i < 8 {
+			k2 = k2<<8 | int32(b)
+		}
+	}
+	if kind == RateKindFirstMessage {
+		k2 ^= 0x1f1f1f1f
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, k1, k2); err != nil {
+		return false, 0, err
+	}
+	// First-message quota only applies while the sender still has zero messages in this conversation.
+	// Re-check under the advisory lock so a parallel insert is not double-charged / falsely blocked later.
+	if kind == RateKindFirstMessage && conversationID != nil {
+		var prior int
+		if err := tx.QueryRow(ctx, `
+SELECT COUNT(*)::int FROM messages
+WHERE conversation_id=$1 AND sender_user_id=$2 AND deleted_at IS NULL`, *conversationID, userID).Scan(&prior); err != nil {
+			return false, 0, err
+		}
+		if prior > 0 {
+			return true, 0, tx.Commit(ctx)
+		}
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `
+SELECT COUNT(*)::int FROM messenger_rate_events
+WHERE user_id=$1 AND kind=$2 AND created_at >= $3`, userID, kind, since).Scan(&n); err != nil {
+		return false, 0, err
+	}
+	if n >= limit {
+		var oldest time.Time
+		_ = tx.QueryRow(ctx, `
+SELECT created_at FROM messenger_rate_events
+WHERE user_id=$1 AND kind=$2 AND created_at >= $3
+ORDER BY created_at ASC LIMIT 1`, userID, kind, since).Scan(&oldest)
+		window := now.Sub(since)
+		retry := oldest.Add(window).Sub(now)
+		if retry < time.Second {
+			retry = time.Second
+		}
+		_ = tx.Commit(ctx)
+		return false, retry, nil
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO messenger_rate_events(id, user_id, kind, conversation_id, created_at)
+VALUES ($1,$2,$3,$4,$5)`, ids.New(), userID, kind, conversationID, now); err != nil {
+		return false, 0, err
+	}
+	return true, 0, tx.Commit(ctx)
+}
+
+func (s *Store) CountSenderMessages(ctx context.Context, conversationID, senderID uuid.UUID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+SELECT COUNT(*)::int FROM messages
+WHERE conversation_id=$1 AND sender_user_id=$2 AND deleted_at IS NULL`, conversationID, senderID).Scan(&n)
+	return n, err
 }
 
 func (s *Store) ListParticipants(ctx context.Context, conversationID uuid.UUID) ([]domain.Participant, error) {

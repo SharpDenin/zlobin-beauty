@@ -157,6 +157,14 @@ func RateLimited(msg string) *AppError {
 	return New(CodeRateLimited, http.StatusTooManyRequests, msg)
 }
 
+// RateLimitedRetry returns 429 with details.retry_after (seconds) for Retry-After headers.
+func RateLimitedRetry(msg string, retryAfterSec int) *AppError {
+	if retryAfterSec < 1 {
+		retryAfterSec = 1
+	}
+	return RateLimited(msg).WithDetails(map[string]any{"retry_after": retryAfterSec})
+}
+
 func InvalidCredentials() *AppError {
 	return UnauthorizedCode(CodeInvalidCredentials, "invalid credentials")
 }

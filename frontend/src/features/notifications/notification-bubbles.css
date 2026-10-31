@@ -1,0 +1,80 @@
+.notif-bubbles {
+  /* Above sticky chrome, below messenger overlay (--z-modal) and toasts. */
+  position: fixed;
+  z-index: var(--z-dropdown, 30);
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: max(88px, calc(env(safe-area-inset-bottom, 0px) + 72px));
+  display: grid;
+  gap: 8px;
+  width: min(320px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.notif-bubble {
+  pointer-events: auto;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md, 14px);
+  background: color-mix(in srgb, var(--color-surface, #141821) 92%, transparent);
+  border: 1px solid var(--color-border, #252b3b);
+  box-shadow: var(--shadow-glow, 0 8px 24px rgba(0, 0, 0, 0.35));
+  animation: notif-bubble-in var(--motion-normal, 220ms) ease-out;
+}
+
+.notif-bubble.is-unread {
+  border-color: color-mix(in srgb, var(--color-primary, #7c82ff) 45%, var(--color-border, #252b3b));
+}
+
+.notif-bubble__link {
+  display: grid;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.notif-bubble__link strong {
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.notif-bubble__link span {
+  color: var(--color-text-muted, #9ea6b5);
+  font-size: var(--text-sm, 0.875rem);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.notif-bubble__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+@keyframes notif-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notif-bubble {
+    animation: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .notif-bubbles {
+    /* Clear atmospheric / left column area on wide homes — keep off primary CTA. */
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: auto;
+    bottom: max(24px, env(safe-area-inset-bottom, 0px));
+    width: min(300px, 26vw);
+  }
+}

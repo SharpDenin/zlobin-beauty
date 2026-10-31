@@ -28,7 +28,10 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/internal/notifications", internal(http.HandlerFunc(a.createNotification)))
 	mux.Handle("GET /v1/internal/reviews/stats", internal(http.HandlerFunc(a.reviewStats)))
 	mux.Handle("GET /v1/notifications", auth(http.HandlerFunc(a.listNotifications)))
+	mux.Handle("GET /v1/notifications/bubbles", auth(http.HandlerFunc(a.listNotificationBubbles)))
 	mux.Handle("POST /v1/notifications/{id}/read", auth(http.HandlerFunc(a.markRead)))
+	mux.Handle("PATCH /v1/notifications/{id}", auth(http.HandlerFunc(a.patchNotification)))
+	mux.Handle("DELETE /v1/notifications/{id}", auth(http.HandlerFunc(a.deleteNotification)))
 	mux.Handle("POST /v1/reviews", auth(http.HandlerFunc(a.createReview)))
 	mux.Handle("GET /v1/reviews/mine", auth(http.HandlerFunc(a.myReviews)))
 	mux.HandleFunc("GET /v1/masters/{masterUserID}/reviews", a.masterReviews)
@@ -114,6 +117,24 @@ func (a *API) listNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
+	unread := 0
+	for _, n := range items {
+		out = append(out, notificationDTO(n))
+		if n.ReadAt == nil {
+			unread++
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out, "unread_count": unread})
+}
+
+func (a *API) listNotificationBubbles(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	items, err := a.svc.ListBubbles(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
 	for _, n := range items {
 		out = append(out, notificationDTO(n))
 	}
@@ -128,6 +149,45 @@ func (a *API) markRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.svc.MarkRead(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) patchNotification(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Hidden *bool `json:"hidden"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	if req.Hidden == nil || !*req.Hidden {
+		httpx.WriteError(w, r, a.log, apperr.Validation("hidden:true is required"))
+		return
+	}
+	if err := a.svc.HideNotification(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteNotification(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.DeleteNotification(r.Context(), id, claims.UserID); err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
@@ -201,13 +261,20 @@ func notificationDTO(n domain.Notification) map[string]any {
 	if n.EntityID != nil {
 		entityID = n.EntityID.String()
 	}
-	var readAt any
+	var readAt, hiddenAt, deletedAt any
 	if n.ReadAt != nil {
 		readAt = *n.ReadAt
 	}
+	if n.HiddenAt != nil {
+		hiddenAt = *n.HiddenAt
+	}
+	if n.DeletedAt != nil {
+		deletedAt = *n.DeletedAt
+	}
 	return map[string]any{
 		"id": n.ID.String(), "type": n.Type, "title": n.Title, "body": n.Body,
-		"entity_type": n.EntityType, "entity_id": entityID, "read_at": readAt, "created_at": n.CreatedAt,
+		"entity_type": n.EntityType, "entity_id": entityID,
+		"read_at": readAt, "hidden_at": hiddenAt, "deleted_at": deletedAt, "created_at": n.CreatedAt,
 	}
 }
 

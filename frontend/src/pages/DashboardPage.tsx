@@ -16,6 +16,8 @@ import 'react-grid-layout/css/styles.css'
 import '@/features/dashboard/dashboard.css'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
+import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { formatMoney } from '@/shared/lib/money'
@@ -122,6 +124,7 @@ function availableWidgets(cabinet: ReturnType<typeof useCabinet>) {
 export function DashboardPage() {
   const { user, accessToken } = useAuth()
   const cabinet = useCabinet()
+  const messenger = useMessengerOptional()
   const qc = useQueryClient()
   const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 390 })
   const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => breakpointForWidth(390))
@@ -346,6 +349,7 @@ export function DashboardPage() {
 
   return (
     <main className={`page stack dashboard-page${editing ? ' dashboard-page--editing' : ''}`} data-testid="dashboard-page">
+      <NotificationBubbles />
       <header className="dashboard-page-head">
         <div className="stack-sm">
           <p className="eyebrow">Главная</p>
@@ -522,7 +526,14 @@ export function DashboardPage() {
                   {w.id === 'calendar' && <CalendarPage embedded />}
                   {w.id === 'today' && <MetricTile label="Сегодня" value={today.length} caption="записей" to="/calendar" />}
                   {w.id === 'pending' && <MetricTile label="Ожидают" value={pending.length} caption="подтверждения" to="/appointments" />}
-                  {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/messages" />}
+                  {w.id === 'messages' && (
+                    <MetricTile
+                      label="Сообщения"
+                      value={messenger?.unreadTotal ?? 0}
+                      caption="непрочитанных"
+                      to="/messages"
+                    />
+                  )}
                   {w.id === 'upcoming' && (
                     <div className="stack">
                       <div className="row between"><h2>Ближайшие записи</h2><Link to="/appointments">Все</Link></div>

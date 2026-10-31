@@ -15,6 +15,8 @@ import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
 import { useHomeBackground } from '@/shared/theme/backgrounds'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
+import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
+import { notificationHref } from '@/features/notifications/notificationHref'
 import { enableDevicePush } from '@/features/pwa/push'
 import {
   dayKey,
@@ -113,15 +115,6 @@ function ownerRoleLabel(kind: string, fallback: string): string {
   if (kind === 'salon_owner' || kind === 'chain_owner') return 'Владелец'
   if (kind === 'salon_admin') return 'Администратор'
   return fallback || 'Salon-X'
-}
-
-function notificationHref(n: NotificationItem) {
-  if (n.entity_type === 'appointment' && n.entity_id) return `/appointments/${n.entity_id}`
-  if (n.entity_type === 'conversation' && n.entity_id) return `/messages/${n.entity_id}`
-  if (n.entity_type === 'masterclass' && n.entity_id) return `/masterclasses/${n.entity_id}`
-  if (n.entity_type === 'model_request' && n.entity_id) return `/models/${n.entity_id}`
-  if (n.entity_type === 'client_order' && n.entity_id) return `/orders/${n.entity_id}`
-  return '/notifications'
 }
 
 export function OwnerStartPage() {
@@ -288,6 +281,7 @@ export function OwnerStartPage() {
       style={{ ['--owner-bg-image' as string]: `url('${background.src}')` }}
     >
       <div className="owner-start-bg" aria-hidden="true" />
+      <NotificationBubbles />
 
       <div className="owner-start-panel">
         <header className="owner-start-top">

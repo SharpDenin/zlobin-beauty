@@ -17,6 +17,19 @@ vi.mock('@/features/auth/AuthProvider', () => ({
   }),
 }))
 
+vi.mock('@/features/messenger/MessengerProvider', () => ({
+  useMessengerOptional: () => ({
+    unreadTotal: 7,
+    overlayOpen: false,
+    overlayConversationId: null,
+    isDesktop: true,
+    open: () => undefined,
+    openList: () => undefined,
+    close: () => undefined,
+    start: async () => null,
+  }),
+}))
+
 vi.mock('@/shared/lib/cabinet', () => ({
   useCabinet: () => ({
     kind: 'private_master',
@@ -66,7 +79,7 @@ vi.mock('react-grid-layout', async (importOriginal) => {
   return {
     ...actual,
     useContainerWidth: () => ({
-      width: 1200,
+      width: 1400,
       containerRef: { current: null },
       mounted: true,
     }),
@@ -80,6 +93,7 @@ const defaultWidgets = [
   { id: 'calendar', enabled: true, positions: { lg: { x: 0, y: 5, w: 12, h: 18 } } },
   { id: 'today', enabled: true, positions: { lg: { x: 0, y: 23, w: 3, h: 4 } } },
   { id: 'pending', enabled: true, positions: { lg: { x: 3, y: 23, w: 3, h: 4 } } },
+  { id: 'messages', enabled: true, positions: { lg: { x: 6, y: 23, w: 3, h: 4 } } },
   { id: 'upcoming', enabled: true, positions: { lg: { x: 0, y: 27, w: 6, h: 8 } } },
   { id: 'analytics', enabled: true, positions: { lg: { x: 6, y: 27, w: 6, h: 8 } } },
 ]
@@ -118,7 +132,31 @@ function mockApis() {
         ],
       }
     }
-    if (path.startsWith('/v1/notifications')) return { items: [] }
+    if (path.startsWith('/v1/notifications')) {
+      return {
+        items: [
+          {
+            id: 'n1',
+            title: 'Событие',
+            body: 'Текст',
+            read_at: null,
+            created_at: '2026-08-30T10:00:00.000Z',
+            entity_type: 'appointment',
+            entity_id: 'a1',
+          },
+          {
+            id: 'n2',
+            title: 'Ещё',
+            body: 'Текст',
+            read_at: null,
+            created_at: '2026-08-30T11:00:00.000Z',
+            entity_type: 'appointment',
+            entity_id: 'a1',
+          },
+        ],
+        unread_count: 2,
+      }
+    }
     if (path.startsWith('/v1/planner/blocks')) return { items: [] }
     if (path.startsWith('/v1/commerce/supplier-orders')) return { items: [] }
     return {}
@@ -190,6 +228,16 @@ describe('DashboardPage', () => {
     expect(screen.getByTestId('dashboard-edit-active')).toBeInTheDocument()
     expect(screen.getByTestId('drag-handle-alerts')).toBeInTheDocument()
     expect(screen.getByTestId('dashboard-page').className).toContain('dashboard-page--editing')
+  })
+
+  it('messages tile uses messenger unreadTotal, not notification unread', async () => {
+    renderPage()
+    await waitFor(() => expect(document.querySelector('[data-widget="messages"]')).toBeTruthy())
+    const tile = document.querySelector('[data-widget="messages"]')
+    expect(tile?.textContent).toMatch(/непрочитанных/)
+    expect(tile?.textContent).toMatch(/\b7\b/)
+    // Notification unread is 2 — must not drive this tile.
+    expect(tile?.textContent).not.toMatch(/\b2\b/)
   })
 
   it('cancel discards draft layout changes', async () => {

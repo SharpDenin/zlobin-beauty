@@ -103,17 +103,27 @@ const CATALOG: Record<string, CatalogEntry> = {
   messenger_no_relationship: {
     kind: 'authorization',
     title: 'Пока нельзя написать',
-    hint: 'Нужна общая запись или контакт в адресной книге.',
+    hint: 'Проверьте, что у собеседника есть активный профиль.',
   },
   messenger_master_unpublished: {
     kind: 'authorization',
     title: 'Мастер недоступен для сообщений',
-    hint: 'Профиль мастера ещё не опубликован в поиске.',
+    hint: 'Нужен существующий профиль мастера.',
   },
   messenger_master_not_published_actor: {
     kind: 'authorization',
-    title: 'Сначала опубликуйте профиль',
-    hint: 'Писать клиентам можно после публикации профиля мастера.',
+    title: 'Нужен профиль мастера',
+    hint: 'Создайте профиль мастера, чтобы писать клиентам.',
+  },
+  messenger_profile_required: {
+    kind: 'authorization',
+    title: 'Нужен профиль мастера',
+    hint: 'Создайте профиль мастера, чтобы писать клиентам.',
+  },
+  messenger_master_missing: {
+    kind: 'not_found',
+    title: 'Профиль мастера не найден',
+    hint: 'У пользователя ещё нет профиля мастера.',
   },
   messenger_supplier_unavailable: {
     kind: 'authorization',
@@ -292,8 +302,8 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   rate_limited: {
     kind: 'rate_limited',
-    title: 'Слишком много попыток',
-    hint: 'Подождите немного и попробуйте снова.',
+    title: 'Слишком много сообщений подряд',
+    hint: 'Подождите немного и попробуйте снова. Лимит защищает от спама в новых диалогах.',
   },
   internal_error: {
     kind: 'server',
@@ -374,6 +384,11 @@ const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
   { match: 'no booking relationship with this client', code: 'messenger_no_relationship' },
   { match: 'master is not available', code: 'messenger_master_unpublished' },
   { match: 'only a published master can message a client', code: 'messenger_master_not_published_actor' },
+  { match: 'master profile is required to message a client', code: 'messenger_profile_required' },
+  { match: 'master profile not found', code: 'messenger_master_missing' },
+  { match: 'user is not available', code: 'messenger_no_relationship' },
+  { match: 'too many new conversations', code: 'rate_limited' },
+  { match: 'too many first messages', code: 'rate_limited' },
   { match: 'only a published master can message a supplier', code: 'messenger_supplier_master_only' },
   { match: 'supplier is not available', code: 'messenger_supplier_unavailable' },
 ]

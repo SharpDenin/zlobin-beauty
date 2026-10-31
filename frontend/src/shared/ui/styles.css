@@ -3427,6 +3427,25 @@ button.list-item:hover {
 .messenger-thread-title { min-width: 0; flex: 1; }
 .messenger-thread-title h2,
 .messenger-list-head h2 { margin: 0; font-size: var(--text-lg); }
+.messenger-filters {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) var(--space-3) var(--space-2);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+.messenger-filters .field { margin: 0; }
+.messenger-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.messenger-filter-chips .chip {
+  min-height: 36px;
+  padding-inline: 12px;
+  touch-action: manipulation;
+}
 .messenger-list-scroll {
   overflow: auto;
   flex: 1;

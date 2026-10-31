@@ -53,16 +53,26 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const [newBanner, setNewBanner] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [listQ, setListQ] = useState('')
+  const [listType, setListType] = useState('')
+  const [unreadOnly, setUnreadOnly] = useState(false)
   const composing = useRef(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const list = useQuery({
-    queryKey: ['conversations'],
-    queryFn: () => apiRequest<{ items: Conversation[] }>('/v1/conversations?limit=50', { token: accessToken }),
+    queryKey: ['conversations', listQ, listType, unreadOnly],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: '50' })
+      const q = listQ.trim()
+      if (q) params.set('q', q)
+      if (listType) params.set('type', listType)
+      if (unreadOnly) params.set('unread', '1')
+      return apiRequest<{ items: Conversation[] }>(`/v1/conversations?${params}`, { token: accessToken })
+    },
     enabled: Boolean(accessToken),
-    refetchInterval: id ? 8000 : 8000,
+    refetchInterval: 8000,
   })
 
   const conversation = useQuery({
@@ -311,14 +321,33 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
           )}
         </div>
       </div>
+      <div className="messenger-filters stack-sm" data-testid="messenger-filters">
+        <label className="field" htmlFor="messenger-search">
+          <span className="sr-only">Поиск по имени</span>
+          <input
+            id="messenger-search"
+            type="search"
+            placeholder="Поиск по имени"
+            value={listQ}
+            onChange={(e) => setListQ(e.target.value)}
+            autoComplete="off"
+          />
+        </label>
+        <div className="row gap wrap messenger-filter-chips" role="group" aria-label="Фильтры диалогов">
+          <button type="button" className={`chip${listType === '' ? ' active' : ''}`} onClick={() => setListType('')}>Все</button>
+          <button type="button" className={`chip${listType === 'client_master' ? ' active' : ''}`} onClick={() => setListType('client_master')}>Клиент ↔ мастер</button>
+          <button type="button" className={`chip${listType === 'master_supplier' ? ' active' : ''}`} onClick={() => setListType('master_supplier')}>Поставщик</button>
+          <button type="button" className={`chip${unreadOnly ? ' active' : ''}`} onClick={() => setUnreadOnly((v) => !v)} aria-pressed={unreadOnly}>Непрочитанные</button>
+        </div>
+      </div>
       {list.isLoading && <div className="state-box">Загрузка…</div>}
       {list.isError && <ErrorBanner error={list.error} fallbackTitle="Не удалось загрузить диалоги" />}
       {!list.isLoading && items.length === 0 && (
         <EmptyState
-          title="Пока нет сообщений"
-          text={emptyAction ? undefined : 'Новые сообщения появятся здесь.'}
+          title={listQ || listType || unreadOnly ? 'Ничего не найдено' : 'Пока нет сообщений'}
+          text={listQ || listType || unreadOnly ? 'Попробуйте изменить поиск или фильтры.' : emptyAction ? undefined : 'Новые сообщения появятся здесь.'}
           action={
-            emptyAction ? (
+            !listQ && !listType && !unreadOnly && emptyAction ? (
               <Link className="btn btn-secondary" to={emptyAction.to} onClick={onClose}>
                 {emptyAction.label}
               </Link>

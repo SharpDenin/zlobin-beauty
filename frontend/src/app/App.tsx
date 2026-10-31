@@ -71,6 +71,7 @@ import { InviteMasterPage } from '@/pages/InviteMasterPage'
 import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
 import { SettingsLayout } from '@/pages/settings/SettingsLayout'
 import { SettingsAppearancePage } from '@/pages/settings/SettingsAppearancePage'
+import { SettingsSalonsPage } from '@/pages/settings/SettingsSalonsPage'
 import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
@@ -137,6 +138,7 @@ export function App() {
                 <Route path="/settings" element={<SettingsLayout />}>
                   <Route index element={<Navigate to="appearance" replace />} />
                   <Route path="appearance" element={<SettingsAppearancePage />} />
+                  <Route path="salons" element={<SettingsSalonsPage />} />
                 </Route>
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/shop/cart" element={<ShopPage />} />

@@ -40,7 +40,10 @@ export function WorkFormatPicker({
                 checked={checked}
                 onChange={() => toggle(opt.value)}
               />
-              <span>{opt.label}</span>
+              <span className="work-format-option__text">
+                <span className="work-format-option__label">{opt.label}</span>
+                <span className="work-format-option__hint muted">{opt.description}</span>
+              </span>
             </label>
           )
         })}

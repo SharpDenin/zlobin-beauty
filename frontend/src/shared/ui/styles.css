@@ -913,9 +913,20 @@ fieldset[aria-required="true"] > legend::after,
   background: var(--color-primary-muted);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
-.work-format-option span {
+.work-format-option__text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.work-format-option__label {
   font-weight: 600;
   line-height: 1.35;
+}
+.work-format-option__hint {
+  font-weight: 400;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 .invite-qr-page .invite-qr-block img {
   width: min(100%, 280px);
@@ -1206,6 +1217,15 @@ button.list-item:hover {
   background: var(--color-primary);
   color: var(--color-primary-ink);
   border-color: var(--color-primary);
+}
+.register-steps {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.register-steps .wizard-step.is-skip {
+  opacity: 0.35;
 }
 .wizard-step.done {
   background: var(--color-primary-muted);

@@ -2,7 +2,6 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 import { useQuery } from '@tanstack/react-query'
 import {
   hasMasterAccess,
-  hasSalonAdmin,
   hasSupplierAccess,
   hasSupplierRepAccess,
   hasSystemAdmin,
@@ -156,14 +155,11 @@ export function resolveCapabilities(
   const isSalonAdmin = hasOrgRole(orgs, 'admin') && !isSalonOwner
   const isSalonMasterMember =
     hasOrgRole(orgs, 'master') && !isSalonOwner && !isSalonAdmin
+  // REG-03: owner/admin membership and legacy owner shell do NOT imply master capabilities.
   const isMaster =
-    Boolean(user && hasMasterAccess(user))
+    Boolean(user?.roles.includes('master'))
     || Boolean(master?.id)
-    || isSalonOwner
-    || isSalonAdmin
     || isSalonMasterMember
-    || legacyOwnerShell != null
-    || identityOwnerClaim
   const isChainOps = ownedSalonCount(orgs) > 1
 
   return {
@@ -531,7 +527,7 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
         throw e
       }
     },
-    enabled: Boolean(accessToken && (hasMasterAccess(user) || hasSalonAdmin(user))),
+    enabled: Boolean(accessToken && (user?.roles.includes('master') || user?.roles.includes('salon_admin'))),
     retry: false,
   })
 
@@ -542,12 +538,8 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
     [user, orgItems, master],
   )
 
-  const canUseMasterMode =
-    capabilities.isMaster
-    || capabilities.isSalonOwner
-    || capabilities.isSalonAdmin
-    || capabilities.isPlatformAdmin
-    || hasOwnerShell(capabilities)
+  // REG-03: master UI mode only when real master capabilities exist (not owner membership alone).
+  const canUseMasterMode = capabilities.isMaster || capabilities.isPlatformAdmin
 
   const [modePref, setModePref] = usePreference<InteractionMode | ''>(INTERACTION_MODE_PREF_KEY, '')
   const interactionMode: InteractionMode = (() => {
@@ -588,7 +580,7 @@ export function CabinetProvider({ children }: { children: ReactNode }) {
     return branches.find((b) => b.id === selectedBranchId) ?? branches[0] ?? null
   }, [selectedOrg, selectedBranchId])
 
-  const needsMaster = Boolean(accessToken && (hasMasterAccess(user) || hasSalonAdmin(user)))
+  const needsMaster = Boolean(accessToken && (user?.roles.includes('master') || user?.roles.includes('salon_admin')))
   const ready = !needsMaster || masterQ.isFetched
 
   const workTypes = capabilities.workFormats

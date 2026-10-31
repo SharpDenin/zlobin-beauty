@@ -19,6 +19,9 @@ describe('work formats', () => {
     ])
     const labels = CANONICAL_WORK_TYPE_OPTIONS.map((o) => o.label)
     expect(new Set(labels).size).toBe(labels.length)
+    for (const o of CANONICAL_WORK_TYPE_OPTIONS) {
+      expect(o.description.length).toBeGreaterThan(20)
+    }
   })
 
   it('normalizes aliases and strips ownership', () => {

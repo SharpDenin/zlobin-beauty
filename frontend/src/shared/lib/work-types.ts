@@ -30,10 +30,26 @@ export const LEGACY_NON_FORMAT_CODES = new Set(['employee', ...OWNERSHIP_WORK_TY
 
 /** Unique options for registration / profile multi-select. */
 export const CANONICAL_WORK_TYPE_OPTIONS = [
-  { value: 'private_practice', label: LABELS.private_practice },
-  { value: 'percentage_based', label: LABELS.percentage_based },
-  { value: 'mobile_service', label: LABELS.mobile_service },
-  { value: 'chair_rental', label: LABELS.chair_rental },
+  {
+    value: 'private_practice',
+    label: LABELS.private_practice,
+    description: 'Работаете самостоятельно и принимаете клиентов у себя или в выбранном вами месте.',
+  },
+  {
+    value: 'percentage_based',
+    label: LABELS.percentage_based,
+    description: 'Работаете в салоне и получаете процент от стоимости услуг.',
+  },
+  {
+    value: 'mobile_service',
+    label: LABELS.mobile_service,
+    description: 'Оказываете услуги на территории клиента — с выездом.',
+  },
+  {
+    value: 'chair_rental',
+    label: LABELS.chair_rental,
+    description: 'Арендуете рабочее место (кресло) в салоне.',
+  },
 ] as const
 
 export type CanonicalWorkType = (typeof CANONICAL_WORK_TYPE_OPTIONS)[number]['value']

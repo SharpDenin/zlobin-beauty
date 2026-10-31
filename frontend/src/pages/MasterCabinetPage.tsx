@@ -23,20 +23,14 @@ import {
   readinessAnchor,
   readinessFieldHint,
 } from '@/shared/lib/master-profile-readiness'
+import { CreateSalonForm, type CreateSalonPayload } from '@/shared/ui/CreateSalonForm'
+import { useCabinet } from '@/shared/lib/cabinet'
 
 type OrgItem = {
-  organization: { id: string; name: string; type: string; published: boolean; description: string }
+  organization: { id: string; name: string; type: string; published: boolean; description: string; city?: string; address_line?: string }
   branches: Array<{ id: string; name: string; city: string; address_line: string; phone: string; published: boolean }>
   roles: string[]
 }
-
-const orgSchema = z.object({
-  name: z.string().min(2, 'Минимум 2 символа'),
-  branch_name: z.string().min(2, 'Минимум 2 символа'),
-  city: z.string().min(2, 'Укажите город'),
-  address_line: z.string().min(3, 'Укажите адрес'),
-  phone: z.string().min(5, 'Укажите телефон').optional().or(z.literal('')),
-})
 
 const masterSchema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
@@ -52,6 +46,7 @@ const masterSchema = z.object({
 
 export function MasterCabinetPage() {
   const { accessToken, user } = useAuth()
+  const cabinet = useCabinet()
   const qc = useQueryClient()
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
@@ -67,8 +62,21 @@ export function MasterCabinetPage() {
     enabled: Boolean(accessToken),
   })
 
-  const primaryOrg = orgs.data?.items[0]
-  const primaryBranch = primaryOrg?.branches[0]
+  // Prefer active org context (sx.selectedOrg); fall back to first salon only when unset/stale.
+  const salonItems = (orgs.data?.items ?? []).filter((o) => o.organization.type !== 'supplier')
+  const primaryOrg =
+    (cabinet.selectedOrg && cabinet.selectedOrg.organization.type !== 'supplier'
+      ? (salonItems.find((o) => o.organization.id === cabinet.selectedOrg!.organization.id) ?? null)
+      : null)
+    ?? salonItems[0]
+  const primaryBranch =
+    (primaryOrg
+      && cabinet.selectedOrg?.organization.id === primaryOrg.organization.id
+      && cabinet.selectedBranch
+      && primaryOrg.branches.some((b) => b.id === cabinet.selectedBranch!.id)
+      ? primaryOrg.branches.find((b) => b.id === cabinet.selectedBranch!.id) ?? null
+      : null)
+    ?? primaryOrg?.branches[0]
 
   const orgReadiness = useQuery({
     queryKey: ['org-readiness', primaryOrg?.organization.id],
@@ -147,7 +155,6 @@ export function MasterCabinetPage() {
     enabled: Boolean(primaryBranch?.id),
   })
 
-  const orgForm = useForm<z.infer<typeof orgSchema>>({ resolver: zodResolver(orgSchema) })
   const branchForm = useForm<{ phone: string }>({
     defaultValues: { phone: '' },
   })
@@ -213,20 +220,21 @@ export function MasterCabinetPage() {
   }, [master.data, masterForm, user?.display_name])
 
   const createOrg = useMutation({
-    mutationFn: async (values: z.infer<typeof orgSchema>) => {
-      const res = await apiRequest<{ branch: { id: string } }>('/v1/organizations', {
+    mutationFn: async (payload: CreateSalonPayload) => {
+      const { phone, ...body } = payload
+      const res = await apiRequest<{ organization: { id: string }; branch: { id: string } | null }>('/v1/organizations', {
         token: accessToken,
-        body: { name: values.name, branch_name: values.branch_name, city: values.city, address_line: values.address_line, type: 'salon' },
+        body,
       })
-      const phone = (values.phone ?? '').trim()
       if (phone && res.branch?.id) {
         await apiRequest(`/v1/branches/${res.branch.id}`, { method: 'PATCH', token: accessToken, body: { phone } })
       }
       return res
     },
-    onSuccess: async () => {
+    onSuccess: async (res) => {
       setOk('Салон создан')
       setError(null)
+      if (res.organization?.id) cabinet.setSelectedOrgId(res.organization.id)
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
@@ -284,7 +292,7 @@ export function MasterCabinetPage() {
     mutationFn: (values: z.infer<typeof masterSchema>) => {
       const banned = moderationError([values.display_name, values.bio ?? '', values.education ?? '', values.specializations ?? ''].join(' '))
       if (banned) throw new ApiError(banned, 'content_not_allowed', 400)
-      const org = orgs.data?.items.find((o) => o.organization.type !== 'supplier') ?? orgs.data?.items[0]
+      const org = primaryOrg
       const boundOrg = Boolean(master.data?.master.organization_id)
       const types = uniqueCanonicalWorkTypes(values.work_types)
       return apiRequest('/v1/me/master', {
@@ -294,7 +302,7 @@ export function MasterCabinetPage() {
           ...(org || boundOrg
             ? {
                 organization_id: org?.organization.id ?? master.data?.master.organization_id,
-                branch_id: org?.branches[0]?.id ?? master.data?.master.branch_id,
+                branch_id: primaryBranch?.id ?? org?.branches[0]?.id ?? master.data?.master.branch_id,
               }
             : {}),
           display_name: values.display_name,
@@ -364,7 +372,7 @@ export function MasterCabinetPage() {
       return
     }
     if (!accessToken) return
-    const org = orgs.data?.items.find((o) => o.organization.type !== 'supplier') ?? orgs.data?.items[0]
+    const org = primaryOrg
     const existing = master.data?.master
     const formSpecs = (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
     // Prefer form values when present; otherwise keep server specializations so photo upload
@@ -387,7 +395,7 @@ export function MasterCabinetPage() {
           ...(org || existing?.organization_id
             ? {
                 organization_id: org?.organization.id ?? existing?.organization_id,
-                branch_id: org?.branches[0]?.id ?? existing?.branch_id,
+                branch_id: primaryBranch?.id ?? org?.branches[0]?.id ?? existing?.branch_id,
               }
             : {}),
           display_name: masterForm.getValues('display_name') || existing?.display_name || user?.display_name || 'Мастер',
@@ -538,19 +546,26 @@ export function MasterCabinetPage() {
         <h2>Салон</h2>
         <p className="muted">
           Членство в организации не зависит от формата работы.
-          {!hasSalon ? ' Салон можно создать здесь или принять приглашение владельца.' : ''}
+          {!hasSalon ? ' Салон можно создать здесь или принять приглашение владельца. Филиал необязателен.' : ''}
+          {hasSalon ? <> Управление несколькими салонами — в <Link to="/settings/salons">Настройки → Мои салоны</Link>.</> : null}
         </p>
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
         {orgs.isError && <ErrorBanner error={orgs.error} fallbackTitle="Не удалось загрузить организации" />}
-        {orgs.data && orgs.data.items.length > 0 ? (
+        {orgs.data && orgs.data.items.length > 0 && (
           <div className="stack-sm">
             {orgs.data.items.map((item) => (
               <div key={item.organization.id} className="stack-sm">
                 <strong>{item.organization.name}</strong>
-                <p>{item.branches[0]?.city}, {item.branches[0]?.address_line}</p>
+                <p>
+                  {item.organization.city || item.branches[0]?.city || 'Город не указан'}
+                  {(item.organization.address_line || item.branches[0]?.address_line)
+                    ? `, ${item.organization.address_line || item.branches[0]?.address_line}`
+                    : ''}
+                </p>
                 <p className="muted">
-                  Филиал: {item.branches[0]?.published ? 'опубликован' : 'скрыт'}
-                  {item.branches[0]?.phone ? ` · ${item.branches[0].phone}` : ' · телефон не указан'}
+                  {item.branches.length === 0
+                    ? 'Без филиалов'
+                    : `Филиал: ${item.branches[0]?.published ? 'опубликован' : 'скрыт'}${item.branches[0]?.phone ? ` · ${item.branches[0].phone}` : ' · телефон не указан'}`}
                 </p>
               </div>
             ))}
@@ -586,35 +601,14 @@ export function MasterCabinetPage() {
               </form>
             )}
           </div>
-        ) : (!orgs.isLoading && !orgs.isError) ? (
-          <form className="stack" onSubmit={orgForm.handleSubmit((v) => createOrg.mutate(v))}>
-            <div className="field">
-              <label>Название</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.name)} {...orgForm.register('name')} />
-              {orgForm.formState.errors.name && <span className="error">{orgForm.formState.errors.name.message}</span>}
-            </div>
-            <div className="field">
-              <label>Филиал</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.branch_name)} {...orgForm.register('branch_name')} />
-              {orgForm.formState.errors.branch_name && <span className="error">{orgForm.formState.errors.branch_name.message}</span>}
-            </div>
-            <div className="field">
-              <label>Город</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.city)} {...orgForm.register('city')} />
-              {orgForm.formState.errors.city && <span className="error">{orgForm.formState.errors.city.message}</span>}
-            </div>
-            <div className="field">
-              <label>Адрес</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.address_line)} {...orgForm.register('address_line')} />
-              {orgForm.formState.errors.address_line && <span className="error">{orgForm.formState.errors.address_line.message}</span>}
-            </div>
-            <div className="field">
-              <label>Телефон</label>
-              <input {...orgForm.register('phone')} placeholder="+7 999 000-00-00" />
-            </div>
-            <button className="btn btn-primary btn-block" type="submit" disabled={createOrg.isPending}>Создать салон</button>
-          </form>
-        ) : null}
+        )}
+        {!orgs.isLoading && !orgs.isError && !hasSalon && (
+          <CreateSalonForm
+            pending={createOrg.isPending}
+            defaultCity={user?.city || 'Красноярск'}
+            onSubmit={async (payload) => { await createOrg.mutateAsync(payload) }}
+          />
+        )}
       </section>
 
       {primaryOrg && (

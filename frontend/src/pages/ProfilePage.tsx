@@ -111,7 +111,7 @@ export function ProfilePage() {
             onChange={cabinet.setInteractionMode}
             canUseMasterMode={cabinet.canUseMasterMode}
           />
-          {cabinet.capabilities.isMaster && (
+          {cabinet.canUseMasterMode && (
             <Link className="btn btn-secondary" to="/master">Форматы работы и профиль мастера</Link>
           )}
         </section>

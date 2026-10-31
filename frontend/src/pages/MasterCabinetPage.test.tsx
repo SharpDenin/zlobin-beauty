@@ -39,6 +39,19 @@ vi.mock('@/shared/lib/useFormDraft', () => ({
   useFormDraft: () => ({ clear: vi.fn() }),
 }))
 
+vi.mock('@/shared/lib/cabinet', () => ({
+  useCabinet: () => ({
+    selectedOrg: {
+      organization: { id: 'org1', name: 'Салон', type: 'salon', published: true, description: '' },
+      branches: [{ id: 'b1', name: 'Центр', city: 'Красноярск', address_line: 'Ленина 1', phone: '+7900', published: false }],
+      roles: ['owner'],
+    },
+    selectedBranch: { id: 'b1', name: 'Центр', city: 'Красноярск', address_line: 'Ленина 1', phone: '+7900', published: false },
+    setSelectedOrgId: vi.fn(),
+    setSelectedBranchId: vi.fn(),
+  }),
+}))
+
 const mockedRequest = vi.mocked(apiRequest)
 
 function renderPage() {

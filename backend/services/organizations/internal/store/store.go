@@ -16,13 +16,13 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-const orgCols = `id, name, description, type, status, published, logo_media_id, delivery_note, masters_see_client_contacts, created_by, created_at, updated_at`
+const orgCols = `id, name, description, type, status, published, logo_media_id, delivery_note, masters_see_client_contacts, city, address_line, created_by, created_at, updated_at`
 const branchCols = `id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
 pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, active, created_at, updated_at`
 
 func scanOrg(row pgx.Row) (*domain.Organization, error) {
 	var o domain.Organization
-	if err := row.Scan(&o.ID, &o.Name, &o.Description, &o.Type, &o.Status, &o.Published, &o.LogoMediaID, &o.DeliveryNote, &o.MastersSeeClientContacts, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
+	if err := row.Scan(&o.ID, &o.Name, &o.Description, &o.Type, &o.Status, &o.Published, &o.LogoMediaID, &o.DeliveryNote, &o.MastersSeeClientContacts, &o.City, &o.AddressLine, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -45,28 +45,32 @@ func scanBranch(row pgx.Row) (*domain.Branch, error) {
 	return &b, nil
 }
 
-func (s *Store) CreateOrgWithBranchAndOwner(ctx context.Context, org domain.Organization, branch domain.Branch, membership domain.Membership) error {
+// CreateOrgWithOwner creates organization + owner membership atomically.
+// When branch != nil it is inserted in the same transaction.
+func (s *Store) CreateOrgWithOwner(ctx context.Context, org domain.Organization, branch *domain.Branch, membership domain.Membership) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-INSERT INTO organizations(id, name, description, type, status, published, logo_media_id, delivery_note, masters_see_client_contacts, created_by, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, org.ID, org.Name, org.Description, org.Type, org.Status, org.Published, org.LogoMediaID, org.DeliveryNote, true, org.CreatedBy, org.CreatedAt, org.UpdatedAt)
+INSERT INTO organizations(id, name, description, type, status, published, logo_media_id, delivery_note, masters_see_client_contacts, city, address_line, created_by, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, org.ID, org.Name, org.Description, org.Type, org.Status, org.Published, org.LogoMediaID, org.DeliveryNote, true, org.City, org.AddressLine, org.CreatedBy, org.CreatedAt, org.UpdatedAt)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `
+	if branch != nil {
+		_, err = tx.Exec(ctx, `
 INSERT INTO branches(id, organization_id, name, city, address_line, phone, timezone, cancel_window_hours, auto_confirm, published,
 pickup_enabled, latitude, longitude, working_hours_note, photo_media_id, active, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-		branch.ID, branch.OrganizationID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone,
-		branch.CancelWindowHours, branch.AutoConfirm, branch.Published,
-		branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, true,
-		branch.CreatedAt, branch.UpdatedAt)
-	if err != nil {
-		return err
+			branch.ID, branch.OrganizationID, branch.Name, branch.City, branch.AddressLine, branch.Phone, branch.Timezone,
+			branch.CancelWindowHours, branch.AutoConfirm, branch.Published,
+			branch.PickupEnabled, branch.Latitude, branch.Longitude, branch.WorkingHoursNote, branch.PhotoMediaID, true,
+			branch.CreatedAt, branch.UpdatedAt)
+		if err != nil {
+			return err
+		}
 	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO memberships(id, organization_id, user_id, role, status, created_at)
@@ -75,6 +79,11 @@ VALUES ($1,$2,$3,$4,$5,$6)`, membership.ID, membership.OrganizationID, membershi
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// CreateOrgWithBranchAndOwner keeps the legacy name for call sites that always pass a branch.
+func (s *Store) CreateOrgWithBranchAndOwner(ctx context.Context, org domain.Organization, branch domain.Branch, membership domain.Membership) error {
+	return s.CreateOrgWithOwner(ctx, org, &branch, membership)
 }
 
 func (s *Store) CreateBranch(ctx context.Context, branch domain.Branch) error {

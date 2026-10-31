@@ -7,18 +7,20 @@ import (
 )
 
 type Organization struct {
-	ID                        uuid.UUID
-	Name                      string
-	Description               string
-	Type                      string
-	Status                    string
-	Published                 bool
-	LogoMediaID               *uuid.UUID
-	DeliveryNote              string
-	MastersSeeClientContacts  bool
-	CreatedBy                 uuid.UUID
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	ID                       uuid.UUID
+	Name                     string
+	Description              string
+	Type                     string
+	Status                   string
+	Published                bool
+	LogoMediaID              *uuid.UUID
+	DeliveryNote             string
+	MastersSeeClientContacts bool
+	City                     string
+	AddressLine              string
+	CreatedBy                uuid.UUID
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // SupplierListItem is a published supplier org with first-branch city for catalog UI.

@@ -69,6 +69,23 @@ describe('resolveCapabilities / legacy owner shell', () => {
     expect(canFeatureFromCaps(caps, 'salon_settings')).toBe(true)
   })
 
+  it('REG-03: owner membership alone does not grant master capabilities', () => {
+    const orgs = [ownerOrg()]
+    const caps = resolveCapabilities(baseUser(['client']), orgs, null)
+    expect(caps.isSalonOwner).toBe(true)
+    expect(caps.isMaster).toBe(false)
+    expect(canFeatureFromCaps(caps, 'staff')).toBe(true)
+    expect(resolveCabinetKind(baseUser(['client']), { orgs, master: null })).toBe('salon_owner')
+  })
+
+  it('REG-03: owner + master keeps both capability sets', () => {
+    const orgs = [ownerOrg()]
+    const master = { id: 'm1', work_types: ['private_practice'] }
+    const caps = resolveCapabilities(baseUser(['master']), orgs, master)
+    expect(caps.isSalonOwner).toBe(true)
+    expect(caps.isMaster).toBe(true)
+  })
+
   it('treats inactive membership as absent (not in mine list)', () => {
     // /organizations/mine only returns status=active — empty orgs simulates removed/inactive.
     const caps = resolveCapabilities(baseUser(['salon_owner']), [], {
@@ -131,6 +148,14 @@ describe('resolveCapabilities / legacy owner shell', () => {
     expect(caps.workFormats).toEqual(['private_practice', 'chair_rental'])
     expect(resolveCabinetKind(baseUser(['salon_owner', 'master']), { orgs, master, interactionMode: 'client' })).toBe('client')
     expect(resolveCabinetKind(baseUser(['salon_owner', 'master']), { orgs, master, interactionMode: 'master' })).toBe('salon_owner')
+  })
+
+  it('REG-03: owner-only stays in owner shell without master mode signals', () => {
+    const orgs = [ownerOrg()]
+    const caps = resolveCapabilities(baseUser(['client']), orgs, {})
+    expect(caps.isMaster).toBe(false)
+    expect(caps.isSalonOwner).toBe(true)
+    expect(resolveCabinetKind(baseUser(['client']), { orgs, master: {}, interactionMode: 'master' })).toBe('salon_owner')
   })
 
   it('marks chain ops when owning multiple salons via membership only', () => {

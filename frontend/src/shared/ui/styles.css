@@ -3727,6 +3727,11 @@ button.list-item:hover {
   gap: var(--space-3);
   grid-template-columns: 1fr;
 }
+.card.is-selected {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-glow);
+}
+
 .history-card.is-terminal,
 .card.is-terminal {
   opacity: 0.72;

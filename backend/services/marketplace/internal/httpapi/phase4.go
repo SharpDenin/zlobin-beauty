@@ -35,6 +35,11 @@ func (a *API) registerPhase4Routes(mux *http.ServeMux, auth func(http.Handler) h
 	mux.Handle("GET /v1/model-requests/{id}/responses", auth(http.HandlerFunc(a.listModelResponses)))
 	mux.Handle("POST /v1/model-responses/{id}/accept", auth(http.HandlerFunc(a.acceptModelResponse)))
 	mux.Handle("POST /v1/model-responses/{id}/cancel", auth(http.HandlerFunc(a.cancelModelResponse)))
+	mux.Handle("GET /v1/model-request-interests", auth(http.HandlerFunc(a.listModelRequestInterests)))
+	// Alias under /v1/model-requests/ so existing gateway prefix routes work without a dedicated mount.
+	mux.Handle("GET /v1/model-requests/interests", auth(http.HandlerFunc(a.listModelRequestInterests)))
+	mux.Handle("POST /v1/model-requests/{id}/interest", auth(http.HandlerFunc(a.addModelRequestInterest)))
+	mux.Handle("DELETE /v1/model-requests/{id}/interest", auth(http.HandlerFunc(a.removeModelRequestInterest)))
 
 	mux.Handle("GET /v1/internal/masters/by-user/{userID}", internal(http.HandlerFunc(a.internalMasterByUser)))
 	mux.Handle("GET /v1/internal/masterclasses/{id}/access", internal(http.HandlerFunc(a.internalMasterclassAccess)))
@@ -366,6 +371,48 @@ func (a *API) acceptModelResponse(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, modelRequestDTO(*req))
 }
 
+func (a *API) listModelRequestInterests(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	items, err := a.svc.ListMyModelRequestInterests(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, modelRequestInterestDTO(it))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) addModelRequestInterest(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.AddModelRequestInterest(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"request_id": id.String(), "interested": true})
+}
+
+func (a *API) removeModelRequestInterest(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.RemoveModelRequestInterest(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"request_id": id.String(), "interested": false})
+}
+
 func (a *API) cancelModelResponse(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	id, err := uuid.Parse(r.PathValue("id"))
@@ -549,8 +596,15 @@ func modelRequestDTO(e domain.ModelRequest) map[string]any {
 		"category": e.Category, "title": e.Title, "description": e.Description, "city": e.City,
 		"location_note": e.LocationNote, "starts_at": e.StartsAt, "ends_at": e.EndsAt, "timezone": e.Timezone,
 		"capacity": e.Capacity, "accepted_count": e.AcceptedCount, "available_slots": slots,
-		"status": e.Status, "relevant": e.Relevant, "match_score": e.MatchScore, "my_response": mine,
-		"created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
+		"status": e.Status, "relevant": e.Relevant, "interested": e.Interested, "match_score": e.MatchScore,
+		"my_response": mine, "created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
+	}
+}
+
+func modelRequestInterestDTO(i domain.ModelRequestInterest) map[string]any {
+	return map[string]any{
+		"user_id": i.UserID.String(), "request_id": i.RequestID.String(), "created_at": i.CreatedAt,
+		"title": i.Title, "starts_at": i.StartsAt, "ends_at": i.EndsAt, "status": i.Status,
 	}
 }
 

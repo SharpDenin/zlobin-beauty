@@ -465,6 +465,146 @@ WHERE id=$1 AND client_user_id=$2 AND status='requested'`, id, userID, now)
 	return nil
 }
 
+func (s *Store) ListModelRequestInterestIDs(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT request_id FROM model_request_interests WHERE user_id=$1`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListModelRequestInterests(ctx context.Context, userID uuid.UUID) ([]domain.ModelRequestInterest, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT i.user_id, i.request_id, i.created_at, r.title, r.starts_at, r.ends_at, r.status
+FROM model_request_interests i
+JOIN model_requests r ON r.id = i.request_id
+WHERE i.user_id=$1
+ORDER BY r.starts_at ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ModelRequestInterest
+	for rows.Next() {
+		var it domain.ModelRequestInterest
+		if err := rows.Scan(&it.UserID, &it.RequestID, &it.CreatedAt, &it.Title, &it.StartsAt, &it.EndsAt, &it.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	if out == nil {
+		out = []domain.ModelRequestInterest{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) HasModelRequestInterest(ctx context.Context, userID, requestID uuid.UUID) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM model_request_interests WHERE user_id=$1 AND request_id=$2)`, userID, requestID).Scan(&exists)
+	return exists, err
+}
+
+// AddModelRequestInterest inserts interest under SERIALIZABLE isolation and
+// rejects overlapping intervals among the user's existing interests.
+func (s *Store) AddModelRequestInterest(ctx context.Context, userID, requestID uuid.UUID, now time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`); err != nil {
+		return err
+	}
+
+	var status string
+	var starts, ends time.Time
+	var masterID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+SELECT status, starts_at, ends_at, master_user_id FROM model_requests WHERE id=$1 FOR UPDATE`, requestID).
+		Scan(&status, &starts, &ends, &masterID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound("model request not found")
+		}
+		return err
+	}
+	if status != domain.StatusPublished {
+		return apperr.Conflict("model request is not open for interest")
+	}
+	if masterID == userID {
+		return apperr.Forbidden("cannot interest own request")
+	}
+
+	var already bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM model_request_interests WHERE user_id=$1 AND request_id=$2)`, userID, requestID).Scan(&already); err != nil {
+		return err
+	}
+	if already {
+		return nil
+	}
+
+	rows, err := tx.Query(ctx, `
+SELECT r.starts_at, r.ends_at, r.title
+FROM model_request_interests i
+JOIN model_requests r ON r.id = i.request_id
+WHERE i.user_id=$1`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var os, oe time.Time
+		var title string
+		if err := rows.Scan(&os, &oe, &title); err != nil {
+			return err
+		}
+		if domain.IntervalsOverlap(starts, ends, os, oe) {
+			return apperr.ConflictCode(apperr.CodeModelInterestOverlap,
+				"selected model request overlaps another interest: "+title)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+INSERT INTO model_request_interests(user_id, request_id, created_at)
+VALUES ($1,$2,$3)`, userID, requestID, now); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil
+		}
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapSerialize(err)
+	}
+	return nil
+}
+
+func (s *Store) RemoveModelRequestInterest(ctx context.Context, userID, requestID uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `
+DELETE FROM model_request_interests WHERE user_id=$1 AND request_id=$2`, userID, requestID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("interest not found")
+	}
+	return nil
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }

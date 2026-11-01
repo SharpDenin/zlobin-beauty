@@ -64,14 +64,16 @@ describe('MediaImage stillFrame opt-in', () => {
 
   it('does not leave stale still after unmount during resolve', async () => {
     const { resolveGifStillFrame } = await import('@/shared/lib/gifStillFrame')
-    let release: ((v: string | null) => void) | null = null
+    let release: ((v: string | null) => void) | undefined
     vi.mocked(resolveGifStillFrame).mockImplementationOnce(
       () => new Promise((resolve) => { release = resolve }),
     )
     const { unmount } = render(<MediaImage mediaId="slow" alt="Slow" stillFrame loading="eager" />)
     await waitFor(() => expect(release).toBeTypeOf('function'))
     unmount()
-    release?.('data:image/png;base64,LATE')
+    const finish = release
+    expect(finish).toBeDefined()
+    finish!('data:image/png;base64,LATE')
     await Promise.resolve()
     expect(document.querySelector('[data-testid="media-still"]')).toBeNull()
   })

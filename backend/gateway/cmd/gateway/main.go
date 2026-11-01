@@ -86,6 +86,8 @@ func main() {
 	mux.Handle("/v1/masterclass-registrations/", marketplace)
 	mux.Handle("/v1/model-requests", marketplace)
 	mux.Handle("/v1/model-requests/", marketplace)
+	mux.Handle("/v1/model-request-interests", marketplace)
+	mux.Handle("/v1/model-request-interests/", marketplace)
 	mux.Handle("/v1/model-responses/", marketplace)
 	mux.Handle("/v1/profession-types", marketplace)
 	mux.Handle("/v1/profession-types/", marketplace)

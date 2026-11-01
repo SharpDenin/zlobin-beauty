@@ -42,9 +42,8 @@ func (s *Service) PatchModelPreferences(ctx context.Context, userID uuid.UUID, i
 	}
 	p.UpdatedAt = now
 	p.UserID = userID
-	if in.Willing != nil {
-		p.Willing = *in.Willing
-	}
+	// willing is legacy: stop writing from new clients. Keep stored value for history.
+	_ = in.Willing
 	if in.Notify != nil {
 		p.Notify = *in.Notify
 	}
@@ -67,9 +66,6 @@ func (s *Service) PatchModelPreferences(ctx context.Context, userID uuid.UUID, i
 	if in.DateTo != nil {
 		p.DateTo = parseDatePtr(*in.DateTo)
 	}
-	if !p.Willing {
-		p.Notify = false
-	}
 	if err := s.store.UpsertModelPreference(ctx, *p); err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -87,7 +83,7 @@ func (s *Service) MatchingModelPreferences(ctx context.Context, category, city, 
 	}
 	var out []domain.ModelPreference
 	for _, p := range items {
-		if !p.Notify || !p.Willing {
+		if !p.Notify {
 			continue
 		}
 		if len(p.Categories) == 0 {

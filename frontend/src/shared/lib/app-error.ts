@@ -195,6 +195,11 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Сеанс пересекается с другим',
     hint: 'Выберите другое время.',
   },
+  model_interest_overlap: {
+    kind: 'conflict',
+    title: 'Предложение пересекается по времени с уже выбранным',
+    hint: 'Снимите пересекающийся интерес или выберите другое время.',
+  },
   booking_cutoff_passed: {
     kind: 'conflict',
     title: 'Запись на этот сеанс уже закрыта',

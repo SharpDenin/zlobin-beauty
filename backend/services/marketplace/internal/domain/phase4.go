@@ -84,6 +84,7 @@ type ModelRequest struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	Relevant      bool
+	Interested    bool
 	MatchScore    int
 	MyResponse    *ModelResponse
 }
@@ -96,4 +97,22 @@ type ModelResponse struct {
 	Status       string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// ModelRequestInterest is a soft interest in a model_request (not a response/slot).
+type ModelRequestInterest struct {
+	UserID    uuid.UUID
+	RequestID uuid.UUID
+	CreatedAt time.Time
+	// Joined request fields for list/overlap checks.
+	Title    string
+	StartsAt time.Time
+	EndsAt   time.Time
+	Status   string
+}
+
+// IntervalsOverlap reports whether two half-open-adjacent intervals collide.
+// Touching endpoints (endA == startB) do not overlap.
+func IntervalsOverlap(startA, endA, startB, endB time.Time) bool {
+	return startA.Before(endB) && startB.Before(endA)
 }

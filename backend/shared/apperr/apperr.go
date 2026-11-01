@@ -34,6 +34,7 @@ const (
 	CodeOccurrenceUnavailable       Code = "occurrence_unavailable"
 	CodeOccurrenceFull              Code = "occurrence_full"
 	CodeOccurrenceOverlap           Code = "occurrence_overlap"
+	CodeModelInterestOverlap        Code = "model_interest_overlap"
 	CodeBookingCutoff               Code = "booking_cutoff_passed"
 	CodeClientBlacklisted           Code = "client_blacklisted"
 	CodePlannerOutsideHours         Code = "planner_outside_hours"

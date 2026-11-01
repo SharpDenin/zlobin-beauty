@@ -168,12 +168,12 @@ describe('MasterCabinetPage PROF-01..05', () => {
     await waitFor(() => expect(screen.getByText('Телефон филиала сохранён')).toBeInTheDocument())
   })
 
-  it('uploads photo without requiring specializations in the payload from empty form tags', async () => {
+  it('preserves legacy specializations as chips and on photo upload', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('master-readiness-missing')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByDisplayValue('колористика')).toBeInTheDocument())
-    // Clear tags in the form — photo save must still preserve server specializations.
-    fireEvent.change(screen.getByLabelText('Дополнительные теги'), { target: { value: '' } })
+    await waitFor(() => expect(screen.getByTestId('master-legacy-specializations')).toBeInTheDocument())
+    expect(screen.getByText('колористика')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Дополнительные теги')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Загрузить фото профиля' }))
     await waitFor(() => {
       const put = mockedRequest.mock.calls.find((c) => c[0] === '/v1/me/master' && (c[1] as { method?: string })?.method === 'PUT')
@@ -185,4 +185,5 @@ describe('MasterCabinetPage PROF-01..05', () => {
       expect(body.education).toBe('Academy')
     })
   })
+
 })

@@ -308,7 +308,8 @@ export function MasterCabinetPage() {
           display_name: values.display_name,
           city: values.city,
           bio: values.bio ?? '',
-          specializations: (values.specializations ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+          // Preserve legacy specializations; new directions use profession_type_ids only.
+          specializations: master.data?.master.specializations ?? [],
           experience_years: values.experience_years,
           education: values.education ?? '',
           work_type: primaryWorkType(types),
@@ -374,10 +375,8 @@ export function MasterCabinetPage() {
     if (!accessToken) return
     const org = primaryOrg
     const existing = master.data?.master
-    const formSpecs = (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
-    // Prefer form values when present; otherwise keep server specializations so photo upload
-    // does not wipe tags or require specialization in the same step (PROF-03).
-    const specializations = formSpecs.length ? formSpecs : (existing?.specializations ?? [])
+    // Legacy specializations are preserved as-is; directions are profession_type_ids.
+    const specializations = existing?.specializations ?? []
     const workTypes = uniqueCanonicalWorkTypes(
       (masterForm.getValues('work_types')?.length
         ? masterForm.getValues('work_types')
@@ -724,10 +723,20 @@ export function MasterCabinetPage() {
               <span className="hint field-need" role="status">{fieldHint('profession_types')}</span>
             )}
           </div>
-          <div className="field">
-            <label htmlFor="master-specializations">Дополнительные теги</label>
-            <input id="master-specializations" {...masterForm.register('specializations')} placeholder="Свадебные укладки, мужские стрижки" />
-            <p className="muted">Свободные теги для поиска. Не дублируют профессиональный тип.</p>
+          <div id="master-specializations" className="field" data-testid="master-legacy-specializations">
+            <span>Дополнительные теги (архив)</span>
+            <p className="muted">
+              Направления задаются через «Тип мастера» выше. Свободный ввод отключён.
+            </p>
+            {(master.data?.master.specializations?.length ?? 0) > 0 ? (
+              <div className="row wrap" role="list">
+                {master.data!.master.specializations!.map((tag) => (
+                  <span key={tag} className="chip badge-default" role="listitem">{tag}</span>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">Сохранённых свободных тегов нет.</p>
+            )}
             {fieldHint('specializations') && <span className="hint field-need" role="status">{fieldHint('specializations')}</span>}
           </div>
           <div className="field">

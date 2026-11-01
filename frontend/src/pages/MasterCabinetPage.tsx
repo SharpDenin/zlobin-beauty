@@ -139,7 +139,7 @@ export function MasterCabinetPage() {
   const portfolio = useQuery({
     queryKey: ['my-portfolio'],
     queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string; sort_order: number }> }>(
+      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string; media_type?: string; sort_order: number }> }>(
         '/v1/me/master/portfolio',
         { token: accessToken },
       ),
@@ -804,7 +804,13 @@ export function MasterCabinetPage() {
         <div className="list">
           {portfolio.data?.items.map((item) => (
             <article key={item.id} className="list-item stack-sm">
-              <MediaImage mediaId={item.media_id} token={accessToken} alt={item.caption || 'Работа'} className="portfolio-thumb" />
+              <MediaImage
+                mediaId={item.media_id}
+                token={accessToken}
+                alt={item.caption || 'Работа'}
+                className="portfolio-thumb"
+                stillFrame={item.media_type === 'gif'}
+              />
               {item.caption && <p>{item.caption}</p>}
               <button
                 className="btn btn-secondary btn-compact"

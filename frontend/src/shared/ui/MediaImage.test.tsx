@@ -1,8 +1,30 @@
-import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+
+vi.mock('@/shared/lib/mediaCache', () => ({
+  getCachedMediaUrl: vi.fn(() => null),
+  loadMediaBlobUrl: vi.fn(async () => 'blob:mock/default'),
+  clearMediaCache: vi.fn(),
+}))
+
+vi.mock('@/shared/lib/gifStillFrame', async () => {
+  const actual = await vi.importActual<typeof import('@/shared/lib/gifStillFrame')>(
+    '@/shared/lib/gifStillFrame',
+  )
+  return {
+    ...actual,
+    getCachedGifStill: vi.fn(() => null),
+    resolveGifStillFrame: vi.fn(async () => 'data:image/png;base64,STILL'),
+  }
+})
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 describe('MediaImage fallback', () => {
   it('shows system fallback when media id is missing', () => {
@@ -11,6 +33,47 @@ describe('MediaImage fallback', () => {
     expect(el).toHaveClass('media-fallback')
     expect(el).toHaveTextContent('СТ')
     expect(el.querySelector('img')).toBeNull()
+  })
+})
+
+describe('MediaImage stillFrame opt-in', () => {
+  it('default path stays animated (no still extraction)', async () => {
+    const { resolveGifStillFrame } = await import('@/shared/lib/gifStillFrame')
+    render(<MediaImage mediaId="m1" alt="Default" loading="eager" />)
+    await waitFor(() => {
+      expect(screen.getByAltText('Default').getAttribute('src')).toBe('blob:mock/default')
+    })
+    expect(resolveGifStillFrame).not.toHaveBeenCalled()
+  })
+
+  it('stillFrame uses derived still for plain and both cover layers', async () => {
+    const { container: plain } = render(<MediaImage mediaId="g1" alt="Still plain" stillFrame loading="eager" />)
+    await waitFor(() => {
+      expect(plain.querySelector('[data-testid="media-still"]')?.getAttribute('src')).toBe('data:image/png;base64,STILL')
+    })
+
+    const { container: cover } = render(<MediaImage mediaId="g2" alt="Still cover" variant="cover" stillFrame loading="eager" />)
+    await waitFor(() => {
+      expect(cover.querySelector('[data-testid="media-still-cover"]')).not.toBeNull()
+    })
+    const imgs = cover.querySelectorAll('[data-testid="media-still-cover"] img')
+    expect(imgs).toHaveLength(2)
+    expect(imgs[0].getAttribute('src')).toBe('data:image/png;base64,STILL')
+    expect(imgs[1].getAttribute('src')).toBe('data:image/png;base64,STILL')
+  })
+
+  it('does not leave stale still after unmount during resolve', async () => {
+    const { resolveGifStillFrame } = await import('@/shared/lib/gifStillFrame')
+    let release: ((v: string | null) => void) | null = null
+    vi.mocked(resolveGifStillFrame).mockImplementationOnce(
+      () => new Promise((resolve) => { release = resolve }),
+    )
+    const { unmount } = render(<MediaImage mediaId="slow" alt="Slow" stillFrame loading="eager" />)
+    await waitFor(() => expect(release).toBeTypeOf('function'))
+    unmount()
+    release?.('data:image/png;base64,LATE')
+    await Promise.resolve()
+    expect(document.querySelector('[data-testid="media-still"]')).toBeNull()
   })
 })
 

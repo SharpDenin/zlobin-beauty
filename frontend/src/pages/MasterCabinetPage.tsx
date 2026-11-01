@@ -855,7 +855,7 @@ export function MasterCabinetPage() {
           <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
             Установить пн–пт 10:00–19:00
           </button>
-          <Link className="btn btn-secondary" to="/schedule">Установка графика</Link>
+          <Link className="btn btn-secondary" to="/calendar?panel=schedule">Установка графика</Link>
         </div>
         {hours.data && hours.data.items.length > 0 && (
           <p className="muted">Сохранено интервалов: {hours.data.items.length}</p>

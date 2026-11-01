@@ -72,7 +72,6 @@ import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
 import { SettingsLayout } from '@/pages/settings/SettingsLayout'
 import { SettingsAppearancePage } from '@/pages/settings/SettingsAppearancePage'
 import { SettingsSalonsPage } from '@/pages/settings/SettingsSalonsPage'
-import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { MessagesPage } from '@/pages/MessagesPage'
@@ -192,7 +191,7 @@ export function App() {
                   <Route path="/masterclasses/new" element={<MasterclassCreatePage />} />
                   <Route path="/masterclasses/:id" element={<MasterclassDetailPage />} />
                   <Route path="/models/new" element={<ModelRequestCreatePage />} />
-                  <Route path="/schedule" element={<WorkSchedulePage />} />
+                  <Route path="/schedule" element={<Navigate to="/calendar?panel=schedule" replace />} />
                   <Route path="/chairs" element={<ChairMarketplacePage />} />
                   <Route path="/clients" element={<ClientsPage />} />
                   <Route path="/services" element={<ServicesPage />} />

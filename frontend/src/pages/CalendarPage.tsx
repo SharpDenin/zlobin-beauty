@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
@@ -62,7 +62,13 @@ import {
 import { CalendarAvailability } from '@/pages/CalendarAvailability'
 import { CalendarMobile } from '@/pages/CalendarMobile'
 import { RescheduleDialog } from '@/pages/RescheduleDialog'
+import { ScheduleEditor, type ScheduleEditorTab } from '@/features/schedule/ScheduleEditor'
 import '@/pages/calendar.css'
+
+function parseScheduleTab(raw: string | null): ScheduleEditorTab {
+  if (raw === 'exception' || raw === 'modes' || raw === 'hours') return raw
+  return 'hours'
+}
 
 type Appointment = {
   id: string
@@ -207,6 +213,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const { accessToken, user } = useAuth()
   const cabinet = useCabinet()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const qc = useQueryClient()
   const calendarRef = useRef<FullCalendar | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -214,6 +221,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const swipeStart = useRef<{ x: number; y: number; id: number; t: number; blocked: boolean } | null>(null)
   const interacting = useRef(false)
   const suppressSelect = useRef(false)
+  const suppressEventClick = useRef(false)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
   const compact = useCompactCalendar()
   const wasCompact = useRef(compact)
@@ -238,6 +246,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [rangeDraft, setRangeDraft] = useState<DisplayRange>(displayRangePref)
   const [rangeError, setRangeError] = useState<string | null>(null)
   const [hoursEditorOpen, setHoursEditorOpen] = useState(false)
+  const schedulePanelOpen = !embedded && searchParams.get('panel') === 'schedule'
+  const scheduleTab = parseScheduleTab(searchParams.get('tab'))
+  const scheduleStartQ = searchParams.get('start')
+  const scheduleEndQ = searchParams.get('end')
 
   const [range, setRange] = useState(initialRange)
   const [currentView, setCurrentView] = useState<CalendarViewId>(() => {
@@ -257,6 +269,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [rescheduleOpen, setRescheduleOpen] = useState(false)
   const [pendingApptDrop, setPendingApptDrop] = useState<{ id: string; start: Date; end: Date; revert: () => void } | null>(null)
   const [pendingInterval, setPendingInterval] = useState<{ start: Date; end: Date } | null>(null)
+  const [pendingDayOff, setPendingDayOff] = useState(false)
   const [moving, setMoving] = useState(false)
   const [masterFilter, setMasterFilter] = useState('')
   const [branchFilter, setBranchFilter] = useState('')
@@ -761,16 +774,17 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   })
 
   const saveWorkInterval = useMutation({
-    mutationFn: async (payload: { start: Date; end: Date }) => {
+    mutationFn: async (payload: { start: Date; end: Date; isDayOff?: boolean }) => {
       const interval = rangeToDayInterval(payload.start, payload.end, salonTimezone)
       if (!interval) throw new Error('Интервал должен укладываться в один день')
+      const isDayOff = Boolean(payload.isDayOff)
       const body = {
         items: [{
           day: interval.day,
-          is_day_off: false,
-          start_minute: interval.start_minute,
-          end_minute: interval.end_minute,
-          note: 'Рабочий интервал',
+          is_day_off: isDayOff,
+          start_minute: isDayOff ? null : interval.start_minute,
+          end_minute: isDayOff ? null : interval.end_minute,
+          note: isDayOff ? 'Выходной' : 'Рабочий интервал',
         }],
       }
       if (ownerMode && orgID && masterFilter && masterFilter !== user?.id) {
@@ -783,17 +797,18 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     },
     onSuccess: async (_data, variables) => {
       const interval = rangeToDayInterval(variables.start, variables.end, salonTimezone)
-      if (interval) {
+      if (interval && !variables.isDayOff) {
         setRememberedInterval({
           from: minutesToHHMM(interval.start_minute),
           to: minutesToHHMM(interval.end_minute),
         })
       }
-      setOk('Рабочий интервал сохранён')
+      setOk(variables.isDayOff ? 'Выходной сохранён' : 'Рабочий интервал сохранён')
       setIntervalMode(false)
       setIntervalStartMin(null)
       setIntervalEndMin(null)
       setPendingInterval(null)
+      setPendingDayOff(false)
       await qc.invalidateQueries({ queryKey: ['calendar-exceptions'] })
     },
     onError: (e) => {
@@ -879,13 +894,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       detachMove?.()
       detachMove = null
     }
-    const onDown = (event: PointerEvent) => {
-      if (event.pointerType === 'mouse' && event.button !== 0) return
-      const target = event.target as HTMLElement | null
-      if (!target || target.closest('.fc-event, .fc-button, a, button')) return
-      const slot = target.closest('.fc-timegrid-slot') as HTMLElement | null
-      const time = slot?.getAttribute('data-time')
-      if (!time) return
+    const arm = (event: PointerEvent, onFire: () => void) => {
       clear()
       origin = { x: event.clientX, y: event.clientY }
       const onMove = (move: PointerEvent) => {
@@ -906,6 +915,30 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       }
       timer = window.setTimeout(() => {
         timer = null
+        onFire()
+        navigator.vibrate?.(10)
+      }, LONG_PRESS_MS)
+    }
+    const onDown = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      const target = event.target as HTMLElement | null
+      if (!target || target.closest('.fc-button, a, button')) return
+      const eventEl = target.closest('.fc-event') as HTMLElement | null
+      if (eventEl) {
+        if (eventEl.classList.contains('fc-bg-event') || eventEl.classList.contains('fc-non-business')) return
+        const id = eventEl.dataset.calId
+        if (!id || id.startsWith('wm:')) return
+        arm(event, () => {
+          suppressEventClick.current = true
+          openEventById(id)
+          setSheet('event')
+        })
+        return
+      }
+      const slot = target.closest('.fc-timegrid-slot') as HTMLElement | null
+      const time = slot?.getAttribute('data-time')
+      if (!time) return
+      arm(event, () => {
         suppressSelect.current = true
         const [hh, mm] = time.split(':').map(Number)
         const start = new Date(selectedDate)
@@ -914,15 +947,16 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         setBlockStart(isoToDatetimeLocal(start.toISOString(), salonTimezone))
         setBlockEnd(isoToDatetimeLocal(new Date(start.getTime() + 60 * 60 * 1000).toISOString(), salonTimezone))
         setSheet('empty')
-        navigator.vibrate?.(10)
-      }, LONG_PRESS_MS)
+      })
     }
     root.addEventListener('pointerdown', onDown)
     return () => {
       clear()
       root.removeEventListener('pointerdown', onDown)
     }
-  }, [embedded, readOnlyOverlay, compact, selectedDate, salonTimezone])
+    // openEventById is stable enough via events closure; re-bind when grid date/tz changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, readOnlyOverlay, compact, selectedDate, salonTimezone, events])
 
   async function persistMove(id: string, start: Date | null, end: Date | null, resized: boolean) {
     if (!start || !end) return false
@@ -1044,7 +1078,47 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   function onEventClick(info: EventClickArg) {
     if (info.event.display === 'background') return
+    if (suppressEventClick.current) {
+      suppressEventClick.current = false
+      return
+    }
+    setSheet(null)
     openEventById(info.event.id)
+  }
+
+  function openSchedulePanel(tab: ScheduleEditorTab = 'hours', slot?: Date | null) {
+    const next = new URLSearchParams(searchParams)
+    next.set('panel', 'schedule')
+    next.set('tab', tab)
+    if (slot) {
+      next.set('start', slot.toISOString())
+      next.set('end', new Date(slot.getTime() + 60 * 60 * 1000).toISOString())
+    } else {
+      next.delete('start')
+      next.delete('end')
+    }
+    setSearchParams(next, { replace: true })
+  }
+
+  function closeSchedulePanel() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('panel')
+    next.delete('tab')
+    next.delete('start')
+    next.delete('end')
+    setSearchParams(next, { replace: true })
+  }
+
+  function markDayOffFor(day: Date) {
+    const ymd = zonedYmd(day, salonTimezone)
+    const [y, mo, d] = ymd.split('-').map(Number)
+    try {
+      const startIso = wallTimeInTimezoneToUtcIso(y, mo, d, 0, 0, 0, salonTimezone)
+      const endIso = wallTimeInTimezoneToUtcIso(y, mo, d, 23, 59, 0, salonTimezone)
+      saveWorkInterval.mutate({ start: new Date(startIso), end: new Date(endIso), isDayOff: true })
+    } catch (e) {
+      toast.error(formatUserError(e, 'Не удалось отметить выходной'))
+    }
   }
 
   function onDatesSet(info: DatesSetArg) {
@@ -1240,6 +1314,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     setHoursEditorOpen(true)
   }
 
+  useEffect(() => {
+    if (pendingInterval) setPendingDayOff(false)
+  }, [pendingInterval])
+
   const loading = appointments.isLoading || blocks.isLoading || hours.isLoading
   // Month keeps the compact custom grid; day/week use FullCalendar so drag/resize work on phone.
   const showMobileMonth = compact && currentView === 'dayGridMonth'
@@ -1311,7 +1389,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const editorForm = (
     <>
       <div className="field"><label htmlFor="cal-block-title">Название</label><input id="cal-block-title" value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} autoFocus aria-required="true" /></div>
-      <div className="field"><label htmlFor="cal-block-cat">Категория</label><select id="cal-block-cat" value={blockCat} onChange={(e) => { setBlockCat(e.target.value); setBlockColor(normalizeCalendarColor(category(e.target.value).color, e.target.value)) }}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
+      <div className="field">
+        <label htmlFor="cal-block-cat">Категория</label>
+        <select id="cal-block-cat" value={blockCat} onChange={(e) => { setBlockCat(e.target.value); setBlockColor(normalizeCalendarColor(category(e.target.value).color, e.target.value)) }}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+        <p className="muted">Тип занятости в планере (перерыв, задача, блокировка и т.д.).</p>
+      </div>
       <div className="field"><span className="label">Цвет</span>{colorTokenPicker(blockColor, setBlockColor)}</div>
       <div className="field"><label htmlFor="cal-block-start">Начало</label><input id="cal-block-start" type="datetime-local" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} aria-required="true" /></div>
       <div className="field"><label htmlFor="cal-block-end">Конец</label><input id="cal-block-end" type="datetime-local" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} aria-required="true" /></div>
@@ -1363,7 +1445,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       ) : (
         <>
           <div className="field"><label htmlFor="cal-edit-title">Название</label><input id="cal-edit-title" value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} /></div>
-          <div className="field"><label htmlFor="cal-edit-cat">Категория</label><select id="cal-edit-cat" value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
+          <div className="field">
+            <label htmlFor="cal-edit-cat">Категория</label>
+            <select id="cal-edit-cat" value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+            <p className="muted">Тип занятости в планере (перерыв, задача, блокировка и т.д.).</p>
+          </div>
           <div className="field"><span className="label">Цвет</span>{colorTokenPicker(blockColor, setBlockColor)}</div>
           <div className="field"><label htmlFor="cal-edit-start">Начало</label><input id="cal-edit-start" type="datetime-local" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} /></div>
           <div className="field"><label htmlFor="cal-edit-end">Конец</label><input id="cal-edit-end" type="datetime-local" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} /></div>
@@ -1379,7 +1465,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   const hoursEditorForm = (
     <div className="stack" data-testid="calendar-hours-editor">
-      <p className="muted">Рабочий день задаёт диапазон сетки календаря. Это не создаёт записи в графике.</p>
+      <p className="muted">Отображаемые часы сетки календаря. Это не недельный график мастера.</p>
       <div className="calendar-display-range">
         <div className="field">
           <label htmlFor="cal-hours-from">Начало</label>
@@ -1437,8 +1523,18 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
           )}
           <div className="row calendar-page-head-actions">
-            <button className="btn btn-secondary btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
-              Рабочий день
+            {!readOnlyOverlay ? (
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                data-testid="calendar-open-schedule"
+                onClick={() => openSchedulePanel('hours')}
+              >
+                Установка графика
+              </button>
+            ) : null}
+            <button className="btn btn-ghost btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
+              Диапазон сетки
             </button>
             {!readOnlyOverlay ? (
               <button className="btn btn-primary btn-compact" type="button" onClick={() => (blockStart && blockEnd ? setEditorOpen(true) : openCreateAt(selectedDate))}>+ Событие</button>
@@ -1485,8 +1581,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <div className="calendar-view-tabs" aria-label="Режим календаря">
           {([
             ['timeGridDay', 'День'],
-            ['timeGridWeek', 'Неделя'],
+            ['timeGridWeek', compact ? '3 дня' : 'Неделя'],
             ['dayGridMonth', 'Месяц'],
+            ['listWeek', 'Список'],
           ] as const).map(([id, label]) => (
             <button
               key={id}
@@ -1522,8 +1619,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       {settingsOpen && (
         <section className="card calendar-color-settings stack" data-testid="calendar-settings">
           <div>
-            <strong>Рабочий день</strong>
-            <p className="muted">Диапазон сетки, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится.</p>
+            <strong>Диапазон сетки</strong>
+            <p className="muted">Отображаемые часы, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится. Недельный график мастера задаётся отдельно.</p>
           </div>
           <div className="calendar-display-range">
             <div className="field">
@@ -1536,7 +1633,20 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             </div>
           </div>
           {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
-          <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить рабочий день</button>
+          <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить диапазон сетки</button>
+          {rememberedInterval ? (
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => {
+                setDisplayRangePref(rememberedInterval)
+                setRangeDraft(rememberedInterval)
+                setOk(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
+              }}
+            >
+              Применить сохранённый интервал ({rememberedInterval.from}–{rememberedInterval.to})
+            </button>
+          ) : null}
 
           <div>
             <strong>Навигация</strong>
@@ -1578,8 +1688,18 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           </div>
 
           <div className="row wrap gap">
-            <Link className="btn btn-secondary" to="/schedule" data-testid="settings-open-schedule">Установка графика</Link>
-            <Link className="btn btn-secondary" to="/master">Рабочие часы пн–пт</Link>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              data-testid="settings-open-schedule"
+              onClick={() => {
+                setSettingsOpen(false)
+                openSchedulePanel('hours')
+              }}
+            >
+              Установка графика
+            </button>
+            <Link className="btn btn-secondary" to="/master">Профиль мастера</Link>
           </div>
         </section>
       )}
@@ -1639,7 +1759,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <EmptyState
           title="Рабочий график пока не задан"
           text="Календарь покажет рабочие часы после того, как мастер сохранит расписание."
-          action={<Link className="btn btn-secondary" to="/schedule">Установка графика</Link>}
+          action={(
+            <button className="btn btn-secondary" type="button" onClick={() => openSchedulePanel('hours')}>
+              Установка графика
+            </button>
+          )}
         />
       ) : null}
 
@@ -1702,6 +1826,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           events={events}
           eventContent={eventCard}
           eventDidMount={(arg) => {
+            arg.el.dataset.calId = arg.event.id
             const css = String(arg.event.extendedProps.colorCss ?? '')
             if (!css || !arg.el.classList.contains('is-planner-block')) return
             arg.el.style.setProperty('--cal-event-accent', css)
@@ -1739,9 +1864,57 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         </Modal>
       )}
 
+      <Drawer
+        open={sheet === 'event' && Boolean(selected)}
+        onClose={() => { setSheet(null) }}
+        label="Действия с событием"
+        title={
+          selected?.kind === 'appointment' ? (
+            <div>
+              <p className="eyebrow">Запись</p>
+              <h2>{selected.title}</h2>
+            </div>
+          ) : selected ? (
+            <div>
+              <p className="eyebrow">{selected.category}</p>
+              <h2>Событие планера</h2>
+            </div>
+          ) : undefined
+        }
+      >
+        {selected ? (
+          <div className="stack cal-action-sheet">
+            {selected.kind === 'appointment' ? (
+              <>
+                <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); navigate(`/appointments/${apptId}`) }}>Открыть</button>
+                {!selected.readonly && canDragAppointment(selected.statusRaw, selected.bookingMode) ? (
+                  <button type="button" className="btn btn-secondary" onClick={() => { setSheet(null); setRescheduleOpen(true) }}>Перенести</button>
+                ) : null}
+                <button type="button" className="btn btn-secondary" onClick={() => setSheet(null)}>Подробнее</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn btn-primary" onClick={() => setSheet(null)}>Изменить</button>
+                {!selected.readonly ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={removeBlock.isPending}
+                    onClick={() => { removeBlock.mutate(selected.id.slice(6)); setSheet(null); setSelected(null) }}
+                  >
+                    Удалить
+                  </button>
+                ) : null}
+              </>
+            )}
+            <button type="button" className="btn btn-ghost" onClick={() => { setSheet(null); setSelected(null) }}>Отмена</button>
+          </div>
+        ) : null}
+      </Drawer>
+
       {compact ? (
         <Drawer
-          open={Boolean(selected) && sheet !== 'empty'}
+          open={Boolean(selected) && sheet !== 'empty' && sheet !== 'event'}
           onClose={() => { setSelected(null); setRescheduleOpen(false); setSheet(null) }}
           label="Событие календаря"
           title={
@@ -1758,38 +1931,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             ) : undefined
           }
         >
-          {sheet === 'event' && selected ? (
-            <div className="stack cal-action-sheet">
-              {selected.kind === 'appointment' ? (
-                <>
-                  <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); navigate(`/appointments/${apptId}`) }}>Открыть</button>
-                  {!selected.readonly && canDragAppointment(selected.statusRaw, selected.bookingMode) ? (
-                    <button type="button" className="btn btn-secondary" onClick={() => { setSheet(null); setRescheduleOpen(true) }}>Перенести</button>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <button type="button" className="btn btn-primary" onClick={() => setSheet(null)}>Изменить</button>
-                  {!selected.readonly ? (
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      disabled={removeBlock.isPending}
-                      onClick={() => { removeBlock.mutate(selected.id.slice(6)); setSheet(null) }}
-                    >
-                      Удалить
-                    </button>
-                  ) : null}
-                </>
-              )}
-              <button type="button" className="btn btn-ghost" onClick={() => setSheet(null)}>Отмена</button>
-            </div>
-          ) : detailBody}
+          {detailBody}
         </Drawer>
       ) : (
         <Modal
-          open={Boolean(selected)}
-          onClose={() => { setSelected(null); setRescheduleOpen(false) }}
+          open={Boolean(selected) && sheet !== 'event'}
+          onClose={() => { setSelected(null); setRescheduleOpen(false); setSheet(null) }}
           title={selected?.kind === 'block' ? 'Событие планера' : (selected?.title ?? 'Запись')}
           label="Событие календаря"
         >
@@ -1800,50 +1947,64 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       <Drawer
         open={sheet === 'empty'}
         onClose={() => setSheet(null)}
-        title={<div><p className="eyebrow">Календарь</p><h2>Действия</h2></div>}
-        label="Действия календаря"
+        title={<div><p className="eyebrow">Доступность</p><h2>Свободный слот</h2></div>}
+        label="Действия доступности"
       >
         <div className="stack cal-action-sheet">
-          <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); if (sheetSlot) openCreateAt(sheetSlot) }}>Добавить запись</button>
-          <Link className="btn btn-secondary" to="/clients" onClick={() => setSheet(null)}>Записать клиента</Link>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              setSheet(null)
+              openSchedulePanel('hours', sheetSlot)
+            }}
+          >
+            Установить график
+          </button>
           <button
             type="button"
             className="btn btn-secondary"
+            disabled={saveWorkInterval.isPending || !sheetSlot}
             onClick={() => {
+              if (!sheetSlot) return
               setSheet(null)
-              openHoursEditor()
+              markDayOffFor(sheetSlot)
             }}
           >
-            Установить рабочие часы
+            Выходной на этот день
           </button>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => {
               setSheet(null)
-              setIntervalMode(true)
-              setIntervalStartMin(null)
-              setIntervalEndMin(null)
-              setOk('Выберите начало и конец интервала')
+              if (sheetSlot) {
+                setPendingInterval({
+                  start: sheetSlot,
+                  end: new Date(sheetSlot.getTime() + 60 * 60 * 1000),
+                })
+                setPendingDayOff(false)
+              } else {
+                setIntervalMode(true)
+                setIntervalStartMin(null)
+                setIntervalEndMin(null)
+                setOk('Выберите начало и конец интервала')
+              }
             }}
           >
-            Запомнить интервалы работы
+            Рабочий интервал
           </button>
           <button
             type="button"
             className="btn btn-secondary"
-            disabled={!rememberedInterval}
-            onClick={() => {
-              if (!rememberedInterval) return
-              setDisplayRangePref(rememberedInterval)
-              setRangeDraft(rememberedInterval)
-              setSheet(null)
-              setOk(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
-            }}
+            onClick={() => { setSheet(null); if (sheetSlot) openCreateAt(sheetSlot) }}
           >
-            Применить сохранённые интервалы
+            Создать блок
           </button>
-          <button type="button" className="btn btn-ghost" onClick={() => { setSheet(null); setSettingsOpen(true) }}>Настройки календаря</button>
+          <button type="button" className="btn btn-secondary" onClick={() => { setSheet(null); if (sheetSlot) openCreateAt(sheetSlot) }}>
+            Добавить запись
+          </button>
+          <Link className="btn btn-ghost" to="/clients" onClick={() => setSheet(null)}>Записать клиента</Link>
           <button type="button" className="btn btn-ghost" onClick={() => setSheet(null)}>Отмена</button>
         </div>
       </Drawer>
@@ -1851,10 +2012,29 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       <Drawer
         open={hoursEditorOpen}
         onClose={() => setHoursEditorOpen(false)}
-        title={<div><p className="eyebrow">Календарь</p><h2>Рабочий день</h2></div>}
-        label="Рабочий день календаря"
+        title={<div><p className="eyebrow">Календарь</p><h2>Отображаемые часы</h2></div>}
+        label="Диапазон сетки календаря"
       >
         {hoursEditorForm}
+      </Drawer>
+
+      <Drawer
+        open={schedulePanelOpen}
+        onClose={closeSchedulePanel}
+        title={<div><p className="eyebrow">Календарь</p><h2>Установка графика</h2></div>}
+        label="Установка графика"
+        panelClassName="schedule-editor-drawer"
+      >
+        <ScheduleEditor
+          embedded
+          tab={scheduleTab}
+          initialStart={scheduleStartQ}
+          initialEnd={scheduleEndQ}
+          onSaved={() => {
+            void qc.invalidateQueries({ queryKey: ['calendar-hours'] })
+            void qc.invalidateQueries({ queryKey: ['calendar-exceptions'] })
+          }}
+        />
       </Drawer>
 
       {selected?.kind === 'appointment' && apptId ? (
@@ -1920,8 +2100,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       {pendingInterval ? (
         <Drawer
           open
-          onClose={() => setPendingInterval(null)}
-          title={<div><p className="eyebrow">График</p><h2>Сохранить рабочий интервал?</h2></div>}
+          onClose={() => { setPendingInterval(null); setPendingDayOff(false) }}
+          title={<div><p className="eyebrow">График</p><h2>{pendingDayOff ? 'Отметить выходной?' : 'Сохранить рабочий интервал?'}</h2></div>}
           label="Подтверждение интервала"
         >
           <div className="stack cal-action-sheet">
@@ -1932,15 +2112,23 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 salonTimezone,
               )}
             </p>
+            <label className="field-check">
+              <input
+                type="checkbox"
+                checked={pendingDayOff}
+                onChange={(e) => setPendingDayOff(e.target.checked)}
+              />
+              <span>Выходной на этот день</span>
+            </label>
             <button
               type="button"
               className="btn btn-primary"
               disabled={saveWorkInterval.isPending}
-              onClick={() => saveWorkInterval.mutate(pendingInterval)}
+              onClick={() => saveWorkInterval.mutate({ ...pendingInterval, isDayOff: pendingDayOff })}
             >
-              Сохранить рабочий интервал
+              {pendingDayOff ? 'Сохранить выходной' : 'Сохранить рабочий интервал'}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={() => setPendingInterval(null)}>Отмена</button>
+            <button type="button" className="btn btn-ghost" onClick={() => { setPendingInterval(null); setPendingDayOff(false) }}>Отмена</button>
           </div>
         </Drawer>
       ) : null}

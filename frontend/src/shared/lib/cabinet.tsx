@@ -454,7 +454,7 @@ export function navForCabinet(
   if (check('pickup_orders')) secondary.push({ to: '/pickup-orders', label: 'Выдача заказов' })
   if (check('reports')) secondary.push({ to: '/reports', label: 'Аналитика' })
   if (check('salon_settings')) secondary.push({ to: '/salon/settings', label: 'Настройки салона' })
-  secondary.push({ to: '/schedule', label: 'График' })
+  secondary.push({ to: '/calendar?panel=schedule', label: 'График' })
   secondary.push({ to: '/chairs', label: 'Аренда кресел' })
   if (kind === 'chain_owner' || kind === 'salon_owner' || kind === 'chair_master' || kind === 'mobile_master') {
     secondary.push({ to: '/master', label: 'Салон' })

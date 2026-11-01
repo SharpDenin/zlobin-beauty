@@ -8,6 +8,7 @@ import {
   calendarColorClass,
   displayRangeToSlotTimes,
   eventOverlapsDay,
+  LONG_PRESS_MS,
   longPressMoved,
   minutesFromMidnight,
   minutesToHHMM,
@@ -156,7 +157,7 @@ export function CalendarMobile({
       navigator.vibrate?.(10)
       onFire()
       longPressTimer.current = null
-    }, 500)
+    }, LONG_PRESS_MS)
   }
 
   function suppressClickIfLongPress(e: { preventDefault: () => void; stopPropagation: () => void }) {
@@ -237,7 +238,34 @@ export function CalendarMobile({
                 key={c.ymd}
                 type="button"
                 className={`cal-month-cell ${c.ymd === todayYmd ? 'is-today' : ''} ${c.ymd === ymd ? 'is-selected' : ''}`}
-                onClick={() => onSelectDate(c.date)}
+                onPointerDown={(e) => {
+                  if (e.pointerType === 'mouse' && e.button !== 0) return
+                  pressOrigin.current = { x: e.clientX, y: e.clientY }
+                  armLongPress(() => {
+                    const start = wallDateAt(c.date, c.ymd, hours.find((h) => h.weekday === weekdayIndex(c.date, timezone))?.start_minute ?? fromMin)
+                    onLongPressEmpty?.(start)
+                  })
+                }}
+                onPointerMove={onPressMove}
+                onPointerUp={() => clearLongPress()}
+                onPointerCancel={() => clearLongPress()}
+                onClick={(e) => {
+                  if (suppressClickIfLongPress(e)) return
+                  onSelectDate(c.date)
+                  if (c.count > 0) {
+                    // Day view lists events; with a single event open its action sheet when possible.
+                    const cellEvents = events.filter(
+                      (ev) =>
+                        ev.id
+                        && ev.start
+                        && ev.display !== 'background'
+                        && eventOverlapsDay(String(ev.start), ev.end ? String(ev.end) : undefined, c.ymd, timezone),
+                    )
+                    if (cellEvents.length === 1 && cellEvents[0].id && onEventLongPress) {
+                      onEventLongPress(String(cellEvents[0].id))
+                    }
+                  }
+                }}
               >
                 <span>{c.day}</span>
                 <span className="cal-month-dots-row" aria-hidden>

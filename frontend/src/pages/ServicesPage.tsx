@@ -347,6 +347,15 @@ export function ServicesPage() {
                 <div className="row between">
                   <strong className="service-card-price">{s.price_display || formatMoney(s.price_minor)}</strong>
                   <div className="row">
+                    {s.published && !s.archived_at && master.data?.master.id && (
+                      <Link
+                        className="btn btn-primary btn-compact"
+                        data-testid="service-book-link"
+                        to={`/masters/${master.data.master.id}?service=${s.id}`}
+                      >
+                        Записаться
+                      </Link>
+                    )}
                     <Link className="btn btn-secondary btn-compact" to={`/services/${s.id}`}>Изменить</Link>
                     {s.published && !s.archived_at && (
                       <button

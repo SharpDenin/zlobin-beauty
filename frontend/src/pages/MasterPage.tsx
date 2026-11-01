@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -142,6 +142,7 @@ function ratingDistribution(reviews: Review[]): number[] {
 
 export function MasterPage() {
   const { id } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { accessToken, user } = useAuth()
   const messenger = useMessenger()
   const qc = useQueryClient()
@@ -162,6 +163,7 @@ export function MasterPage() {
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerIndex, setViewerIndex] = useState(0)
   const [bookingFocus, setBookingFocus] = useState(false)
+  const [serviceDeepLinkHandled, setServiceDeepLinkHandled] = useState(false)
 
   const masterQuery = useQuery({
     queryKey: ['master', id],
@@ -173,6 +175,56 @@ export function MasterPage() {
     () => masterQuery.data?.services.find((s) => s.id === serviceId),
     [masterQuery.data, serviceId],
   )
+
+  const syncServiceParam = (nextId: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (nextId) next.set('service', nextId)
+    else next.delete('service')
+    setSearchParams(next, { replace: true })
+  }
+
+  useEffect(() => {
+    setServiceDeepLinkHandled(false)
+    setServiceId('')
+    setStep(0)
+  }, [id])
+
+  useEffect(() => {
+    if (!masterQuery.data || serviceDeepLinkHandled) return
+    const fromUrl = (searchParams.get('service') || searchParams.get('serviceId') || '').trim()
+    if (!fromUrl) {
+      setServiceDeepLinkHandled(true)
+      return
+    }
+    const match = masterQuery.data.services.find((s) => s.id === fromUrl)
+    if (!match) {
+      const msg = 'Эта услуга не принадлежит выбранному мастеру.'
+      setError(msg)
+      toast.error(msg)
+      const next = new URLSearchParams(searchParams)
+      next.delete('service')
+      next.delete('serviceId')
+      setSearchParams(next, { replace: true })
+      setServiceDeepLinkHandled(true)
+      return
+    }
+    setServiceId(match.id)
+    setSlot('')
+    setOccurrenceId('')
+    setError(null)
+    setStep(1)
+    setBookingFocus(true)
+    setServiceDeepLinkHandled(true)
+    if (searchParams.get('service') !== match.id || searchParams.has('serviceId')) {
+      const next = new URLSearchParams(searchParams)
+      next.set('service', match.id)
+      next.delete('serviceId')
+      setSearchParams(next, { replace: true })
+    }
+    requestAnimationFrame(() => {
+      document.getElementById('mp-booking')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [masterQuery.data, searchParams, serviceDeepLinkHandled, toast, setSearchParams])
 
   const isFixed = selectedService?.booking_mode === 'fixed_window'
   const steps = isFixed ? FIXED_STEPS : FLEX_STEPS
@@ -485,6 +537,7 @@ export function MasterPage() {
       )}
 
       <section id="mp-booking" className="stack">
+        {error && step < 3 ? <ErrorBanner error={error} /> : null}
         <h2 className="mp-section-title">
           {step === 0 ? 'Услуги' : step === 1 && selectedService ? selectedService.name : 'Запись'}
         </h2>
@@ -525,6 +578,7 @@ export function MasterPage() {
                 data-testid="mp-service"
                 onClick={() => {
                   setServiceId(s.id)
+                  syncServiceParam(s.id)
                   setSlot('')
                   setOccurrenceId('')
                   setError(null)
@@ -663,9 +717,25 @@ export function MasterPage() {
             {slotsQuery.isLoading && <div className="state-box">Загрузка слотов…</div>}
             {slotsQuery.isError && <ErrorBanner error={slotsQuery.error} fallbackTitle="Не удалось получить свободное время" />}
             {slotsQuery.data && slotsQuery.data.items.length === 0 && (
-              <div className="empty-state">
+              <div className="empty-state" data-testid="mp-slots-empty">
                 <h2>Нет свободных окон</h2>
-                <p>Выберите другую дату.</p>
+                <p>
+                  На {new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                  })}{' '}
+                  у мастера нет свободного времени для «{selectedService?.name ?? 'услуги'}»
+                  {selectedService ? ` (${selectedService.duration_minutes} мин)` : ''}.
+                </p>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  data-testid="mp-slots-pick-date"
+                  onClick={() => { setSlot(''); setStep(1) }}
+                >
+                  Выбрать другую дату
+                </button>
               </div>
             )}
             {slotsQuery.data && slotsQuery.data.items.length > 0 && (

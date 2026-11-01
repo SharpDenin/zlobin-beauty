@@ -40,14 +40,13 @@ test.describe('production calendar', () => {
     }
     await assertNoPageOverflow(page)
 
+    // Day view uses FullCalendar on all widths; month still uses calendar-mobile on phone.
+    await expect(page.locator('.calendar-wrap .fc')).toBeVisible({ timeout: 15_000 })
     if (info.project.name === 'phone-390') {
-      await expect(page.getByTestId('calendar-mobile')).toBeVisible()
-      const dayChip = page.locator('.cal-day-chip').nth(4)
-      await expect(dayChip).toBeVisible()
-      await dayChip.click()
-      const block = page.locator('.cal-slot-event').first()
-      if (await block.count()) {
-        await block.click()
+      await page.getByRole('button', { name: 'День', exact: true }).click()
+      const appt = page.locator('.fc-event.is-appt').first()
+      if (await appt.count()) {
+        await appt.click()
         await expect(page.getByTestId('calendar-detail')).toBeVisible()
         const reschedule = page.getByRole('button', { name: 'Перенести' })
         if (await reschedule.count()) {
@@ -59,7 +58,6 @@ test.describe('production calendar', () => {
         }
       }
     } else {
-      await expect(page.locator('.calendar-wrap .fc')).toBeVisible({ timeout: 15_000 })
       await page.getByRole('button', { name: 'Неделя' }).click()
       await expect(page.locator('.fc-timegrid')).toBeVisible()
       const appt = page.locator('.fc-event.is-appt').first()
@@ -80,7 +78,18 @@ test.describe('production calendar', () => {
 
     await page.getByRole('button', { name: 'Настройки календаря' }).click()
     await expect(page.getByTestId('calendar-settings')).toBeVisible()
-    await expect(page.getByTestId('settings-open-schedule')).toHaveAttribute('href', '/schedule')
+    await page.getByTestId('settings-open-schedule').click()
+    await expect(page).toHaveURL(/panel=schedule/)
+    await expect(page.getByTestId('weekly-hours-form')).toBeVisible()
     await assertNoPageOverflow(page)
+  })
+
+  test('calendar?panel=schedule opens weekly hours editor', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'key viewports')
+    if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/calendar?panel=schedule')
+    await expect(page.getByTestId('weekly-hours-form')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('schedule-editor')).toBeVisible()
   })
 })

@@ -28,6 +28,37 @@ func TestValidPaymentMethod(t *testing.T) {
 	}
 }
 
+func TestValidClientPickupPaymentMethod(t *testing.T) {
+	if !ValidClientPickupPaymentMethod(PaymentMethodCash) {
+		t.Fatal("cash must be allowed for pickup checkout")
+	}
+	if !ValidClientPickupPaymentMethod(PaymentMethodBankTransfer) {
+		t.Fatal("bank_transfer is pay-on-pickup and must be allowed")
+	}
+	for _, m := range []string{PaymentMethodCard, PaymentMethodInvoice, "crypto", ""} {
+		if ValidClientPickupPaymentMethod(m) {
+			t.Fatalf("expected rejected for new client checkout: %q", m)
+		}
+	}
+}
+
+func TestClientOrderReturnCreditMinor(t *testing.T) {
+	items := []ClientOrderItem{
+		{Qty: 2, QtyDelivered: 2, PriceMinor: 1500},
+		{Qty: 1, QtyDelivered: 1, PriceMinor: 500},
+	}
+	if got := ClientOrderReturnCreditMinor(items); got != -3500 {
+		t.Fatalf("want -3500 (credit reduces debt), got %d", got)
+	}
+	// Falls back to ordered qty when qty_delivered is unset.
+	if got := ClientOrderReturnCreditMinor([]ClientOrderItem{{Qty: 3, PriceMinor: 100}}); got != -300 {
+		t.Fatalf("want -300, got %d", got)
+	}
+	if got := ClientOrderReturnCreditMinor(nil); got != 0 {
+		t.Fatalf("empty => 0, got %d", got)
+	}
+}
+
 func TestInitialPaymentStatus(t *testing.T) {
 	if got := InitialPaymentStatus(PaymentMethodCash); got != PaymentStatusPending {
 		t.Fatalf("cash => pending, got %s", got)

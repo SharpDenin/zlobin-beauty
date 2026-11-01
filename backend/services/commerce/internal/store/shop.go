@@ -635,6 +635,95 @@ WHERE supplier_org_id=$1 AND client_user_id=$2`, supplierOrgID, clientUserID).Sc
 	return total, err
 }
 
+func (s *Store) ClientOrdersWithReturnCredit(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := make(map[uuid.UUID]bool, len(orderIDs))
+	if len(orderIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT ref_id FROM debt_ledger
+WHERE kind=$1 AND ref_type='client_order' AND ref_id = ANY($2)`,
+		domain.DebtKindReturnCredit, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+type ReturnClientOrderParams struct {
+	OrderID       uuid.UUID
+	PaymentStatus string
+	Credit        domain.DebtEntry
+	History       domain.ClientOrderStatusHistory
+	Now           time.Time
+}
+
+// ReturnClientOrder locks the order, rejects a second return_credit, writes the
+// ledger entry and history, and updates payment_status in one transaction.
+func (s *Store) ReturnClientOrder(ctx context.Context, p ReturnClientOrderParams) (*domain.ClientOrder, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var order domain.ClientOrder
+	if err := tx.QueryRow(ctx, `SELECT `+clientOrderColumns+` FROM client_orders WHERE id=$1 FOR UPDATE`, p.OrderID).Scan(
+		&order.ID, &order.UserID, &order.SupplierOrgID, &order.Status, &order.Currency, &order.TotalMinor,
+		&order.DeliveryAddress, &order.DeliveryComment, &order.PaymentMethod, &order.RepUserID, &order.DeliveredAt,
+		&order.DeliveryNote, &order.AmountCollectedMinor, &order.CreatedAt, &order.UpdatedAt, &order.PickupBranchID,
+		&order.PaymentStatus, &order.IdempotencyKey, &order.CheckoutGroupID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("order not found")
+		}
+		return nil, err
+	}
+	if order.Status != domain.ClientOrderStatusReceived {
+		return nil, apperr.Conflict("return is only allowed for received orders")
+	}
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM debt_ledger
+  WHERE kind=$1 AND ref_type='client_order' AND ref_id=$2
+)`, domain.DebtKindReturnCredit, p.OrderID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, apperr.Conflict("order already returned")
+	}
+
+	if err := insertDebtEntryTx(ctx, tx, p.Credit); err != nil {
+		if isUniqueViolation(err) {
+			return nil, apperr.Conflict("order already returned")
+		}
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE client_orders SET payment_status=$2, updated_at=$3 WHERE id=$1`,
+		p.OrderID, p.PaymentStatus, p.Now); err != nil {
+		return nil, err
+	}
+	if err := appendStatusHistoryTx(ctx, tx, p.History); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	order.PaymentStatus = p.PaymentStatus
+	order.UpdatedAt = p.Now
+	return &order, nil
+}
+
 // --- rep deliveries ---
 
 func (s *Store) ListRepDeliveries(ctx context.Context, supplierOrgID uuid.UUID, repUserID *uuid.UUID, statuses []string) ([]domain.ClientOrder, error) {

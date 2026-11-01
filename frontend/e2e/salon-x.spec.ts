@@ -669,6 +669,33 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(cart.status).toBe(403)
   })
 
+  test('SHOP-01 rejects card and other non-pickup payment methods on checkout', async () => {
+    const client = await apiLogin('client1@demo.local')
+    await clearClientCart(client.access_token)
+    const product = await shopProductInStock(client.access_token)
+    expect(product?.id).toBeTruthy()
+    await fetch(`${api}/v1/commerce/shop/cart/items`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: product!.id, qty: 1 }),
+    })
+    const branchId = await salonPickupBranchId((await apiLogin('master1@demo.local')).access_token)
+    const h = { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' }
+    for (const method of ['card', 'invoice', 'crypto']) {
+      const res = await fetch(`${api}/v1/commerce/shop/checkout`, {
+        method: 'POST',
+        headers: h,
+        body: JSON.stringify({
+          delivery_address: 'E2E Reject Card Address 1',
+          payment_method: method,
+          pickup_branch_id: branchId,
+          confirm_price_changes: true,
+        }),
+      })
+      expect(res.status, `method ${method}`).toBe(400)
+    }
+  })
+
   test('phase3 checkout idempotency key', async () => {
     const client = await apiLogin('client1@demo.local')
     await clearClientCart(client.access_token)
@@ -885,6 +912,136 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(transitions).toContain('submitted')
     expect(transitions).toContain('ready_for_pickup')
     expect(transitions).toContain('received')
+  })
+
+  test('SHOP-02 full return of received order with return_credit', async () => {
+    const client = await apiLogin('client1@demo.local')
+    await clearClientCart(client.access_token)
+    const supplier = await apiLogin('supplier1@demo.local')
+    const clientUser = await apiLogin('client2@demo.local')
+    await clearClientCart(clientUser.access_token)
+    const salon = await apiLogin('master1@demo.local')
+    const product = await shopProductInStock(clientUser.access_token, { skuPrefix: 'S1-', excludeRace: true })
+    expect(product?.id).toBeTruthy()
+    await fetch(`${api}/v1/commerce/shop/cart/items`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${clientUser.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: product!.id, qty: 1 }),
+    })
+    const branchId = await salonPickupBranchId(salon.access_token)
+    const checkout = await fetch(`${api}/v1/commerce/shop/checkout`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${clientUser.access_token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `e2e-return-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        delivery_address: 'Return Flow Test Address',
+        payment_method: 'cash',
+        pickup_branch_id: branchId,
+        confirm_price_changes: true,
+      }),
+    })
+    expect(checkout.status).toBe(201)
+    const created = await checkout.json() as { orders: Array<{ id: string; total_minor: number; supplier_org_id: string }> }
+    const orderId = created.orders[0].id
+    const supplierOrgId = created.orders[0].supplier_org_id
+    const totalMinor = created.orders[0].total_minor
+
+    const advance = async (status: string) => {
+      const res = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/transition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+      expect(res.status).toBeLessThan(300)
+    }
+    await advance('confirmed')
+    await advance('picking')
+    await advance('in_delivery')
+    // Mark delivered via supplier transition (full deliver without rep assignment)
+    const deliver = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/transition`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'delivered' }),
+    })
+    expect(deliver.status).toBeLessThan(300)
+
+    const accept = await fetch(`${api}/v1/commerce/shop/pickup/orders/${orderId}/accept`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${salon.access_token}` },
+    })
+    expect(accept.status).toBeLessThan(300)
+    const handover = await fetch(`${api}/v1/commerce/shop/pickup/orders/${orderId}/handover`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${salon.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payment_received: true }),
+    })
+    expect(handover.status).toBeLessThan(300)
+
+    const orderMeta = await fetch(`${api}/v1/commerce/shop/orders/${orderId}`, {
+      headers: { Authorization: `Bearer ${clientUser.access_token}` },
+    })
+    const orderBody = await orderMeta.json() as { user_id: string; status: string }
+    expect(orderBody.status).toBe('received')
+    const clientUserId = orderBody.user_id
+    expect(clientUserId).toBeTruthy()
+
+    const debtBeforeRes = await fetch(
+      `${api}/v1/commerce/shop/debt?organization_id=${supplierOrgId}&client_user_id=${clientUserId}`,
+      { headers: { Authorization: `Bearer ${supplier.access_token}` } },
+    )
+    expect(debtBeforeRes.ok).toBeTruthy()
+    const debtBefore = await debtBeforeRes.json() as { balance_minor: number }
+
+    // Wrong status / stranger: client cannot return
+    const forbidden = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'client attempt' }),
+    })
+    expect(forbidden.status).toBeGreaterThanOrEqual(400)
+
+    const ret = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'e2e full return' }),
+    })
+    expect(ret.status).toBeLessThan(300)
+    const returned = await ret.json() as { returned: boolean; payment_status: string; status: string; total_minor: number }
+    expect(returned.returned).toBe(true)
+    expect(returned.status).toBe('received')
+    expect(returned.payment_status).toBe('refunded')
+
+    const debtAfterRes = await fetch(
+      `${api}/v1/commerce/shop/debt?organization_id=${supplierOrgId}&client_user_id=${clientUserId}`,
+      { headers: { Authorization: `Bearer ${supplier.access_token}` } },
+    )
+    const debtAfter = await debtAfterRes.json() as { balance_minor: number }
+    // return_credit is negative → balance decreases by order total
+    expect(debtAfter.balance_minor).toBe(debtBefore.balance_minor - totalMinor)
+
+    const dup = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'duplicate' }),
+    })
+    expect(dup.status).toBe(409)
+
+    const parallel = await Promise.all([
+      fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'race-a' }),
+      }),
+      fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'race-b' }),
+      }),
+    ])
+    expect(parallel.every((r) => r.status === 409)).toBeTruthy()
   })
 
   test('phase3 price change confirmation', async ({ page }, info) => {

@@ -396,15 +396,22 @@ export function MasterPage() {
   return (
     <main className="page mp-page">
       <section className="mp-hero" aria-label="Профиль мастера">
+        <div className="mp-hero-photo">
+          <MediaImage
+            mediaId={master.photo_media_id}
+            token={accessToken}
+            alt={master.display_name}
+            fallback={master.display_name.slice(0, 1)}
+            variant="cover"
+          />
+          <span className="mp-verified" aria-hidden="true" title="Профиль">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12.5 10 17l9-10" />
+            </svg>
+          </span>
+        </div>
         <div className="mp-hero-body">
-          <h1 className="mp-hero-name">
-            {master.display_name}
-            <span className="mp-verified" aria-hidden="true" title="Профиль">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12.5 10 17l9-10" />
-              </svg>
-            </span>
-          </h1>
+          <h1 className="mp-hero-name">{master.display_name}</h1>
           <p className="mp-hero-role">{roleLabels.join(' • ')}</p>
           <div className="mp-hero-meta">
             <div className="mp-hero-meta-row">
@@ -428,15 +435,6 @@ export function MasterPage() {
               </div>
             )}
           </div>
-        </div>
-        <div className="mp-hero-photo">
-          <MediaImage
-            mediaId={master.photo_media_id}
-            token={accessToken}
-            alt={master.display_name}
-            fallback={master.display_name.slice(0, 1)}
-            variant="cover"
-          />
         </div>
         <div className="mp-hero-cta">
           <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
@@ -757,7 +755,7 @@ export function MasterPage() {
                 })}
               </p>
             )}
-            <div className="slot-list">
+            <div className="slot-grid mp-slot-grid">
               {slotsQuery.data?.items.map((s) => {
                 const label = new Date(s.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
                 return (

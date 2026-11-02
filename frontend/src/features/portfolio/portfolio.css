@@ -42,25 +42,25 @@
   color: var(--color-primary-ink);
 }
 
+/* 3-col square grid on all widths — matches other_pages portfolio reference */
 .portfolio-tight-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
 }
 @media (min-width: 768px) {
   .portfolio-tight-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+    gap: 6px;
   }
 }
 
 .portfolio-cell {
   position: relative;
   margin: 0;
-  aspect-ratio: 1 / 1.08;
+  aspect-ratio: 1;
   border: 0;
   padding: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   overflow: hidden;
   background: var(--gradient-image-fallback);
   cursor: pointer;

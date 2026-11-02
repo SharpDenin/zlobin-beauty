@@ -367,7 +367,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         body: { widgets: [...rest, { id: 'calendar_colors', colors: { ...savedColors, [category]: color } }] },
       })
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['me-dashboard'] }),
+    onSuccess: () => {
+      toast.success('Цвет категории сохранён')
+      void qc.invalidateQueries({ queryKey: ['me-dashboard'] })
+    },
   })
 
   const workModes = useQuery({
@@ -724,6 +727,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     onSuccess: async () => {
       setEditorOpen(false)
       setOk('Событие добавлено в календарь')
+      toast.success('Событие добавлено в календарь')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
     },
@@ -751,6 +755,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     onSuccess: async () => {
       setSelected(null)
       setOk('Событие обновлено')
+      toast.success('Событие обновлено')
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
     },
     onError: (e) => {
@@ -764,6 +769,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     onSuccess: async () => {
       setSelected(null)
       setOk('Событие удалено')
+      toast.success('Событие удалено')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
     },
@@ -803,7 +809,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           to: minutesToHHMM(interval.end_minute),
         })
       }
-      setOk(variables.isDayOff ? 'Выходной сохранён' : 'Рабочий интервал сохранён')
+      const msg = variables.isDayOff ? 'Выходной сохранён' : 'Рабочий интервал сохранён'
+      setOk(msg)
+      toast.success(msg)
       setIntervalMode(false)
       setIntervalStartMin(null)
       setIntervalEndMin(null)

@@ -8,6 +8,7 @@ import { useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 import { premiumLabel } from '@/features/dashboard/premiumLabel'
 import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
 import { NotificationFeed } from '@/features/notifications/NotificationFeed'
@@ -84,6 +85,7 @@ export function SupplierHomePage() {
     },
     onSuccess: async () => {
       setCreateError(null)
+      toast.success('Организация поставщика создана')
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
     },
     onError: (e) => setCreateError(formatUserError(e, 'Не удалось создать поставщика')),

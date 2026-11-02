@@ -8,6 +8,7 @@ import { useCabinet } from '@/shared/lib/cabinet'
 import { useMyOrgs, type OrgItem } from '@/shared/lib/commerce'
 import { CreateSalonForm, type CreateSalonPayload } from '@/shared/ui/CreateSalonForm'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 
 function ownedSalons(items: OrgItem[]): OrgItem[] {
   return items.filter(
@@ -45,6 +46,7 @@ export function SettingsSalonsPage() {
     onSuccess: async (res) => {
       setError(null)
       setOk('Салон создан')
+      toast.success('Салон создан')
       setShowCreate(false)
       cabinet.setSelectedOrgId(res.organization.id)
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })

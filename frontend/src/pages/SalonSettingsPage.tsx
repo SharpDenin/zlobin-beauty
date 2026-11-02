@@ -6,6 +6,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg } from '@/shared/lib/commerce'
 import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 import { LEASE_LABELS, type ChairLease, type SalonChair } from '@/shared/lib/work-mode'
 
 export function SalonSettingsPage() {
@@ -30,6 +31,7 @@ export function SalonSettingsPage() {
       }),
     onSuccess: async () => {
       setOk('Политика контактов обновлена')
+      toast.success('Политика контактов обновлена')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
     },
@@ -94,17 +96,24 @@ function ChairManagement({ orgId, branchId, token }: { orgId?: string; branchId?
     }),
     onSuccess: () => {
       setError(null)
+      toast.success('Кресло создано')
       void qc.invalidateQueries({ queryKey: ['org-chairs'] })
     },
     onError: (e) => setError(formatUserError(e, 'Не удалось создать кресло')),
   })
   const approve = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/approve`, { method: 'POST', token }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-leases'] }),
+    onSuccess: () => {
+      toast.success('Аренда подтверждена')
+      void qc.invalidateQueries({ queryKey: ['org-leases'] })
+    },
   })
   const reject = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/reject`, { method: 'POST', token }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-leases'] }),
+    onSuccess: () => {
+      toast.success('Запрос аренды отклонён')
+      void qc.invalidateQueries({ queryKey: ['org-leases'] })
+    },
   })
 
   if (!orgId || !branchId) return null

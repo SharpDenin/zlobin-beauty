@@ -14,6 +14,7 @@ import { PageHeader } from '@/app/layout'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { InteractionModeSwitch } from '@/shared/ui/InteractionModeSwitch'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { toast } from '@/shared/ui/Toast'
 import { premiumLabel } from '@/features/dashboard/premiumLabel'
 import { roleTitle } from '@/features/dashboard/roleTitle'
 import '@/features/dashboard/dashboard.css'
@@ -71,6 +72,7 @@ export function ProfilePage() {
       draft.clear()
       updateUser(me)
       setOk('Профиль сохранён')
+      toast.success('Профиль сохранён')
       setError(null)
       void qc.invalidateQueries({ queryKey: ['home-masters'] })
     },
@@ -89,6 +91,7 @@ export function ProfilePage() {
       }),
     onSuccess: () => {
       setOk('Если нужно, мы отправили письмо для подтверждения email.')
+      toast.success('Письмо для подтверждения email отправлено')
       setError(null)
     },
     onError: (e) => {

@@ -28,6 +28,7 @@ import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { toast } from '@/shared/ui/Toast'
 import { CalendarPage } from '@/pages/CalendarPage'
 import {
   LIBRARY,
@@ -181,6 +182,7 @@ export function DashboardPage() {
       body: { widgets: [...widgets, ...calendarPrefs] },
     }),
     onSuccess: () => {
+      toast.success('Макет кабинета сохранён')
       void qc.invalidateQueries({ queryKey: ['me-dashboard'] })
       setEditing(false)
       setDraft(null)

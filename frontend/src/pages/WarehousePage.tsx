@@ -12,6 +12,7 @@ import { MediaImage } from '@/shared/ui/MediaImage'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Hint } from '@/shared/ui/Hint'
+import { toast } from '@/shared/ui/Toast'
 
 type OrgItem = {
   organization: { id: string; name: string }
@@ -201,6 +202,7 @@ export function WarehousePage() {
     },
     onSuccess: async (res) => {
       setOk('Склад создан')
+      toast.success('Склад создан')
       await qc.invalidateQueries({ queryKey: ['commerce-locations'] })
       if (res.id) setLocationId(res.id)
     },
@@ -226,6 +228,7 @@ export function WarehousePage() {
       }),
     onSuccess: async () => {
       setOk('Товар создан')
+      toast.success('Товар создан')
       productForm.reset({ name: '', brand: '', sku: '', unit: 'pcs', volume_label: '', parent_id: '', price_rubles: 0, min_stock: 5 })
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
     },
@@ -240,6 +243,7 @@ export function WarehousePage() {
       }),
     onSuccess: async () => {
       setOk('Приёмка записана, остаток обновлён')
+      toast.success('Приёмка записана')
       receiptForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
       await qc.invalidateQueries({ queryKey: ['commerce-movements'] })
@@ -261,6 +265,7 @@ export function WarehousePage() {
       }),
     onSuccess: async () => {
       setOk('Заказ поставщику создан')
+      toast.success('Заказ поставщику создан')
       supplierOrderForm.reset()
       await qc.invalidateQueries({ queryKey: ['commerce-supplier-orders'] })
     },
@@ -281,6 +286,7 @@ export function WarehousePage() {
       }),
     onSuccess: async () => {
       setOk('Норма расхода сохранена')
+      toast.success('Норма расхода сохранена')
       normForm.reset({ required: true, qty: 1 })
       await qc.invalidateQueries({ queryKey: ['commerce-norms'] })
     },
@@ -335,6 +341,7 @@ export function WarehousePage() {
     },
     onSuccess: async () => {
       setOk('Импорт применён транзакционно')
+      toast.success('Импорт применён')
       setImportJobId(null)
       await qc.invalidateQueries({ queryKey: ['commerce-products'] })
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })

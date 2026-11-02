@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiRequest } from '@/shared/api/client'
 import { formatUserError } from '@/shared/lib/app-error'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { datetimeLocalToIso, isoToDatetimeLocal } from '@/shared/lib/time'
@@ -185,6 +186,7 @@ export function ScheduleEditor({
     onSuccess: () => {
       setError(null)
       setOk('Интервал режима добавлен')
+      toast.success('Интервал режима добавлен')
       setStart('')
       setEnd('')
       void qc.invalidateQueries({ queryKey: ['work-mode-intervals'] })
@@ -195,7 +197,10 @@ export function ScheduleEditor({
 
   const remove = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/me/work-mode-intervals/${id}`, { method: 'DELETE', token: accessToken }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['work-mode-intervals'] }),
+    onSuccess: () => {
+      toast.success('Интервал режима удалён')
+      void qc.invalidateQueries({ queryKey: ['work-mode-intervals'] })
+    },
   })
 
   const saveHours = useMutation({
@@ -206,6 +211,7 @@ export function ScheduleEditor({
     }),
     onSuccess: async () => {
       setOk('Недельный график сохранён')
+      toast.success('Недельный график сохранён')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['me-working-hours'] })
       await qc.invalidateQueries({ queryKey: ['calendar-hours'] })
@@ -236,7 +242,9 @@ export function ScheduleEditor({
       })
     },
     onSuccess: async () => {
-      setOk(exceptionOff ? 'Выходной сохранён' : 'Рабочий интервал сохранён')
+      const msg = exceptionOff ? 'Выходной сохранён' : 'Рабочий интервал сохранён'
+      setOk(msg)
+      toast.success(msg)
       setError(null)
       await qc.invalidateQueries({ queryKey: ['calendar-exceptions'] })
       onSaved?.()

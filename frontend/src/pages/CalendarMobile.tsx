@@ -221,9 +221,9 @@ export function CalendarMobile({
             <h2 className="cal-mobile-month">{periodLabel}</h2>
           </div>
           <div className="cal-mobile-nav">
-            <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущему месяцу">←</button>
+            <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущему месяцу">Назад</button>
             <button type="button" className="btn btn-secondary cal-touch" onClick={onToday}>Сегодня</button>
-            <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующему месяцу">→</button>
+            <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующему месяцу">Вперёд</button>
           </div>
         </header>
         <div className="cal-month-dots" role="grid" aria-label="Месяц">
@@ -289,9 +289,9 @@ export function CalendarMobile({
           <h2 className="cal-mobile-month">{periodLabel}</h2>
         </div>
         <div className="cal-mobile-nav">
-          <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущей дате">←</button>
+          <button type="button" className="btn btn-ghost cal-touch" onClick={onPrev} aria-label="К предыдущей дате">Назад</button>
           <button type="button" className="btn btn-secondary cal-touch" onClick={onToday}>Сегодня</button>
-          <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующей дате">→</button>
+          <button type="button" className="btn btn-ghost cal-touch" onClick={onNext} aria-label="К следующей дате">Вперёд</button>
         </div>
       </header>
 

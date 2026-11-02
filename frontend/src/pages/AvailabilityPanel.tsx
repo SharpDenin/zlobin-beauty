@@ -3,7 +3,6 @@ import {
   alternativeMessage,
   availabilityBadgeClass,
   availabilityStatusLabel,
-  availabilityStatusMark,
   cosmeticsProductPath,
   itemAvailable,
   itemIncoming,
@@ -41,7 +40,7 @@ export function AvailabilityPanel({
             <div className="row between">
               <strong>{productTitle(it)}</strong>
               <span className={`badge ${availabilityBadgeClass(it.status)}`}>
-                {availabilityStatusMark(it.status)} {availabilityStatusLabel(it.status)}
+                {availabilityStatusLabel(it.status)}
               </span>
             </div>
             <p className="muted">

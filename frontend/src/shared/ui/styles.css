@@ -2318,17 +2318,26 @@ button.list-item:hover {
 .product-photo.placeholder {
   display: grid; place-items: center; color: var(--color-primary); font-family: var(--font-display);
 }
-.hint-wrap { position: relative; display: inline-block; margin-left: 6px; }
+.hint-wrap { position: relative; display: inline-block; margin-left: 6px; vertical-align: middle; }
 .hint-btn {
   width: 22px; height: 22px; border-radius: 50%;
   border: 1px solid var(--color-border); color: var(--color-text-muted); font-size: 12px;
+  touch-action: manipulation;
 }
 .hint-pop {
-  position: absolute; z-index: var(--z-dropdown); width: 240px; padding: 12px;
+  position: fixed;
+  z-index: calc(var(--z-modal) + 5);
+  width: min(280px, calc(100vw - 16px));
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 12px;
   background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
   animation: dropdown-in var(--motion-fast) var(--ease-out);
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
+.hint-pop p { margin: 8px 0; color: var(--color-text-muted); font-size: var(--text-sm); }
 .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .filters-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 @media (max-width: 768px) {

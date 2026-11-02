@@ -265,7 +265,7 @@ export function eventOverlapsDay(startIso: string, endIso: string | undefined, y
 export function visitCompanionTitle(serviceName: string, groupNames: string[]) {
   const rest = groupNames.filter((n) => n !== serviceName)
   if (!rest.length) return ''
-  return rest.join(' → ')
+  return rest.join(' затем ')
 }
 
 export function minutesFromMidnight(date: Date, timeZone: string) {

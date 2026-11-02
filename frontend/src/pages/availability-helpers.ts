@@ -60,20 +60,9 @@ export function availabilityStatusLabel(status: string) {
   }
 }
 
+/** @deprecated Prefer availabilityStatusLabel — kept for callers that still compose mark+label. */
 export function availabilityStatusMark(status: string) {
-  switch (status) {
-    case 'available':
-      return '✓'
-    case 'incoming':
-      return '⚠'
-    case 'orderable':
-      return '→'
-    case 'shortage':
-    case 'unavailable':
-      return '!'
-    default:
-      return '·'
-  }
+  return availabilityStatusLabel(status)
 }
 
 export function availabilityBadgeClass(status: string) {

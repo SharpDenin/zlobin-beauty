@@ -864,7 +864,9 @@ export function HairConsultationDetailPage() {
                 <strong>{actionLabel(e.action)}</strong>
                 <div className="muted">
                   {new Date(e.created_at).toLocaleString('ru-RU')}
-                  {e.from_status ? ` · ${statusLabel(e.from_status)} → ${statusLabel(e.to_status)}` : ` · ${statusLabel(e.to_status)}`}
+                  {e.from_status
+                    ? ` · с ${statusLabel(e.from_status)} на ${statusLabel(e.to_status)}`
+                    : ` · ${statusLabel(e.to_status)}`}
                 </div>
                 {typeof e.meta?.comment === 'string' && <p>{e.meta.comment}</p>}
               </li>

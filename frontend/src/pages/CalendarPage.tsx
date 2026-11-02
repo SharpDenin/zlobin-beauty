@@ -540,7 +540,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       const own = !readOnlyOverlay && (a.master_user_id === user?.id || ownerMode)
       const canMove = own && canDragAppointment(a.status, a.booking_mode)
       const group = a.visit_group_id ? visitNames.get(a.visit_group_id) ?? [] : []
-      const visitLabel = group.length > 1 ? group.join(' → ') : ''
+      const visitLabel = group.length > 1 ? group.join(' затем ') : ''
       out.push({
         id: `appt:${a.id}`,
         title: a.service_name,
@@ -1786,6 +1786,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             },
           }}
           headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
+          buttonIcons={false}
           locale={ruLocale}
           timeZone={salonTimezone}
           height={embedded ? 'auto' : '100%'}
@@ -1849,7 +1850,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           select={onSelectSlot}
           datesSet={onDatesSet}
           eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
-          buttonText={{ today: 'Сегодня' }}
+          buttonText={{ today: 'Сегодня', prev: 'Назад', next: 'Вперёд' }}
         />
       </div>
       ) : null}

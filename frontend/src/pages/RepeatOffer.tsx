@@ -110,7 +110,7 @@ export function RepeatOffer({
                 <div className="row between">
                   <strong>{formatRequirementLine(r)}</strong>
                   <span className={`badge ${r.status === 'available' ? 'badge-success' : r.status === 'incoming' || r.status === 'orderable' ? 'badge-warning' : 'badge-danger'}`}>
-                    {r.status === 'available' ? '✓' : r.status === 'orderable' ? '→' : '⚠'} {requirementStatusLabel(r.status)}
+                    {requirementStatusLabel(r.status)}
                   </span>
                 </div>
                 <p className="muted">

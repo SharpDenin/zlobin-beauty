@@ -4,6 +4,7 @@ import { apiRequest } from '@/shared/api/client'
 import { formatUserError } from '@/shared/lib/app-error'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { DevicePushCard } from '@/features/pwa/DevicePushCard'
 import { useState } from 'react'
 
 type Notification = {
@@ -62,6 +63,7 @@ export function NotificationsPage() {
   return (
     <main className="page stack">
       <h1>Уведомления</h1>
+      <DevicePushCard compact />
       {error && <ErrorBanner error={error} />}
       {query.isLoading && <div className="state-box">Загрузка…</div>}
       {query.isError && <ErrorBanner error={query.error} fallbackTitle="Не удалось загрузить уведомления" />}

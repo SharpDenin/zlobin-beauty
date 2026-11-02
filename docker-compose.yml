@@ -246,7 +246,7 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@salonx.local}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:no-reply@salon-x.ru}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:

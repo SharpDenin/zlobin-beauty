@@ -2,6 +2,15 @@ import { apiRequest } from '@/shared/api/client'
 
 export type PushConfig = { enabled: boolean; public_key: string }
 
+export type DevicePushUiStatus =
+  | 'loading'
+  | 'unsupported'
+  | 'server_disabled'
+  | 'denied'
+  | 'default'
+  | 'subscribed'
+  | 'ready'
+
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -11,13 +20,51 @@ export function urlBase64ToUint8Array(base64String: string) {
   return out
 }
 
+export function browserSupportsWebPush() {
+  return typeof window !== 'undefined'
+    && 'serviceWorker' in navigator
+    && 'PushManager' in window
+    && 'Notification' in window
+}
+
+export async function fetchPushConfig(token: string | null): Promise<PushConfig> {
+  return apiRequest<PushConfig>('/v1/push/config', { token })
+}
+
+export async function getLocalPushSubscription() {
+  if (!browserSupportsWebPush()) return null
+  const registration = await navigator.serviceWorker.ready
+  return registration.pushManager.getSubscription()
+}
+
+/** Resolve UX status without requesting permission. */
+export async function resolveDevicePushStatus(config: PushConfig | null | undefined): Promise<DevicePushUiStatus> {
+  if (!config) return 'loading'
+  if (!browserSupportsWebPush()) return 'unsupported'
+  if (!config.enabled || !config.public_key) return 'server_disabled'
+  if (Notification.permission === 'denied') return 'denied'
+  const sub = await getLocalPushSubscription()
+  if (sub) return 'subscribed'
+  if (Notification.permission === 'granted') return 'ready'
+  return 'default'
+}
+
+/**
+ * Enable push after an explicit user gesture.
+ * Reuses an existing browser subscription and always syncs it to the backend.
+ */
 export async function enableDevicePush(token: string | null, publicKey: string) {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    throw new Error('Браузер не поддерживает push')
+  if (!browserSupportsWebPush()) {
+    throw new Error('Браузер не поддерживает push-уведомления')
   }
-  const permission = await Notification.requestPermission()
+  if (!publicKey) {
+    throw new Error('Push на сервере не настроен')
+  }
+  const permission = Notification.permission === 'granted'
+    ? 'granted'
+    : await Notification.requestPermission()
   if (permission !== 'granted') {
-    throw new Error('Разрешение на уведомления не выдано')
+    throw new Error('Разрешение на уведомления не выдано. Включите их в настройках браузера или системы.')
   }
   const registration = await navigator.serviceWorker.ready
   const existing = await registration.pushManager.getSubscription()
@@ -26,6 +73,9 @@ export async function enableDevicePush(token: string | null, publicKey: string) 
     applicationServerKey: urlBase64ToUint8Array(publicKey),
   })
   const json = subscription.toJSON()
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+    throw new Error('Не удалось получить ключи подписки')
+  }
   await apiRequest('/v1/push/subscription', {
     method: 'PUT',
     token,
@@ -37,13 +87,32 @@ export async function enableDevicePush(token: string | null, publicKey: string) 
   return subscription
 }
 
+/** If the browser already has a subscription, sync it to the backend (no permission prompt). */
+export async function syncDevicePush(token: string | null) {
+  if (!browserSupportsWebPush() || Notification.permission !== 'granted') return false
+  const subscription = await getLocalPushSubscription()
+  if (!subscription) return false
+  const json = subscription.toJSON()
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false
+  await apiRequest('/v1/push/subscription', {
+    method: 'PUT',
+    token,
+    body: { endpoint: json.endpoint, keys: json.keys },
+  })
+  return true
+}
+
 export async function disableDevicePush(token: string | null) {
   if (!('serviceWorker' in navigator)) return
   const registration = await navigator.serviceWorker.ready
   const subscription = await registration.pushManager.getSubscription()
   if (!subscription) return
   const endpoint = subscription.endpoint
-  await subscription.unsubscribe()
+  try {
+    await subscription.unsubscribe()
+  } catch {
+    /* still remove on server */
+  }
   await apiRequest('/v1/push/subscription', {
     method: 'DELETE',
     token,

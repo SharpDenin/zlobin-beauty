@@ -31,6 +31,11 @@
 
 `devOptions.enabled` только если `VITE_PWA_DEV=true`. Обычный `npm run dev` **без** service worker. Иначе старый SW с другого origin легко перехватывает `/login`.
 
+## Web Push
+
+`importScripts: ['sw-push.js']` — обработчики `push` / `notificationclick`.  
+Отправка и VAPID: [PUSH.md](./PUSH.md). Без VAPID-ключей на communications приложение и in-app уведомления работают; системный push выключен.
+
 ## Production
 
 Nginx: `index.html` и `sw.js` с `Cache-Control: no-cache`. Оболочка обновляется, API не обслуживается из кэша.

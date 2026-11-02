@@ -2,6 +2,7 @@ import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 
 const SECTIONS = [
   { to: '/settings/appearance', label: 'Оформление', end: false },
+  { to: '/settings/notifications', label: 'Уведомления', end: false },
   { to: '/settings/salons', label: 'Мои салоны', end: false },
 ] as const
 
@@ -15,7 +16,7 @@ export function SettingsLayout() {
     <main className="page stack settings-page" data-testid="settings-page">
       <header className="stack-sm">
         <h1>Настройки</h1>
-        <p className="muted">Оформление приложения и ваши салоны. Профиль мастера — в разделе «Профиль».</p>
+        <p className="muted">Оформление, push-уведомления и ваши салоны. Профиль мастера — в разделе «Профиль».</p>
       </header>
       <nav className="settings-nav row wrap gap" aria-label="Разделы настроек">
         {SECTIONS.map((s) => (

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,11 @@ type Service struct {
 	vapidPublic      string
 	vapidPrivate     string
 	vapidSubject     string
+	pushSender pushSender
+	pushSubs   pushSubRepo
+	log        *slog.Logger
+	// syncPush runs dispatch inline (tests only).
+	syncPush bool
 }
 
 func New(st *store.Store, bookingURL string) *Service {
@@ -45,7 +51,12 @@ func (s *Service) CreateNotification(ctx context.Context, userID uuid.UUID, typ,
 	})); err != nil {
 		return err
 	}
-	s.dispatchPush(ctx, userID, title, body, entityType, entityID)
+	// Push is best-effort and must not fail or delay the in-app notification path.
+	if s.syncPush {
+		s.dispatchPush(ctx, userID, title, body, entityType, entityID)
+	} else {
+		s.schedulePush(userID, title, body, entityType, entityID)
+	}
 	return nil
 }
 

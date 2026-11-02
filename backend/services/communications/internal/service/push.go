@@ -3,7 +3,8 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -15,12 +16,56 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
+// pushSender abstracts the HTTP push delivery for tests.
+type pushSender interface {
+	Send(ctx context.Context, sub domain.PushSubscription, payload []byte, publicKey, privateKey, subject string) (status int, err error)
+}
+
+// pushSubRepo is the subscription slice of the store (tests may inject a fake).
+type pushSubRepo interface {
+	ListPushSubscriptions(ctx context.Context, userID uuid.UUID) ([]domain.PushSubscription, error)
+	DeletePushSubscription(ctx context.Context, userID uuid.UUID, endpoint string) error
+}
+
+type webPushSender struct{}
+
+func (webPushSender) Send(ctx context.Context, sub domain.PushSubscription, payload []byte, publicKey, privateKey, subject string) (int, error) {
+	resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
+		Endpoint: sub.Endpoint,
+		Keys:     webpush.Keys{P256dh: sub.P256dh, Auth: sub.Auth},
+	}, &webpush.Options{
+		Subscriber:      subject,
+		VAPIDPublicKey:  publicKey,
+		VAPIDPrivateKey: privateKey,
+		TTL:             60,
+	})
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
 func (s *Service) WithPush(publicKey, privateKey, subject string) *Service {
 	s.vapidPublic = strings.TrimSpace(publicKey)
 	s.vapidPrivate = strings.TrimSpace(privateKey)
 	s.vapidSubject = strings.TrimSpace(subject)
 	if s.vapidSubject == "" {
-		s.vapidSubject = "mailto:support@salonx.local"
+		s.vapidSubject = "mailto:no-reply@salon-x.ru"
+	}
+	if s.pushSender == nil {
+		s.pushSender = webPushSender{}
+	}
+	if s.log == nil {
+		s.log = slog.Default()
+	}
+	return s
+}
+
+func (s *Service) WithPushLogger(log *slog.Logger) *Service {
+	if log != nil {
+		s.log = log
 	}
 	return s
 }
@@ -70,11 +115,33 @@ func notificationTarget(entityType string, entityID *uuid.UUID) string {
 	}
 }
 
+// schedulePush delivers Web Push after the in-app notification is persisted.
+// Failures never affect CreateNotification; work runs off the request path.
+func (s *Service) schedulePush(userID uuid.UUID, title, body, entityType string, entityID *uuid.UUID) {
+	if !s.PushEnabled() {
+		return
+	}
+	var entityCopy *uuid.UUID
+	if entityID != nil {
+		id := *entityID
+		entityCopy = &id
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		s.dispatchPush(ctx, userID, title, body, entityType, entityCopy)
+	}()
+}
+
 func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, body, entityType string, entityID *uuid.UUID) {
 	if !s.PushEnabled() {
 		return
 	}
-	subs, err := s.store.ListPushSubscriptions(ctx, userID)
+	repo := s.pushSubs
+	if repo == nil {
+		repo = s.store
+	}
+	subs, err := repo.ListPushSubscriptions(ctx, userID)
 	if err != nil || len(subs) == 0 {
 		return
 	}
@@ -86,25 +153,24 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 	if err != nil {
 		return
 	}
+	sender := s.pushSender
+	if sender == nil {
+		sender = webPushSender{}
+	}
 	for _, sub := range subs {
-		resp, err := webpush.SendNotification(payload, &webpush.Subscription{
-			Endpoint: sub.Endpoint,
-			Keys:     webpush.Keys{P256dh: sub.P256dh, Auth: sub.Auth},
-		}, &webpush.Options{
-			Subscriber:      s.vapidSubject,
-			VAPIDPublicKey:  s.vapidPublic,
-			VAPIDPrivateKey: s.vapidPrivate,
-			TTL:             60,
-		})
+		status, err := sender.Send(ctx, sub, payload, s.vapidPublic, s.vapidPrivate, s.vapidSubject)
 		if err != nil {
-			log.Printf("push send: %v", err)
+			if s.log != nil {
+				s.log.Warn("push delivery failed", "status", "error")
+			}
 			continue
 		}
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
+		if status == http.StatusGone || status == http.StatusNotFound {
+			_ = repo.DeletePushSubscription(ctx, userID, sub.Endpoint)
+			continue
 		}
-		if resp != nil && (resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound) {
-			_ = s.store.DeletePushSubscription(ctx, userID, sub.Endpoint)
+		if status >= 500 && s.log != nil {
+			s.log.Warn("push delivery temporary failure", "http_status", status)
 		}
 	}
 }

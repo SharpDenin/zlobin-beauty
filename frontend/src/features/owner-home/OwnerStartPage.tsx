@@ -17,7 +17,7 @@ import { useHomeBackground } from '@/shared/theme/backgrounds'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
 import { notificationHref } from '@/features/notifications/notificationHref'
-import { enableDevicePush } from '@/features/pwa/push'
+import { DevicePushCard } from '@/features/pwa/DevicePushCard'
 import {
   dayKey,
   formatOwnerDate,
@@ -178,13 +178,6 @@ export function OwnerStartPage() {
     queryFn: () => apiRequest<{ items: NotificationItem[] }>('/v1/notifications', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
-  const pushConfig = useQuery({
-    queryKey: ['push-config'],
-    queryFn: () => apiRequest<{ enabled: boolean; public_key: string }>('/v1/push/config', { token: accessToken }),
-    enabled: Boolean(accessToken),
-    retry: false,
-  })
-
   const items = (appointments.data?.items ?? []).filter((a) => {
     if (cabinet.kind !== 'chain_owner' || !cabinet.selectedBranch?.id) return true
     return !a.branch_id || a.branch_id === cabinet.selectedBranch.id
@@ -503,19 +496,7 @@ export function OwnerStartPage() {
           {!notifications.isLoading && notes.length === 0 && (
             <p className="owner-start-empty">Пока нет уведомлений</p>
           )}
-          {pushConfig.data?.enabled && pushConfig.data.public_key && (
-            <button
-              className="owner-start-push"
-              type="button"
-              onClick={() => {
-                void enableDevicePush(accessToken, pushConfig.data!.public_key)
-                  .then(() => toast.success('Уведомления на устройстве включены'))
-                  .catch((e) => toast.error(userError(e, 'Не удалось включить уведомления')))
-              }}
-            >
-              Уведомления на устройстве
-            </button>
-          )}
+          <DevicePushCard compact className="owner-start-push-card" />
           <ul className="owner-start-note-list">
             {notes.slice(0, 3).map((n) => (
               <li key={n.id}>

@@ -32,6 +32,10 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("POST /v1/auth/login", a.login)
 	mux.HandleFunc("POST /v1/auth/refresh", a.refresh)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
+	mux.HandleFunc("POST /v1/auth/password-reset/request", a.passwordResetRequest)
+	mux.HandleFunc("POST /v1/auth/password-reset/confirm", a.passwordResetConfirm)
+	mux.HandleFunc("POST /v1/auth/email-verification/confirm", a.emailVerifyConfirm)
+	mux.Handle("POST /v1/auth/email-verification/request", authMW(http.HandlerFunc(a.emailVerifyRequest)))
 	mux.Handle("GET /v1/auth/me", authMW(http.HandlerFunc(a.me)))
 	mux.Handle("POST /v1/auth/lookup", authMW(http.HandlerFunc(a.lookup)))
 	mux.Handle("PATCH /v1/auth/me", authMW(http.HandlerFunc(a.updateMe)))
@@ -92,13 +96,15 @@ type refreshReq struct {
 }
 
 type userDTO struct {
-	ID          string   `json:"id"`
-	Email       *string  `json:"email"`
-	Phone       *string  `json:"phone"`
-	DisplayName string   `json:"display_name"`
-	City        string   `json:"city"`
-	Roles       []string `json:"roles"`
-	Status      string   `json:"status"`
+	ID            string   `json:"id"`
+	Email         *string  `json:"email"`
+	Phone         *string  `json:"phone"`
+	DisplayName   string   `json:"display_name"`
+	City          string   `json:"city"`
+	Roles         []string `json:"roles"`
+	Status        string   `json:"status"`
+	EmailVerified bool     `json:"email_verified"`
+	PhoneVerified bool     `json:"phone_verified"`
 }
 
 type authResp struct {
@@ -115,14 +121,76 @@ func toUserDTO(u domain.User) userDTO {
 		roles = []string{}
 	}
 	return userDTO{
-		ID:          u.ID.String(),
-		Email:       u.Email,
-		Phone:       u.Phone,
-		DisplayName: u.DisplayName,
-		City:        u.City,
-		Roles:       roles,
-		Status:      u.Status,
+		ID:            u.ID.String(),
+		Email:         u.Email,
+		Phone:         u.Phone,
+		DisplayName:   u.DisplayName,
+		City:          u.City,
+		Roles:         roles,
+		Status:        u.Status,
+		EmailVerified: u.EmailVerified,
+		PhoneVerified: u.PhoneVerified,
 	}
+}
+
+func (a *API) passwordResetRequest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	msg, err := a.svc.RequestPasswordReset(r.Context(), req.Email, clientIP(r))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"message": msg})
+}
+
+func (a *API) passwordResetConfirm(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	if err := a.svc.ConfirmPasswordReset(r.Context(), req.Token, req.NewPassword, clientIP(r)); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"message": "Пароль обновлён. Войдите с новым паролем."})
+}
+
+func (a *API) emailVerifyRequest(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.ClaimsFrom(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("unauthorized"))
+		return
+	}
+	if err := a.svc.RequestEmailVerification(r.Context(), claims.UserID, clientIP(r)); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"message": "Если нужно, мы отправили письмо для подтверждения email."})
+}
+
+func (a *API) emailVerifyConfirm(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	if err := a.svc.ConfirmEmailVerification(r.Context(), req.Token); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"message": "Email подтверждён."})
 }
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {

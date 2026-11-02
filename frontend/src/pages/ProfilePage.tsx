@@ -60,6 +60,8 @@ export function ProfilePage() {
         phone: string | null
         roles: string[]
         status: string
+        email_verified?: boolean
+        phone_verified?: boolean
       }>('/v1/auth/me', {
         method: 'PATCH',
         token: accessToken,
@@ -75,6 +77,23 @@ export function ProfilePage() {
     onError: (e) => {
       setOk(null)
       setError(userError(e, 'Не удалось сохранить профиль'))
+    },
+  })
+
+  const verifyEmail = useMutation({
+    mutationFn: () =>
+      apiRequest<{ message: string }>('/v1/auth/email-verification/request', {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      }),
+    onSuccess: () => {
+      setOk('Если нужно, мы отправили письмо для подтверждения email.')
+      setError(null)
+    },
+    onError: (e) => {
+      setOk(null)
+      setError(userError(e, 'Не удалось отправить письмо. Проверьте, что почта настроена на сервере.'))
     },
   })
 
@@ -95,6 +114,11 @@ export function ProfilePage() {
             <p className="muted">Форматы: {workTypesLabel(cabinet.workTypes)}</p>
           )}
           <p className="muted">{user?.email ?? 'Email не указан'}</p>
+          {user?.email && (
+            <p className="muted" data-testid="email-verify-status">
+              {user.email_verified ? 'Email подтверждён' : 'Email пока не подтверждён — это не мешает записи и покупкам'}
+            </p>
+          )}
           <div className="appt-card-meta">
             {(user?.roles ?? []).map((r) => (
               <span key={r} className="badge badge-default">{roleLabel(r)}</span>
@@ -102,6 +126,22 @@ export function ProfilePage() {
           </div>
         </div>
       </section>
+
+      {user?.email && !user.email_verified && (
+        <section className="card stack" data-testid="email-verify-card">
+          <h2>Подтверждение email</h2>
+          <p className="muted">Подтверждение необязательно для входа, записи и покупок. Письмо придёт на {user.email}.</p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={verifyEmail.isPending}
+            data-testid="email-verify-resend"
+            onClick={() => verifyEmail.mutate()}
+          >
+            {verifyEmail.isPending ? 'Отправляем…' : 'Отправить письмо ещё раз'}
+          </button>
+        </section>
+      )}
 
       {cabinet.canUseMasterMode && (
         <section className="card stack">

@@ -58,6 +58,7 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
             <label htmlFor="password">Пароль</label>
             <input id="password" type="password" autoComplete="current-password" aria-required="true" aria-invalid={Boolean(errors.password)} {...register('password')} />
             {errors.password && <span className="error">{errors.password.message}</span>}
+            <p className="hint"><Link to="/forgot-password">Забыли пароль?</Link></p>
           </div>
           {sessionEnded && !error && (
             <div className="auth-notice" role="status" data-testid="session-expired-notice">

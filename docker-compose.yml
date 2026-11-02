@@ -71,6 +71,18 @@ services:
       APP_ENV: ${APP_ENV:-development}
       MIGRATIONS_DIR: /migrations
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.salon-x.ru}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-no-reply@salon-x.ru}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS_MODE: ${SMTP_TLS_MODE:-implicit}
+      SMTP_TLS_SERVER_NAME: ${SMTP_TLS_SERVER_NAME:-hosting.reg.ru}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@salon-x.ru}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Salon-X}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-720h}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/identity/migrations:/migrations:ro

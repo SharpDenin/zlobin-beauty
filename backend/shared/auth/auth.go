@@ -14,10 +14,22 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-const (
+// Session policy defaults (AUTH-03). Changing these affects only newly issued tokens.
+var (
 	AccessTTL  = 15 * time.Minute
 	RefreshTTL = 30 * 24 * time.Hour
 )
+
+// ConfigureTTLs optionally overrides defaults from configuration. Zero values are ignored.
+// Existing refresh sessions keep their stored expires_at — this never mass-revokes.
+func ConfigureTTLs(access, refresh time.Duration) {
+	if access > 0 {
+		AccessTTL = access
+	}
+	if refresh > 0 {
+		RefreshTTL = refresh
+	}
+}
 
 type Claims struct {
 	UserID    uuid.UUID `json:"uid"`

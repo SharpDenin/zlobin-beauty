@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
 	"github.com/zlobin/zlobin-beauty/backend/shared/entitlement"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/mailer"
 )
 
 type Service struct {
@@ -25,8 +27,13 @@ type Service struct {
 	allowDevBilling bool
 	mediaURL        string
 	internalToken   string
+	mailer          mailer.Mailer
+	publicAppURL    string
+	log             *slog.Logger
 	httpClient      *http.Client
 	now             func() time.Time
+	// captureActionToken is set only by live SMTP e2e tests; must never log the raw value.
+	captureActionToken func(purpose, raw string)
 }
 
 func New(st *store.Store, jwtSecret string) *Service {

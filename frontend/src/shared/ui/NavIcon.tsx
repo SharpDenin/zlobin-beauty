@@ -38,6 +38,7 @@ function iconFor(to: string): AppIconName {
   if (to.startsWith('/rep/finance')) return 'money'
   if (to.startsWith('/masterclasses')) return 'book'
   if (to.startsWith('/models')) return 'portfolio'
+  if (to.startsWith('/consultations')) return 'scissors'
   return 'home'
 }
 

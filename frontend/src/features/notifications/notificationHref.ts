@@ -6,5 +6,6 @@ export function notificationHref(n: { entity_type?: string | null; entity_id?: s
   if (type === 'masterclass' && id) return `/masterclasses/${id}`
   if (type === 'model_request' && id) return `/models/${id}`
   if (type === 'client_order' && id) return `/orders/${id}`
+  if (type === 'hair_consultation' && id) return `/consultations/${id}`
   return '/notifications'
 }

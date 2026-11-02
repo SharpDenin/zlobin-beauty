@@ -12,6 +12,7 @@ import { SearchPage } from '@/pages/SearchPage'
 import { MasterPage } from '@/pages/MasterPage'
 import { AppointmentsPage } from '@/pages/AppointmentsPage'
 import { MasterCabinetPage } from '@/pages/MasterCabinetPage'
+import { HairConsultationDetailPage, HairConsultationsPage } from '@/pages/HairConsultationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { PortfolioPage } from '@/pages/PortfolioPage'
 import { AppointmentDetailPage } from '@/pages/AppointmentDetailPage'
@@ -132,6 +133,8 @@ export function App() {
                 <Route path="/contacts" element={<ContactsPage />} />
                 <Route path="/models" element={<ModelsPage />} />
                 <Route path="/models/:id" element={<ModelRequestDetailPage />} />
+                <Route path="/consultations" element={<HairConsultationsPage />} />
+                <Route path="/consultations/:id" element={<HairConsultationDetailPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/subscription" element={<SubscriptionPage />} />
                 <Route path="/settings" element={<SettingsLayout />}>

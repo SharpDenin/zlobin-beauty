@@ -29,6 +29,24 @@ func TestPurposeWallpaperIsOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestPurposeHairConsultationIsPrivateImagesOnly(t *testing.T) {
+	if !ValidPurpose(PurposeHairConsultation) {
+		t.Fatal("expected valid")
+	}
+	if IsSharedPurpose(PurposeHairConsultation) || IsPublicPurpose(PurposeHairConsultation) {
+		t.Fatal("expected private")
+	}
+	if !ContentAllowedForPurpose(PurposeHairConsultation, "image/jpeg") || !ContentAllowedForPurpose(PurposeHairConsultation, "image/png") || !ContentAllowedForPurpose(PurposeHairConsultation, "image/webp") {
+		t.Fatal("expected jpeg/png/webp")
+	}
+	if ContentAllowedForPurpose(PurposeHairConsultation, "image/gif") || ContentAllowedForPurpose(PurposeHairConsultation, "video/mp4") {
+		t.Fatal("gif/video not allowed")
+	}
+	if MaxBytesForPurpose(PurposeHairConsultation) != MaxUploadBytes {
+		t.Fatal("expected 10MiB")
+	}
+}
+
 func TestPurposeMessageIsPrivate(t *testing.T) {
 	if !ValidPurpose(PurposeMessage) {
 		t.Fatal("purpose=message must be a valid upload purpose")

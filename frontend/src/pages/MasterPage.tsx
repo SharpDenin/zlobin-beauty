@@ -443,6 +443,15 @@ export function MasterPage() {
             Записаться
           </button>
           {accessToken && (
+            <Link
+              className="btn btn-secondary"
+              to={`/consultations?master=${master.user_id}`}
+              data-testid="consult-master"
+            >
+              Консультация
+            </Link>
+          )}
+          {accessToken && (
             <button
               className="btn btn-secondary mp-msg-btn"
               type="button"

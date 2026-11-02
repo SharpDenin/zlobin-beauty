@@ -3822,3 +3822,40 @@ button.list-item:hover {
   border-radius: 0;
 }
 .bottomnav { z-index: 26; }
+
+/* Hair consultations (DIAG-01–04) */
+.stack-gap { display: grid; gap: var(--space-4); }
+.stack-gap-sm { display: grid; gap: var(--space-2); }
+.row-wrap { display: flex; flex-wrap: wrap; align-items: center; }
+.gap-sm { gap: var(--space-2); }
+.check { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--text-sm); }
+.ok-banner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  color: var(--color-text-primary);
+}
+.consult-detail fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.consult-photo-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 1fr;
+}
+.consult-zone-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: 1fr;
+}
+@media (min-width: 768px) {
+  .consult-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .consult-zone-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .consult-photo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

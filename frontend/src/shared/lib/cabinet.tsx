@@ -422,6 +422,7 @@ export function navForCabinet(
       { to: '/settings', label: 'Настройки' },
       { to: '/profile', label: 'Профиль' },
       { to: '/models', label: 'Модели' },
+      { to: '/consultations', label: 'Консультации' },
       { to: '/orders', label: 'Мои заказы' },
       { to: '/shop/cart', label: 'Корзина' },
     ]
@@ -441,6 +442,7 @@ export function navForCabinet(
   secondary.push({ to: '/portfolio', label: 'Портфолио' })
   secondary.push({ to: '/masterclasses', label: 'Мастер-классы' })
   secondary.push({ to: '/models', label: 'Модели' })
+  secondary.push({ to: '/consultations', label: 'Консультации' })
   if (check('clients')) secondary.push({ to: '/clients', label: 'Клиенты' })
   if (check('services')) secondary.push({ to: '/services', label: 'Услуги' })
   if (check('cosmetics')) secondary.push({ to: '/cosmetics', label: 'Косметика' })

@@ -19,8 +19,9 @@ const (
 	PurposeArticle     = "article"
 	PurposeVideo       = "video"
 	PurposeService     = "service"
-	PurposeMessage     = "message"
-	PurposeWallpaper   = "wallpaper"
+	PurposeMessage          = "message"
+	PurposeWallpaper        = "wallpaper"
+	PurposeHairConsultation = "hair_consultation"
 )
 
 // Size ceilings. The browser compresses photos before upload, so these are generous limits for
@@ -47,7 +48,7 @@ type MediaObject struct {
 
 func ValidPurpose(p string) bool {
 	switch p {
-	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService, PurposeMessage, PurposeWallpaper:
+	case PurposeProfile, PurposeSalon, PurposePortfolio, PurposeBeforeAfter, PurposeProduct, PurposeDelivery, PurposeDocument, PurposeArticle, PurposeVideo, PurposeService, PurposeMessage, PurposeWallpaper, PurposeHairConsultation:
 		return true
 	default:
 		return false
@@ -101,6 +102,14 @@ func AllowsGIF(purpose string) bool {
 func ContentAllowedForPurpose(purpose, ct string) bool {
 	if !ValidContentType(ct) {
 		return false
+	}
+	if purpose == PurposeHairConsultation {
+		switch ct {
+		case "image/jpeg", "image/png", "image/webp":
+			return true
+		default:
+			return false
+		}
 	}
 	switch {
 	case ct == "image/gif":

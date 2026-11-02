@@ -178,6 +178,7 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       ORGANIZATIONS_URL: http://organizations:8080
       IDENTITY_URL: http://identity:8080
+      COMMUNICATIONS_URL: http://communications:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -261,6 +262,8 @@ services:
       MINIO_USE_SSL: "false"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       COMMUNICATIONS_URL: http://communications:8080
+      BOOKING_URL: http://booking:8080
+      CLIENTS_URL: http://clients:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -270,6 +273,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      clients:
+        condition: service_started
 
   gateway:
     <<: *service-runtime

@@ -122,6 +122,8 @@ func main() {
 	mux.Handle("/v1/clients/", clients)
 	mux.Handle("/v1/client-cards", clients)
 	mux.Handle("/v1/client-cards/", clients)
+	mux.Handle("/v1/hair-consultations", clients)
+	mux.Handle("/v1/hair-consultations/", clients)
 	mux.Handle("/v1/notifications", communications)
 	mux.Handle("/v1/notifications/", communications)
 	mux.Handle("/v1/push/", communications)

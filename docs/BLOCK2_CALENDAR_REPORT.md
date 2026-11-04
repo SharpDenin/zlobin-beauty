@@ -106,7 +106,50 @@ npx playwright test e2e/calendar-stabilize.spec.ts --project=phone-390
 ## 9. Ограничения
 
 - Физические жесты (swipe vs scroll) на iPhone/Samsung — ручная проверка.
-- Drag записи на телефоне в day-list нет (перенос через карточку/диалог); drag остаётся на FC (3 дня / desktop).
+- Drag записи на телефоне в day-list нет (перенос через карточку/диалог); drag остаётся на FC (3 дня / desktop / неделя).
 - Клиентский визард слотов — chip grid свободного времени, не timeline «занято» (по BOOKING.md это корректно).
 - Seed: 2026-11-04 — exception day_off при наличии записей; UI теперь их показывает.
 - Полный прогон всех 16 UI-сценариев ролей на staging желателен после деплоя.
+
+---
+
+## 10. BLOCK 2.1 — адаптивные правки (2026-11-05)
+
+### Первопричины
+
+| Проблема | Причина |
+| --- | --- |
+| Наложение / обрезанная лента дат | Sticky `cal-mobile-head` + `cal-day-strip` внутри одного scroll-контейнера + `overflow:hidden` shell → strip сжимался/перекрывался; `state-box success` конкурировал с кнопками head |
+| Нет «Неделя» | Compact remap `timeGridWeek` → `timeGridThreeDay`; одна кнопка «3 дня» вместо двух режимов |
+| Дубль success | `setOk` + `toast.success` + постоянный `.state-box.success` |
+| Фильтры в основном UI | `.calendar-category-row` всегда в chrome; на day CSS прятал, на остальных режимах — нет |
+
+### Исправления
+
+1. **Layout day:** `cal-mobile-chrome` (head + strip, `flex-shrink:0`) и `cal-mobile-body` (слоты, `overflow-y:auto`); sticky убран.
+2. **Лента дат:** `min-height:64px`, `touch-action:pan-x`, выбранный день `scrollIntoView`; без page overflow-x.
+3. **Неделя:** отдельные вкладки День / 3 дня / Неделя / Месяц / Список; FC `timeGridWeek` на mobile; remap снят.
+4. **Toast only:** удалён success banner и state `ok`; успех только через `toast.success`; ошибки — `ErrorBanner` / `toast.error`.
+5. **Фильтры:** панель категорий только в «Настройки календаря» → «Показ категорий» (тот же `hidden` / `setHidden`).
+
+### Файлы 2.1
+
+- `frontend/src/pages/CalendarPage.tsx`
+- `frontend/src/pages/CalendarMobile.tsx`
+- `frontend/src/pages/calendar.css`
+- `frontend/e2e/calendar.spec.ts`
+- `frontend/e2e/calendar-stabilize.spec.ts`
+- `docs/CALENDAR.md`
+- `docs/BLOCK2_CALENDAR_REPORT.md`
+
+### Проверка
+
+- Vitest `calendar-helpers.test.ts` — 15/15.
+- Browser **360 / 390**: tabs `sameRow=true`, `overflow-x:auto`, stripH≈74, chrome/body без overlap, `catMain=0`, `successBox=false`, `pageOX=false`.
+- **Неделя** на 390: FC 7 колонок (пн–вс), page overflow-x = false.
+- Фильтры только в settings («Показ категорий»).
+- Скриншоты:  
+  - `docs/qa01-artifacts/cal-block21-390-day.png`  
+  - `docs/qa01-artifacts/cal-block21-360-day.png`  
+  - `docs/qa01-artifacts/cal-block21-390-settings.png`  
+  - `docs/qa01-artifacts/cal-block21-390-week.png`

@@ -8,13 +8,13 @@
 | --- | --- | --- |
 | День | Телефон | Горизонтальная лента дат + вертикальный список слотов по рабочему графику |
 | День | Планшет / десктоп | FullCalendar timeGrid |
-| 3 дня | Телефон / узкий | FullCalendar вместо недели |
-| Неделя | Планшет и десктоп | Колонки времени |
+| 3 дня | Все | FullCalendar `timeGridThreeDay` |
+| Неделя | Все | FullCalendar `timeGridWeek` (на узком экране — горизонтальный скролл колонок) |
 | Месяц | Телефон | Сетка точек `CalendarMobile`; тап открывает день |
 | Месяц | Широкий | FullCalendar dayGrid |
 | Список | Все | Лента событий за период |
 
-Сохранённый вид: preference `calendar.view.desktop` / `calendar.view.mobile` / `calendar.view.embedded`. При смене ширины неделя ↔ 3 дня подменяется.
+Сохранённый вид: preference `calendar.view.desktop` / `calendar.view.mobile` / `calendar.view.embedded`. Фильтры категорий — только в «Настройки календаря».
 
 ## Мобильный день (референс)
 

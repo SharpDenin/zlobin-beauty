@@ -33,11 +33,8 @@ test.describe('production calendar', () => {
     await page.goto('/calendar')
     await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
     await expect(page.getByRole('button', { name: 'День', exact: true })).toBeVisible()
-    if (info.project.name === 'phone-390') {
-      await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
-    } else {
-      await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
-    }
+    await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
     await assertNoPageOverflow(page)
 
     if (info.project.name === 'phone-390') {
@@ -78,8 +75,12 @@ test.describe('production calendar', () => {
     await expect(page.getByRole('dialog').getByRole('alert').filter({ hasText: /позже начала|Не удалось/ })).toBeVisible()
     await page.getByRole('button', { name: 'Закрыть' }).click()
 
+    // Category filters live in settings — not permanently in the main calendar chrome.
+    await expect(page.locator('.calendar-shell > .calendar-category-row')).toHaveCount(0)
     await page.getByRole('button', { name: 'Настройки календаря' }).click()
     await expect(page.getByTestId('calendar-settings')).toBeVisible()
+    await expect(page.getByRole('group', { name: 'Фильтры категорий' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /Клиент/ }).first()).toBeVisible()
     await page.getByTestId('settings-open-schedule').click()
     await expect(page).toHaveURL(/panel=schedule/)
     await expect(page.getByTestId('weekly-hours-form')).toBeVisible()

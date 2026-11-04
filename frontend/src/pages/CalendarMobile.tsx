@@ -306,56 +306,63 @@ export function CalendarMobile({
     )
   }
 
+  const freeSlotLabel = intervalSelecting
+    ? undefined
+    : `Свободное время · ${dayContextLabel}`
+
   return (
     <div className="cal-mobile cal-mobile--day" data-testid="calendar-mobile" data-day-list="true">
-      <header className="cal-mobile-head cal-mobile-head--day">
-        <h2 className="cal-mobile-title">{heading}</h2>
-        <div className="cal-mobile-head-actions">
-          <button type="button" className="btn btn-ghost btn-compact cal-touch" onClick={onToday}>
-            Сегодня
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon cal-date-picker-btn cal-touch"
-            aria-label="Выбрать дату"
-            data-testid="calendar-mobile-date-picker"
-            onClick={openDatePicker}
-          >
-            <AppIcon name="calendar" size={20} />
-          </button>
-          <input
-            ref={dateInputRef}
-            type="date"
-            className="visually-hidden"
-            value={ymd}
-            onChange={(e) => onDateInputChange(e.target.value)}
-            tabIndex={-1}
-            aria-hidden
-          />
-        </div>
-      </header>
-
-      <div className="cal-day-strip" ref={stripRef} role="listbox" aria-label="Дни">
-        {strip.map((d) => {
-          const selected = d.ymd === ymd
-          return (
-            <button
-              key={d.ymd}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              aria-current={selected ? 'date' : undefined}
-              aria-label={`${d.weekday} ${d.day}${d.isToday ? ', сегодня' : ''}`}
-              className={`cal-day-chip ${selected ? 'is-selected' : ''} ${d.isToday ? 'is-today' : ''}`}
-              onClick={() => onSelectDate(d.date)}
-            >
-              <span className="cal-day-chip-wd">{d.weekday}</span>
-              <span className="cal-day-chip-num">{d.day}</span>
+      <div className="cal-mobile-chrome">
+        <header className="cal-mobile-head cal-mobile-head--day">
+          <h2 className="cal-mobile-title">{heading}</h2>
+          <div className="cal-mobile-head-actions">
+            <button type="button" className="btn btn-ghost btn-compact cal-touch" onClick={onToday}>
+              Сегодня
             </button>
-          )
-        })}
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon cal-date-picker-btn cal-touch"
+              aria-label="Выбрать дату"
+              data-testid="calendar-mobile-date-picker"
+              onClick={openDatePicker}
+            >
+              <AppIcon name="calendar" size={20} />
+            </button>
+            <input
+              ref={dateInputRef}
+              type="date"
+              className="visually-hidden"
+              value={ymd}
+              onChange={(e) => onDateInputChange(e.target.value)}
+              tabIndex={-1}
+              aria-hidden
+            />
+          </div>
+        </header>
+
+        <div className="cal-day-strip" ref={stripRef} role="listbox" aria-label="Дни">
+          {strip.map((d) => {
+            const selected = d.ymd === ymd
+            return (
+              <button
+                key={d.ymd}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                aria-current={selected ? 'date' : undefined}
+                aria-label={`${d.weekday} ${d.day}${d.isToday ? ', сегодня' : ''}`}
+                className={`cal-day-chip ${selected ? 'is-selected' : ''} ${d.isToday ? 'is-today' : ''}`}
+                onClick={() => onSelectDate(d.date)}
+              >
+                <span className="cal-day-chip-wd">{d.weekday}</span>
+                <span className="cal-day-chip-num">{d.day}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
+      <div className="cal-mobile-body">
       {rangeExtendedHint ? <p className="cal-outside-banner muted" role="status">{rangeExtendedHint}</p> : null}
 
       {intervalSelecting ? (
@@ -566,7 +573,7 @@ export function CalendarMobile({
                   <span className="cal-slot-free-label">
                     {intervalSelecting
                       ? (inInterval ? 'В выбранном интервале' : 'Свободное время')
-                      : `Свободное время на ${dayContextLabel}`}
+                      : freeSlotLabel}
                   </span>
                   <span className="chev" aria-hidden>›</span>
                 </button>
@@ -575,6 +582,7 @@ export function CalendarMobile({
           })}
         </ol>
       )}
+      </div>
     </div>
   )
 }

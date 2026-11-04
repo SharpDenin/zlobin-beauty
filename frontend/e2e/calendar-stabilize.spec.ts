@@ -64,25 +64,29 @@ test.describe('calendar stabilization', () => {
       await page.goto('/calendar')
       await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
 
-      const dayLabel = 'День'
-      const weekLabel = width <= 599 ? '3 дня' : 'Неделя'
-      await expect(page.getByRole('button', { name: dayLabel, exact: true })).toBeVisible()
-      await expect(page.getByRole('button', { name: weekLabel, exact: true })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Месяц', exact: true })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Список', exact: true })).toBeVisible()
+      const views = ['День', '3 дня', 'Неделя', 'Месяц', 'Список'] as const
+      for (const label of views) {
+        await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
+      }
 
-      for (const view of [dayLabel, weekLabel, 'Месяц', 'Список'] as const) {
+      for (const view of views) {
         await page.getByRole('button', { name: view, exact: true }).click()
         await page.waitForTimeout(350)
         const m = await metrics(page)
         expect(m.overflowX, `${width}/${view} overflowX`).toBe(false)
         expect(m.clipped, `${width}/${view} clipped: ${m.clipped.join(',')}`).toEqual([])
         // Phone day/month use CalendarMobile; other views need FC wrap height.
-        const phoneList = width <= 599 && (view === dayLabel || view === 'Месяц')
+        const phoneList = width <= 599 && (view === 'День' || view === 'Месяц')
         if (!phoneList) {
           expect(m.wrapHeight, `${width}/${view} wrap height`).toBeGreaterThan(180)
         } else {
           await expect(page.getByTestId('calendar-mobile')).toBeVisible()
+          if (view === 'День') {
+            const strip = page.locator('.cal-day-strip')
+            await expect(strip).toBeVisible()
+            const box = await strip.boundingBox()
+            expect(box?.height ?? 0, `${width}/День strip height`).toBeGreaterThan(48)
+          }
         }
         await page.screenshot({
           path: path.join(shotDir, `cal-${width}-${view.replace(/\s+/g, '-')}.png`),

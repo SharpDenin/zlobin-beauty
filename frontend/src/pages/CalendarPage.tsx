@@ -254,15 +254,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [range, setRange] = useState(initialRange)
   const [currentView, setCurrentView] = useState<CalendarViewId>(() => {
     if (!isCalendarViewId(savedView)) return defaultView
-    // Phone week maps to 3-day strip.
-    if (compact && savedView === 'timeGridWeek') return 'timeGridThreeDay'
-    if (!compact && savedView === 'timeGridThreeDay') return 'timeGridWeek'
     return savedView
   })
   const [selectedDate, setSelectedDate] = useState(() => new Date())
   const [hidden, setHidden] = useState<string[]>([])
   const [error, setError] = useState<unknown>(null)
-  const [ok, setOk] = useState<string | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [selected, setSelected] = useState<CalendarSelection | null>(null)
@@ -301,24 +297,19 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   useEffect(() => {
     if (wasCompact.current === compact) return
     wasCompact.current = compact
-    setCurrentView((prev) => {
-      const next: CalendarViewId = compact
-        ? (prev === 'timeGridWeek' || prev === 'timeGridThreeDay' ? 'timeGridThreeDay' : 'timeGridDay')
-        : (prev === 'timeGridThreeDay' ? 'timeGridWeek' : prev === 'timeGridDay' ? 'timeGridWeek' : prev)
-      queueMicrotask(() => calendarRef.current?.getApi().changeView(next))
-      return next
+    // Keep the chosen view across breakpoints (day / 3-day / week / month / list).
+    queueMicrotask(() => {
+      if (compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth')) return
+      calendarRef.current?.getApi().changeView(currentView)
     })
-  }, [compact])
+  }, [compact, currentView])
 
   useEffect(() => {
     if (!isCalendarViewId(savedView)) return
-    let mapped: CalendarViewId = savedView
-    if (compact && mapped === 'timeGridWeek') mapped = 'timeGridThreeDay'
-    if (!compact && mapped === 'timeGridThreeDay') mapped = 'timeGridWeek'
-    if (mapped === currentView) return
-    setCurrentView(mapped)
-    if (!(compact && mapped === 'dayGridMonth')) {
-      calendarRef.current?.getApi().changeView(mapped)
+    if (savedView === currentView) return
+    setCurrentView(savedView)
+    if (!(compact && (savedView === 'dayGridMonth' || savedView === 'timeGridDay'))) {
+      calendarRef.current?.getApi().changeView(savedView)
     }
     // hydrate from preference when it arrives / changes externally
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -726,7 +717,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }),
     onSuccess: async () => {
       setEditorOpen(false)
-      setOk('Событие добавлено в календарь')
       toast.success('Событие добавлено в календарь')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
@@ -754,7 +744,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     },
     onSuccess: async () => {
       setSelected(null)
-      setOk('Событие обновлено')
       toast.success('Событие обновлено')
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
     },
@@ -768,7 +757,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     mutationFn: (id: string) => apiRequest(`/v1/planner/blocks/${id}`, { method: 'DELETE', token: accessToken }),
     onSuccess: async () => {
       setSelected(null)
-      setOk('Событие удалено')
       toast.success('Событие удалено')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
@@ -810,7 +798,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         })
       }
       const msg = variables.isDayOff ? 'Выходной сохранён' : 'Рабочий интервал сохранён'
-      setOk(msg)
       toast.success(msg)
       setIntervalMode(false)
       setIntervalStartMin(null)
@@ -980,7 +967,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           body: { starts_at: startsAt, ends_at: endsAt },
         })
         await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
-        setOk(resized ? 'Длительность обновлена' : 'Событие перенесено')
+        toast.success(resized ? 'Длительность обновлена' : 'Событие перенесено')
       } else if (id.startsWith('appt:')) {
         await apiRequest(`/v1/appointments/${id.slice(5)}/reschedule`, {
           token: accessToken,
@@ -988,7 +975,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         })
         await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
         await qc.invalidateQueries({ queryKey: ['appointments'] })
-        setOk('Запись перенесена')
+        toast.success('Запись перенесена')
       }
       setError(null)
       restoreScroll()
@@ -1171,18 +1158,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function changeView(id: CalendarViewId) {
-    const mapped: CalendarViewId =
-      compact && id === 'timeGridWeek' ? 'timeGridThreeDay'
-        : !compact && id === 'timeGridThreeDay' ? 'timeGridWeek'
-          : id
-    setCurrentView(mapped)
-    setSavedView(mapped)
-    if (compact && (mapped === 'timeGridDay' || mapped === 'dayGridMonth')) {
+    setCurrentView(id)
+    setSavedView(id)
+    if (compact && (id === 'timeGridDay' || id === 'dayGridMonth')) {
       // Day/month list unmounts FullCalendar — keep a wide fetch window around the selected day.
       ensureRangeCovers(selectedDate)
     }
-    if (!(compact && (mapped === 'dayGridMonth' || mapped === 'timeGridDay'))) {
-      calendarRef.current?.getApi().changeView(mapped)
+    if (!(compact && (id === 'dayGridMonth' || id === 'timeGridDay'))) {
+      calendarRef.current?.getApi().changeView(id)
     }
   }
 
@@ -1289,7 +1272,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     setRangeError(null)
     setDisplayRangePref(result.value)
     setHoursEditorOpen(false)
-    setOk('Рабочий день календаря сохранён')
+    toast.success('Рабочий день календаря сохранён')
   }
 
   function onPointerDownSwipe(e: ReactPointerEvent) {
@@ -1579,7 +1562,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       )}
 
       {!editorOpen && !selected ? <ErrorBanner error={error} fallbackTitle="Не удалось изменить расписание" /> : null}
-      {ok && <div className="state-box success">{ok}</div>}
       {moving ? <p className="muted" aria-live="polite">Сохраняем перенос…</p> : null}
       {intervalMode ? <p className="state-box">Выберите начало и конец интервала, затем сохраните</p> : null}
 
@@ -1613,18 +1595,19 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       )}
 
       <div className="calendar-controls calendar-toolbar-sticky" ref={toolbarRef}>
-        <div className="calendar-view-tabs" aria-label="Режим календаря">
+        <div className="calendar-view-tabs" aria-label="Режим календаря" data-testid="calendar-view-tabs">
           {([
             ['timeGridDay', 'День'],
-            ['timeGridWeek', compact ? '3 дня' : 'Неделя'],
+            ['timeGridThreeDay', '3 дня'],
+            ['timeGridWeek', 'Неделя'],
             ['dayGridMonth', 'Месяц'],
             ['listWeek', 'Список'],
           ] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
-              className={`chip ${currentView === id || (id === 'timeGridWeek' && currentView === 'timeGridThreeDay') ? 'active' : ''}`}
-              aria-pressed={currentView === id || (id === 'timeGridWeek' && currentView === 'timeGridThreeDay')}
+              className={`chip ${currentView === id ? 'active' : ''}`}
+              aria-pressed={currentView === id}
               onClick={() => changeView(id)}
             >
               {label}
@@ -1638,21 +1621,26 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <p className="calendar-outside-hint muted" role="status">{rangeExtendedHint}</p>
       ) : null}
 
-      <div className="calendar-category-row">
-        {palette.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className={`calendar-category-chip ${hidden.includes(c.id) ? 'is-hidden' : ''}`}
-            onClick={() => setHidden((h) => h.includes(c.id) ? h.filter((x) => x !== c.id) : [...h, c.id])}
-          >
-            <span style={{ backgroundColor: calendarColorCss(c.color, c.id) } as CSSProperties}>{c.icon}</span>{c.label}
-          </button>
-        ))}
-      </div>
-
       {settingsOpen && (
         <section className="card calendar-color-settings stack" data-testid="calendar-settings">
+          <div>
+            <strong>Показ категорий</strong>
+            <p className="muted">Скрытые категории не отображаются в календаре. Настройки сохраняются до перезагрузки сессии.</p>
+          </div>
+          <div className="calendar-category-row calendar-category-row--settings" role="group" aria-label="Фильтры категорий">
+            {palette.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`calendar-category-chip ${hidden.includes(c.id) ? 'is-hidden' : ''}`}
+                aria-pressed={!hidden.includes(c.id)}
+                onClick={() => setHidden((h) => h.includes(c.id) ? h.filter((x) => x !== c.id) : [...h, c.id])}
+              >
+                <span style={{ backgroundColor: calendarColorCss(c.color, c.id) } as CSSProperties}>{c.icon}</span>{c.label}
+              </button>
+            ))}
+          </div>
+
           <div>
             <strong>Диапазон сетки</strong>
             <p className="muted">Отображаемые часы, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится. Недельный график мастера задаётся отдельно.</p>
@@ -1676,7 +1664,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               onClick={() => {
                 setDisplayRangePref(rememberedInterval)
                 setRangeDraft(rememberedInterval)
-                setOk(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
+                toast.success(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
               }}
             >
               Применить сохранённый интервал ({rememberedInterval.from}–{rememberedInterval.to})
@@ -2025,7 +2013,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 setIntervalMode(true)
                 setIntervalStartMin(null)
                 setIntervalEndMin(null)
-                setOk('Выберите начало и конец интервала')
               }
             }}
           >

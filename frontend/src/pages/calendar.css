@@ -51,7 +51,19 @@
   .calendar-shell.is-mobile-day .cal-mobile {
     flex: 1 1 auto;
     min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .calendar-shell.is-mobile-day .cal-mobile-chrome {
+    flex-shrink: 0;
+  }
+  .calendar-shell.is-mobile-day .cal-mobile-body {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     padding-bottom: calc(var(--space-4) + var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px));
   }
   .calendar-shell.is-mobile-fc .calendar-page-head.calendar-toolbar-sticky,
@@ -106,19 +118,12 @@
   }
   .calendar-shell.is-mobile-day .cal-mobile-head,
   .calendar-shell.is-mobile-day .cal-day-strip {
-    position: sticky;
-    top: 0;
-  }
-  .calendar-shell.is-mobile-day .cal-day-strip {
-    top: 48px;
+    position: static;
   }
   .calendar-shell.is-mobile-day .calendar-page-head-actions.is-compact-day {
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
-  }
-  .calendar-shell.is-mobile-day .calendar-category-row {
-    display: none;
   }
   .calendar-shell.is-mobile-day .cal-mobile-period {
     flex: 1 1 100%;
@@ -131,14 +136,25 @@
   .calendar-shell.is-mobile-day .cal-mobile-month {
     font-size: 1.05rem;
   }
-  .calendar-view-tabs {
+  /* Override global styles.css 4-col grid — five modes need a horizontal scroll rail */
+  .calendar-shell .calendar-view-tabs {
     width: 100%;
-    overflow-x: auto;
+    display: flex !important;
+    grid-template-columns: none !important;
+    flex-wrap: nowrap !important;
+    gap: 6px;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: thin;
+    padding-bottom: 2px;
   }
-  .calendar-view-tabs .chip {
-    flex: 1 0 auto;
-    min-height: 44px;
+  .calendar-shell .calendar-view-tabs .chip {
+    flex: 0 0 auto;
+    min-height: 40px;
+    white-space: nowrap;
   }
 }
 
@@ -426,17 +442,26 @@
   touch-action: pan-y;
 }
 
+.cal-mobile-chrome {
+  display: grid;
+  gap: var(--space-2);
+  background: var(--color-bg, #0b0d12);
+  padding-bottom: 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+.cal-mobile-body {
+  min-width: 0;
+}
+
 .cal-mobile-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  position: sticky;
-  top: calc(var(--cal-sticky-top) + var(--cal-toolbar-h));
-  z-index: 2;
-  background: color-mix(in srgb, var(--color-bg) 94%, transparent);
-  padding-bottom: 4px;
+  background: transparent;
+  padding-bottom: 0;
 }
 
 .cal-mobile-head--day {
@@ -493,23 +518,26 @@
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 2px 0 8px;
+  overflow-y: hidden;
+  min-height: 64px;
+  max-width: 100%;
+  padding: 4px 2px 8px;
   scrollbar-width: thin;
   overscroll-behavior-x: contain;
-  position: sticky;
-  top: calc(var(--cal-sticky-top) + var(--cal-toolbar-h) + 52px);
-  z-index: 2;
-  background: color-mix(in srgb, var(--color-bg) 96%, transparent);
+  touch-action: pan-x;
+  background: transparent;
+  -webkit-overflow-scrolling: touch;
 }
 
 .cal-day-chip {
   flex: 0 0 auto;
-  min-width: 44px;
+  width: 48px;
+  min-width: 48px;
   min-height: 56px;
   display: grid;
   place-items: center;
   gap: 2px;
-  padding: 8px 10px;
+  padding: 8px 6px;
   border-radius: var(--radius-md, 14px);
   border: 1px solid transparent;
   background: transparent;
@@ -581,9 +609,16 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
-  position: sticky;
-  top: calc(var(--cal-sticky-top) + var(--cal-toolbar-h) + 120px);
-  z-index: 2;
+  position: relative;
+  z-index: 1;
+}
+
+.calendar-category-row.calendar-category-row--settings,
+.calendar-color-settings .calendar-category-row--settings {
+  flex-wrap: wrap;
+  overflow: visible;
+  max-height: none;
+  gap: 8px;
 }
 
 .cal-slot-grid {
@@ -713,13 +748,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-sm);
+  max-width: 100%;
 }
 
 .cal-slot-event .muted {
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .cal-slot-event.cal-color-primary { --cal-event-accent: var(--color-primary); }
@@ -898,17 +938,17 @@
   .calendar-shell.is-mobile-fc .calendar-controls,
   .calendar-shell.is-mobile-day .calendar-controls {
     display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
     gap: 8px;
   }
   .calendar-shell.is-mobile-fc .calendar-view-tabs,
   .calendar-shell.is-mobile-day .calendar-view-tabs {
-    flex: 1 1 auto;
-    width: auto;
+    flex: 0 0 auto;
+    width: 100%;
   }
-  .calendar-category-row {
+  .calendar-category-row:not(.calendar-category-row--settings) {
     flex-wrap: nowrap;
     overflow-x: auto;
     max-height: 44px;
@@ -953,7 +993,30 @@
 .app-shell.app-shell--fill .calendar-shell.is-mobile-day .cal-mobile {
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.app-shell.app-shell--fill .calendar-shell.is-mobile-day .cal-mobile-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Narrow week grid: scroll columns horizontally, page stays without overflow-x */
+@media (max-width: 599px) {
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-timegrid-body,
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-scrollgrid-sync-table {
+    min-width: 0;
+  }
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-daygrid-body,
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc-timegrid-cols > table {
+    min-width: calc(7 * 72px);
+  }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-col-header-cell-cushion,
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-timegrid-axis-cushion {
+    font-size: 0.75rem;
+  }
 }

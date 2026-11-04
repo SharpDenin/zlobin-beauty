@@ -29,6 +29,8 @@ export type User = {
   city: string
   roles: string[]
   status: string
+  email_verified?: boolean
+  phone_verified?: boolean
 }
 
 type AuthResponse = {

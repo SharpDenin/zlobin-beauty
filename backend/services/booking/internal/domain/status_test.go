@@ -37,3 +37,28 @@ func TestCanReschedule(t *testing.T) {
 		t.Fatal("in progress must not reschedule")
 	}
 }
+
+func TestConfirmRejectCancelTransitions(t *testing.T) {
+	// Master confirm
+	if !CanTransition(StatusPendingConfirmation, StatusConfirmed) {
+		t.Fatal("master confirm")
+	}
+	// Master reject = cancel by master
+	if !CanTransition(StatusPendingConfirmation, StatusCancelledByMaster) {
+		t.Fatal("master reject/cancel from pending")
+	}
+	if !CanTransition(StatusConfirmed, StatusCancelledByMaster) {
+		t.Fatal("master cancel confirmed")
+	}
+	// Client cancel
+	if !CanTransition(StatusPendingConfirmation, StatusCancelledByClient) {
+		t.Fatal("client cancel pending")
+	}
+	if !CanTransition(StatusConfirmed, StatusCancelledByClient) {
+		t.Fatal("client cancel confirmed")
+	}
+	// Terminal: cannot re-confirm after cancel
+	if CanTransition(StatusCancelledByMaster, StatusConfirmed) {
+		t.Fatal("cancelled must not re-confirm")
+	}
+}

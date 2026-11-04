@@ -16,17 +16,19 @@ import 'react-grid-layout/css/styles.css'
 import '@/features/dashboard/dashboard.css'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
+import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { formatMoney } from '@/shared/lib/money'
 import { initials } from '@/shared/lib/initials'
-import { workTypeLabel } from '@/shared/lib/status'
-import { workTypeNeedsSalon } from '@/shared/lib/work-types'
+import { workTypesLabel } from '@/shared/lib/work-types'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { toast } from '@/shared/ui/Toast'
 import { CalendarPage } from '@/pages/CalendarPage'
 import {
   LIBRARY,
@@ -87,6 +89,7 @@ type MasterHero = {
   display_name?: string
   city?: string
   work_type?: string
+  work_types?: string[]
   photo_media_id?: string | null
   published?: boolean
   rating_avg?: number
@@ -100,6 +103,7 @@ function notificationHref(n: Notification) {
   if (n.entity_type === 'conversation' && n.entity_id) return `/messages/${n.entity_id}`
   if (n.entity_type === 'masterclass' && n.entity_id) return `/masterclasses/${n.entity_id}`
   if (n.entity_type === 'model_request' && n.entity_id) return `/models/${n.entity_id}`
+  if (n.entity_type === 'hair_consultation' && n.entity_id) return `/consultations/${n.entity_id}`
   return '/notifications'
 }
 
@@ -122,6 +126,7 @@ function availableWidgets(cabinet: ReturnType<typeof useCabinet>) {
 export function DashboardPage() {
   const { user, accessToken } = useAuth()
   const cabinet = useCabinet()
+  const messenger = useMessengerOptional()
   const qc = useQueryClient()
   const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 390 })
   const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => breakpointForWidth(390))
@@ -177,6 +182,7 @@ export function DashboardPage() {
       body: { widgets: [...widgets, ...calendarPrefs] },
     }),
     onSuccess: () => {
+      toast.success('Макет кабинета сохранён')
       void qc.invalidateQueries({ queryKey: ['me-dashboard'] })
       setEditing(false)
       setDraft(null)
@@ -279,15 +285,27 @@ export function DashboardPage() {
   const master = masterQ.data?.master
   const displayName = master?.display_name?.trim() || user?.display_name || 'Профиль'
   const city = master?.city?.trim() || user?.city?.trim() || ''
-  const workLabel = workTypeLabel(master?.work_type || cabinet.workType)
+  const workLabel = workTypesLabel(
+    master?.work_types?.length
+      ? master.work_types
+      : (cabinet.workTypes?.length ?? 0)
+        ? cabinet.workTypes
+        : master?.work_type
+          ? [master.work_type]
+          : [],
+  )
+  const showPortfolio = Boolean(
+    cabinet.capabilities?.isMaster
+    || cabinet.capabilities?.isSalonOwner
+    || cabinet.capabilities?.isSalonAdmin
+    || ['private_master', 'chair_master', 'mobile_master', 'salon_employee', 'salon_owner', 'chain_owner'].includes(cabinet.kind),
+  )
   const professionLine = master
     ? masterProfessionLabel(master, '')
     : ''
-  const salonName = workTypeNeedsSalon(master?.work_type || cabinet.workType)
+  const salonName = cabinet.selectedOrg?.organization.type !== 'supplier'
     ? cabinet.selectedOrg?.organization.name
     : undefined
-  const showPortfolio = ['private_master', 'chair_master', 'mobile_master', 'salon_employee', 'salon_owner', 'chain_owner'].includes(cabinet.kind)
-  const published = master?.published
   const ratingAvg = typeof master?.rating_avg === 'number' && master.rating_avg > 0 ? master.rating_avg : null
   const ratingCount = typeof master?.rating_count === 'number' ? master.rating_count : 0
 
@@ -334,6 +352,7 @@ export function DashboardPage() {
 
   return (
     <main className={`page stack dashboard-page${editing ? ' dashboard-page--editing' : ''}`} data-testid="dashboard-page">
+      <NotificationBubbles />
       <header className="dashboard-page-head">
         <div className="stack-sm">
           <p className="eyebrow">Главная</p>
@@ -413,12 +432,6 @@ export function DashboardPage() {
             <Link className="dash-premium-pill" to="/profile/subscription" data-testid="dashboard-premium-pill">
               {premiumLabel(sub.data)}
             </Link>
-            {typeof published === 'boolean' && (
-              <span className={`dash-visibility${published ? ' dash-visibility--on' : ''}`} data-testid="dashboard-visibility">
-                <span className="dash-visibility__dot" aria-hidden="true" />
-                {published ? 'В поиске' : 'Скрыт'}
-              </span>
-            )}
           </div>
           {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
             <label className="field" style={{ maxWidth: 280 }}>
@@ -516,7 +529,14 @@ export function DashboardPage() {
                   {w.id === 'calendar' && <CalendarPage embedded />}
                   {w.id === 'today' && <MetricTile label="Сегодня" value={today.length} caption="записей" to="/calendar" />}
                   {w.id === 'pending' && <MetricTile label="Ожидают" value={pending.length} caption="подтверждения" to="/appointments" />}
-                  {w.id === 'messages' && <MetricTile label="Сообщения" value={unread.length} caption="непрочитанных" to="/messages" />}
+                  {w.id === 'messages' && (
+                    <MetricTile
+                      label="Сообщения"
+                      value={messenger?.unreadTotal ?? 0}
+                      caption="непрочитанных"
+                      to="/messages"
+                    />
+                  )}
                   {w.id === 'upcoming' && (
                     <div className="stack">
                       <div className="row between"><h2>Ближайшие записи</h2><Link to="/appointments">Все</Link></div>

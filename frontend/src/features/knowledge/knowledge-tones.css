@@ -91,25 +91,8 @@
   display: grid;
   gap: var(--space-2);
 }
-.kb-search-input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.kb-search-input-wrap input {
-  flex: 1;
+.kb-search-bar .search-field {
   min-width: 0;
-  min-height: var(--control-h);
-  padding-right: calc(var(--control-h) + var(--space-2));
-}
-.kb-search-input-wrap .kb-search-clear {
-  position: absolute;
-  right: var(--space-1);
-  top: 50%;
-  transform: translateY(-50%);
-  min-width: var(--control-h);
-  min-height: var(--control-h);
-  padding: 0;
 }
 .kb-search-meta {
   display: flex;

@@ -4,7 +4,7 @@ import { apiRequest } from '@/shared/api/client'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { AvailabilityPanel } from '@/pages/AvailabilityPanel'
 import { KnowledgeRecommendations } from '@/pages/KnowledgeRecommendations'
-import { availabilityBadgeClass, availabilityStatusMark, type AvailabilityAnalysis } from '@/pages/availability-helpers'
+import { availabilityBadgeClass, availabilityStatusLabel, type AvailabilityAnalysis } from '@/pages/availability-helpers'
 
 export function CalendarAvailability({
   token,
@@ -37,11 +37,11 @@ export function CalendarAvailability({
           data-testid="availability-indicator"
           onClick={() => setOpen((v) => !v)}
         >
-          ! Наличие материалов
+          Наличие материалов
         </button>
         {query.data && (
           <span className={`badge ${availabilityBadgeClass(query.data.availability_status || (query.data.can_perform_now ? 'available' : 'shortage'))}`}>
-            {availabilityStatusMark(query.data.availability_status || (query.data.can_perform_now ? 'available' : 'shortage'))}
+            {availabilityStatusLabel(query.data.availability_status || (query.data.can_perform_now ? 'available' : 'shortage'))}
           </span>
         )}
       </div>

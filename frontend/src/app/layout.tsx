@@ -3,17 +3,18 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess, hasSystemAdmin, useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet, applyNavOrder, moveNavPath, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { usePreference } from '@/shared/lib/preferences'
-import { workTypeLabel } from '@/shared/lib/status'
+import { workTypesLabel } from '@/shared/lib/work-types'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
-import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { Drawer } from '@/shared/ui/Drawer'
 import { EmptyState } from '@/shared/ui/EmptyState'
+import { InteractionModeSwitch } from '@/shared/ui/InteractionModeSwitch'
 import { NavIcon } from '@/shared/ui/NavIcon'
 import { PageLoading } from '@/shared/ui/PageLoading'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { MessengerProvider, useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { PremiumStatusLink } from '@/features/dashboard/PremiumStatusLink'
 import { releaseOrphanedOverlayLock } from '@/shared/ui/overlayLock'
+import { HomeBackgroundPreferenceSync } from '@/features/settings/HomeBackgroundPreferenceSync'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -187,13 +188,21 @@ function MoreDrawer({
     <Drawer open={open} onClose={onClose} title="Меню" panelClassName="stack-sm more-menu-panel">
       <section className="stack-sm more-account">
         <p className="more-account-name">{user?.display_name}</p>
-        <p className="muted">{cabinet.label}{cabinet.workType ? ` · ${workTypeLabel(cabinet.workType)}` : ''}</p>
+        <p className="muted">
+          {cabinet.label}
+          {cabinet.workTypes.length ? ` · ${workTypesLabel(cabinet.workTypes)}` : ''}
+        </p>
+        <InteractionModeSwitch
+          mode={cabinet.interactionMode}
+          onChange={cabinet.setInteractionMode}
+          canUseMasterMode={cabinet.canUseMasterMode}
+        />
         <div className="row wrap gap">
           <Link className="btn btn-secondary btn-compact" to="/profile" onClick={onClose}>Профиль</Link>
+          <Link className="btn btn-secondary btn-compact" to="/settings" onClick={onClose}>Настройки</Link>
           <Link className="btn btn-secondary btn-compact" to="/profile/subscription" onClick={onClose} data-testid="more-premium">
             Premium
           </Link>
-          <ThemeToggle labelled />
         </div>
       </section>
 
@@ -263,6 +272,7 @@ function MoreDrawer({
 export function AppShell() {
   return (
     <MessengerProvider>
+      <HomeBackgroundPreferenceSync />
       <AppShellInner />
     </MessengerProvider>
   )
@@ -316,17 +326,24 @@ function AppShellInner() {
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
         <div className="sidenav-toolbar">
-          <ThemeToggle labelled />
           <PremiumStatusLink />
         </div>
         <p className="muted cabinet-label">{cabinet.label}</p>
-        {cabinet.workType && <p className="muted">{workTypeLabel(cabinet.workType)}</p>}
-        {cabinet.kind === 'chain_owner' && orgOptions.length > 1 && (
+        {cabinet.workTypes.length > 0 && <p className="muted">{workTypesLabel(cabinet.workTypes)}</p>}
+        <InteractionModeSwitch
+          mode={cabinet.interactionMode}
+          onChange={cabinet.setInteractionMode}
+          canUseMasterMode={cabinet.canUseMasterMode}
+          compact
+        />
+        {(cabinet.capabilities.isSalonOwner || cabinet.capabilities.isSalonAdmin || cabinet.capabilities.isChainOps)
+          && orgOptions.length > 1 && (
           <label className="field" style={{ marginTop: 12 }}>
             <span className="muted">Салон</span>
             <select
               className="location-select"
               aria-label="Салон"
+              data-testid="org-switcher"
               value={cabinet.selectedOrg?.organization.id ?? ''}
               onChange={(e) => cabinet.setSelectedOrgId(e.target.value)}
             >
@@ -336,7 +353,8 @@ function AppShellInner() {
             </select>
           </label>
         )}
-        {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+        {(cabinet.capabilities.isSalonOwner || cabinet.capabilities.isSalonAdmin || cabinet.capabilities.isChainOps)
+          && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
           <label className="field" style={{ marginTop: 12 }}>
             <span className="muted">Филиал</span>
             <select
@@ -366,7 +384,8 @@ function AppShellInner() {
             <div className="brand"><BrandLogo size="sm" /></div>
           </div>
           <div className="row topbar-actions">
-            {cabinet.kind === 'chain_owner' && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
+            {(cabinet.capabilities.isSalonOwner || cabinet.capabilities.isSalonAdmin || cabinet.capabilities.isChainOps)
+              && (cabinet.selectedOrg?.branches.length ?? 0) > 1 && (
               <select
                 className="topbar-branch location-select"
                 data-testid="chain-branch-switcher"
@@ -379,7 +398,6 @@ function AppShellInner() {
                 ))}
               </select>
             )}
-            <ThemeToggle />
             <button
               className="btn btn-secondary btn-compact topbar-menu-btn"
               type="button"

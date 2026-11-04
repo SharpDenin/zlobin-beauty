@@ -21,7 +21,26 @@ vi.mock('@/shared/lib/cabinet', () => ({
   useCabinet: () => ({
     kind: 'salon_owner',
     label: 'Владелец салона',
-    workType: 'owner',
+    workType: 'private_practice',
+    workTypes: ['private_practice'],
+    capabilities: {
+      isClient: true,
+      isMaster: true,
+      isSalonOwner: true,
+      isSalonAdmin: false,
+      isSalonMasterMember: false,
+      isChainOps: false,
+      isSupplier: false,
+      isSupplierRep: false,
+      isPlatformAdmin: false,
+      legacyOwnerShell: null,
+      identityOwnerClaim: false,
+      workFormats: ['private_practice'],
+      hasLegacyEmployeeFormat: false,
+    },
+    interactionMode: 'master',
+    setInteractionMode: () => undefined,
+    canUseMasterMode: true,
     orgs: [],
     selectedOrg: { organization: { id: 'org1', name: 'Аура' }, branches: [] },
     selectedBranch: null,
@@ -106,7 +125,7 @@ describe('OwnerStartPage', () => {
     expect(screen.getByRole('link', { name: 'Команда' })).toHaveAttribute('href', '/staff')
     expect(screen.getByRole('link', { name: 'Финансы' })).toHaveAttribute('href', '/reports')
 	expect(screen.getByRole('link', { name: 'Склад' })).toHaveAttribute('href', '/inventory')
-    expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/salon/settings')
+    expect(screen.getByRole('link', { name: 'Настройки салона' })).toHaveAttribute('href', '/salon/settings')
     expect(screen.queryByText(/Кабинет/i)).toBeNull()
     expect(screen.getByText(/2\s?000\s?₽/)).toBeInTheDocument()
   })

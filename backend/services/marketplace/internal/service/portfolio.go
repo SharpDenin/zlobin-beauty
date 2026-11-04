@@ -355,14 +355,7 @@ func (s *Service) ListMasterPortfolio(ctx context.Context, masterID uuid.UUID, c
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if m == nil || !m.Published {
-		return nil, apperr.NotFound("master not found")
-	}
-	visible, err := s.isMasterPubliclyVisible(ctx, *m)
-	if err != nil {
-		return nil, err
-	}
-	if !visible {
+	if m == nil {
 		return nil, apperr.NotFound("master not found")
 	}
 	items, err := s.store.ListPortfolioByMaster(ctx, m.ID, category)

@@ -13,15 +13,16 @@ func TestNormalizeClientPaymentMethod(t *testing.T) {
 	if got := normalizeClientPaymentMethod("card"); got != domain.PaymentMethodCard {
 		t.Fatalf("card want card got %q", got)
 	}
+	if got := normalizeClientPaymentMethod("bank_transfer"); got != domain.PaymentMethodBankTransfer {
+		t.Fatalf("bank_transfer want bank_transfer got %q", got)
+	}
 }
 
-func TestMockCardPaymentProvider(t *testing.T) {
-	p := MockCardPaymentProvider{}
-	status, err := p.Initiate(t.Context(), domain.ClientOrder{})
-	if err != nil {
-		t.Fatal(err)
+func TestResolveClientPaymentStatus(t *testing.T) {
+	if got := resolveClientPaymentStatus("cash"); got != domain.PaymentStatusPending {
+		t.Fatalf("cash => pending, got %q", got)
 	}
-	if status != domain.PaymentStatusAuthorized {
-		t.Fatalf("want authorized got %q", status)
+	if got := resolveClientPaymentStatus("bank_transfer"); got != domain.PaymentStatusAwaitingPayment {
+		t.Fatalf("bank_transfer => awaiting_payment, got %q", got)
 	}
 }

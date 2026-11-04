@@ -9,6 +9,7 @@ import { useBuyerOrg } from '@/shared/lib/commerce'
 import { statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 
 type Member = { id: string; user_id?: string; role: string; status: string }
 type HoursItem = { weekday: number; start_minute: number; end_minute: number }
@@ -107,6 +108,7 @@ export function StaffPage() {
       }),
     onSuccess: async () => {
       setOk('Расписание сохранено')
+      toast.success('Расписание сохранено')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['staff-hours'] })
     },
@@ -120,7 +122,11 @@ export function StaffPage() {
         token: accessToken,
         body: { items: [{ day: dayOff, is_day_off: true, note: 'Выходной' }] },
       }),
-    onSuccess: () => { setOk('Выходной добавлен'); setError(null) },
+    onSuccess: () => {
+      setOk('Выходной добавлен')
+      toast.success('Выходной добавлен')
+      setError(null)
+    },
     onError: (e) => setError(formatUserError(e, 'Не удалось добавить выходной')),
   })
 
@@ -137,6 +143,7 @@ export function StaffPage() {
     },
     onSuccess: async () => {
       setOk('Сотрудник добавлен')
+      toast.success('Сотрудник добавлен')
       setError(null)
       setInviteEmail('')
       await qc.invalidateQueries({ queryKey: ['staff'] })

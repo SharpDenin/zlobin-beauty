@@ -22,6 +22,7 @@ import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Drawer } from '@/shared/ui/Drawer'
+import { SearchField } from '@/shared/ui/SearchField'
 import '@/features/knowledge/knowledge-tones.css'
 
 type Facets = {
@@ -236,30 +237,17 @@ function KnowledgeHub({ token, professional }: { token: string | null; professio
             : 'Рекомендации по домашнему уходу и косметика, которую можно использовать дома.'}
         </p>
         <div className="kb-search-bar">
-          <div className="field">
-            <label htmlFor="kb-search">Поиск по названию</label>
-            <div className="kb-search-input-wrap">
-              <input
-                id="kb-search"
-                data-testid="kb-search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Поиск по базе знаний"
-                autoComplete="off"
-                enterKeyHint="search"
-              />
-              {search ? (
-                <button
-                  className="btn btn-ghost btn-compact kb-search-clear"
-                  type="button"
-                  aria-label="Очистить поиск"
-                  onClick={() => { setSearch(''); patch({ q: '' }) }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          </div>
+          <SearchField
+            id="kb-search"
+            data-testid="kb-search"
+            label="Поиск по названию"
+            value={search}
+            onChange={setSearch}
+            placeholder="Поиск по базе знаний"
+            clearable
+            loading={list.isLoading && Boolean(filters.q)}
+            onClear={() => { setSearch(''); patch({ q: '' }) }}
+          />
           <div className="kb-search-meta">
             <p className="kb-result-count" aria-live="polite">
               {!list.isLoading && filters.q
@@ -543,35 +531,22 @@ function SupplierKnowledgeHome() {
         <Link className="btn btn-primary" to="/knowledge/new">Создать материал</Link>
       </div>
       <div className="kb-search-bar card stack-sm">
-        <div className="field">
-          <label htmlFor="kb-mine-search">Поиск по названию</label>
-          <div className="kb-search-input-wrap">
-            <input
-              id="kb-mine-search"
-              data-testid="kb-search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по базе знаний"
-              autoComplete="off"
-              enterKeyHint="search"
-            />
-            {search ? (
-              <button
-                className="btn btn-ghost btn-compact kb-search-clear"
-                type="button"
-                aria-label="Очистить поиск"
-                onClick={() => {
-                  setSearch('')
-                  const p = new URLSearchParams(params)
-                  p.delete('q')
-                  setParams(p, { replace: true })
-                }}
-              >
-                ×
-              </button>
-            ) : null}
-          </div>
-        </div>
+        <SearchField
+          id="kb-mine-search"
+          data-testid="kb-search"
+          label="Поиск по названию"
+          value={search}
+          onChange={setSearch}
+          placeholder="Поиск по базе знаний"
+          clearable
+          loading={mine.isLoading && Boolean(qParam)}
+          onClear={() => {
+            setSearch('')
+            const p = new URLSearchParams(params)
+            p.delete('q')
+            setParams(p, { replace: true })
+          }}
+        />
         <p className="kb-result-count" aria-live="polite">
           {!mine.isLoading ? (qParam ? `Найдено: ${total}` : `${total} материалов`) : 'Поиск…'}
         </p>

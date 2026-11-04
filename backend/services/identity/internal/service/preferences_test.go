@@ -1,9 +1,13 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func TestValidatePreferenceKey(t *testing.T) {
-	good := []string{"calendar.view.mobile", "calendar.displayRange", "nav.order", "ui.theme", "dashboard.mode", "messenger.sound", "forms.draft-hint"}
+	good := []string{"calendar.view.mobile", "calendar.displayRange", "nav.order", "ui.theme", "ui.home_bg", "dashboard.mode", "messenger.sound", "forms.draft-hint"}
 	for _, k := range good {
 		if err := ValidatePreferenceKey(k); err != nil {
 			t.Fatalf("%s should be valid: %v", k, err)
@@ -25,5 +29,18 @@ func TestValidatePreferenceValue(t *testing.T) {
 		if err := ValidatePreferenceValue([]byte(raw)); err == nil {
 			t.Fatalf("value %.12q should be rejected", raw)
 		}
+	}
+}
+
+func TestValidateHomeBgPreferenceSystem(t *testing.T) {
+	s := New(nil, "secret")
+	if err := s.validateHomeBgPreference(t.Context(), uuid.Nil, []byte(`{"source":"system","id":"mist-canyon"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.validateHomeBgPreference(t.Context(), uuid.Nil, []byte(`{"source":"system","id":"nope"}`)); err == nil {
+		t.Fatal("unknown system wallpaper must be rejected")
+	}
+	if err := s.validateHomeBgPreference(t.Context(), uuid.Nil, []byte(`{"source":"custom","media_id":"not-a-uuid"}`)); err == nil {
+		t.Fatal("invalid media_id must be rejected")
 	}
 }

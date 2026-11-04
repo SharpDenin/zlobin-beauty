@@ -18,12 +18,13 @@ import (
 )
 
 type Service struct {
-	store             *store.Store
-	internalToken     string
-	organizationsURL  string
-	identityURL       string
-	httpClient        *http.Client
-	now               func() time.Time
+	store              *store.Store
+	internalToken      string
+	organizationsURL   string
+	identityURL        string
+	communicationsURL  string
+	httpClient         *http.Client
+	now                func() time.Time
 }
 
 func New(st *store.Store, internalToken string) *Service {

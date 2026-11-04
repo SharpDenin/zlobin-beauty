@@ -4,6 +4,7 @@ import { apiRequest } from '@/shared/api/client'
 import { formatUserError } from '@/shared/lib/app-error'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { datetimeLocalToIso } from '@/shared/lib/time'
 import { useCabinet } from '@/shared/lib/cabinet'
@@ -42,6 +43,7 @@ export function ChairMarketplacePage() {
     onSuccess: () => {
       setError(null)
       setSelected(null)
+      toast.success('Запрос аренды отправлен')
       void qc.invalidateQueries({ queryKey: ['my-chair-leases'] })
     },
     onError: (e) => setError(formatUserError(e, 'Не удалось отправить запрос')),

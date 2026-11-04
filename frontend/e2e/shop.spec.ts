@@ -50,6 +50,34 @@ async function assertNoPageOverflow(page: import('@playwright/test').Page) {
 }
 
 test.describe('production shop', () => {
+  test('SHOP adaptive checkout + PVZ search widths', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'single worker drives all widths')
+    if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
+
+    const widths = [360, 390, 768, 1024, 1440] as const
+    const client = await apiLogin('client1@demo.local')
+    await clearClientCart(client.access_token)
+    await loginUI(page, 'client1@demo.local')
+
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: width < 768 ? 800 : 900 })
+      await page.goto('/shop')
+      await expect(page.getByRole('heading', { name: 'Магазин' })).toBeVisible({ timeout: 15_000 })
+      await assertNoPageOverflow(page)
+
+      const search = page.getByPlaceholder(/Поиск|название/i).first()
+      if (await search.isVisible().catch(() => false)) {
+        await search.fill('gel')
+        await page.keyboard.press('Enter').catch(() => undefined)
+      }
+
+      await page.goto('/shop/checkout')
+      // empty cart may redirect/empty-state; either is fine for layout
+      await expect(page.getByRole('heading', { name: /Оформление|Магазин|Корзина/i }).first()).toBeVisible({ timeout: 15_000 })
+      await assertNoPageOverflow(page)
+    }
+  })
+
   test('client shop catalog → product → cart → checkout → order', async ({ page }, info) => {
     test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'key viewports')
     if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
@@ -88,9 +116,29 @@ test.describe('production shop', () => {
     await page.getByRole('button', { name: 'Оформить заказ' }).click()
 
     await expect(page.getByRole('heading', { name: 'Оформление заказа' })).toBeVisible({ timeout: 15_000 })
+
+    // SHOP-03: PVZ search by name/city/address (list filter; selection kept)
+    const changeBtn = page.getByRole('button', { name: 'Изменить' })
+    if (await changeBtn.isVisible().catch(() => false)) {
+      await changeBtn.click()
+      const search = page.getByLabel('Поиск пункта выдачи')
+      await expect(search).toBeVisible({ timeout: 10_000 })
+      await search.fill('___no_such_pvz___')
+      await expect(page.getByText(/Нет пунктов выдачи по этому запросу/i)).toBeVisible()
+      await search.fill('')
+      if (info.project.name === 'phone-390') {
+        await page.getByRole('button', { name: 'Готово' }).click()
+      }
+    }
+
     await page.getByRole('button', { name: /Далее · оплата/i }).click()
+    await expect(page.getByRole('heading', { name: 'Оплата при получении' })).toBeVisible()
+    await expect(page.getByText('Картой онлайн')).toHaveCount(0)
+    await expect(page.getByLabel(/Наличные при получении/i)).toBeVisible()
+    await expect(page.getByLabel(/Банковский перевод при получении/i)).toBeVisible()
     await page.getByRole('button', { name: /Далее · сводка/i }).click()
     await page.getByRole('button', { name: 'Подтвердить' }).click()
+    await expect(page.getByText(/при получении/i)).toBeVisible()
     await page.getByRole('button', { name: 'Подтвердить заказ' }).click()
     await expect(page.locator('.success-panel').getByText('Готово')).toBeVisible({ timeout: 20_000 })
     await page.locator('.success-panel').getByRole('link', { name: 'Мои заказы' }).click()

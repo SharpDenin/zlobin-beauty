@@ -8,6 +8,12 @@ frontend/dist/
 
 # Local runtime
 .logs/
+bin/
+epica-export/
+epica-mapping.local.json
+epica-mapping.passthrough.json
+epica-mapping.prod.json
+epica-dry-run-*.json
 
 # Editor/IDE
 .idea/

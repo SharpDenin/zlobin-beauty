@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,7 +25,16 @@ func (a *API) registerMessengerRoutes(mux *http.ServeMux, auth func(http.Handler
 func (a *API) listConversations(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	limit, offset := parseLimitOffset(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
-	items, err := a.svc.ListConversations(r.Context(), claims.UserID, limit, offset)
+	q := service.ListConversationsQuery{
+		Limit:  limit,
+		Offset: offset,
+		Q:      strings.TrimSpace(r.URL.Query().Get("q")),
+		Type:   strings.TrimSpace(r.URL.Query().Get("type")),
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("unread")); v == "1" || strings.EqualFold(v, "true") {
+		q.UnreadOnly = true
+	}
+	items, err := a.svc.ListConversationsFiltered(r.Context(), claims.UserID, q)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

@@ -86,3 +86,18 @@ type Session struct {
 	ReplacedBy       *uuid.UUID
 	CreatedAt        time.Time
 }
+
+const (
+	AuthPurposePasswordReset = "password_reset"
+	AuthPurposeEmailVerify   = "email_verify"
+)
+
+type AuthActionToken struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Purpose   string
+	TokenHash string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}

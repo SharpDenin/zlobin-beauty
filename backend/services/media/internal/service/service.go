@@ -40,6 +40,7 @@ type Service struct {
 	storage           *ObjectStorage
 	communicationsURL string
 	bookingURL        string
+	clientsURL        string
 	internalToken     string
 	signingKey        []byte
 	httpClient        *http.Client
@@ -65,6 +66,12 @@ func (s *Service) WithCommunications(url, token string) *Service {
 // WithBooking enables appointment-scoped access checks for before/after photos.
 func (s *Service) WithBooking(url string) *Service {
 	s.bookingURL = strings.TrimRight(url, "/")
+	return s
+}
+
+// WithClients enables hair-consultation photo access checks.
+func (s *Service) WithClients(url string) *Service {
+	s.clientsURL = strings.TrimRight(url, "/")
 	return s
 }
 
@@ -261,6 +268,14 @@ func (s *Service) checkMediaAccess(ctx context.Context, obj *domain.MediaObject,
 		}
 	case domain.IsAppointmentPurpose(obj.Purpose):
 		ok, err := s.internalAccess(ctx, s.bookingURL, obj.ID, userID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	case obj.Purpose == domain.PurposeHairConsultation:
+		ok, err := s.internalAccess(ctx, s.clientsURL, obj.ID, userID)
 		if err != nil {
 			return err
 		}

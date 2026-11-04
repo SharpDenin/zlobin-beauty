@@ -31,23 +31,20 @@ test.describe('production calendar', () => {
     if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
-    await expect(page.getByRole('heading', { name: /календарь/i }).first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
     await expect(page.getByRole('button', { name: 'День', exact: true })).toBeVisible()
-    if (info.project.name === 'phone-390') {
-      await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
-    } else {
-      await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
-    }
+    await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
     await assertNoPageOverflow(page)
 
     if (info.project.name === 'phone-390') {
-      await expect(page.getByTestId('calendar-mobile')).toBeVisible()
-      const dayChip = page.locator('.cal-day-chip').nth(4)
-      await expect(dayChip).toBeVisible()
-      await dayChip.click()
-      const block = page.locator('.cal-slot-event').first()
-      if (await block.count()) {
-        await block.click()
+      await page.getByRole('button', { name: 'День', exact: true }).click()
+      await expect(page.getByTestId('calendar-mobile')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByTestId('calendar-mobile')).toHaveAttribute('data-day-list', 'true')
+      await expect(page.locator('.cal-day-strip')).toBeVisible()
+      const appt = page.locator('.cal-slot-event.is-appt, .cal-slot-event').first()
+      if (await appt.count()) {
+        await appt.click()
         await expect(page.getByTestId('calendar-detail')).toBeVisible()
         const reschedule = page.getByRole('button', { name: 'Перенести' })
         if (await reschedule.count()) {
@@ -78,9 +75,24 @@ test.describe('production calendar', () => {
     await expect(page.getByRole('dialog').getByRole('alert').filter({ hasText: /позже начала|Не удалось/ })).toBeVisible()
     await page.getByRole('button', { name: 'Закрыть' }).click()
 
+    // Category filters live in settings — not permanently in the main calendar chrome.
+    await expect(page.locator('.calendar-shell > .calendar-category-row')).toHaveCount(0)
     await page.getByRole('button', { name: 'Настройки календаря' }).click()
     await expect(page.getByTestId('calendar-settings')).toBeVisible()
-    await expect(page.getByTestId('settings-open-schedule')).toHaveAttribute('href', '/schedule')
+    await expect(page.getByRole('group', { name: 'Фильтры категорий' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /Клиент/ }).first()).toBeVisible()
+    await page.getByTestId('settings-open-schedule').click()
+    await expect(page).toHaveURL(/panel=schedule/)
+    await expect(page.getByTestId('weekly-hours-form')).toBeVisible()
     await assertNoPageOverflow(page)
+  })
+
+  test('calendar?panel=schedule opens weekly hours editor', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'key viewports')
+    if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/calendar?panel=schedule')
+    await expect(page.getByTestId('weekly-hours-form')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('schedule-editor')).toBeVisible()
   })
 })

@@ -165,8 +165,8 @@ func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, professional b
 		return nil, err
 	}
 	payment := normalizeClientPaymentMethod(in.PaymentMethod)
-	if !domain.ValidPaymentMethod(payment) {
-		return nil, apperr.Validation("invalid payment_method")
+	if !domain.ValidClientPickupPaymentMethod(payment) {
+		return nil, apperr.Validation("invalid payment_method: only pay-on-pickup methods are allowed")
 	}
 	idemKey := strings.TrimSpace(in.IdempotencyKey)
 	if idemKey != "" {
@@ -246,11 +246,7 @@ func (s *Service) Checkout(ctx context.Context, userID uuid.UUID, professional b
 			PaymentMethod: payment, PickupBranchID: in.PickupBranchID,
 			CheckoutGroupID: &groupID, CreatedAt: now, UpdatedAt: now,
 		}
-		payStatus, err := resolveClientPaymentStatus(payment, clientPaymentProvider(payment), ctx, order)
-		if err != nil {
-			return nil, apperr.Internal(err)
-		}
-		order.PaymentStatus = payStatus
+		order.PaymentStatus = resolveClientPaymentStatus(payment)
 		batches = append(batches, store.CheckoutBatchOrder{
 			Order: order, Items: orderItems,
 			History: domain.ClientOrderStatusHistory{
@@ -608,6 +604,79 @@ func (s *Service) GetDebtBalance(ctx context.Context, actor, orgID, clientUserID
 		return 0, apperr.Internal(err)
 	}
 	return total, nil
+}
+
+type ReturnClientOrderInput struct {
+	Reason string
+}
+
+// ReturnClientOrder records a full return of a received client order.
+// Creates a single debt_ledger return_credit (negative amount_minor) atomically
+// with status-history note. Repeat returns are rejected via unique index + check.
+func (s *Service) ReturnClientOrder(ctx context.Context, actor, orderID uuid.UUID, in ReturnClientOrderInput) (*domain.ClientOrder, []domain.ClientOrderItem, error) {
+	reason := strings.TrimSpace(in.Reason)
+	if reason == "" {
+		return nil, nil, apperr.Validation("return reason is required")
+	}
+	o, err := s.store.GetClientOrder(ctx, orderID)
+	if err != nil {
+		return nil, nil, apperr.Internal(err)
+	}
+	if o == nil {
+		return nil, nil, apperr.NotFound("order not found")
+	}
+	if err := s.requireMembership(ctx, o.SupplierOrgID, actor, "owner", "admin", "master"); err != nil {
+		return nil, nil, err
+	}
+	if o.Status != domain.ClientOrderStatusReceived {
+		return nil, nil, apperr.Conflict("return is only allowed for received orders")
+	}
+	items, err := s.store.ListClientOrderItems(ctx, orderID)
+	if err != nil {
+		return nil, nil, apperr.Internal(err)
+	}
+	creditMinor := domain.ClientOrderReturnCreditMinor(items)
+	if creditMinor == 0 {
+		return nil, nil, apperr.Validation("order has no returnable amount")
+	}
+	now := s.now().UTC()
+	payStatus := o.PaymentStatus
+	if payStatus == domain.PaymentStatusPaid || payStatus == domain.PaymentStatusAuthorized {
+		payStatus = domain.PaymentStatusRefunded
+	}
+	history := domain.ClientOrderStatusHistory{
+		ID: ids.New(), OrderID: orderID,
+		FromStatus: o.Status, ToStatus: o.Status,
+		ActorUserID: actor, Note: "return: " + reason, CreatedAt: now,
+	}
+	credit := domain.DebtEntry{
+		ID: ids.New(), SupplierOrgID: o.SupplierOrgID, ClientUserID: o.UserID,
+		Kind: domain.DebtKindReturnCredit, AmountMinor: creditMinor,
+		RefType: "client_order", RefID: &o.ID, Note: reason,
+		ActorUserID: actor, CreatedAt: now,
+	}
+	outOrder, err := s.store.ReturnClientOrder(ctx, store.ReturnClientOrderParams{
+		OrderID: orderID, PaymentStatus: payStatus, Credit: credit, History: history, Now: now,
+	})
+	if err != nil {
+		if ae, ok := apperr.As(err); ok {
+			return nil, nil, ae
+		}
+		return nil, nil, apperr.Internal(err)
+	}
+	num := domain.FormatClientOrderNumber(outOrder.ID, outOrder.CreatedAt)
+	s.notifyClientOrder(ctx, outOrder.UserID, "client_order.returned", "Возврат заказа",
+		"По заказу "+num+" оформлен возврат", outOrder.ID)
+	return outOrder, items, nil
+}
+
+// ClientOrdersReturnedMap reports which order IDs already have a return_credit.
+func (s *Service) ClientOrdersReturnedMap(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	m, err := s.store.ClientOrdersWithReturnCredit(ctx, orderIDs)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return m, nil
 }
 
 // --- CSV import ---

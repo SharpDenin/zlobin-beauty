@@ -144,10 +144,13 @@ func (a *API) branchPublication(w http.ResponseWriter, r *http.Request) {
 type createReq struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
-	BranchName  string `json:"branch_name"`
 	City        string `json:"city"`
 	AddressLine string `json:"address_line"`
-	Timezone    string `json:"timezone"`
+	// Optional branch — legacy clients always send branch_name.
+	BranchName        string `json:"branch_name"`
+	BranchCity        string `json:"branch_city"`
+	BranchAddressLine string `json:"branch_address_line"`
+	Timezone          string `json:"timezone"`
 }
 
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
@@ -158,16 +161,21 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.svc.Create(r.Context(), service.CreateOrgInput{
-		Name: req.Name, Type: req.Type, BranchName: req.BranchName, City: req.City,
-		AddressLine: req.AddressLine, Timezone: req.Timezone, CreatedBy: claims.UserID,
+		Name: req.Name, Type: req.Type, City: req.City, AddressLine: req.AddressLine,
+		BranchName: req.BranchName, BranchCity: req.BranchCity, BranchAddressLine: req.BranchAddressLine,
+		Timezone: req.Timezone, CreatedBy: claims.UserID,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	var branch any
+	if res.Branch != nil {
+		branch = branchDTO(*res.Branch)
+	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"organization": orgDTO(res.Organization),
-		"branch":       branchDTO(res.Branch),
+		"branch":       branch,
 	})
 }
 
@@ -443,7 +451,8 @@ func orgDTO(o domain.Organization) map[string]any {
 		"type": o.Type, "status": o.Status, "published": o.Published,
 		"logo_media_id": logo, "delivery_note": o.DeliveryNote,
 		"masters_see_client_contacts": o.MastersSeeClientContacts,
-		"created_at":                  o.CreatedAt, "updated_at": o.UpdatedAt,
+		"city":                        o.City, "address_line": o.AddressLine,
+		"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
 	}
 }
 

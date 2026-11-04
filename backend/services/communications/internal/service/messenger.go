@@ -102,33 +102,24 @@ func (s *Service) createClientMaster(ctx context.Context, in CreateConversationI
 	actor := in.ActorID
 	var clientID, masterID uuid.UUID
 	if in.ClientUserID != nil {
+		// Master → client: actor must have a master profile; peer must be an active user.
 		clientID = *in.ClientUserID
 		masterID = actor
 		if clientID == actor {
 			return nil, apperr.Validation("cannot message yourself")
 		}
-		published, err := s.fetchPublishedMaster(ctx, masterID)
+		exists, err := s.fetchMasterProfileExists(ctx, masterID)
 		if err != nil {
 			return nil, err
 		}
-		if !published {
-			return nil, apperr.Forbidden("only a published master can message a client")
+		if !exists {
+			return nil, apperr.Forbidden("master profile is required to message a client")
 		}
-		related, err := s.fetchBookingRelationship(ctx, masterID, clientID)
-		if err != nil {
+		if err := s.requireActiveUser(ctx, clientID); err != nil {
 			return nil, err
-		}
-		if !related {
-			// Address book is an explicit working relationship (USER_FLOWS: messages from contacts).
-			linked, linkErr := s.hasAddressBookLink(ctx, masterID, clientID)
-			if linkErr != nil {
-				return nil, linkErr
-			}
-			if !linked {
-				return nil, apperr.Forbidden("no booking relationship with this client")
-			}
 		}
 	} else {
+		// Client → master: target must have a master profile; no published/services gate (MSG-01 / PROF-06).
 		if in.MasterUserID == nil {
 			return nil, apperr.Validation("master_user_id is required")
 		}
@@ -137,12 +128,15 @@ func (s *Service) createClientMaster(ctx context.Context, in CreateConversationI
 		if masterID == actor {
 			return nil, apperr.Validation("cannot message yourself")
 		}
-		published, err := s.fetchPublishedMaster(ctx, masterID)
+		if err := s.requireActiveUser(ctx, masterID); err != nil {
+			return nil, err
+		}
+		exists, err := s.fetchMasterProfileExists(ctx, masterID)
 		if err != nil {
 			return nil, err
 		}
-		if !published {
-			return nil, apperr.Forbidden("master is not available")
+		if !exists {
+			return nil, apperr.NotFound("master profile not found")
 		}
 	}
 	key := ContextKeyClientMaster(clientID, masterID)
@@ -263,13 +257,27 @@ func (s *Service) createModelRequestChat(ctx context.Context, actor uuid.UUID, r
 	return s.findOrInsert(ctx, c, parts, actor)
 }
 
+const (
+	rateCreateLimit  = 10
+	rateCreateWindow = time.Hour
+	rateFirstLimit   = 5
+	rateFirstWindow  = 10 * time.Minute
+)
+
 func (s *Service) findOrInsert(ctx context.Context, c domain.Conversation, parts []domain.Participant, actor uuid.UUID) (*domain.Conversation, error) {
+	if s.store == nil {
+		return nil, apperr.Internal(fmt.Errorf("store is not configured"))
+	}
 	existing, err := s.store.FindConversationByKey(ctx, c.ContextKey)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
 	if existing != nil {
+		// Reopening an existing dialog does not consume create quota (MSG-03).
 		return s.GetConversation(ctx, existing.ID, actor)
+	}
+	if err := s.consumeCreateRate(ctx, actor); err != nil {
+		return nil, err
 	}
 	if err := s.store.InsertConversation(ctx, c, parts); err != nil {
 		var pgErr *pgconn.PgError
@@ -288,8 +296,51 @@ func (s *Service) findOrInsert(ctx context.Context, c domain.Conversation, parts
 	return s.GetConversation(ctx, c.ID, actor)
 }
 
+func (s *Service) consumeCreateRate(ctx context.Context, actor uuid.UUID) error {
+	if s.store == nil {
+		return nil
+	}
+	now := s.now().UTC()
+	ok, retry, err := s.store.ConsumeRateSlot(ctx, actor, store.RateKindConversationCreate, nil, now.Add(-rateCreateWindow), now, rateCreateLimit)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !ok {
+		sec := int(retry.Seconds()) + 1
+		return apperr.RateLimitedRetry("too many new conversations; try again later", sec)
+	}
+	return nil
+}
+
+type ListConversationsQuery struct {
+	Limit      int
+	Offset     int
+	Q          string
+	Type       string
+	UnreadOnly bool
+}
+
 func (s *Service) ListConversations(ctx context.Context, actor uuid.UUID, limit, offset int) ([]domain.Conversation, error) {
-	items, err := s.store.ListConversationsForUser(ctx, actor, limit, offset)
+	return s.ListConversationsFiltered(ctx, actor, ListConversationsQuery{Limit: limit, Offset: offset})
+}
+
+func (s *Service) ListConversationsFiltered(ctx context.Context, actor uuid.UUID, q ListConversationsQuery) ([]domain.Conversation, error) {
+	f := store.ListConversationsFilter{
+		Type: q.Type, UnreadOnly: q.UnreadOnly, Limit: q.Limit, Offset: q.Offset,
+	}
+	needle := strings.ToLower(strings.TrimSpace(q.Q))
+	if needle != "" {
+		peers, err := s.peerIDsMatchingName(ctx, actor, needle)
+		if err != nil {
+			return nil, err
+		}
+		// Non-nil empty → SQL short-circuit (no matches among this user's peers).
+		f.PeerIDs = peers
+		if len(peers) == 0 {
+			return []domain.Conversation{}, nil
+		}
+	}
+	items, err := s.store.ListConversationsForUserFiltered(ctx, actor, f)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -302,6 +353,45 @@ func (s *Service) ListConversations(ctx context.Context, actor uuid.UUID, limit,
 		out = append(out, *hydrated)
 	}
 	return out, nil
+}
+
+// peerIDsMatchingName resolves current peer display names via identity (batched) and returns
+// peer user IDs whose name contains needle. Scope is limited to peers of actor's conversations.
+func (s *Service) peerIDsMatchingName(ctx context.Context, actor uuid.UUID, needle string) ([]uuid.UUID, error) {
+	peerIDs, err := s.store.ListPeerUserIDs(ctx, actor)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if len(peerIDs) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	const chunk = 100
+	matched := make([]uuid.UUID, 0)
+	for i := 0; i < len(peerIDs); i += chunk {
+		end := i + chunk
+		if end > len(peerIDs) {
+			end = len(peerIDs)
+		}
+		users, err := s.identityBatch(ctx, peerIDs[i:end])
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			if strings.Contains(strings.ToLower(u.DisplayName), needle) {
+				matched = append(matched, u.ID)
+			}
+		}
+	}
+	return matched, nil
+}
+
+func peerNameOf(c domain.Conversation, actor uuid.UUID) string {
+	for _, p := range c.Participants {
+		if p.UserID != actor && strings.TrimSpace(p.DisplayName) != "" {
+			return p.DisplayName
+		}
+	}
+	return ""
 }
 
 func (s *Service) GetConversation(ctx context.Context, id, actor uuid.UUID) (*domain.Conversation, error) {
@@ -424,6 +514,16 @@ func (s *Service) SendMessage(ctx context.Context, conversationID, actor uuid.UU
 			return nil, apperr.Validation("attachment must be uploaded with purpose=message")
 		}
 		kind = MessageKindFromContentType(meta.ContentType, true)
+	}
+	prior, err := s.store.CountSenderMessages(ctx, conversationID, actor)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if prior == 0 {
+		// MSG-03: first outbound message in a conversation; consume slot under PG advisory lock.
+		if err := s.consumeFirstMessageRate(ctx, actor, conversationID); err != nil {
+			return nil, err
+		}
 	}
 	now := s.now().UTC()
 	m := domain.Message{
@@ -663,6 +763,90 @@ func (s *Service) fetchBookingRelationship(ctx context.Context, masterUserID, cl
 		return false, apperr.Internal(err)
 	}
 	return body.Related, nil
+}
+
+func (s *Service) consumeFirstMessageRate(ctx context.Context, actor, conversationID uuid.UUID) error {
+	if s.store == nil {
+		return nil
+	}
+	now := s.now().UTC()
+	cid := conversationID
+	ok, retry, err := s.store.ConsumeRateSlot(ctx, actor, store.RateKindFirstMessage, &cid, now.Add(-rateFirstWindow), now, rateFirstLimit)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !ok {
+		sec := int(retry.Seconds()) + 1
+		return apperr.RateLimitedRetry("too many first messages in new chats; try again later", sec)
+	}
+	return nil
+}
+
+func (s *Service) requireActiveUser(ctx context.Context, userID uuid.UUID) error {
+	status, err := s.fetchUserStatus(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if status == "" {
+		return apperr.NotFound("user not found")
+	}
+	if !strings.EqualFold(status, "active") {
+		return apperr.Forbidden("user is not available")
+	}
+	return nil
+}
+
+func (s *Service) fetchUserStatus(ctx context.Context, userID uuid.UUID) (string, error) {
+	if s.identityURL == "" || s.internalToken == "" {
+		return "", apperr.Internal(fmt.Errorf("identity is not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/users/"+userID.String(), nil)
+	if err != nil {
+		return "", apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode >= 300 {
+		return "", apperr.Internal(fmt.Errorf("identity status %d", resp.StatusCode))
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return "", apperr.Internal(err)
+	}
+	return strings.TrimSpace(body.Status), nil
+}
+
+// fetchMasterProfileExists returns true when a master profile row exists (published or not).
+func (s *Service) fetchMasterProfileExists(ctx context.Context, userID uuid.UUID) (bool, error) {
+	if s.marketplaceURL == "" || s.internalToken == "" {
+		return false, apperr.Internal(fmt.Errorf("marketplace is not configured"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/internal/masters/by-user/"+userID.String(), nil)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 300 {
+		return false, apperr.Internal(fmt.Errorf("marketplace status %d", resp.StatusCode))
+	}
+	return true, nil
 }
 
 func (s *Service) fetchPublishedMaster(ctx context.Context, userID uuid.UUID) (bool, error) {

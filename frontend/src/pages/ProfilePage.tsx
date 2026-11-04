@@ -8,10 +8,13 @@ import { apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
+import { workTypesLabel } from '@/shared/lib/work-types'
 import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { PageHeader } from '@/app/layout'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { InteractionModeSwitch } from '@/shared/ui/InteractionModeSwitch'
 import { MasterPortrait } from '@/shared/ui/MasterPortrait'
+import { toast } from '@/shared/ui/Toast'
 import { premiumLabel } from '@/features/dashboard/premiumLabel'
 import { roleTitle } from '@/features/dashboard/roleTitle'
 import '@/features/dashboard/dashboard.css'
@@ -58,6 +61,8 @@ export function ProfilePage() {
         phone: string | null
         roles: string[]
         status: string
+        email_verified?: boolean
+        phone_verified?: boolean
       }>('/v1/auth/me', {
         method: 'PATCH',
         token: accessToken,
@@ -67,6 +72,7 @@ export function ProfilePage() {
       draft.clear()
       updateUser(me)
       setOk('Профиль сохранён')
+      toast.success('Профиль сохранён')
       setError(null)
       void qc.invalidateQueries({ queryKey: ['home-masters'] })
     },
@@ -76,8 +82,26 @@ export function ProfilePage() {
     },
   })
 
+  const verifyEmail = useMutation({
+    mutationFn: () =>
+      apiRequest<{ message: string }>('/v1/auth/email-verification/request', {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      }),
+    onSuccess: () => {
+      setOk('Если нужно, мы отправили письмо для подтверждения email.')
+      toast.success('Письмо для подтверждения email отправлено')
+      setError(null)
+    },
+    onError: (e) => {
+      setOk(null)
+      setError(userError(e, 'Не удалось отправить письмо. Проверьте, что почта настроена на сервере.'))
+    },
+  })
+
   const cabinet = useCabinet()
-  const showSubscription = cabinet.kind !== 'salon_admin' && cabinet.kind !== 'client'
+  const showSubscription = cabinet.capabilities.isMaster || cabinet.capabilities.isSalonOwner || cabinet.capabilities.isSupplier
   const photoMediaId = (cabinet.master as { photo_media_id?: string | null } | null)?.photo_media_id ?? null
 
   return (
@@ -89,7 +113,15 @@ export function ProfilePage() {
         <div className="stack-sm">
           <h2>{user?.display_name}</h2>
           <p className="muted">{roleTitle(cabinet.kind)}</p>
+          {cabinet.workTypes.length > 0 && (
+            <p className="muted">Форматы: {workTypesLabel(cabinet.workTypes)}</p>
+          )}
           <p className="muted">{user?.email ?? 'Email не указан'}</p>
+          {user?.email && (
+            <p className="muted" data-testid="email-verify-status">
+              {user.email_verified ? 'Email подтверждён' : 'Email пока не подтверждён — это не мешает записи и покупкам'}
+            </p>
+          )}
           <div className="appt-card-meta">
             {(user?.roles ?? []).map((r) => (
               <span key={r} className="badge badge-default">{roleLabel(r)}</span>
@@ -97,6 +129,36 @@ export function ProfilePage() {
           </div>
         </div>
       </section>
+
+      {user?.email && !user.email_verified && (
+        <section className="card stack" data-testid="email-verify-card">
+          <h2>Подтверждение email</h2>
+          <p className="muted">Подтверждение необязательно для входа, записи и покупок. Письмо придёт на {user.email}.</p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={verifyEmail.isPending}
+            data-testid="email-verify-resend"
+            onClick={() => verifyEmail.mutate()}
+          >
+            {verifyEmail.isPending ? 'Отправляем…' : 'Отправить письмо ещё раз'}
+          </button>
+        </section>
+      )}
+
+      {cabinet.canUseMasterMode && (
+        <section className="card stack">
+          <h2>Режим интерфейса</h2>
+          <InteractionModeSwitch
+            mode={cabinet.interactionMode}
+            onChange={cabinet.setInteractionMode}
+            canUseMasterMode={cabinet.canUseMasterMode}
+          />
+          {cabinet.canUseMasterMode && (
+            <Link className="btn btn-secondary" to="/master">Форматы работы и профиль мастера</Link>
+          )}
+        </section>
+      )}
 
       <section className="card stack">
         <h2>Личные данные</h2>
@@ -130,6 +192,7 @@ export function ProfilePage() {
           {showSubscription && <Link className="btn btn-secondary" to="/profile/subscription">Подписка</Link>}
           <Link className="btn btn-secondary" to="/messages">Сообщения</Link>
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
+          <Link className="btn btn-secondary" to="/settings">Настройки</Link>
           <button className="btn btn-danger" type="button" onClick={() => void logout()}>Выйти</button>
         </div>
       </section>

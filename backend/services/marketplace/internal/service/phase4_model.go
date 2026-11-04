@@ -94,12 +94,16 @@ func (s *Service) PublishModelRequest(ctx context.Context, id, actor uuid.UUID) 
 	if existing.Status != domain.StatusDraft && existing.Status != domain.StatusPublished {
 		return nil, apperr.Conflict("cannot publish this request")
 	}
+	// Notify only on first publish (draft → published) to avoid duplicate model_opportunity.
+	firstPublish := existing.Status == domain.StatusDraft
 	existing.Status = domain.StatusPublished
 	existing.UpdatedAt = s.now().UTC()
 	if err := s.store.UpdateModelRequest(ctx, *existing); err != nil {
 		return nil, apperr.Internal(err)
 	}
-	s.notifyModelMatches(ctx, *existing)
+	if firstPublish {
+		s.notifyModelMatches(ctx, *existing)
+	}
 	return s.GetModelRequest(ctx, id, actor)
 }
 
@@ -160,8 +164,15 @@ func (s *Service) markModelRelevance(ctx context.Context, actor uuid.UUID, e *do
 	if e.MasterUserID == actor {
 		return
 	}
+	if interested, err := s.store.HasModelRequestInterest(ctx, actor, e.ID); err == nil && interested {
+		e.Interested = true
+		e.Relevant = true
+		e.MatchScore = 100
+		return
+	}
+	// Soft match for discovery still uses notify + category/city/dates; willing is ignored.
 	pref, err := s.fetchModelPreference(ctx, actor)
-	if err != nil || pref == nil || !pref.Willing {
+	if err != nil || pref == nil || !pref.Notify {
 		return
 	}
 	best := 0
@@ -181,6 +192,47 @@ func (s *Service) markModelRelevance(ctx context.Context, actor uuid.UUID, e *do
 	}
 	e.MatchScore = best
 	e.Relevant = best > 0
+}
+
+func (s *Service) AddModelRequestInterest(ctx context.Context, requestID, actor uuid.UUID) error {
+	var last error
+	for i := 0; i < 4; i++ {
+		err := s.store.AddModelRequestInterest(ctx, actor, requestID, s.now().UTC())
+		if err == nil {
+			return nil
+		}
+		if ae, ok := apperr.As(err); ok && ae.Message == "retry" {
+			last = err
+			continue
+		}
+		if ae, ok := apperr.As(err); ok {
+			return ae
+		}
+		return apperr.Internal(err)
+	}
+	if last != nil {
+		return apperr.Conflict("please retry")
+	}
+	return apperr.Internal(fmt.Errorf("add interest failed"))
+}
+
+func (s *Service) RemoveModelRequestInterest(ctx context.Context, requestID, actor uuid.UUID) error {
+	err := s.store.RemoveModelRequestInterest(ctx, actor, requestID)
+	if ae, ok := apperr.As(err); ok {
+		return ae
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) ListMyModelRequestInterests(ctx context.Context, actor uuid.UUID) ([]domain.ModelRequestInterest, error) {
+	items, err := s.store.ListModelRequestInterests(ctx, actor)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return items, nil
 }
 
 func (s *Service) RespondModelRequest(ctx context.Context, requestID, actor uuid.UUID) (*domain.ModelResponse, error) {
@@ -221,6 +273,8 @@ func (s *Service) AcceptModelResponse(ctx context.Context, responseID, actor uui
 		req, err := s.store.AcceptModelResponse(ctx, responseID, actor, s.now().UTC())
 		if err == nil {
 			if req != nil {
+				// Keep UI consistent: accepted slot → drop soft interest for this request.
+				_ = s.store.RemoveModelRequestInterest(ctx, actor, req.ID)
 				s.notify(ctx, req.MasterUserID, "model_accepted", "Модель подтвердила слот", req.Title, "model_request", req.ID)
 			}
 			return req, nil

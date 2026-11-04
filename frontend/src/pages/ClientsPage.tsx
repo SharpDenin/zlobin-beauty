@@ -1,7 +1,8 @@
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ErrorBanner } from '@/shared/ui/ErrorBanner'
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { SearchField } from '@/shared/ui/SearchField'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth, hasMasterAccess } from '@/features/auth/AuthProvider'
 
@@ -23,9 +24,17 @@ const segmentLabel: Record<string, string> = {
   unknown: 'Без визитов',
 }
 
+function matchesClientQuery(c: ClientRow, q: string) {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return true
+  const hay = [c.display_name, c.phone ?? '', c.email ?? ''].join(' ').toLowerCase()
+  return hay.includes(needle)
+}
+
 export function ClientsPage() {
   const { accessToken, user } = useAuth()
   const [segment, setSegment] = useState('')
+  const [q, setQ] = useState('')
   const isMaster = hasMasterAccess(user)
 
   const clients = useQuery({
@@ -36,6 +45,11 @@ export function ClientsPage() {
     },
     enabled: Boolean(accessToken && isMaster),
   })
+
+  const filtered = useMemo(
+    () => (clients.data?.items ?? []).filter((c) => matchesClientQuery(c, q)),
+    [clients.data?.items, q],
+  )
 
   if (!isMaster) {
     return (
@@ -51,7 +65,15 @@ export function ClientsPage() {
       <p className="muted">
         Сегменты по визитам: новые (первый визит ≤ 30 дн.), активные (последний ≤ 90 дн.), давно не были (&gt; 90 дн.).
       </p>
-      <div className="row">
+      <SearchField
+        value={q}
+        onChange={setQ}
+        placeholder="Имя, телефон или email"
+        aria-label="Поиск клиентов"
+        clearable
+        data-testid="clients-search"
+      />
+      <div className="row wrap">
         {[
           { value: '', label: 'Все' },
           { value: 'new', label: 'Новые' },
@@ -70,11 +92,15 @@ export function ClientsPage() {
       </div>
       {clients.isLoading && <div className="state-box">Загрузка…</div>}
       {clients.isError && <ErrorBanner error={clients.error} fallbackTitle="Не удалось загрузить клиентов" />}
-      {clients.data && clients.data.items.length === 0 && (
-        <div className="state-box">Клиентов пока нет — они появляются после завершённых визитов</div>
+      {clients.data && filtered.length === 0 && (
+        <div className="state-box">
+          {q.trim()
+            ? 'Никого не нашли по этому запросу'
+            : 'Клиентов пока нет — они появляются после завершённых визитов'}
+        </div>
       )}
       <div className="list">
-        {clients.data?.items.map((c) => (
+        {filtered.map((c) => (
           <article key={c.id} className="list-item">
             <div className="row between">
               <strong>{c.display_name}</strong>

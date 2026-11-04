@@ -58,6 +58,7 @@ func main() {
 	svc := service.New(st, storage).
 		WithCommunications(getenv("COMMUNICATIONS_URL", "http://communications:8080"), os.Getenv("INTERNAL_TOKEN")).
 		WithBooking(getenv("BOOKING_URL", "http://booking:8080")).
+		WithClients(getenv("CLIENTS_URL", "http://clients:8080")).
 		WithSigningSecret(cfg.JWTSecret)
 	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
 	mux := http.NewServeMux()

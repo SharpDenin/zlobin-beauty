@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
-import { applyStoredBackground, useHomeBackground } from '@/shared/theme/backgrounds'
+import { applyStoredBackground, hydrateCustomBackground, useHomeBackground } from '@/shared/theme/backgrounds'
 import { applyTheme, readStoredTheme, systemTheme, writeStoredTheme, type ThemeChoice } from '@/shared/theme/theme'
 
 type ThemeContextValue = {
@@ -21,7 +21,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useLayoutEffect(() => {
     applyStoredBackground()
-  }, [background.id, background.accent, theme])
+  }, [background.id, background.accent, background.src, theme])
+
+  useEffect(() => {
+    void hydrateCustomBackground()
+  }, [])
 
   useEffect(() => {
     applyTheme(theme)

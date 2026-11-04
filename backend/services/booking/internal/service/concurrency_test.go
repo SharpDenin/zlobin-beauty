@@ -30,12 +30,11 @@ func TestConcurrentCreateSameSlotDocumentsBehavior(t *testing.T) {
 	})
 
 	t.Run("store_exclusion_integration", func(t *testing.T) {
-		if os.Getenv("DATABASE_URL") == "" {
-			t.Skip("DATABASE_URL not set; skip store-level exclusion concurrency test")
+		if os.Getenv("DATABASE_URL") == "" && os.Getenv("BOOKING_DATABASE_URL") == "" {
+			t.Skip("DATABASE_URL / BOOKING_DATABASE_URL not set; see store.TestConcurrentCreateSameSlotExclusion")
 		}
-		// Optional: insert two overlapping appointments under the same master.
-		// Relies on appointments_no_overlap EXCLUDE USING gist (... tstzrange(..., '[)')).
-		// Implement when CI provides a booking database; until then this documents intent.
-		t.Skip("integration harness not wired; exclusion is covered by store CreateAppointment 23P01 mapping")
+		// Live concurrent INSERT race lives in store/concurrency_integration_test.go
+		// (appointments_no_overlap → mapAppointmentConflict → appointment_time_conflict).
+		t.Log("run: go test ./services/booking/internal/store/ -run ConcurrentCreateSameSlot")
 	})
 }

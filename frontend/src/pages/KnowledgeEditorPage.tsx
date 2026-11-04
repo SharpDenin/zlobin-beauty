@@ -15,6 +15,7 @@ import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { RichDocRenderer } from '@/shared/ui/RichDocRenderer'
 import { Modal } from '@/shared/ui/Modal'
 import { Drawer } from '@/shared/ui/Drawer'
+import { toast } from '@/shared/ui/Toast'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { moderationError } from '@/shared/lib/moderation'
 import { useDraftState } from '@/shared/lib/useFormDraft'
@@ -170,7 +171,9 @@ export function KnowledgeEditorPage() {
     },
     onSuccess: async (item, status) => {
       clearDraft()
-      setOk(status === 'published' ? 'Материал опубликован' : 'Черновик сохранён')
+      const msg = status === 'published' ? 'Материал опубликован' : 'Черновик сохранён'
+      setOk(msg)
+      toast.success(msg)
       setError(null)
       setDraft((d) => ({ ...d, status }))
       await qc.invalidateQueries({ queryKey: ['knowledge-mine'] })
@@ -186,7 +189,9 @@ export function KnowledgeEditorPage() {
       return apiRequest<KnowledgeArticle>(`/v1/knowledge/${id}/${path}`, { method: 'POST', token: accessToken })
     },
     onSuccess: async (item) => {
-      setOk(item.status === 'published' ? 'Опубликовано' : item.status === 'archived' ? 'В архиве' : 'Снято с публикации')
+      const msg = item.status === 'published' ? 'Опубликовано' : item.status === 'archived' ? 'В архиве' : 'Снято с публикации'
+      setOk(msg)
+      toast.success(msg)
       setDraft((d) => ({ ...d, status: (item.status as Draft['status']) || 'draft' }))
       await qc.invalidateQueries({ queryKey: ['knowledge-mine'] })
     },

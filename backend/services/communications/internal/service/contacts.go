@@ -416,6 +416,23 @@ func (s *Service) identityBatch(ctx context.Context, ids []uuid.UUID) ([]identit
 	if s.identityURL == "" || s.internalToken == "" {
 		return nil, apperr.Internal(fmt.Errorf("identity is not configured"))
 	}
+	const maxIDs = 100
+	out := make([]identityPublicUser, 0, len(ids))
+	for i := 0; i < len(ids); i += maxIDs {
+		end := i + maxIDs
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk, err := s.identityBatchChunk(ctx, ids[i:end])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, chunk...)
+	}
+	return out, nil
+}
+
+func (s *Service) identityBatchChunk(ctx context.Context, ids []uuid.UUID) ([]identityPublicUser, error) {
 	parts := make([]string, 0, len(ids))
 	for _, id := range ids {
 		parts = append(parts, id.String())

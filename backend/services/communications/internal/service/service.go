@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,11 @@ type Service struct {
 	vapidPublic      string
 	vapidPrivate     string
 	vapidSubject     string
+	pushSender pushSender
+	pushSubs   pushSubRepo
+	log        *slog.Logger
+	// syncPush runs dispatch inline (tests only).
+	syncPush bool
 }
 
 func New(st *store.Store, bookingURL string) *Service {
@@ -45,7 +51,12 @@ func (s *Service) CreateNotification(ctx context.Context, userID uuid.UUID, typ,
 	})); err != nil {
 		return err
 	}
-	s.dispatchPush(ctx, userID, title, body, entityType, entityID)
+	// Push is best-effort and must not fail or delay the in-app notification path.
+	if s.syncPush {
+		s.dispatchPush(ctx, userID, title, body, entityType, entityID)
+	} else {
+		s.schedulePush(userID, title, body, entityType, entityID)
+	}
 	return nil
 }
 
@@ -60,8 +71,41 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]domain.Notifica
 	return items, nil
 }
 
+func (s *Service) ListBubbles(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {
+	items, err := s.store.ListBubbleNotifications(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.Notification{}
+	}
+	return items, nil
+}
+
 func (s *Service) MarkRead(ctx context.Context, id, userID uuid.UUID) error {
 	err := s.store.MarkRead(ctx, id, userID, s.now().UTC())
+	if ae, ok := apperr.As(err); ok {
+		return ae
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) HideNotification(ctx context.Context, id, userID uuid.UUID) error {
+	err := s.store.HideNotification(ctx, id, userID, s.now().UTC())
+	if ae, ok := apperr.As(err); ok {
+		return ae
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) DeleteNotification(ctx context.Context, id, userID uuid.UUID) error {
+	err := s.store.SoftDeleteNotification(ctx, id, userID, s.now().UTC())
 	if ae, ok := apperr.As(err); ok {
 		return ae
 	}

@@ -66,10 +66,23 @@ services:
       DATABASE_URL: postgres://identity:identity@postgres:5432/identity?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      MEDIA_URL: http://media:8080
       ALLOW_DEV_BILLING: ${ALLOW_DEV_BILLING:-true}
       APP_ENV: ${APP_ENV:-development}
       MIGRATIONS_DIR: /migrations
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.salon-x.ru}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-no-reply@salon-x.ru}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS_MODE: ${SMTP_TLS_MODE:-implicit}
+      SMTP_TLS_SERVER_NAME: ${SMTP_TLS_SERVER_NAME:-hosting.reg.ru}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@salon-x.ru}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Salon-X}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-720h}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/identity/migrations:/migrations:ro
@@ -177,6 +190,7 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       ORGANIZATIONS_URL: http://organizations:8080
       IDENTITY_URL: http://identity:8080
+      COMMUNICATIONS_URL: http://communications:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -232,7 +246,7 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@salonx.local}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:no-reply@salon-x.ru}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -260,6 +274,8 @@ services:
       MINIO_USE_SSL: "false"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       COMMUNICATIONS_URL: http://communications:8080
+      BOOKING_URL: http://booking:8080
+      CLIENTS_URL: http://clients:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
@@ -269,6 +285,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      clients:
+        condition: service_started
 
   gateway:
     <<: *service-runtime

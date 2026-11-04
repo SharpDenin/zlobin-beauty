@@ -29,16 +29,20 @@ func New(st *store.Store) *Service {
 type CreateOrgInput struct {
 	Name        string
 	Type        string
-	BranchName  string
 	City        string
 	AddressLine string
-	Timezone    string
-	CreatedBy   uuid.UUID
+	// Optional first branch. Create branch when BranchName is non-empty
+	// (legacy clients always send branch_name + city + address).
+	BranchName        string
+	BranchCity        string
+	BranchAddressLine string
+	Timezone          string
+	CreatedBy         uuid.UUID
 }
 
 type OrgBundle struct {
 	Organization domain.Organization
-	Branch       domain.Branch
+	Branch       *domain.Branch
 }
 
 type UpdateOrgInput struct {
@@ -71,16 +75,36 @@ type UpdateBranchInput struct {
 
 func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, error) {
 	name := strings.TrimSpace(in.Name)
-	branchName := strings.TrimSpace(in.BranchName)
 	city := strings.TrimSpace(in.City)
 	address := strings.TrimSpace(in.AddressLine)
+	branchName := strings.TrimSpace(in.BranchName)
+	branchCity := strings.TrimSpace(in.BranchCity)
+	branchAddress := strings.TrimSpace(in.BranchAddressLine)
 	orgType := strings.TrimSpace(in.Type)
-	if name == "" || branchName == "" || city == "" || address == "" {
-		return nil, apperr.Validation("name, branch_name, city and address_line are required")
+
+	if name == "" || city == "" {
+		return nil, apperr.Validation("name and city are required")
 	}
-	if err := moderation.ValidateFields(map[string]string{
-		"name": name, "branch_name": branchName, "city": city, "address_line": address,
-	}); err != nil {
+	// Legacy clients send branch_name + shared city/address_line without separate branch fields.
+	if branchName != "" {
+		if branchCity == "" {
+			branchCity = city
+		}
+		if branchAddress == "" {
+			branchAddress = address
+		}
+		if branchCity == "" || branchAddress == "" {
+			return nil, apperr.Validation("branch city and address_line are required when branch_name is set")
+		}
+	}
+
+	modFields := map[string]string{"name": name, "city": city, "address_line": address}
+	if branchName != "" {
+		modFields["branch_name"] = branchName
+		modFields["branch_city"] = branchCity
+		modFields["branch_address_line"] = branchAddress
+	}
+	if err := moderation.ValidateFields(modFields); err != nil {
 		return nil, err
 	}
 	if orgType == "" {
@@ -96,20 +120,20 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	now := s.now().UTC()
 	org := domain.Organization{
 		ID: ids.New(), Name: name, Type: orgType, Status: "active",
+		City: city, AddressLine: address,
 		CreatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now,
 	}
-	branch := domain.Branch{
-		ID: ids.New(), OrganizationID: org.ID, Name: branchName, City: city, AddressLine: address,
-		Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, PickupEnabled: true, CreatedAt: now, UpdatedAt: now,
-	}
-	ownerRole := "owner"
-	if orgType == "supplier" {
-		ownerRole = "owner"
+	var branch *domain.Branch
+	if branchName != "" {
+		branch = &domain.Branch{
+			ID: ids.New(), OrganizationID: org.ID, Name: branchName, City: branchCity, AddressLine: branchAddress,
+			Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, PickupEnabled: true, CreatedAt: now, UpdatedAt: now,
+		}
 	}
 	membership := domain.Membership{
-		ID: ids.New(), OrganizationID: org.ID, UserID: in.CreatedBy, Role: ownerRole, Status: "active", CreatedAt: now,
+		ID: ids.New(), OrganizationID: org.ID, UserID: in.CreatedBy, Role: "owner", Status: "active", CreatedAt: now,
 	}
-	if err := s.store.CreateOrgWithBranchAndOwner(ctx, org, branch, membership); err != nil {
+	if err := s.store.CreateOrgWithOwner(ctx, org, branch, membership); err != nil {
 		return nil, apperr.Internal(err)
 	}
 	return &OrgBundle{Organization: org, Branch: branch}, nil

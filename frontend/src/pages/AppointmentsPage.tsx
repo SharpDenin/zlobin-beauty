@@ -9,6 +9,7 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Modal } from '@/shared/ui/Modal'
 import { PageHeader } from '@/app/layout'
+import { toast } from '@/shared/ui/Toast'
 import { groupAppointmentsByVisit, visitGroupPrice, visitGroupTitle } from '@/pages/visit-plan-helpers'
 
 type Appointment = {
@@ -46,6 +47,7 @@ export function AppointmentsPage() {
       apiRequest(`/v1/appointments/${id}/confirm`, { method: 'POST', token: accessToken }),
     onSuccess: async () => {
       setActionError(null)
+      toast.success('Запись подтверждена')
       await qc.invalidateQueries({ queryKey: ['appointments'] })
     },
     onError: (e) => setActionError(userError(e, 'Не удалось подтвердить запись')),
@@ -61,6 +63,7 @@ export function AppointmentsPage() {
     onSuccess: async () => {
       setActionError(null)
       setRejectId(null)
+      toast.success('Запись отклонена')
       await qc.invalidateQueries({ queryKey: ['appointments'] })
     },
     onError: (e) => setActionError(userError(e, 'Не удалось отклонить запись')),

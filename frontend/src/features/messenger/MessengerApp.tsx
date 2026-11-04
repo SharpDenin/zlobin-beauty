@@ -9,6 +9,7 @@ import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Overlay } from '@/shared/ui/Overlay'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { AppIcon } from '@/shared/ui/AppIcon'
 import { ChatMedia } from '@/features/messenger/ChatMedia'
 import { ContactPickerModal } from '@/features/contacts/ContactPickerModal'
 import { addContact, listContacts } from '@/features/contacts/api'
@@ -53,16 +54,26 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const [newBanner, setNewBanner] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [listQ, setListQ] = useState('')
+  const [listType, setListType] = useState('')
+  const [unreadOnly, setUnreadOnly] = useState(false)
   const composing = useRef(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const list = useQuery({
-    queryKey: ['conversations'],
-    queryFn: () => apiRequest<{ items: Conversation[] }>('/v1/conversations?limit=50', { token: accessToken }),
+    queryKey: ['conversations', listQ, listType, unreadOnly],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: '50' })
+      const q = listQ.trim()
+      if (q) params.set('q', q)
+      if (listType) params.set('type', listType)
+      if (unreadOnly) params.set('unread', '1')
+      return apiRequest<{ items: Conversation[] }>(`/v1/conversations?${params}`, { token: accessToken })
+    },
     enabled: Boolean(accessToken),
-    refetchInterval: id ? 8000 : 8000,
+    refetchInterval: 8000,
   })
 
   const conversation = useQuery({
@@ -311,14 +322,33 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
           )}
         </div>
       </div>
+      <div className="messenger-filters stack-sm" data-testid="messenger-filters">
+        <label className="field" htmlFor="messenger-search">
+          <span className="sr-only">Поиск по имени</span>
+          <input
+            id="messenger-search"
+            type="search"
+            placeholder="Поиск по имени"
+            value={listQ}
+            onChange={(e) => setListQ(e.target.value)}
+            autoComplete="off"
+          />
+        </label>
+        <div className="row gap wrap messenger-filter-chips" role="group" aria-label="Фильтры диалогов">
+          <button type="button" className={`chip${listType === '' ? ' active' : ''}`} onClick={() => setListType('')}>Все</button>
+          <button type="button" className={`chip${listType === 'client_master' ? ' active' : ''}`} onClick={() => setListType('client_master')}>Клиент ↔ мастер</button>
+          <button type="button" className={`chip${listType === 'master_supplier' ? ' active' : ''}`} onClick={() => setListType('master_supplier')}>Поставщик</button>
+          <button type="button" className={`chip${unreadOnly ? ' active' : ''}`} onClick={() => setUnreadOnly((v) => !v)} aria-pressed={unreadOnly}>Непрочитанные</button>
+        </div>
+      </div>
       {list.isLoading && <div className="state-box">Загрузка…</div>}
       {list.isError && <ErrorBanner error={list.error} fallbackTitle="Не удалось загрузить диалоги" />}
       {!list.isLoading && items.length === 0 && (
         <EmptyState
-          title="Пока нет сообщений"
-          text={emptyAction ? undefined : 'Новые сообщения появятся здесь.'}
+          title={listQ || listType || unreadOnly ? 'Ничего не найдено' : 'Пока нет сообщений'}
+          text={listQ || listType || unreadOnly ? 'Попробуйте изменить поиск или фильтры.' : emptyAction ? undefined : 'Новые сообщения появятся здесь.'}
           action={
-            emptyAction ? (
+            !listQ && !listType && !unreadOnly && emptyAction ? (
               <Link className="btn btn-secondary" to={emptyAction.to} onClick={onClose}>
                 {emptyAction.label}
               </Link>
@@ -414,6 +444,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
               key={m.client_id || m.id}
               className={`chat-bubble ${own ? 'is-own' : 'is-in'} ${m.status === 'failed' ? 'is-failed' : ''}`}
             >
+              {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
               {m.media_id && m.status !== 'sending' && (
                 <ChatMedia
                   mediaId={m.media_id}
@@ -426,7 +457,6 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
               {m.file && !m.media_id && (
                 <PendingAttach file={m.file} />
               )}
-              {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
               <span className="chat-bubble-meta">
                 {formatMessageTime(m.created_at)}
                 {own && m.status === 'sending' ? ' · Отправка' : ''}
@@ -482,7 +512,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
             aria-label="Прикрепить фото или видео"
             onClick={() => fileInputRef.current?.click()}
           >
-            Файл
+            <AppIcon name="attach" size={20} />
           </button>
           <label className="visually-hidden" htmlFor={`message-body-${mode}`}>Сообщение</label>
           <textarea
@@ -501,9 +531,10 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
             className="btn btn-primary composer-send"
             type="submit"
             data-testid="send-message"
+            aria-label="Отправить"
             disabled={pending || !canSendMessage(draft, file)}
           >
-            Отправить
+            <AppIcon name="send" size={20} />
           </button>
         </div>
       </form>

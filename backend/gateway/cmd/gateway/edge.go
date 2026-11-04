@@ -200,6 +200,14 @@ func rateLimit() func(http.Handler) http.Handler {
 			match: func(r *http.Request) bool { return r.Method == http.MethodPost && r.URL.Path == "/v1/auth/register" }},
 		{name: "auth-refresh", limit: envLimit("RATE_LIMIT_REFRESH_PER_MIN", 120, 2400), window: time.Minute,
 			match: func(r *http.Request) bool { return r.Method == http.MethodPost && r.URL.Path == "/v1/auth/refresh" }},
+		{name: "auth-password-reset", limit: envLimit("RATE_LIMIT_PASSWORD_RESET_PER_MIN", 10, 600), window: time.Minute,
+			match: func(r *http.Request) bool {
+				return r.Method == http.MethodPost && (r.URL.Path == "/v1/auth/password-reset/request" || r.URL.Path == "/v1/auth/password-reset/confirm")
+			}},
+		{name: "auth-email-verify", limit: envLimit("RATE_LIMIT_EMAIL_VERIFY_PER_MIN", 20, 600), window: time.Minute,
+			match: func(r *http.Request) bool {
+				return r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/auth/email-verification/")
+			}},
 		{name: "media-upload", limit: envLimit("RATE_LIMIT_UPLOAD_PER_MIN", 60, 1200), window: time.Minute,
 			match: isMediaUpload},
 		{name: "global", limit: envLimit("RATE_LIMIT_GLOBAL_PER_MIN", 3000, 60000), window: time.Minute,

@@ -31,7 +31,7 @@ test.describe('production calendar', () => {
     if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
-    await expect(page.getByRole('heading', { name: /календарь/i }).first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
     await expect(page.getByRole('button', { name: 'День', exact: true })).toBeVisible()
     if (info.project.name === 'phone-390') {
       await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
@@ -40,11 +40,12 @@ test.describe('production calendar', () => {
     }
     await assertNoPageOverflow(page)
 
-    // Day view uses FullCalendar on all widths; month still uses calendar-mobile on phone.
-    await expect(page.locator('.calendar-wrap .fc')).toBeVisible({ timeout: 15_000 })
     if (info.project.name === 'phone-390') {
       await page.getByRole('button', { name: 'День', exact: true }).click()
-      const appt = page.locator('.fc-event.is-appt').first()
+      await expect(page.getByTestId('calendar-mobile')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByTestId('calendar-mobile')).toHaveAttribute('data-day-list', 'true')
+      await expect(page.locator('.cal-day-strip')).toBeVisible()
+      const appt = page.locator('.cal-slot-event.is-appt, .cal-slot-event').first()
       if (await appt.count()) {
         await appt.click()
         await expect(page.getByTestId('calendar-detail')).toBeVisible()
@@ -58,6 +59,7 @@ test.describe('production calendar', () => {
         }
       }
     } else {
+      await expect(page.locator('.calendar-wrap .fc')).toBeVisible({ timeout: 15_000 })
       await page.getByRole('button', { name: 'Неделя' }).click()
       await expect(page.locator('.fc-timegrid')).toBeVisible()
       const appt = page.locator('.fc-event.is-appt').first()

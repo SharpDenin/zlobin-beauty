@@ -62,7 +62,7 @@ test.describe('calendar stabilization', () => {
       await page.setViewportSize({ width, height: width <= 430 ? 844 : 900 })
       await loginUI(page, 'master1@demo.local')
       await page.goto('/calendar')
-      await expect(page.getByRole('heading', { name: /календарь/i }).first()).toBeVisible({ timeout: 20_000 })
+      await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
 
       const dayLabel = 'День'
       const weekLabel = width <= 599 ? '3 дня' : 'Неделя'
@@ -77,11 +77,12 @@ test.describe('calendar stabilization', () => {
         const m = await metrics(page)
         expect(m.overflowX, `${width}/${view} overflowX`).toBe(false)
         expect(m.clipped, `${width}/${view} clipped: ${m.clipped.join(',')}`).toEqual([])
-        if (view !== 'Месяц' || width > 599) {
-          // Month on phone uses CalendarMobile; time-grid / list need fixed wrap.
-          if (view !== 'Месяц') {
-            expect(m.wrapHeight, `${width}/${view} wrap height`).toBeGreaterThan(180)
-          }
+        // Phone day/month use CalendarMobile; other views need FC wrap height.
+        const phoneList = width <= 599 && (view === dayLabel || view === 'Месяц')
+        if (!phoneList) {
+          expect(m.wrapHeight, `${width}/${view} wrap height`).toBeGreaterThan(180)
+        } else {
+          await expect(page.getByTestId('calendar-mobile')).toBeVisible()
         }
         await page.screenshot({
           path: path.join(shotDir, `cal-${width}-${view.replace(/\s+/g, '-')}.png`),

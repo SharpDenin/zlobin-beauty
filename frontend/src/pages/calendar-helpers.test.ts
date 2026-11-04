@@ -23,6 +23,9 @@ import {
   visitCompanionTitle,
   weekdayIndex,
   zonedYmd,
+  resolveDayWorkWindow,
+  eventCoversSlot,
+  buildHalfHourSlots,
 } from './calendar-helpers'
 
 describe('long press', () => {
@@ -132,5 +135,32 @@ describe('calendar helpers', () => {
     expect(rangeToDayInterval(start, midnight, tz)?.end_minute).toBe(1440)
     expect(isCalendarViewId('timeGridThreeDay')).toBe(true)
     expect(isCalendarViewId('timeGridYear')).toBe(false)
+  })
+
+  it('resolves day work window from weekly hours and exceptions', () => {
+    const hours = [{ weekday: 3, start_minute: 10 * 60, end_minute: 19 * 60 }]
+    expect(resolveDayWorkWindow('2026-05-14', 3, hours, [])).toEqual({
+      status: 'open',
+      startMin: 600,
+      endMin: 1140,
+    })
+    expect(resolveDayWorkWindow('2026-05-14', 0, hours, [])).toEqual({ status: 'day_off' })
+    expect(resolveDayWorkWindow('2026-05-14', 3, [], [])).toEqual({ status: 'unset' })
+    expect(
+      resolveDayWorkWindow('2026-05-14', 3, hours, [{ day: '2026-05-14', is_day_off: true }]),
+    ).toEqual({ status: 'day_off' })
+    expect(
+      resolveDayWorkWindow('2026-05-14', 0, hours, [
+        { day: '2026-05-14', is_day_off: false, start_minute: 12 * 60, end_minute: 16 * 60 },
+      ]),
+    ).toEqual({ status: 'open', startMin: 720, endMin: 960 })
+    expect(buildHalfHourSlots(600, 690)).toEqual([600, 630, 660])
+  })
+
+  it('detects event coverage across half-hour slots', () => {
+    const tz = 'Asia/Krasnoyarsk'
+    expect(eventCoversSlot('2026-05-14T10:00:00+07:00', '2026-05-14T11:00:00+07:00', 10 * 60, tz)).toBe(true)
+    expect(eventCoversSlot('2026-05-14T10:00:00+07:00', '2026-05-14T11:00:00+07:00', 10 * 60 + 30, tz)).toBe(true)
+    expect(eventCoversSlot('2026-05-14T10:00:00+07:00', '2026-05-14T11:00:00+07:00', 11 * 60, tz)).toBe(false)
   })
 })

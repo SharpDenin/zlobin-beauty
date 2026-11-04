@@ -351,3 +351,51 @@ export function buildHalfHourSlots(fromMin: number, toMin: number): number[] {
   for (let m = fromMin; m < toMin; m += 30) out.push(m)
   return out
 }
+
+export type WorkHoursItem = { weekday: number; start_minute: number; end_minute: number }
+export type WorkExceptionItem = {
+  day: string
+  is_day_off: boolean
+  start_minute?: number | null
+  end_minute?: number | null
+}
+
+export type DayWorkWindow =
+  | { status: 'unset' }
+  | { status: 'day_off' }
+  | { status: 'open'; startMin: number; endMin: number }
+
+/** Resolve the master's working window for a calendar day (exceptions override weekly hours). */
+export function resolveDayWorkWindow(
+  ymd: string,
+  weekday: number,
+  hours: WorkHoursItem[],
+  exceptions: WorkExceptionItem[],
+): DayWorkWindow {
+  const ex = exceptions.find((e) => e.day === ymd || e.day.startsWith(`${ymd}T`) || e.day.startsWith(ymd))
+  if (ex?.is_day_off) return { status: 'day_off' }
+  if (ex && !ex.is_day_off && ex.start_minute != null && ex.end_minute != null && ex.end_minute > ex.start_minute) {
+    return { status: 'open', startMin: ex.start_minute, endMin: ex.end_minute }
+  }
+  if (hours.length === 0) return { status: 'unset' }
+  const h = hours.find((item) => item.weekday === weekday)
+  if (!h || h.end_minute <= h.start_minute) return { status: 'day_off' }
+  return { status: 'open', startMin: h.start_minute, endMin: h.end_minute }
+}
+
+/** True when [start,end) overlaps the half-hour slot starting at slotMin. */
+export function eventCoversSlot(
+  startIso: string,
+  endIso: string | undefined,
+  slotMin: number,
+  timeZone: string,
+): boolean {
+  const start = new Date(startIso)
+  if (Number.isNaN(start.getTime())) return false
+  const end = endIso ? new Date(endIso) : new Date(start.getTime() + 30 * 60 * 1000)
+  if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) return false
+  const startMin = minutesFromMidnight(start, timeZone)
+  const endMin = minutesFromMidnight(end, timeZone)
+  const slotEnd = slotMin + 30
+  return startMin < slotEnd && endMin > slotMin
+}

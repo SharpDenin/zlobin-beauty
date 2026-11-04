@@ -1177,13 +1177,38 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           : id
     setCurrentView(mapped)
     setSavedView(mapped)
-    if (!(compact && mapped === 'dayGridMonth')) {
+    if (compact && (mapped === 'timeGridDay' || mapped === 'dayGridMonth')) {
+      // Day/month list unmounts FullCalendar — keep a wide fetch window around the selected day.
+      ensureRangeCovers(selectedDate)
+    }
+    if (!(compact && (mapped === 'dayGridMonth' || mapped === 'timeGridDay'))) {
       calendarRef.current?.getApi().changeView(mapped)
     }
   }
 
+  function ensureRangeCovers(date: Date) {
+    const start = new Date(date)
+    start.setDate(start.getDate() - 7)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(date)
+    end.setDate(end.getDate() + 21)
+    end.setHours(23, 59, 59, 999)
+    const needFrom = start.getTime()
+    const needTo = end.getTime()
+    setRange((current) => {
+      const curFrom = new Date(current.from).getTime()
+      const curTo = new Date(current.to).getTime()
+      if (needFrom >= curFrom && needTo <= curTo) return current
+      return {
+        from: new Date(Math.min(curFrom, needFrom)).toISOString(),
+        to: new Date(Math.max(curTo, needTo)).toISOString(),
+      }
+    })
+  }
+
   function goToDate(date: Date) {
     setSelectedDate(date)
+    ensureRangeCovers(date)
     calendarRef.current?.getApi().gotoDate(date)
   }
 
@@ -1327,24 +1352,24 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [pendingInterval])
 
   const loading = appointments.isLoading || blocks.isLoading || hours.isLoading
-  // Month keeps the compact custom grid; day/week use FullCalendar so drag/resize work on phone.
-  const showMobileMonth = compact && currentView === 'dayGridMonth'
-  const showMobileFc = compact && !showMobileMonth
+  // Phone day + month: reference list / month grid. 3-day and list keep FullCalendar.
+  const showMobileDayList = compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth')
+  const showMobileFc = compact && !showMobileDayList
   const apptId = selected?.kind === 'appointment' && selected.id.startsWith('appt:') ? selected.id.slice(5) : ''
 
   useEffect(() => {
-    if (showMobileMonth) return
+    if (showMobileDayList) return
     const api = calendarRef.current?.getApi()
     if (!api) return
     api.setOption('slotMinTime', slotMinTime)
     api.setOption('slotMaxTime', slotMaxTime)
-  }, [showMobileMonth, slotMinTime, slotMaxTime])
+  }, [showMobileDayList, slotMinTime, slotMaxTime])
 
   useEffect(() => {
-    if (showMobileMonth) return
+    if (showMobileDayList) return
     const id = requestAnimationFrame(() => calendarRef.current?.getApi().updateSize())
     return () => cancelAnimationFrame(id)
-  }, [showMobileMonth, currentView, loading])
+  }, [showMobileDayList, currentView, loading])
 
   useEffect(() => {
     const topbar = document.querySelector('.topbar') as HTMLElement | null
@@ -1362,7 +1387,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [])
 
   useEffect(() => {
-    if (scrolledOnce.current || loading || showMobileMonth) return
+    if (scrolledOnce.current || loading || showMobileDayList) return
     scrolledOnce.current = true
     requestAnimationFrame(() => {
       const wrap = wrapRef.current
@@ -1376,7 +1401,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         wrap.querySelector('.fc-event')
       slot?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     })
-  }, [loading, showMobileMonth, salonTimezone])
+  }, [loading, showMobileDayList, salonTimezone])
 
   const colorTokenPicker = (value: string, onPick: (token: string) => void) => (
     <div className="calendar-color-token-grid" role="listbox" aria-label="Цвет">
@@ -1505,7 +1530,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   const body = (
     <div
-      className={`stack calendar-shell ${showMobileMonth ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
+      className={`stack calendar-shell ${showMobileDayList ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
       style={{ touchAction: 'pan-y' }}
       onPointerDown={onPointerDownSwipe}
       onPointerMove={onPointerMoveSwipe}
@@ -1514,7 +1539,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     >
       {!embedded && (
         <div className="calendar-page-head calendar-toolbar-sticky">
-          {!showMobileMonth ? (
+          {showMobileDayList ? (
+            <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
+          ) : (
             <div className="stack-sm">
               <p className="eyebrow">Расписание</p>
               <h1>{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
@@ -1527,10 +1554,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 <p className="muted">Долгое нажатие — меню. Перетаскивайте задачи, чтобы менять время.</p>
               )}
             </div>
-          ) : (
-            <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
           )}
-          <div className="row calendar-page-head-actions">
+          <div className={`row calendar-page-head-actions ${showMobileDayList ? 'is-compact-day' : ''}`}>
             {!readOnlyOverlay ? (
               <button
                 className="btn btn-secondary btn-compact"
@@ -1541,9 +1566,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 Установка графика
               </button>
             ) : null}
-            <button className="btn btn-ghost btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
-              Диапазон сетки
-            </button>
+            {!showMobileDayList ? (
+              <button className="btn btn-ghost btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
+                Диапазон сетки
+              </button>
+            ) : null}
             {!readOnlyOverlay ? (
               <button className="btn btn-primary btn-compact" type="button" onClick={() => (blockStart && blockEnd ? setEditorOpen(true) : openCreateAt(selectedDate))}>+ Событие</button>
             ) : null}
@@ -1712,7 +1739,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         </section>
       )}
 
-      {showMobileMonth ? (
+      {showMobileDayList ? (
         <CalendarMobile
           events={events}
           timezone={salonTimezone}
@@ -1725,6 +1752,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           loading={loading}
           moving={moving}
           monthMode={currentView === 'dayGridMonth'}
+          heading="Расписание"
           intervalSelecting={intervalMode}
           intervalStartMin={intervalStartMin}
           intervalEndMin={intervalEndMin}
@@ -1756,14 +1784,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileMonth && loading ? (
+      {!showMobileDayList && loading ? (
         <div className="calendar-wrap" aria-busy="true">
           <div className="skeleton skeleton-card" />
           <div className="skeleton skeleton-card" />
         </div>
       ) : null}
 
-      {!showMobileMonth && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
+      {!showMobileDayList && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
         <EmptyState
           title="Рабочий график пока не задан"
           text="Календарь покажет рабочие часы после того, как мастер сохранит расписание."
@@ -1775,7 +1803,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileMonth ? (
+      {!showMobileDayList ? (
       <div
         className="calendar-wrap"
         ref={wrapRef}

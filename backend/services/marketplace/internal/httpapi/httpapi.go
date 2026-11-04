@@ -362,6 +362,7 @@ type createServiceReq struct {
 	DurationMinutes int     `json:"duration_minutes"`
 	PriceMinor      int64   `json:"price_minor"`
 	BookingMode     string  `json:"booking_mode"`
+	Published       *bool   `json:"published"`
 	AttachToMe      bool    `json:"attach_to_me"`
 }
 
@@ -369,7 +370,7 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var req createServiceReq
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		httpx.WriteError(w, r, a.log, apperr.Validation(httpx.DecodeJSONMessage(err)))
 		return
 	}
 	orgID, err := uuid.Parse(req.OrganizationID)
@@ -385,7 +386,8 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 	item, err := a.svc.CreateService(r.Context(), service.CreateServiceInput{
 		ActorUserID: claims.UserID, OrganizationID: orgID, Name: req.Name, Category: req.Category,
 		Description: req.Description, Notes: req.Notes, PhotoMediaID: photoMediaID,
-		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, BookingMode: req.BookingMode, AttachToMaster: req.AttachToMe,
+		DurationMinutes: req.DurationMinutes, PriceMinor: req.PriceMinor, BookingMode: req.BookingMode,
+		Published: req.Published, AttachToMaster: req.AttachToMe,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
@@ -414,7 +416,7 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 		Archived        *bool           `json:"archived"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		httpx.WriteError(w, r, a.log, apperr.Validation(httpx.DecodeJSONMessage(err)))
 		return
 	}
 	in := service.UpdateServiceInput{

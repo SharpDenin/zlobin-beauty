@@ -643,6 +643,7 @@ type CreateServiceInput struct {
 	DurationMinutes int
 	PriceMinor      int64
 	BookingMode     string
+	Published       *bool
 	AttachToMaster  bool
 }
 
@@ -691,11 +692,15 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 		return nil, err
 	}
 	now := s.now().UTC()
+	published := true
+	if in.Published != nil {
+		published = *in.Published
+	}
 	item := domain.ServiceItem{
 		ID: ids.New(), OrganizationID: in.OrganizationID, Name: name, Category: category,
 		Description: strings.TrimSpace(in.Description), Notes: strings.TrimSpace(in.Notes), PhotoMediaID: in.PhotoMediaID,
 		DurationMinutes: in.DurationMinutes, PriceMinor: in.PriceMinor, Currency: "RUB", BookingMode: bookingMode,
-		Published: true, CreatedAt: now, UpdatedAt: now,
+		Published: published, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateService(ctx, item); err != nil {
 		return nil, apperr.Internal(err)

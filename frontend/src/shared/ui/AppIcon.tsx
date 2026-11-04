@@ -29,6 +29,9 @@ export type AppIconName =
   | 'x'
   | 'clients'
   | 'services'
+  | 'bell'
+  | 'attach'
+  | 'send'
 
 const ICONS: Record<AppIconName, ReactNode> = {
   home: (
@@ -194,6 +197,23 @@ const ICONS: Record<AppIconName, ReactNode> = {
       <circle cx="6" cy="6" r="3" />
       <circle cx="6" cy="18" r="3" />
       <path d="m20 4-8.5 8.5M20 20l-8.5-8.5" />
+    </>
+  ),
+  bell: (
+    <>
+      <path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 4 1.5 5.5 1.5 5.5H5s1.5-1.5 1.5-5.5" />
+      <path d="M10 18.5a2 2 0 0 0 4 0" />
+    </>
+  ),
+  attach: (
+    <>
+      <path d="m15.5 7.5-6.8 6.8a2.5 2.5 0 0 0 3.5 3.5l7.2-7.2a4 4 0 0 0-5.7-5.7L6.5 12.1" />
+    </>
+  ),
+  send: (
+    <>
+      <path d="M5 12h12" />
+      <path d="m13 6 6 6-6 6" />
     </>
   ),
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -67,6 +68,28 @@ func DecodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
+}
+
+// DecodeJSONMessage turns json.Decoder errors into short user-facing validation text.
+// Unknown fields and type mismatches are surfaced; raw Go dump is avoided.
+func DecodeJSONMessage(err error) string {
+	if err == nil {
+		return "invalid json body"
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "json: unknown field ") {
+		field := strings.Trim(strings.TrimPrefix(msg, "json: unknown field "), `"`)
+		if field != "" {
+			return "unknown field: " + field
+		}
+	}
+	if strings.Contains(msg, "cannot unmarshal") {
+		return "invalid field type in json body"
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || msg == "EOF" {
+		return "empty or truncated json body"
+	}
+	return "invalid json body"
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {

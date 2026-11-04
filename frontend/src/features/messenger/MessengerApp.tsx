@@ -9,6 +9,7 @@ import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Overlay } from '@/shared/ui/Overlay'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { AppIcon } from '@/shared/ui/AppIcon'
 import { ChatMedia } from '@/features/messenger/ChatMedia'
 import { ContactPickerModal } from '@/features/contacts/ContactPickerModal'
 import { addContact, listContacts } from '@/features/contacts/api'
@@ -443,6 +444,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
               key={m.client_id || m.id}
               className={`chat-bubble ${own ? 'is-own' : 'is-in'} ${m.status === 'failed' ? 'is-failed' : ''}`}
             >
+              {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
               {m.media_id && m.status !== 'sending' && (
                 <ChatMedia
                   mediaId={m.media_id}
@@ -455,7 +457,6 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
               {m.file && !m.media_id && (
                 <PendingAttach file={m.file} />
               )}
-              {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
               <span className="chat-bubble-meta">
                 {formatMessageTime(m.created_at)}
                 {own && m.status === 'sending' ? ' · Отправка' : ''}
@@ -511,7 +512,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
             aria-label="Прикрепить фото или видео"
             onClick={() => fileInputRef.current?.click()}
           >
-            Файл
+            <AppIcon name="attach" size={20} />
           </button>
           <label className="visually-hidden" htmlFor={`message-body-${mode}`}>Сообщение</label>
           <textarea
@@ -530,9 +531,10 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
             className="btn btn-primary composer-send"
             type="submit"
             data-testid="send-message"
+            aria-label="Отправить"
             disabled={pending || !canSendMessage(draft, file)}
           >
-            Отправить
+            <AppIcon name="send" size={20} />
           </button>
         </div>
       </form>

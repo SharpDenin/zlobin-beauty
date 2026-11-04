@@ -2,24 +2,32 @@
   /* Above sticky chrome, below messenger overlay (--z-modal) and toasts. */
   position: fixed;
   z-index: var(--z-dropdown, 30);
-  right: max(12px, env(safe-area-inset-right, 0px));
-  bottom: max(88px, calc(env(safe-area-inset-bottom, 0px) + 72px));
-  display: grid;
-  gap: 8px;
-  width: min(320px, calc(100vw - 24px));
   pointer-events: none;
 }
 
-.notif-bubble {
+.notif-bubbles > * {
   pointer-events: auto;
+}
+
+/* —— Desktop / tablet (≥768): card stack, left on wide home, right otherwise —— */
+.notif-bubbles--desktop {
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  display: grid;
+  gap: 8px;
+  width: min(320px, calc(100vw - 24px));
+}
+
+.notif-bubble {
   display: grid;
   gap: 8px;
   padding: 12px;
   border-radius: var(--radius-md, 14px);
-  background: color-mix(in srgb, var(--color-surface, #141821) 92%, transparent);
+  background: var(--color-surface, #141821);
   border: 1px solid var(--color-border, #252b3b);
   box-shadow: var(--shadow-glow, 0 8px 24px rgba(0, 0, 0, 0.35));
-  animation: notif-bubble-in var(--motion-normal, 220ms) ease-out;
+  /* Solid surface — no backdrop-filter: avoids hijacking home blur stacking. */
+  animation: notif-bubble-in var(--motion-fast, 160ms) ease-out;
 }
 
 .notif-bubble.is-unread {
@@ -64,17 +72,117 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .notif-bubble {
+  .notif-bubble,
+  .notif-dot {
     animation: none;
   }
 }
 
 @media (min-width: 1024px) {
-  .notif-bubbles {
-    /* Clear atmospheric / left column area on wide homes — keep off primary CTA. */
+  .notif-bubbles--desktop {
     left: max(16px, env(safe-area-inset-left, 0px));
     right: auto;
     bottom: max(24px, env(safe-area-inset-bottom, 0px));
     width: min(300px, 26vw);
+  }
+}
+
+/* —— Mobile (<768): left vertical stack of circular indicators —— */
+.notif-bubbles--compact {
+  top: max(12px, calc(env(safe-area-inset-top, 0px) + 56px));
+  left: max(10px, env(safe-area-inset-left, 0px));
+  right: auto;
+  bottom: auto;
+  width: auto;
+  max-width: calc(100vw - 20px);
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  /* Stay clear of bottom nav */
+  max-height: calc(100dvh - 56px - var(--nav-h, 64px) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);
+}
+
+.notif-bubbles__rail {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 40px;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.notif-bubbles__rail::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.notif-dot {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text, #f5f7fa);
+  background: var(--color-surface, #141821);
+  border: 1px solid var(--color-border, #252b3b);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  flex-shrink: 0;
+}
+
+.notif-dot.is-unread {
+  border-color: color-mix(in srgb, var(--color-primary, #7c82ff) 55%, var(--color-border, #252b3b));
+}
+
+.notif-dot.is-open {
+  outline: 2px solid var(--color-primary, #7c82ff);
+  outline-offset: 1px;
+}
+
+.notif-dot__badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-primary, #7c82ff);
+  box-shadow: 0 0 0 2px var(--color-surface, #141821);
+}
+
+.notif-bubbles__panel {
+  /* Opens to the right of the left column — does not push indicators right */
+  width: min(260px, calc(100vw - 40px - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  max-height: min(42vh, 280px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.notif-bubbles__panel .notif-bubble {
+  max-height: none;
+}
+
+.notif-bubbles__close {
+  justify-self: end;
+}
+
+/* Phone landscape / very short */
+@media (max-width: 767px) and (max-height: 500px) {
+  .notif-bubbles--compact {
+    top: max(8px, env(safe-area-inset-top, 0px));
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 72px);
+  }
+  .notif-bubbles__panel {
+    max-height: 36vh;
   }
 }

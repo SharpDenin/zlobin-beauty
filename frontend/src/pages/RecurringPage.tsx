@@ -7,6 +7,7 @@ import { useBuyerOrg, useSupplierOrg } from '@/shared/lib/commerce'
 import { statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { toast } from '@/shared/ui/Toast'
 
 type RecurringItem = { product_id: string; qty: number }
 type ProposedChange = {
@@ -150,6 +151,7 @@ export function RecurringPage() {
       }),
     onSuccess: async () => {
       setOk('Решение сохранено')
+      toast.success('Решение сохранено')
       setError(null)
       setProposeId(null)
       setReviseId(null)
@@ -165,6 +167,7 @@ export function RecurringPage() {
         body: { status: input.status },
       }),
     onSuccess: async () => {
+      toast.success('Статус подписки обновлён')
       await qc.invalidateQueries({ queryKey: ['recurring'] })
     },
   })

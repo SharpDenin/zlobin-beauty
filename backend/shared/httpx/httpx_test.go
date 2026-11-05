@@ -32,6 +32,22 @@ func TestCORSAllowsIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestWriteErrorSetsRetryAfterForRateLimited(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/conversations", nil)
+	rec := httptest.NewRecorder()
+	WriteError(rec, req, nil, apperr.RateLimitedRetry("too many new conversations; try again later", 42))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "42" {
+		t.Fatalf("Retry-After=%q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"code":"rate_limited"`) {
+		t.Fatalf("body=%s", body)
+	}
+}
+
 func TestWriteErrorIncludesCodeAndOptionalDetails(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/appointments", nil)
 	rec := httptest.NewRecorder()

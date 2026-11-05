@@ -8,7 +8,7 @@ import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
-import { primaryWorkType, uniqueCanonicalWorkTypes, workTypeNeedsSalon, workTypesLabel } from '@/shared/lib/work-types'
+import { hasLegacyEmployeeFormat, primaryWorkType, uniqueCanonicalWorkTypes, workTypesLabel } from '@/shared/lib/work-types'
 import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
 import type { ProfessionType } from '@/shared/lib/profession-types'
 import { selectedProfessionIds } from '@/shared/lib/profession-types'
@@ -18,20 +18,19 @@ import { MediaImage } from '@/shared/ui/MediaImage'
 import { useToast } from '@/shared/ui/Toast'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { moderationError } from '@/shared/lib/moderation'
+import {
+  incompleteChecks,
+  readinessAnchor,
+  readinessFieldHint,
+} from '@/shared/lib/master-profile-readiness'
+import { CreateSalonForm, type CreateSalonPayload } from '@/shared/ui/CreateSalonForm'
+import { useCabinet } from '@/shared/lib/cabinet'
 
 type OrgItem = {
-  organization: { id: string; name: string; type: string; published: boolean; description: string }
+  organization: { id: string; name: string; type: string; published: boolean; description: string; city?: string; address_line?: string }
   branches: Array<{ id: string; name: string; city: string; address_line: string; phone: string; published: boolean }>
   roles: string[]
 }
-
-const orgSchema = z.object({
-  name: z.string().min(2, 'Минимум 2 символа'),
-  branch_name: z.string().min(2, 'Минимум 2 символа'),
-  city: z.string().min(2, 'Укажите город'),
-  address_line: z.string().min(3, 'Укажите адрес'),
-  phone: z.string().min(5, 'Укажите телефон').optional().or(z.literal('')),
-})
 
 const masterSchema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
@@ -47,6 +46,7 @@ const masterSchema = z.object({
 
 export function MasterCabinetPage() {
   const { accessToken, user } = useAuth()
+  const cabinet = useCabinet()
   const qc = useQueryClient()
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
@@ -62,8 +62,21 @@ export function MasterCabinetPage() {
     enabled: Boolean(accessToken),
   })
 
-  const primaryOrg = orgs.data?.items[0]
-  const primaryBranch = primaryOrg?.branches[0]
+  // Prefer active org context (sx.selectedOrg); fall back to first salon only when unset/stale.
+  const salonItems = (orgs.data?.items ?? []).filter((o) => o.organization.type !== 'supplier')
+  const primaryOrg =
+    (cabinet.selectedOrg && cabinet.selectedOrg.organization.type !== 'supplier'
+      ? (salonItems.find((o) => o.organization.id === cabinet.selectedOrg!.organization.id) ?? null)
+      : null)
+    ?? salonItems[0]
+  const primaryBranch =
+    (primaryOrg
+      && cabinet.selectedOrg?.organization.id === primaryOrg.organization.id
+      && cabinet.selectedBranch
+      && primaryOrg.branches.some((b) => b.id === cabinet.selectedBranch!.id)
+      ? primaryOrg.branches.find((b) => b.id === cabinet.selectedBranch!.id) ?? null
+      : null)
+    ?? primaryOrg?.branches[0]
 
   const orgReadiness = useQuery({
     queryKey: ['org-readiness', primaryOrg?.organization.id],
@@ -126,7 +139,7 @@ export function MasterCabinetPage() {
   const portfolio = useQuery({
     queryKey: ['my-portfolio'],
     queryFn: () =>
-      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string; sort_order: number }> }>(
+      apiRequest<{ items: Array<{ id: string; media_id: string; caption: string; media_type?: string; sort_order: number }> }>(
         '/v1/me/master/portfolio',
         { token: accessToken },
       ),
@@ -142,7 +155,6 @@ export function MasterCabinetPage() {
     enabled: Boolean(primaryBranch?.id),
   })
 
-  const orgForm = useForm<z.infer<typeof orgSchema>>({ resolver: zodResolver(orgSchema) })
   const branchForm = useForm<{ phone: string }>({
     defaultValues: { phone: '' },
   })
@@ -154,14 +166,26 @@ export function MasterCabinetPage() {
       city: 'Красноярск',
       experience_years: 1,
       education: '',
-      work_types: ['independent'],
+      work_types: ['private_practice'],
       profession_type_ids: [],
     },
   })
   const masterDraft = useFormDraft(masterForm, 'master-profile-form')
   const watchedWorkTypes = masterForm.watch('work_types')
-  const needsSalon = workTypeNeedsSalon(watchedWorkTypes)
   const hasSalon = Boolean(master.data?.master.organization_id || orgs.data?.items.some((o) => o.organization.type !== 'supplier'))
+  const legacyEmployee = hasLegacyEmployeeFormat(
+    master.data?.master.work_types?.length
+      ? master.data.master.work_types
+      : master.data?.master.work_type,
+  )
+  const missingChecks = incompleteChecks(readiness.data?.checks)
+  const fieldHint = (key: string) => readinessFieldHint(readiness.data?.checks, key)
+
+  useEffect(() => {
+    if (primaryBranch) {
+      branchForm.reset({ phone: primaryBranch.phone ?? '' })
+    }
+  }, [primaryBranch, branchForm])
 
   useEffect(() => {
     const m = master.data?.master
@@ -181,7 +205,7 @@ export function MasterCabinetPage() {
       } catch { /* ignore malformed onboard cache */ }
       return
     }
-    const types = uniqueCanonicalWorkTypes(m.work_types?.length ? m.work_types : [m.work_type || 'independent'])
+    const types = uniqueCanonicalWorkTypes(m.work_types?.length ? m.work_types : [m.work_type || 'private_practice'])
     masterForm.reset({
       display_name: m.display_name || user?.display_name || '',
       city: m.city || 'Красноярск',
@@ -189,27 +213,28 @@ export function MasterCabinetPage() {
       specializations: (m.specializations ?? []).join(', '),
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
-      work_types: types.length ? types : ['independent'],
+      work_types: types.length ? types : ['private_practice'],
       profession_type_ids: selectedProfessionIds(m),
       published: Boolean(m.published),
     })
   }, [master.data, masterForm, user?.display_name])
 
   const createOrg = useMutation({
-    mutationFn: async (values: z.infer<typeof orgSchema>) => {
-      const res = await apiRequest<{ branch: { id: string } }>('/v1/organizations', {
+    mutationFn: async (payload: CreateSalonPayload) => {
+      const { phone, ...body } = payload
+      const res = await apiRequest<{ organization: { id: string }; branch: { id: string } | null }>('/v1/organizations', {
         token: accessToken,
-        body: { name: values.name, branch_name: values.branch_name, city: values.city, address_line: values.address_line, type: 'salon' },
+        body,
       })
-      const phone = (values.phone ?? '').trim()
       if (phone && res.branch?.id) {
         await apiRequest(`/v1/branches/${res.branch.id}`, { method: 'PATCH', token: accessToken, body: { phone } })
       }
       return res
     },
-    onSuccess: async () => {
+    onSuccess: async (res) => {
       setOk('Салон создан')
       setError(null)
+      if (res.organization?.id) cabinet.setSelectedOrgId(res.organization.id)
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
@@ -228,13 +253,19 @@ export function MasterCabinetPage() {
       })
     },
     onSuccess: async () => {
-      setOk('Данные филиала сохранены')
+      setOk('Телефон филиала сохранён')
       setError(null)
+      toast.success('Телефон филиала сохранён')
       await qc.invalidateQueries({ queryKey: ['orgs-mine'] })
       await qc.invalidateQueries({ queryKey: ['org-readiness'] })
       await qc.invalidateQueries({ queryKey: ['branch-readiness'] })
     },
-    onError: (e) => setError(formatUserError(e, 'Ошибка сохранения филиала')),
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось сохранить телефон')
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   const publishBranch = useMutation({
@@ -261,24 +292,24 @@ export function MasterCabinetPage() {
     mutationFn: (values: z.infer<typeof masterSchema>) => {
       const banned = moderationError([values.display_name, values.bio ?? '', values.education ?? '', values.specializations ?? ''].join(' '))
       if (banned) throw new ApiError(banned, 'content_not_allowed', 400)
-      const org = orgs.data?.items.find((o) => o.organization.type !== 'supplier') ?? orgs.data?.items[0]
+      const org = primaryOrg
       const boundOrg = Boolean(master.data?.master.organization_id)
-      if (needsSalon && !org && !boundOrg) {
-        throw new ApiError('Для этого формата работы нужен салон. Создайте салон или примите приглашение.', 'validation_error', 400)
-      }
       const types = uniqueCanonicalWorkTypes(values.work_types)
       return apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
         body: {
-          ...(needsSalon && org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
-          ...(!needsSalon && boundOrg && master.data?.master.organization_id
-            ? { organization_id: master.data.master.organization_id, branch_id: master.data.master.branch_id }
+          ...(org || boundOrg
+            ? {
+                organization_id: org?.organization.id ?? master.data?.master.organization_id,
+                branch_id: primaryBranch?.id ?? org?.branches[0]?.id ?? master.data?.master.branch_id,
+              }
             : {}),
           display_name: values.display_name,
           city: values.city,
           bio: values.bio ?? '',
-          specializations: (values.specializations ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+          // Preserve legacy specializations; new directions use profession_type_ids only.
+          specializations: master.data?.master.specializations ?? [],
           experience_years: values.experience_years,
           education: values.education ?? '',
           work_type: primaryWorkType(types),
@@ -291,14 +322,21 @@ export function MasterCabinetPage() {
     onSuccess: async () => {
       setOk('Профиль мастера сохранён')
       setError(null)
+      toast.success('Профиль мастера сохранён')
       masterDraft.clear()
       sessionStorage.removeItem('sx.onboard.profession_types')
       sessionStorage.removeItem('sx.onboard.work_type')
       sessionStorage.removeItem('sx.onboard.work_types')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
+      await qc.invalidateQueries({ queryKey: ['me-master-cabinet'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(formatUserError(e, 'Ошибка профиля')),
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось сохранить профиль')
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   const saveHours = useMutation({
@@ -317,10 +355,16 @@ export function MasterCabinetPage() {
     onSuccess: async () => {
       setOk('Расписание: пн–пт 10:00–19:00 (часовой пояс филиала)')
       setError(null)
+      toast.success('Расписание сохранено')
       await qc.invalidateQueries({ queryKey: ['working-hours'] })
       await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     },
-    onError: (e) => setError(formatUserError(e, 'Ошибка расписания')),
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось сохранить расписание')
+      setError(msg)
+      toast.error(msg)
+    },
   })
 
   async function attachProfilePhoto(mediaId: string | null) {
@@ -329,37 +373,54 @@ export function MasterCabinetPage() {
       return
     }
     if (!accessToken) return
-    const org = orgs.data?.items[0]
-    if (needsSalon && !org) {
-      setError('Для этого формата работы нужен салон')
-      toast.error('Для этого формата работы нужен салон')
-      setProfilePhotoDraft(null)
-      return
-    }
+    const org = primaryOrg
+    const existing = master.data?.master
+    // Legacy specializations are preserved as-is; directions are profession_type_ids.
+    const specializations = existing?.specializations ?? []
+    const workTypes = uniqueCanonicalWorkTypes(
+      (masterForm.getValues('work_types')?.length
+        ? masterForm.getValues('work_types')
+        : existing?.work_types?.length
+          ? existing.work_types
+          : [existing?.work_type || 'private_practice']) ?? ['private_practice'],
+    )
     setError(null)
+    setOk(null)
     try {
       await apiRequest('/v1/me/master', {
         method: 'PUT',
         token: accessToken,
         body: {
-          ...(org ? { organization_id: org.organization.id, branch_id: org.branches[0]?.id } : {}),
-          display_name: masterForm.getValues('display_name') || user?.display_name || '',
-          city: masterForm.getValues('city') || 'Красноярск',
-          bio: masterForm.getValues('bio') ?? '',
-          specializations: (masterForm.getValues('specializations') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-          experience_years: masterForm.getValues('experience_years') ?? 0,
-          education: masterForm.getValues('education') ?? '',
-          published: masterForm.getValues('published') ?? false,
-          work_type: primaryWorkType(masterForm.getValues('work_types') ?? ['independent']),
-          work_types: uniqueCanonicalWorkTypes(masterForm.getValues('work_types') ?? ['independent']),
+          ...(org || existing?.organization_id
+            ? {
+                organization_id: org?.organization.id ?? existing?.organization_id,
+                branch_id: primaryBranch?.id ?? org?.branches[0]?.id ?? existing?.branch_id,
+              }
+            : {}),
+          display_name: masterForm.getValues('display_name') || existing?.display_name || user?.display_name || 'Мастер',
+          city: masterForm.getValues('city') || existing?.city || 'Красноярск',
+          bio: masterForm.getValues('bio') ?? existing?.bio ?? '',
+          specializations,
+          experience_years: masterForm.getValues('experience_years') ?? existing?.experience_years ?? 0,
+          // Education stays in API payload for compatibility; field is hidden in UI (PROF-04).
+          education: existing?.education ?? masterForm.getValues('education') ?? '',
+          published: masterForm.getValues('published') ?? Boolean(existing?.published),
+          work_type: primaryWorkType(workTypes),
+          work_types: workTypes,
           photo_media_id: mediaId,
+          // Omit profession_type_ids when profile already exists → backend preserves them.
+          ...(!existing?.id && (masterForm.getValues('profession_type_ids')?.length ?? 0) > 0
+            ? { profession_type_ids: masterForm.getValues('profession_type_ids') }
+            : {}),
         },
       })
       setProfilePhotoDraft(null)
       setOk('Фото профиля сохранено')
       toast.success('Фото профиля сохранено')
       await qc.invalidateQueries({ queryKey: ['my-master'] })
+      await qc.invalidateQueries({ queryKey: ['master-readiness'] })
     } catch (e) {
+      setOk(null)
       const msg = userError(e, 'Не удалось загрузить фото')
       setError(msg)
       toast.error(msg)
@@ -443,7 +504,7 @@ export function MasterCabinetPage() {
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
-      <section className="card stack">
+      <section className="card stack" id="master-readiness">
         <h2>Что ещё заполнить</h2>
         {readiness.isLoading && <div className="state-box">Проверяем профиль…</div>}
         {readiness.isError && <ErrorBanner error={readiness.error} fallbackTitle="Не удалось проверить готовность" />}
@@ -452,17 +513,26 @@ export function MasterCabinetPage() {
             <p>
               {readiness.data.ready
                 ? 'Всё готово — можно публиковать профиль в поиске.'
-                : 'Отметьте пункты ниже, чтобы открыть запись клиентам.'}
+                : 'Не хватает пунктов ниже. Можно сохранять профиль по частям — обязательные поля отмечены у формы.'}
             </p>
-            <div className="list">
-              {readiness.data.checks.filter((c) => !c.ok).slice(0, 4).map((c) => (
-                <div key={c.key} className="list-item">
-                  <div className="row between">
-                    <strong>{c.label}</strong>
-                    <span className="badge badge-warning">Нужно</span>
+            <div className="list" data-testid="master-readiness-missing">
+              {missingChecks.map((c) => {
+                const anchor = readinessAnchor(c.key)
+                return (
+                  <div key={c.key} className="list-item">
+                    <div className="row between gap wrap">
+                      {anchor ? (
+                        <a className="master-readiness-link" href={`#${anchor}`}>
+                          <strong>{c.label}</strong>
+                        </a>
+                      ) : (
+                        <strong>{c.label}</strong>
+                      )}
+                      <span className="badge badge-warning">Нужно</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
               {readiness.data.ready && (
                 <div className="state-box success">Профиль готов к публикации</div>
               )}
@@ -472,75 +542,72 @@ export function MasterCabinetPage() {
       </section>
 
       <section className="card stack">
-        <h2>{needsSalon ? 'Салон' : 'Формат работы'}</h2>
-        {!needsSalon && (
-          <p className="muted">
-            {workTypesLabel(watchedWorkTypes)} — свой салон не обязателен.
-            {!hasSalon ? ' Можно сразу заполнять профиль и принимать записи.' : ''}
-          </p>
-        )}
-        {needsSalon && !hasSalon && (
-          <p className="muted">Для этого формата нужен салон: создайте свой или примите QR-приглашение владельца.</p>
-        )}
+        <h2>Салон</h2>
+        <p className="muted">
+          Членство в организации не зависит от формата работы.
+          {!hasSalon ? ' Салон можно создать здесь или принять приглашение владельца. Филиал необязателен.' : ''}
+          {hasSalon ? <> Управление несколькими салонами — в <Link to="/settings/salons">Настройки → Мои салоны</Link>.</> : null}
+        </p>
         {orgs.isLoading && <div className="state-box">Загрузка…</div>}
         {orgs.isError && <ErrorBanner error={orgs.error} fallbackTitle="Не удалось загрузить организации" />}
-        {orgs.data && orgs.data.items.length > 0 ? (
+        {orgs.data && orgs.data.items.length > 0 && (
           <div className="stack-sm">
             {orgs.data.items.map((item) => (
               <div key={item.organization.id} className="stack-sm">
                 <strong>{item.organization.name}</strong>
-                <p>{item.branches[0]?.city}, {item.branches[0]?.address_line}</p>
+                <p>
+                  {item.organization.city || item.branches[0]?.city || 'Город не указан'}
+                  {(item.organization.address_line || item.branches[0]?.address_line)
+                    ? `, ${item.organization.address_line || item.branches[0]?.address_line}`
+                    : ''}
+                </p>
                 <p className="muted">
-                  Филиал: {item.branches[0]?.published ? 'опубликован' : 'скрыт'}
-                  {item.branches[0]?.phone ? ` · ${item.branches[0].phone}` : ' · телефон не указан'}
+                  {item.branches.length === 0
+                    ? 'Без филиалов'
+                    : `Филиал: ${item.branches[0]?.published ? 'опубликован' : 'скрыт'}${item.branches[0]?.phone ? ` · ${item.branches[0].phone}` : ' · телефон не указан'}`}
                 </p>
               </div>
             ))}
             {primaryBranch && (
-              <form className="stack" onSubmit={branchForm.handleSubmit((v) => saveBranch.mutate(v))}>
-                <div className="field">
-                  <label>Телефон филиала</label>
+              <form
+                className="stack"
+                onSubmit={branchForm.handleSubmit((v) => {
+                  setOk(null)
+                  setError(null)
+                  saveBranch.mutate(v)
+                })}
+              >
+                <div className="field" id="branch-phone">
+                  <label htmlFor="branch-phone-input">Телефон филиала</label>
                   <input
-                    defaultValue={primaryBranch.phone ?? ''}
+                    id="branch-phone-input"
                     {...branchForm.register('phone')}
                     placeholder="+7 999 000-00-00"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    aria-invalid={saveBranch.isError ? true : undefined}
                   />
+                  {saveBranch.isError && (
+                    <span className="error" role="alert">
+                      {formatUserError(saveBranch.error, 'Не удалось сохранить телефон')}
+                    </span>
+                  )}
+                  <p className="hint">Сохраняется отдельно от профиля мастера.</p>
                 </div>
                 <button className="btn btn-primary btn-block" type="submit" disabled={saveBranch.isPending}>
-                  Сохранить телефон
+                  {saveBranch.isPending ? 'Сохраняем…' : 'Сохранить телефон'}
                 </button>
               </form>
             )}
           </div>
-        ) : (!orgs.isLoading && !orgs.isError && needsSalon) ? (
-          <form className="stack" onSubmit={orgForm.handleSubmit((v) => createOrg.mutate(v))}>
-            <div className="field">
-              <label>Название</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.name)} {...orgForm.register('name')} />
-              {orgForm.formState.errors.name && <span className="error">{orgForm.formState.errors.name.message}</span>}
-            </div>
-            <div className="field">
-              <label>Филиал</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.branch_name)} {...orgForm.register('branch_name')} />
-              {orgForm.formState.errors.branch_name && <span className="error">{orgForm.formState.errors.branch_name.message}</span>}
-            </div>
-            <div className="field">
-              <label>Город</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.city)} {...orgForm.register('city')} />
-              {orgForm.formState.errors.city && <span className="error">{orgForm.formState.errors.city.message}</span>}
-            </div>
-            <div className="field">
-              <label>Адрес</label>
-              <input aria-invalid={Boolean(orgForm.formState.errors.address_line)} {...orgForm.register('address_line')} />
-              {orgForm.formState.errors.address_line && <span className="error">{orgForm.formState.errors.address_line.message}</span>}
-            </div>
-            <div className="field">
-              <label>Телефон</label>
-              <input {...orgForm.register('phone')} placeholder="+7 999 000-00-00" />
-            </div>
-            <button className="btn btn-primary btn-block" type="submit" disabled={createOrg.isPending}>Создать салон</button>
-          </form>
-        ) : null}
+        )}
+        {!orgs.isLoading && !orgs.isError && !hasSalon && (
+          <CreateSalonForm
+            pending={createOrg.isPending}
+            defaultCity={user?.city || 'Красноярск'}
+            onSubmit={async (payload) => { await createOrg.mutateAsync(payload) }}
+          />
+        )}
       </section>
 
       {primaryOrg && (
@@ -579,8 +646,9 @@ export function MasterCabinetPage() {
         </section>
       )}
 
-      <section className="card stack">
+      <section className="card stack" id="master-profile">
         <h2>Профиль мастера</h2>
+        <p className="muted">Можно заполнять постепенно: фото, имя и город сохраняются отдельно от необязательных полей.</p>
         {master.isError && <div className="state-box">Профиль ещё не создан — заполните форму ниже</div>}
         <div className="stack-sm">
           <h3>Фото профиля</h3>
@@ -600,60 +668,101 @@ export function MasterCabinetPage() {
             }}
             label="Загрузить фото профиля"
           />
+          <p className="hint">Фото можно сохранить без специализации и описания.</p>
         </div>
-        <form className="stack" onSubmit={masterForm.handleSubmit((v) => {
-          const banned =
-            moderationError(v.display_name) ||
-            moderationError(v.bio ?? '') ||
-            moderationError(v.specializations ?? '') ||
-            moderationError(v.education ?? '')
-          if (banned) {
-            setError(banned)
-            return
-          }
-          saveMaster.mutate(v)
-        })}>
+        <form
+          className="stack master-profile-form"
+          onSubmit={masterForm.handleSubmit((v) => {
+            const banned =
+              moderationError(v.display_name) ||
+              moderationError(v.bio ?? '') ||
+              moderationError(v.specializations ?? '') ||
+              moderationError(v.education ?? '')
+            if (banned) {
+              setOk(null)
+              setError(banned)
+              toast.error(banned)
+              return
+            }
+            setOk(null)
+            setError(null)
+            saveMaster.mutate(v)
+          })}
+        >
+          {/* Keep education in form state for API compat; UI hidden (PROF-04). */}
+          <input type="hidden" {...masterForm.register('education')} />
           <div className="field">
             <label htmlFor="display_name">Имя в поиске</label>
             <input id="display_name" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.display_name)} {...masterForm.register('display_name')} />
             {masterForm.formState.errors.display_name && <span className="error">{masterForm.formState.errors.display_name.message}</span>}
+            {!masterForm.formState.errors.display_name && fieldHint('display_name') && (
+              <span className="hint field-need" role="status">{fieldHint('display_name')}</span>
+            )}
           </div>
           <div className="field">
             <label htmlFor="master-city">Город</label>
             <input id="master-city" required aria-required="true" aria-invalid={Boolean(masterForm.formState.errors.city)} {...masterForm.register('city')} />
             {masterForm.formState.errors.city && <span className="error">{masterForm.formState.errors.city.message}</span>}
-          </div>
-          <div className="field"><label>О себе</label><textarea {...masterForm.register('bio')} /></div>
-          <ProfessionTypePicker
-            value={masterForm.watch('profession_type_ids') ?? []}
-            lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
-            onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
-            error={masterForm.formState.errors.profession_type_ids?.message}
-          />
-          <div className="field">
-            <label>Дополнительные теги</label>
-            <input {...masterForm.register('specializations')} placeholder="Свадебные укладки, мужские стрижки" />
-            <p className="muted">Свободные теги для поиска. Не дублируют профессиональный тип.</p>
+            {!masterForm.formState.errors.city && fieldHint('city') && (
+              <span className="hint field-need" role="status">{fieldHint('city')}</span>
+            )}
           </div>
           <div className="field">
-            <label>Опыт, лет</label>
-            <input type="number" {...masterForm.register('experience_years')} />
+            <label htmlFor="master-bio">О себе</label>
+            <textarea id="master-bio" {...masterForm.register('bio')} />
+            {fieldHint('bio') && <span className="hint field-need" role="status">{fieldHint('bio')}</span>}
+          </div>
+          <div id="master-profession-types">
+            <ProfessionTypePicker
+              value={masterForm.watch('profession_type_ids') ?? []}
+              lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
+              onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
+              error={masterForm.formState.errors.profession_type_ids?.message}
+            />
+            {!masterForm.formState.errors.profession_type_ids && fieldHint('profession_types') && (
+              <span className="hint field-need" role="status">{fieldHint('profession_types')}</span>
+            )}
+          </div>
+          <div id="master-specializations" className="field" data-testid="master-legacy-specializations">
+            <span>Дополнительные теги (архив)</span>
+            <p className="muted">
+              Направления задаются через «Тип мастера» выше. Свободный ввод отключён.
+            </p>
+            {(master.data?.master.specializations?.length ?? 0) > 0 ? (
+              <div className="row wrap" role="list">
+                {master.data!.master.specializations!.map((tag) => (
+                  <span key={tag} className="chip badge-default" role="listitem">{tag}</span>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">Сохранённых свободных тегов нет.</p>
+            )}
+            {fieldHint('specializations') && <span className="hint field-need" role="status">{fieldHint('specializations')}</span>}
+          </div>
+          <div className="field">
+            <label htmlFor="master-experience">Опыт, лет</label>
+            <input id="master-experience" type="number" inputMode="numeric" {...masterForm.register('experience_years')} />
             {masterForm.formState.errors.experience_years && <span className="error">{masterForm.formState.errors.experience_years.message}</span>}
+            {!masterForm.formState.errors.experience_years && fieldHint('experience') && (
+              <span className="hint field-need" role="status">{fieldHint('experience')}</span>
+            )}
           </div>
-          <div className="field"><label>Образование</label><input {...masterForm.register('education')} /></div>
           <WorkFormatPicker
-            value={watchedWorkTypes ?? ['independent']}
-            allowChainOwner
+            value={watchedWorkTypes ?? ['private_practice']}
             onChange={(ids) => masterForm.setValue('work_types', ids, { shouldValidate: true, shouldDirty: true })}
             error={masterForm.formState.errors.work_types?.message}
           />
-          <label className="field-check"><input type="checkbox" {...masterForm.register('published')} /><span>Показать профиль в поиске</span></label>
-          <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>Сохранить профиль</button>
+          {legacyEmployee && (
+            <p className="muted" role="status">
+              В профиле осталось устаревшее значение «employee». Выберите актуальные форматы работы и сохраните — оно не преобразуется автоматически.
+            </p>
+          )}
+          <button className="btn btn-primary btn-block" type="submit" disabled={saveMaster.isPending}>
+            {saveMaster.isPending ? 'Сохраняем…' : 'Сохранить профиль'}
+          </button>
         </form>
         {master.data && (
           <p className="muted">
-            {master.data.master.published ? 'В поиске' : 'Скрыт'}
-            {' · '}
             {workTypesLabel(master.data.master.work_types?.length ? master.data.master.work_types : [master.data.master.work_type || ''])}
             {' · услуг: '}
             {master.data.services.length}
@@ -704,7 +813,13 @@ export function MasterCabinetPage() {
         <div className="list">
           {portfolio.data?.items.map((item) => (
             <article key={item.id} className="list-item stack-sm">
-              <MediaImage mediaId={item.media_id} token={accessToken} alt={item.caption || 'Работа'} className="portfolio-thumb" />
+              <MediaImage
+                mediaId={item.media_id}
+                token={accessToken}
+                alt={item.caption || 'Работа'}
+                className="portfolio-thumb"
+                stillFrame={item.media_type === 'gif'}
+              />
               {item.caption && <p>{item.caption}</p>}
               <button
                 className="btn btn-secondary btn-compact"
@@ -736,24 +851,26 @@ export function MasterCabinetPage() {
         />
       </section>
 
-      <section className="card stack">
+      <section className="card stack" id="master-services">
         <h2>3. Услуги</h2>
         <p className="muted">Прайс и длительности удобнее вести на отдельной странице.</p>
-        <div className="row">
+        {fieldHint('service') && <span className="hint field-need" role="status">{fieldHint('service')}</span>}
+        <div className="row wrap gap">
           <Link className="btn btn-primary" to="/services">Управлять услугами</Link>
           <span className="muted">Сейчас: {master.data?.services.length ?? 0}</span>
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" id="master-schedule">
         <h2>4. Расписание</h2>
+        {fieldHint('schedule') && <span className="hint field-need" role="status">{fieldHint('schedule')}</span>}
         <p>Рабочие часы по умолчанию: пн–пт 10:00–19:00. Исключения дней — в календаре.</p>
         {hours.isError && <ErrorBanner error={hours.error} fallbackTitle="Не удалось загрузить расписание" />}
         <div className="row">
           <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>
             Установить пн–пт 10:00–19:00
           </button>
-          <Link className="btn btn-secondary" to="/schedule">Установка графика</Link>
+          <Link className="btn btn-secondary" to="/calendar?panel=schedule">Установка графика</Link>
         </div>
         {hours.data && hours.data.items.length > 0 && (
           <p className="muted">Сохранено интервалов: {hours.data.items.length}</p>

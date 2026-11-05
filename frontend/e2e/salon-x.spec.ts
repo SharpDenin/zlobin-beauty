@@ -669,6 +669,33 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(cart.status).toBe(403)
   })
 
+  test('SHOP-01 rejects card and other non-pickup payment methods on checkout', async () => {
+    const client = await apiLogin('client1@demo.local')
+    await clearClientCart(client.access_token)
+    const product = await shopProductInStock(client.access_token)
+    expect(product?.id).toBeTruthy()
+    await fetch(`${api}/v1/commerce/shop/cart/items`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: product!.id, qty: 1 }),
+    })
+    const branchId = await salonPickupBranchId((await apiLogin('master1@demo.local')).access_token)
+    const h = { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' }
+    for (const method of ['card', 'invoice', 'crypto']) {
+      const res = await fetch(`${api}/v1/commerce/shop/checkout`, {
+        method: 'POST',
+        headers: h,
+        body: JSON.stringify({
+          delivery_address: 'E2E Reject Card Address 1',
+          payment_method: method,
+          pickup_branch_id: branchId,
+          confirm_price_changes: true,
+        }),
+      })
+      expect(res.status, `method ${method}`).toBe(400)
+    }
+  })
+
   test('phase3 checkout idempotency key', async () => {
     const client = await apiLogin('client1@demo.local')
     await clearClientCart(client.access_token)
@@ -885,6 +912,136 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     expect(transitions).toContain('submitted')
     expect(transitions).toContain('ready_for_pickup')
     expect(transitions).toContain('received')
+  })
+
+  test('SHOP-02 full return of received order with return_credit', async () => {
+    const client = await apiLogin('client1@demo.local')
+    await clearClientCart(client.access_token)
+    const supplier = await apiLogin('supplier1@demo.local')
+    const clientUser = await apiLogin('client2@demo.local')
+    await clearClientCart(clientUser.access_token)
+    const salon = await apiLogin('master1@demo.local')
+    const product = await shopProductInStock(clientUser.access_token, { skuPrefix: 'S1-', excludeRace: true })
+    expect(product?.id).toBeTruthy()
+    await fetch(`${api}/v1/commerce/shop/cart/items`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${clientUser.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: product!.id, qty: 1 }),
+    })
+    const branchId = await salonPickupBranchId(salon.access_token)
+    const checkout = await fetch(`${api}/v1/commerce/shop/checkout`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${clientUser.access_token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `e2e-return-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        delivery_address: 'Return Flow Test Address',
+        payment_method: 'cash',
+        pickup_branch_id: branchId,
+        confirm_price_changes: true,
+      }),
+    })
+    expect(checkout.status).toBe(201)
+    const created = await checkout.json() as { orders: Array<{ id: string; total_minor: number; supplier_org_id: string }> }
+    const orderId = created.orders[0].id
+    const supplierOrgId = created.orders[0].supplier_org_id
+    const totalMinor = created.orders[0].total_minor
+
+    const advance = async (status: string) => {
+      const res = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/transition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+      expect(res.status).toBeLessThan(300)
+    }
+    await advance('confirmed')
+    await advance('picking')
+    await advance('in_delivery')
+    // Mark delivered via supplier transition (full deliver without rep assignment)
+    const deliver = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/transition`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'delivered' }),
+    })
+    expect(deliver.status).toBeLessThan(300)
+
+    const accept = await fetch(`${api}/v1/commerce/shop/pickup/orders/${orderId}/accept`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${salon.access_token}` },
+    })
+    expect(accept.status).toBeLessThan(300)
+    const handover = await fetch(`${api}/v1/commerce/shop/pickup/orders/${orderId}/handover`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${salon.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payment_received: true }),
+    })
+    expect(handover.status).toBeLessThan(300)
+
+    const orderMeta = await fetch(`${api}/v1/commerce/shop/orders/${orderId}`, {
+      headers: { Authorization: `Bearer ${clientUser.access_token}` },
+    })
+    const orderBody = await orderMeta.json() as { user_id: string; status: string }
+    expect(orderBody.status).toBe('received')
+    const clientUserId = orderBody.user_id
+    expect(clientUserId).toBeTruthy()
+
+    const debtBeforeRes = await fetch(
+      `${api}/v1/commerce/shop/debt?organization_id=${supplierOrgId}&client_user_id=${clientUserId}`,
+      { headers: { Authorization: `Bearer ${supplier.access_token}` } },
+    )
+    expect(debtBeforeRes.ok).toBeTruthy()
+    const debtBefore = await debtBeforeRes.json() as { balance_minor: number }
+
+    // Wrong status / stranger: client cannot return
+    const forbidden = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'client attempt' }),
+    })
+    expect(forbidden.status).toBeGreaterThanOrEqual(400)
+
+    const ret = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'e2e full return' }),
+    })
+    expect(ret.status).toBeLessThan(300)
+    const returned = await ret.json() as { returned: boolean; payment_status: string; status: string; total_minor: number }
+    expect(returned.returned).toBe(true)
+    expect(returned.status).toBe('received')
+    expect(returned.payment_status).toBe('refunded')
+
+    const debtAfterRes = await fetch(
+      `${api}/v1/commerce/shop/debt?organization_id=${supplierOrgId}&client_user_id=${clientUserId}`,
+      { headers: { Authorization: `Bearer ${supplier.access_token}` } },
+    )
+    const debtAfter = await debtAfterRes.json() as { balance_minor: number }
+    // return_credit is negative → balance decreases by order total
+    expect(debtAfter.balance_minor).toBe(debtBefore.balance_minor - totalMinor)
+
+    const dup = await fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'duplicate' }),
+    })
+    expect(dup.status).toBe(409)
+
+    const parallel = await Promise.all([
+      fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'race-a' }),
+      }),
+      fetch(`${api}/v1/commerce/shop/supplier/orders/${orderId}/return`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${supplier.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'race-b' }),
+      }),
+    ])
+    expect(parallel.every((r) => r.status === 409)).toBeTruthy()
   })
 
   test('phase3 price change confirmation', async ({ page }, info) => {
@@ -2238,15 +2395,23 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     const client = await apiLogin('client1@demo.local')
     const master = await apiLogin('master1@demo.local')
+    const day = new Date(Date.now() + 4 * 24 * 3600_000)
+    day.setUTCHours(0, 0, 0, 0)
+    const iso = (h: number, m = 0, durH = 2) => {
+      const start = new Date(day.getTime() + (h * 60 + m) * 60_000)
+      const end = new Date(start.getTime() + durH * 3600_000)
+      return { starts_at: start.toISOString(), ends_at: end.toISOString() }
+    }
     const save = await fetch(`${api}/v1/me/model-preferences`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        willing: true, notify: true, categories: ['Колористика'], city: 'Красноярск',
-        date_from: '2026-09-15', date_to: '2026-09-15',
+        notify: true, categories: ['Колористика'], city: 'Красноярск',
+        date_from: day.toISOString().slice(0, 10), date_to: day.toISOString().slice(0, 10),
       }),
     })
     expect(save.ok, await save.text()).toBeTruthy()
+    const slot = iso(11, 0, 2)
     const created = await fetch(`${api}/v1/model-requests`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
@@ -2256,8 +2421,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
         description: 'E2E модель',
         city: 'Красноярск',
         location_note: 'Салон',
-        starts_at: '2026-09-15T11:00:00+07:00',
-        ends_at: '2026-09-15T13:00:00+07:00',
+        ...slot,
         timezone: 'Asia/Krasnoyarsk',
         capacity: 1,
       }),
@@ -2273,9 +2437,10 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     const off = await fetch(`${api}/v1/me/model-preferences`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${client.access_token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ willing: true, notify: false }),
+      body: JSON.stringify({ notify: false }),
     })
     expect(off.ok).toBeTruthy()
+    const slot2 = iso(15, 0, 1)
     const created2 = await fetch(`${api}/v1/model-requests`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
@@ -2284,8 +2449,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
         category: 'Колористика',
         description: 'notify off',
         city: 'Красноярск',
-        starts_at: '2026-09-15T15:00:00+07:00',
-        ends_at: '2026-09-15T16:00:00+07:00',
+        ...slot2,
         timezone: 'Asia/Krasnoyarsk',
         capacity: 1,
       }),
@@ -2295,6 +2459,34 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     const notesAfter = await fetch(`${api}/v1/notifications`, { headers: { Authorization: `Bearer ${client.access_token}` } })
     const notesAfterBody = await notesAfter.json() as { items?: Array<{ type: string; entity_id: string }> }
     expect(notesAfterBody.items?.some((n) => n.entity_id === req2.id)).toBeFalsy()
+
+    // Interest ≠ response
+    const interest = await fetch(`${api}/v1/model-requests/${req.id}/interest`, {
+      method: 'POST', headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    expect(interest.status, await interest.clone().text()).toBe(201)
+    const overlapSlot = iso(12, 0, 2)
+    const createdOverlap = await fetch(`${api}/v1/model-requests`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Пересечение по времени',
+        category: 'Колористика',
+        description: 'overlap',
+        city: 'Красноярск',
+        ...overlapSlot,
+        timezone: 'Asia/Krasnoyarsk',
+        capacity: 1,
+      }),
+    })
+    const overlapReq = await createdOverlap.json() as { id: string }
+    await fetch(`${api}/v1/model-requests/${overlapReq.id}/publish`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+    const overlap = await fetch(`${api}/v1/model-requests/${overlapReq.id}/interest`, {
+      method: 'POST', headers: { Authorization: `Bearer ${client.access_token}` },
+    })
+    expect(overlap.status).toBe(409)
+    const overlapBody = await overlap.json() as { error?: { code?: string }; code?: string }
+    expect(overlapBody.error?.code ?? overlapBody.code).toBe('model_interest_overlap')
 
     const respond = await fetch(`${api}/v1/model-requests/${req.id}/respond`, { method: 'POST', headers: { Authorization: `Bearer ${client.access_token}` } })
     expect(respond.status, await respond.clone().text()).toBe(201)
@@ -2317,7 +2509,95 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await loginUI(page, 'client1@demo.local')
     await page.goto('/models')
     await expect(page.getByRole('heading', { name: 'Модели' })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('model-willing')).toBeVisible()
+    await expect(page.getByTestId('model-notify')).toBeVisible()
+    await expect(page.getByTestId('model-selected-interests')).toBeVisible()
+    await expect(page.getByTestId('model-willing')).toHaveCount(0)
+  })
+
+  test('MODEL-01 interest UI add remove overlap respond', async ({ page }, info) => {
+    const adaptive = ['phone-360', 'phone-390', 'tablet-768', 'laptop-1366', 'desktop-1920']
+    test.skip(!adaptive.includes(info.project.name), 'adaptive widths')
+    const client = await apiLogin('client2@demo.local')
+    const master = await apiLogin('master2@demo.local')
+    // Clear leftover interests so parallel viewport runs do not 409 on overlap.
+    const existing = await fetch(`${api}/v1/model-requests/interests`, { headers: { Authorization: `Bearer ${client.access_token}` } })
+    if (existing.ok) {
+      const body = await existing.json() as { items?: Array<{ request_id: string }> }
+      for (const it of body.items ?? []) {
+        await fetch(`${api}/v1/model-requests/${it.request_id}/interest`, {
+          method: 'DELETE', headers: { Authorization: `Bearer ${client.access_token}` },
+        })
+      }
+    }
+    const hourOffset = ({
+      'phone-360': 2,
+      'phone-390': 5,
+      'tablet-768': 8,
+      'laptop-1366': 11,
+      'desktop-1920': 14,
+    } as Record<string, number>)[info.project.name] ?? 2
+    const day = new Date(Date.now() + 6 * 24 * 3600_000)
+    day.setUTCHours(0, 0, 0, 0)
+    const start = new Date(day.getTime() + hourOffset * 3600_000)
+    const end = new Date(start.getTime() + 2 * 3600_000)
+    const created = await fetch(`${api}/v1/model-requests`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${master.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: `UI интерес ${info.project.name}`,
+        category: 'Колористика',
+        description: 'MODEL-01 UI',
+        city: 'Красноярск',
+        starts_at: start.toISOString(),
+        ends_at: end.toISOString(),
+        timezone: 'Asia/Krasnoyarsk',
+        capacity: 2,
+      }),
+    })
+    expect(created.status, await created.clone().text()).toBe(201)
+    const req = await created.json() as { id: string }
+    await fetch(`${api}/v1/model-requests/${req.id}/publish`, { method: 'POST', headers: { Authorization: `Bearer ${master.access_token}` } })
+
+    await loginUI(page, 'client2@demo.local')
+    await page.goto('/models')
+    await expect(page.getByRole('heading', { name: 'Модели' })).toBeVisible({ timeout: 15_000 })
+
+    // Extra widths required by MODEL-01 (1024 / 1440) when not covered by project presets.
+    if (info.project.name === 'phone-390') {
+      for (const width of [1024, 1440] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await expect(page.getByTestId('model-selected-interests')).toBeVisible()
+        await expect(page.getByTestId(`model-request-${req.id}`)).toBeVisible()
+      }
+      await page.setViewportSize({ width: 390, height: 844 })
+    }
+
+    const card = page.getByTestId(`model-request-${req.id}`)
+    await expect(card).toBeVisible()
+    await card.getByTestId(`interest-${req.id}`).click()
+    await expect(card).toHaveAttribute('data-interested', '1', { timeout: 10_000 })
+    await expect(page.getByTestId('model-selected-interests')).toContainText('UI интерес')
+    await card.getByTestId(`uninterest-${req.id}`).click()
+    await expect(card).toHaveAttribute('data-interested', '0')
+
+    await card.getByTestId(`interest-${req.id}`).click()
+    await page.goto(`/models/${req.id}`)
+    await expect(page.getByTestId('respond-model')).toBeVisible()
+    await page.getByTestId('respond-model').click()
+    await expect(page.getByText(/Отклик отправлен|Статус отклика/i)).toBeVisible({ timeout: 10_000 })
+    // Interest and respond remain distinct controls
+    await expect(page.getByTestId('uninterest-model').or(page.getByTestId('interest-model'))).toBeVisible()
+  })
+
+  test('MODEL-02 master directions via profession types', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await loginUI(page, 'master2@demo.local')
+    await page.goto('/master')
+    await expect(page.getByText('Тип мастера', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('master-legacy-specializations')).toBeVisible()
+    await expect(page.getByLabel('Дополнительные теги')).toHaveCount(0)
+    const types = await (await fetch(`${api}/v1/profession-types`)).json() as { items?: Array<{ id: string; name: string; is_active?: boolean }> }
+    expect((types.items ?? []).length).toBeGreaterThan(0)
   })
 
   test('phase5 master warehouse receive consume adjust isolation', async ({ page }, info) => {

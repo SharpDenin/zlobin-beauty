@@ -6,12 +6,16 @@ import { AppShell, RequireAdmin, RequireAuth, RequireCabinetFeature, RequireMast
 import { CabinetProvider } from '@/shared/lib/cabinet'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
+import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
+import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
+import { VerifyEmailPage } from '@/pages/VerifyEmailPage'
 import { InvitePage } from '@/pages/InvitePage'
 import { HomePage } from '@/pages/HomePage'
 import { SearchPage } from '@/pages/SearchPage'
 import { MasterPage } from '@/pages/MasterPage'
 import { AppointmentsPage } from '@/pages/AppointmentsPage'
 import { MasterCabinetPage } from '@/pages/MasterCabinetPage'
+import { HairConsultationDetailPage, HairConsultationsPage } from '@/pages/HairConsultationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { PortfolioPage } from '@/pages/PortfolioPage'
 import { AppointmentDetailPage } from '@/pages/AppointmentDetailPage'
@@ -69,7 +73,10 @@ import { RecurringPage } from '@/pages/RecurringPage'
 import { StaffPage } from '@/pages/StaffPage'
 import { InviteMasterPage } from '@/pages/InviteMasterPage'
 import { SalonSettingsPage } from '@/pages/SalonSettingsPage'
-import { WorkSchedulePage } from '@/pages/WorkSchedulePage'
+import { SettingsLayout } from '@/pages/settings/SettingsLayout'
+import { SettingsAppearancePage } from '@/pages/settings/SettingsAppearancePage'
+import { SettingsNotificationsPage } from '@/pages/settings/SettingsNotificationsPage'
+import { SettingsSalonsPage } from '@/pages/settings/SettingsSalonsPage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { MessagesPage } from '@/pages/MessagesPage'
@@ -114,6 +121,9 @@ export function App() {
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="/invite/:token" element={<InvitePage />} />
             <Route element={<RequireAuth />}>
               <Route element={<AppShell />}>
@@ -130,8 +140,16 @@ export function App() {
                 <Route path="/contacts" element={<ContactsPage />} />
                 <Route path="/models" element={<ModelsPage />} />
                 <Route path="/models/:id" element={<ModelRequestDetailPage />} />
+                <Route path="/consultations" element={<HairConsultationsPage />} />
+                <Route path="/consultations/:id" element={<HairConsultationDetailPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/subscription" element={<SubscriptionPage />} />
+                <Route path="/settings" element={<SettingsLayout />}>
+                  <Route index element={<Navigate to="appearance" replace />} />
+                  <Route path="appearance" element={<SettingsAppearancePage />} />
+                  <Route path="notifications" element={<SettingsNotificationsPage />} />
+                  <Route path="salons" element={<SettingsSalonsPage />} />
+                </Route>
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/shop/cart" element={<ShopPage />} />
                 <Route path="/shop/checkout" element={<ShopPage />} />
@@ -184,7 +202,7 @@ export function App() {
                   <Route path="/masterclasses/new" element={<MasterclassCreatePage />} />
                   <Route path="/masterclasses/:id" element={<MasterclassDetailPage />} />
                   <Route path="/models/new" element={<ModelRequestCreatePage />} />
-                  <Route path="/schedule" element={<WorkSchedulePage />} />
+                  <Route path="/schedule" element={<Navigate to="/calendar?panel=schedule" replace />} />
                   <Route path="/chairs" element={<ChairMarketplacePage />} />
                   <Route path="/clients" element={<ClientsPage />} />
                   <Route path="/services" element={<ServicesPage />} />

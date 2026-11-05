@@ -26,6 +26,8 @@ export type OrgItem = {
     description?: string
     delivery_note?: string
     masters_see_client_contacts?: boolean
+    city?: string
+    address_line?: string
   }
   branches: BranchCard[]
   roles: string[]

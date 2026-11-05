@@ -26,6 +26,7 @@ import { Drawer } from '@/shared/ui/Drawer'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Modal } from '@/shared/ui/Modal'
+import { SearchField } from '@/shared/ui/SearchField'
 import { toast } from '@/shared/ui/Toast'
 import { moderationError } from '@/shared/lib/moderation'
 import '@/features/contacts/contacts.css'
@@ -247,16 +248,14 @@ export function ContactsPage() {
 
       <div className="contacts-toolbar">
         <div className="contacts-toolbar-row">
-          <label className="field">
-            <span className="visually-hidden">Найти в контактах</span>
-            <input
-              type="search"
-              placeholder="Найти в контактах"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              aria-label="Найти в контактах"
-            />
-          </label>
+          <SearchField
+            value={q}
+            onChange={setQ}
+            placeholder="Найти в контактах"
+            aria-label="Найти в контактах"
+            clearable
+            className="contacts-search-field"
+          />
           <button className="btn btn-primary" type="button" onClick={() => setAddOpen(true)}>
             Добавить контакт
           </button>

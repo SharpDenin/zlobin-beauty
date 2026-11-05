@@ -5,7 +5,6 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { PageLoading } from '@/shared/ui/PageLoading'
-import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 
 type Peek = { organization_id: string; organization_name: string; role: string; expires_at: string }
 
@@ -27,7 +26,7 @@ export function InvitePage() {
         method: 'POST',
         token: accessToken,
       })
-      // Bind master profile to owner's salon (invite is server-validated; salon_id cannot be forged).
+      // Bind master profile to salon via organization_id only — do not overwrite work formats.
       try {
         const me = await apiRequest<{
           master?: {
@@ -39,6 +38,7 @@ export function InvitePage() {
             education?: string
             published?: boolean
             profession_types?: Array<{ id: string }>
+            work_type?: string
             work_types?: string[]
           }
         }>('/v1/me/master', { token: accessToken })
@@ -56,9 +56,8 @@ export function InvitePage() {
               experience_years: m.experience_years ?? 0,
               education: m.education ?? '',
               published: Boolean(m.published),
-              work_type: 'employee',
-              work_types: ['employee'],
               profession_type_ids: (m.profession_types ?? []).map((t) => t.id),
+              // work_type / work_types omitted → backend preserves existing formats
             },
           })
         }
@@ -75,7 +74,6 @@ export function InvitePage() {
   return (
     <div className="app-shell app-shell--auth">
       <div className="page page-narrow stack auth-screen">
-        <div className="auth-theme-bar"><ThemeToggle labelled /></div>
         <BrandLogo size="md" />
         <h1>Приглашение в салон</h1>
         {peek.isLoading && <div className="state-box">Проверяем приглашение…</div>}

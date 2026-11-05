@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useState } from 'react'
-import { apiRequest } from '@/shared/api/client'
+import { useMemo, useState } from 'react'
+import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { userError, formatUserError } from '@/shared/lib/app-error'
@@ -9,7 +9,6 @@ import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 
 type Prefs = {
-  willing: boolean
   notify: boolean
   categories: string[]
   city: string
@@ -33,7 +32,16 @@ type ModelRequest = {
   available_slots: number
   status: string
   relevant?: boolean
+  interested?: boolean
   my_response?: { id: string; status: string } | null
+}
+
+type InterestRow = {
+  request_id: string
+  title: string
+  starts_at: string
+  ends_at: string
+  status: string
 }
 
 function statusLabel(status: string) {
@@ -55,6 +63,12 @@ function statusLabel(status: string) {
   }
 }
 
+function formatRange(starts: string, ends: string) {
+  const a = new Date(starts)
+  const b = new Date(ends)
+  return `${a.toLocaleString('ru-RU')} — ${b.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+}
+
 export function ModelsPage() {
   const { accessToken } = useAuth()
   const cabinet = useCabinet()
@@ -62,7 +76,6 @@ export function ModelsPage() {
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
-  const [willing, setWilling] = useState(false)
   const [notify, setNotify] = useState(false)
   const [categories, setCategories] = useState('Колористика')
   const [city, setCity] = useState('Красноярск')
@@ -73,7 +86,6 @@ export function ModelsPage() {
     queryKey: ['model-prefs'],
     queryFn: async () => {
       const p = await apiRequest<Prefs>('/v1/me/model-preferences', { token: accessToken })
-      setWilling(p.willing)
       setNotify(p.notify)
       setCategories((p.categories ?? []).join(', ') || 'Колористика')
       setCity(p.city || 'Красноярск')
@@ -90,62 +102,128 @@ export function ModelsPage() {
     enabled: Boolean(accessToken),
   })
 
+  const interests = useQuery({
+    queryKey: ['model-request-interests'],
+    queryFn: () => apiRequest<{ items: InterestRow[] }>('/v1/model-requests/interests', { token: accessToken }),
+    enabled: Boolean(accessToken) && !isMaster,
+  })
+
   const savePrefs = useMutation({
     mutationFn: () =>
       apiRequest('/v1/me/model-preferences', {
         method: 'PATCH',
         token: accessToken,
         body: {
-          willing, notify: willing && notify,
+          notify,
           categories: categories.split(',').map((s) => s.trim()).filter(Boolean),
           city, date_from: dateFrom, date_to: dateTo,
         },
       }),
-    onSuccess: () => { setOk('Настройки модели сохранены'); setError(null); void qc.invalidateQueries({ queryKey: ['model-prefs'] }) },
+    onSuccess: () => { setOk('Настройки уведомлений сохранены'); setError(null); void qc.invalidateQueries({ queryKey: ['model-prefs'] }) },
     onError: (e) => { setOk(null); setError(formatUserError(e, 'Не удалось сохранить')) },
   })
 
+  const addInterest = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/model-requests/${id}/interest`, { method: 'POST', token: accessToken }),
+    onSuccess: () => {
+      setError(null)
+      setOk('Добавлено в интересующие')
+      void qc.invalidateQueries({ queryKey: ['model-requests'] })
+      void qc.invalidateQueries({ queryKey: ['model-request-interests'] })
+    },
+    onError: (e) => {
+      setOk(null)
+      if (e instanceof ApiError && e.code === 'model_interest_overlap') {
+        setError(formatUserError(e, 'Это предложение пересекается по времени с уже выбранным'))
+        return
+      }
+      setError(formatUserError(e, 'Не удалось добавить интерес'))
+    },
+  })
+
+  const removeInterest = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/model-requests/${id}/interest`, { method: 'DELETE', token: accessToken }),
+    onSuccess: () => {
+      setError(null)
+      setOk('Интерес снят')
+      void qc.invalidateQueries({ queryKey: ['model-requests'] })
+      void qc.invalidateQueries({ queryKey: ['model-request-interests'] })
+    },
+    onError: (e) => { setOk(null); setError(formatUserError(e, 'Не удалось снять интерес')) },
+  })
+
+  const selectedIds = useMemo(
+    () => new Set((interests.data?.items ?? []).map((i) => i.request_id)),
+    [interests.data],
+  )
+
   return (
     <main className="page stack">
-      <div className="row between">
+      <div className="row between wrap">
         <h1>{isMaster ? 'Требуются модели' : 'Модели'}</h1>
         {isMaster && <Link className="btn btn-primary" to="/models/new">Нужна модель</Link>}
       </div>
       {error && <ErrorBanner error={error} />}
-      {ok && <div className="state-box success">{ok}</div>}
+      {ok && <div className="state-box success" role="status">{ok}</div>}
 
       {!isMaster && (
-        <section className="card stack">
-          <h2>Готов быть моделью</h2>
-          {prefs.isLoading && <div className="state-box">Загрузка…</div>}
-          <label className="row">
-            <input data-testid="model-willing" type="checkbox" checked={willing} onChange={(e) => setWilling(e.target.checked)} />
-            Готов быть моделью
-          </label>
-          <label className="row">
-            <input data-testid="model-notify" type="checkbox" checked={notify} disabled={!willing} onChange={(e) => setNotify(e.target.checked)} />
-            Получать предложения
-          </label>
-          <div className="field">
-            <label htmlFor="model-cats">Интересующие услуги</label>
-            <input id="model-cats" data-testid="model-categories" value={categories} onChange={(e) => setCategories(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="model-city">Город</label>
-            <input id="model-city" value={city} onChange={(e) => setCity(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="model-from">С даты</label>
-            <input id="model-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="model-to">По дату</label>
-            <input id="model-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </div>
-          <button className="btn btn-primary" type="button" data-testid="save-model-prefs" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
-            Сохранить
-          </button>
-        </section>
+        <>
+          <section className="card stack">
+            <h2>Уведомления о подходящих предложениях</h2>
+            <p className="muted">Выберите конкретные мероприятия ниже. Эти настройки только помогают подсвечивать и уведомлять о новых предложениях.</p>
+            {prefs.isLoading && <div className="state-box">Загрузка…</div>}
+            <label className="row">
+              <input data-testid="model-notify" type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
+              Получать предложения
+            </label>
+            <div className="field">
+              <label htmlFor="model-cats">Интересующие услуги</label>
+              <input id="model-cats" data-testid="model-categories" value={categories} onChange={(e) => setCategories(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="model-city">Город</label>
+              <input id="model-city" value={city} onChange={(e) => setCity(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="model-from">С даты</label>
+              <input id="model-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="model-to">По дату</label>
+              <input id="model-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+            <button className="btn btn-secondary" type="button" data-testid="save-model-prefs" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
+              Сохранить уведомления
+            </button>
+          </section>
+
+          <section className="card stack" data-testid="model-selected-interests">
+            <h2>Выбранные предложения</h2>
+            {(interests.data?.items.length ?? 0) === 0 && (
+              <p className="muted">Пока ничего не выбрано. Отметьте предложения в афише — нельзя выбрать пересекающиеся по времени.</p>
+            )}
+            <div className="list">
+              {(interests.data?.items ?? []).map((i) => (
+                <article key={i.request_id} className="list-item stack-sm">
+                  <div className="row between wrap">
+                    <strong>{i.title}</strong>
+                    <button
+                      className="btn btn-secondary btn-compact"
+                      type="button"
+                      disabled={removeInterest.isPending}
+                      onClick={() => removeInterest.mutate(i.request_id)}
+                    >
+                      Убрать
+                    </button>
+                  </div>
+                  <p className="muted">{formatRange(i.starts_at, i.ends_at)}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </>
       )}
 
       <section className="stack">
@@ -155,17 +233,52 @@ export function ModelsPage() {
           <div className="empty-state"><h2>Пока нет запросов</h2></div>
         )}
         <div className="cards-grid">
-          {requests.data?.items.map((item) => (
-            <Link key={item.id} className="card stack-sm" to={`/models/${item.id}`} data-testid={`model-request-${item.id}`}>
-              <div className="row between">
-                <strong>{item.title}</strong>
-                {item.relevant && <span className="badge badge-success">Подходит вам</span>}
-              </div>
-              <p>{item.master_name || item.category} · {item.city}</p>
-              <p className="muted">{new Date(item.starts_at).toLocaleString('ru-RU')} · слотов {item.available_slots}</p>
-              <p className="muted">{statusLabel(item.status)}</p>
-            </Link>
-          ))}
+          {requests.data?.items.map((item) => {
+            const interested = item.interested || selectedIds.has(item.id)
+            return (
+              <article
+                key={item.id}
+                className={`card stack-sm${interested ? ' is-selected' : ''}`}
+                data-testid={`model-request-${item.id}`}
+                data-interested={interested ? '1' : '0'}
+              >
+                <div className="row between wrap">
+                  <Link to={`/models/${item.id}`}><strong>{item.title}</strong></Link>
+                  {interested && <span className="badge badge-confirmed">Интересует</span>}
+                  {!interested && item.relevant && <span className="badge badge-success">Подходит вам</span>}
+                </div>
+                <p>{item.master_name || item.category} · {item.city}</p>
+                <p className="muted">{formatRange(item.starts_at, item.ends_at)} · слотов {item.available_slots}</p>
+                <p className="muted">{statusLabel(item.status)}</p>
+                {!isMaster && item.status === 'published' && (
+                  <div className="row wrap">
+                    {interested ? (
+                      <button
+                        className="btn btn-secondary btn-compact"
+                        type="button"
+                        data-testid={`uninterest-${item.id}`}
+                        disabled={removeInterest.isPending}
+                        onClick={() => removeInterest.mutate(item.id)}
+                      >
+                        Не интересует
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-primary btn-compact"
+                        type="button"
+                        data-testid={`interest-${item.id}`}
+                        disabled={addInterest.isPending}
+                        onClick={() => addInterest.mutate(item.id)}
+                      >
+                        Интересует
+                      </button>
+                    )}
+                    <Link className="btn btn-secondary btn-compact" to={`/models/${item.id}`}>Открыть · отклик</Link>
+                  </div>
+                )}
+              </article>
+            )
+          })}
         </div>
       </section>
     </main>
@@ -234,6 +347,26 @@ export function ModelRequestDetailPage() {
     enabled: Boolean(accessToken && id),
   })
 
+  const addInterest = useMutation({
+    mutationFn: () => apiRequest(`/v1/model-requests/${id}/interest`, { method: 'POST', token: accessToken }),
+    onSuccess: () => {
+      setError(null)
+      void qc.invalidateQueries({ queryKey: ['model-request', id] })
+      void qc.invalidateQueries({ queryKey: ['model-request-interests'] })
+      void qc.invalidateQueries({ queryKey: ['model-requests'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось добавить интерес')),
+  })
+  const removeInterest = useMutation({
+    mutationFn: () => apiRequest(`/v1/model-requests/${id}/interest`, { method: 'DELETE', token: accessToken }),
+    onSuccess: () => {
+      setError(null)
+      void qc.invalidateQueries({ queryKey: ['model-request', id] })
+      void qc.invalidateQueries({ queryKey: ['model-request-interests'] })
+      void qc.invalidateQueries({ queryKey: ['model-requests'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось снять интерес')),
+  })
   const respond = useMutation({
     mutationFn: () => apiRequest(`/v1/model-requests/${id}/respond`, { method: 'POST', token: accessToken }),
     onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['model-request', id] }) },
@@ -241,13 +374,18 @@ export function ModelRequestDetailPage() {
   })
   const accept = useMutation({
     mutationFn: () => apiRequest(`/v1/model-responses/${item.data?.my_response?.id}/accept`, { method: 'POST', token: accessToken }),
-    onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['model-request', id] }) },
+    onSuccess: () => {
+      setError(null)
+      void qc.invalidateQueries({ queryKey: ['model-request', id] })
+      void qc.invalidateQueries({ queryKey: ['model-request-interests'] })
+    },
     onError: (e) => setError(formatUserError(e, 'Не удалось записаться')),
   })
 
   const e = item.data
   const isMaster = e?.master_user_id === user?.id
   const responded = Boolean(e?.my_response && e.my_response.status !== 'cancelled')
+  const interested = Boolean(e?.interested)
 
   return (
     <main className="page stack">
@@ -259,12 +397,23 @@ export function ModelRequestDetailPage() {
         <section className="card stack">
           <h1>{e.title}</h1>
           <p>{e.master_name} · {e.city}</p>
-          <p className="muted">{new Date(e.starts_at).toLocaleString('ru-RU')}</p>
+          <p className="muted">{formatRange(e.starts_at, e.ends_at)}</p>
           <p>{e.description}</p>
           <p>Свободных слотов: {e.available_slots} из {e.capacity}</p>
-          {e.my_response && <p>Статус: {statusLabel(e.my_response.status)}</p>}
+          {e.my_response && <p>Статус отклика: {statusLabel(e.my_response.status)}</p>}
+          {interested && <p className="badge badge-confirmed">В интересующих</p>}
           {!isMaster && (
-            <div className="row">
+            <div className="row wrap">
+              {e.status === 'published' && !interested && (
+                <button className="btn btn-secondary" type="button" data-testid="interest-model" disabled={addInterest.isPending} onClick={() => addInterest.mutate()}>
+                  Интересует
+                </button>
+              )}
+              {interested && (
+                <button className="btn btn-secondary" type="button" data-testid="uninterest-model" disabled={removeInterest.isPending} onClick={() => removeInterest.mutate()}>
+                  Не интересует
+                </button>
+              )}
               <button className="btn btn-secondary" type="button" data-testid="respond-model" disabled={respond.isPending || responded} onClick={() => respond.mutate()}>
                 Откликнуться
               </button>

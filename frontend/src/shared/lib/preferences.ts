@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { toast } from '@/shared/ui/Toast'
 
 const CACHE_PREFIX = 'sx.pref.'
 
@@ -48,15 +49,20 @@ function sameValue<T>(a: T, b: T): boolean {
 
 type PrefsPayload = { preferences: Record<string, unknown> }
 
+type PutVars<T> = { value: T; requestId: number }
+
 /**
  * Server-persisted per-user preference with localStorage cache.
- * Signature used across the app; identity API: GET/PUT /v1/me/preferences.
+ * Optimistic UI rolls back to the last server-confirmed value on PUT failure.
+ * Rapid toggles: only the latest in-flight requestId may commit or roll back.
  */
 export function usePreference<T>(key: string, fallback: T): [T, (next: T | ((prev: T) => T)) => void] {
   const { accessToken } = useAuth()
   const qc = useQueryClient()
   const [value, setLocal] = useState<T>(() => readCache(key, fallback))
   const valueRef = useRef(value)
+  const confirmedRef = useRef<T>(readCache(key, fallback))
+  const requestIdRef = useRef(0)
   const hydrated = useRef(false)
   valueRef.current = value
 
@@ -73,12 +79,17 @@ export function usePreference<T>(key: string, fallback: T): [T, (next: T | ((pre
     if (remote === undefined) {
       if (!hydrated.current) {
         hydrated.current = true
-        setLocal(readCache(key, fallback))
+        const cached = readCache(key, fallback)
+        setLocal(cached)
+        confirmedRef.current = cached
       }
       return
     }
     hydrated.current = true
     const next = remote as T
+    confirmedRef.current = next
+    // Do not clobber a newer optimistic value while a put is in flight.
+    if (requestIdRef.current !== 0) return
     if (!sameValue(valueRef.current, next)) {
       setLocal(next)
       writeCache(key, next)
@@ -86,17 +97,30 @@ export function usePreference<T>(key: string, fallback: T): [T, (next: T | ((pre
   }, [list.data, key, fallback])
 
   const put = useMutation({
-    mutationFn: (next: T) =>
-      apiRequest(`/v1/me/preferences/${encodeURIComponent(key)}`, {
+    mutationFn: async ({ value: next, requestId }: PutVars<T>) => {
+      await apiRequest(`/v1/me/preferences/${encodeURIComponent(key)}`, {
         method: 'PUT',
         token: accessToken,
         body: { value: next },
-      }),
-    onSuccess: (_data, next) => {
+      })
+      return { value: next, requestId }
+    },
+    onSuccess: (result) => {
+      if (result.requestId !== requestIdRef.current) return
+      confirmedRef.current = result.value
+      writeCache(key, result.value)
       qc.setQueryData<PrefsPayload>(['me-preferences'], (old) => {
-        const prefs = { ...(old?.preferences ?? {}), [key]: next }
+        const prefs = { ...(old?.preferences ?? {}), [key]: result.value }
         return { preferences: prefs }
       })
+    },
+    onError: (_err, vars) => {
+      if (vars.requestId !== requestIdRef.current) return
+      const rollback = confirmedRef.current
+      valueRef.current = rollback
+      writeCache(key, rollback)
+      setLocal(rollback)
+      toast.error('Не удалось сохранить настройку. Режим восстановлен.')
     },
   })
 
@@ -108,7 +132,12 @@ export function usePreference<T>(key: string, fallback: T): [T, (next: T | ((pre
       valueRef.current = resolved
       writeCache(key, resolved)
       setLocal(resolved)
-      if (accessToken) put.mutate(resolved)
+      if (accessToken) {
+        const requestId = ++requestIdRef.current
+        put.mutate({ value: resolved, requestId })
+      } else {
+        confirmedRef.current = resolved
+      }
     },
     [accessToken, key, put],
   )

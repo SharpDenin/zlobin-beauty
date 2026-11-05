@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   dayKey,
   formatOwnerDate,
+  homeTiles,
   isDemoAccount,
   isOwnerStartKind,
   ownerManagementTiles,
@@ -40,7 +41,7 @@ describe('owner-home-helpers', () => {
 
   it('picks compact management tiles from real capabilities', () => {
     const tiles = ownerManagementTiles((f) => ['staff', 'reports', 'cosmetics', 'salon_settings'].includes(f))
-    expect(tiles.map((t) => t.label)).toEqual(['Команда', 'Финансы', 'Склад', 'Настройки'])
+    expect(tiles.map((t) => t.label)).toEqual(['Команда', 'Финансы', 'Склад', 'Настройки салона'])
   })
 
   it('labels pending confirmations in Russian', () => {
@@ -56,5 +57,10 @@ describe('owner-home-helpers', () => {
 
   it('formats today as a human date line', () => {
     expect(formatOwnerDate(new Date())).toMatch(/^Сегодня · /)
+  })
+
+  it('labels client search tile as Поиск мастера', () => {
+    const tiles = homeTiles('client', () => false)
+    expect(tiles.find((t) => t.to === '/search')?.label).toBe('Поиск мастера')
   })
 })

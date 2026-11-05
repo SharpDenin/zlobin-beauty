@@ -4,7 +4,9 @@
 
 ## Authentication
 
-- Access JWT + refresh. Сессия в `zb.auth`.
+- Access JWT + refresh. Сессия в `zb.auth`. Политика TTL / rotation / grace: [AUTH_EMAIL_AND_SESSIONS.md](./AUTH_EMAIL_AND_SESSIONS.md), [adr/002-auth-tokens.md](./adr/002-auth-tokens.md).
+- Восстановление пароля и подтверждение email — по SMTP (`shared/mailer`); runbook: [EMAIL_RUNBOOK.md](./EMAIL_RUNBOOK.md). Подтверждение телефона по SMS отложено.
+- `email_verified` не блокирует вход, запись и магазин.
 - Просроченный JWT: выход и **один** показ «Сессия завершилась. Войдите снова.»
 - Обычный `/login` и повторный вход после logout этого текста не содержат.
 - Logout вызывает `/v1/auth/logout` и чистит хранилище.

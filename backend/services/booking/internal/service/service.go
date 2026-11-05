@@ -156,36 +156,17 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	var slots []Slot
-	step := 30
-	now := s.now().UTC()
-	for _, w := range windows {
-		for start := w.start; start+durationMinutes <= w.end; start += step {
-			st := localDay.Add(time.Duration(start) * time.Minute).UTC()
-			en := st.Add(time.Duration(durationMinutes) * time.Minute)
-			if !st.After(now) {
-				continue
-			}
-			if appointmentBlocksSlot(existing, excludeAppointmentID, st, en) {
-				continue
-			}
-			if plannerBlocksSlot(blocks, uuid.Nil, st, en) {
-				continue
-			}
-			mode, ok, err := s.workModeForSlot(ctx, masterUserID, st, en, loc)
-			if err != nil {
-				return nil, apperr.Internal(err)
-			}
-			if !ok {
-				continue
-			}
-			slots = append(slots, Slot{StartsAt: st, EndsAt: en, WorkMode: mode})
-		}
+	dayStart := localDay
+	dayEnd := localDay.Add(24 * time.Hour)
+	modes, err := s.store.ListWorkModeIntervals(ctx, masterUserID, dayStart.UTC(), dayEnd.UTC())
+	if err != nil {
+		return nil, apperr.Internal(err)
 	}
-	if slots == nil {
-		slots = []Slot{}
+	slotWindows := make([]freeSlotWindow, len(windows))
+	for i, w := range windows {
+		slotWindows[i] = freeSlotWindow{start: w.start, end: w.end}
 	}
-	return slots, nil
+	return computeFreeSlots(localDay, slotWindows, durationMinutes, s.now(), existing, excludeAppointmentID, blocks, modes), nil
 }
 
 const defaultTimezone = "Europe/Moscow"

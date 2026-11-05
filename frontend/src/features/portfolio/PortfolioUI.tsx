@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Overlay } from '@/shared/ui/Overlay'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { isPortfolioGif } from '@/shared/lib/gifStillFrame'
 import {
   portfolioDisplayTitle,
   type PortfolioItem,
@@ -132,7 +133,13 @@ export function PortfolioGrid({ items, token, onOpen, ownerActions, empty }: Gri
             aria-label={title}
             onClick={() => onOpen(index)}
           >
-            <MediaImage mediaId={item.media_id} token={token} alt={title} variant="cover" />
+            <MediaImage
+              mediaId={item.media_id}
+              token={token}
+              alt={title}
+              variant="cover"
+              stillFrame={isPortfolioGif(item.media_type)}
+            />
             {ownerActions && (
               <div className="portfolio-cell-actions" onClick={(e) => e.stopPropagation()}>
                 <button

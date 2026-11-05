@@ -33,9 +33,10 @@ describe('availability-helpers', () => {
     expect(availabilityStatusLabel('orderable')).toBe('Можно заказать')
     expect(availabilityStatusLabel('shortage')).toBe('Не хватает')
     expect(availabilityStatusLabel('unavailable')).toBe('Невозможно получить')
-    expect(availabilityStatusMark('available')).toBe('✓')
-    expect(availabilityStatusMark('incoming')).toBe('⚠')
-    expect(availabilityStatusMark('orderable')).toBe('→')
+    expect(availabilityStatusMark('available')).toBe('Хватает')
+    expect(availabilityStatusMark('incoming')).toBe('Ожидается поставка')
+    expect(availabilityStatusMark('orderable')).toBe('Можно заказать')
+    expect(availabilityStatusMark('shortage')).toBe('Не хватает')
   })
 
   it('summarizes overall status', () => {

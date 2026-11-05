@@ -3,11 +3,35 @@ package service
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 )
+
+func TestPeerNameOfUsesOtherParticipant(t *testing.T) {
+	actor := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	peer := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	c := domain.Conversation{
+		Participants: []domain.Participant{
+			{UserID: actor, DisplayName: "Me"},
+			{UserID: peer, DisplayName: "Анна Волкова"},
+		},
+	}
+	if got := peerNameOf(c, actor); got != "Анна Волкова" {
+		t.Fatalf("peer name: %q", got)
+	}
+}
+
+func TestRateCreateAndFirstLimits(t *testing.T) {
+	if rateCreateLimit != 10 || rateCreateWindow != time.Hour {
+		t.Fatalf("create limit: %d / %v", rateCreateLimit, rateCreateWindow)
+	}
+	if rateFirstLimit != 5 || rateFirstWindow != 10*time.Minute {
+		t.Fatalf("first message limit: %d / %v", rateFirstLimit, rateFirstWindow)
+	}
+}
 
 func TestConversationKeysStable(t *testing.T) {
 	a := uuid.MustParse("11111111-1111-1111-1111-111111111111")

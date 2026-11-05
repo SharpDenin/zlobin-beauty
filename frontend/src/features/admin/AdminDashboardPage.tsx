@@ -6,6 +6,8 @@ import { auditActionLabel, formatAdminDate } from './helpers'
 import { AdminSkeleton } from './ui'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
+import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
+import { NotificationFeed } from '@/features/notifications/NotificationFeed'
 
 export function AdminDashboardPage() {
   const { accessToken } = useAuth()
@@ -27,12 +29,14 @@ export function AdminDashboardPage() {
 
   return (
     <div className="page stack admin-page">
+      <NotificationBubbles />
       <header className="stack-xs">
         <p className="eyebrow">Платформа</p>
         <h1>Администрирование</h1>
         <p className="muted">Обзор спорных ситуаций, каталогов и операционных данных.</p>
       </header>
       {error ? <ErrorBanner error={error} fallbackTitle="Не удалось загрузить сводку" /> : null}
+      <NotificationFeed className="card stack" />
       <section className="kpi-grid kpi-desktop-only admin-kpi" aria-label="Сводка">
         <Kpi to="/admin/users" label="Пользователи" value={users.data?.users_total} />
         <Kpi to="/admin/organizations" label="Активные организации" value={orgs.data?.organizations_active} />

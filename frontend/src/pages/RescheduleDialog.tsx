@@ -247,7 +247,7 @@ export function RescheduleDialog({ open, onClose, appointment, token, canOpenCal
           <h3>Перенести запись?</h3>
           <p>
             {slotDateTimeLabel(appointment.starts_at, tz)}
-            <span className="muted"> → </span>
+            <span className="muted"> на </span>
             {slotDateTimeLabel(selected.starts_at, tz)}
           </p>
           <div className="row">

@@ -9,12 +9,15 @@ import { initials } from '@/shared/lib/initials'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { uploadMedia } from '@/shared/lib/mediaUpload'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { AppIcon, type AppIconName } from '@/shared/ui/AppIcon'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
-import { HOME_BACKGROUNDS, setHomeBackground, useHomeBackground } from '@/shared/theme/backgrounds'
+import { useHomeBackground } from '@/shared/theme/backgrounds'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
-import { enableDevicePush } from '@/features/pwa/push'
+import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
+import { notificationHref } from '@/features/notifications/notificationHref'
+import { DevicePushCard } from '@/features/pwa/DevicePushCard'
 import {
   dayKey,
   formatOwnerDate,
@@ -69,13 +72,13 @@ type NotificationItem = {
   entity_id?: string | null
 }
 
-const TILE_PATHS: Record<string, string> = {
-  staff: 'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20a5 5 0 0 1 10 0M13 20a5 5 0 0 1 8 0',
-  money: 'M4 8h16v10H4zm4 5h8M8 8V6h8v2',
-  warehouse: 'M3 20V9l9-5 9 5v11H3zm5-4h8',
-  settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a7.8 7.8 0 0 0 .1-2l2-1.5-2-3.5-2.4.5a8 8 0 0 0-1.7-1L15 3h-6l-.4 2.5a8 8 0 0 0-1.7 1L6.5 6 4.5 9.5 6.5 11a7.8 7.8 0 0 0 0 2l-2 1.5 2 3.5 2.4-.5a8 8 0 0 0 1.7 1L9 21h6l.4-2.5a8 8 0 0 0 1.7-1l2.4.5 2-3.5z',
-  clients: 'M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-7.5 9a7.5 7.5 0 0 1 15 0',
-  services: 'M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6.5 9.5 20 20M6.5 20.5 14 14',
+const TILE_ICONS: Record<string, AppIconName> = {
+  staff: 'staff',
+  money: 'money',
+  warehouse: 'warehouse',
+  settings: 'settings',
+  clients: 'clients',
+  services: 'services',
 }
 
 function ClientMasters({ city }: { city?: string | null }) {
@@ -114,15 +117,6 @@ function ownerRoleLabel(kind: string, fallback: string): string {
   return fallback || 'Salon-X'
 }
 
-function notificationHref(n: NotificationItem) {
-  if (n.entity_type === 'appointment' && n.entity_id) return `/appointments/${n.entity_id}`
-  if (n.entity_type === 'conversation' && n.entity_id) return `/messages/${n.entity_id}`
-  if (n.entity_type === 'masterclass' && n.entity_id) return `/masterclasses/${n.entity_id}`
-  if (n.entity_type === 'model_request' && n.entity_id) return `/models/${n.entity_id}`
-  if (n.entity_type === 'client_order' && n.entity_id) return `/orders/${n.entity_id}`
-  return '/notifications'
-}
-
 export function OwnerStartPage() {
   const { user, accessToken } = useAuth()
   const cabinet = useCabinet()
@@ -131,7 +125,6 @@ export function OwnerStartPage() {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [selectedDay, setSelectedDay] = useState(() => new Date())
-  const [bgOpen, setBgOpen] = useState(false)
   const [photoBusy, setPhotoBusy] = useState(false)
   const days = useMemo(() => weekDays(new Date()), [])
   const audience = homeAudience(cabinet.kind)
@@ -185,13 +178,6 @@ export function OwnerStartPage() {
     queryFn: () => apiRequest<{ items: NotificationItem[] }>('/v1/notifications', { token: accessToken }),
     enabled: Boolean(accessToken),
   })
-  const pushConfig = useQuery({
-    queryKey: ['push-config'],
-    queryFn: () => apiRequest<{ enabled: boolean; public_key: string }>('/v1/push/config', { token: accessToken }),
-    enabled: Boolean(accessToken),
-    retry: false,
-  })
-
   const items = (appointments.data?.items ?? []).filter((a) => {
     if (cabinet.kind !== 'chain_owner' || !cabinet.selectedBranch?.id) return true
     return !a.branch_id || a.branch_id === cabinet.selectedBranch.id
@@ -288,6 +274,7 @@ export function OwnerStartPage() {
       style={{ ['--owner-bg-image' as string]: `url('${background.src}')` }}
     >
       <div className="owner-start-bg" aria-hidden="true" />
+      <NotificationBubbles />
 
       <div className="owner-start-panel">
         <header className="owner-start-top">
@@ -311,42 +298,12 @@ export function OwnerStartPage() {
                 <span className="owner-start-badge">{messenger!.unreadTotal > 9 ? '9+' : messenger!.unreadTotal}</span>
               )}
             </button>
-            <div className="owner-start-bg-anchor">
-              <button
-                className="owner-start-icon-btn"
-                type="button"
-                aria-label="Выбрать фон"
-                aria-expanded={bgOpen}
-                onClick={() => setBgOpen((v) => !v)}
-              >
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-                  <rect x="4" y="5" width="16" height="14" rx="2" />
-                  <path d="m8 15 2.5-3 2 2.2L15 11l3 4" strokeLinejoin="round" />
-                </svg>
-              </button>
-              {bgOpen && (
-                <div className="owner-start-bg-pop" role="dialog" aria-label="Фон главной">
-                  <p>Фон главной</p>
-                  <div className="owner-start-bg-grid">
-                    {HOME_BACKGROUNDS.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`owner-start-bg-option${item.id === background.id ? ' is-selected' : ''}`}
-                        aria-pressed={item.id === background.id}
-                        onClick={() => {
-                          setHomeBackground(item.id)
-                          setBgOpen(false)
-                        }}
-                      >
-                        <img src={item.src} alt="" />
-                        <span>{item.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <Link className="owner-start-icon-btn" to="/settings/appearance" aria-label="Оформление и фон">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2" />
+                <path d="m8 15 2.5-3 2 2.2L15 11l3 4" strokeLinejoin="round" />
+              </svg>
+            </Link>
             <div className="owner-start-avatar-wrap">
               <Link className="owner-start-avatar" to="/profile" aria-label="Открыть профиль">
                 {photo ? (
@@ -539,19 +496,7 @@ export function OwnerStartPage() {
           {!notifications.isLoading && notes.length === 0 && (
             <p className="owner-start-empty">Пока нет уведомлений</p>
           )}
-          {pushConfig.data?.enabled && pushConfig.data.public_key && (
-            <button
-              className="owner-start-push"
-              type="button"
-              onClick={() => {
-                void enableDevicePush(accessToken, pushConfig.data!.public_key)
-                  .then(() => toast.success('Уведомления на устройстве включены'))
-                  .catch((e) => toast.error(userError(e, 'Не удалось включить уведомления')))
-              }}
-            >
-              Уведомления на устройстве
-            </button>
-          )}
+          <DevicePushCard compact className="owner-start-push-card" />
           <ul className="owner-start-note-list">
             {notes.slice(0, 3).map((n) => (
               <li key={n.id}>
@@ -573,9 +518,7 @@ export function OwnerStartPage() {
               {tiles.map((tile) => (
                 <Link key={tile.to} className="owner-start-tile" to={tile.to}>
                   <span className="owner-start-chevron" aria-hidden="true">›</span>
-                  <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                    <path d={TILE_PATHS[tile.icon]} />
-                  </svg>
+                  <AppIcon name={TILE_ICONS[tile.icon] ?? 'home'} size={26} />
                   <span>{tile.label}</span>
                 </Link>
               ))}

@@ -6,16 +6,19 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/httpapi"
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/service"
 	"github.com/zlobin/zlobin-beauty/backend/services/identity/internal/store"
+	"github.com/zlobin/zlobin-beauty/backend/shared/auth"
 	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/db"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 	"github.com/zlobin/zlobin-beauty/backend/shared/logging"
+	"github.com/zlobin/zlobin-beauty/backend/shared/mailer"
 )
 
 func main() {
@@ -45,9 +48,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	auth.ConfigureTTLs(config.EnvDuration("ACCESS_TOKEN_TTL", auth.AccessTTL), config.EnvDuration("REFRESH_TOKEN_TTL", auth.RefreshTTL))
 	st := store.New(pool)
 	allowDev := os.Getenv("ALLOW_DEV_BILLING") == "true" || os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == ""
-	svc := service.New(st, cfg.JWTSecret).WithDevBilling(allowDev)
+	ml := mailer.NewFromEnv()
+	if !ml.Ready() {
+		log.Warn("mailer not configured: password reset and email verification emails will not be sent until SMTP_PASSWORD (and related vars) are set")
+	} else {
+		log.Info("mailer ready", "provider", os.Getenv("EMAIL_PROVIDER"), "host", os.Getenv("SMTP_HOST"))
+	}
+	svc := service.New(st, cfg.JWTSecret).
+		WithDevBilling(allowDev).
+		WithMedia(os.Getenv("MEDIA_URL"), os.Getenv("INTERNAL_TOKEN")).
+		WithMailer(ml).
+		WithPublicAppURL(firstNonEmpty(os.Getenv("PUBLIC_APP_URL"), os.Getenv("APP_PUBLIC_URL"))).
+		WithLogger(log)
 	api := httpapi.New(svc, log)
 
 	mux := http.NewServeMux()
@@ -81,4 +96,13 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

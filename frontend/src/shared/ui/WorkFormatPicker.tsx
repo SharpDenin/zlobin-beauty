@@ -7,29 +7,29 @@ import {
 export function WorkFormatPicker({
   value,
   onChange,
-  allowChainOwner = false,
   error,
 }: {
   value: string[]
   onChange: (next: CanonicalWorkType[]) => void
+  /** @deprecated ownership is not a work format */
   allowChainOwner?: boolean
   error?: string
 }) {
   const selected = new Set(uniqueCanonicalWorkTypes(value))
-  const options = CANONICAL_WORK_TYPE_OPTIONS.filter((o) => allowChainOwner || o.value !== 'chain_owner')
+  const options = CANONICAL_WORK_TYPE_OPTIONS
 
   function toggle(v: CanonicalWorkType) {
     const next = new Set(selected)
     if (next.has(v)) next.delete(v)
     else next.add(v)
     const ordered = options.map((o) => o.value).filter((id) => next.has(id))
-    onChange(ordered.length ? ordered : ['independent'])
+    onChange(ordered.length ? ordered : ['private_practice'])
   }
 
   return (
     <fieldset className="stack-sm" data-testid="work-format-picker">
       <legend className="label-text">Формат работы</legend>
-      <p className="muted">Можно выбрать несколько моделей. Это не профессия — специализация выбирается отдельно.</p>
+      <p className="muted">Можно выбрать несколько. Это не роль и не членство в салоне — специализация выбирается отдельно.</p>
       <div className="work-format-grid">
         {options.map((opt) => {
           const checked = selected.has(opt.value)
@@ -40,7 +40,10 @@ export function WorkFormatPicker({
                 checked={checked}
                 onChange={() => toggle(opt.value)}
               />
-              <span>{opt.label}</span>
+              <span className="work-format-option__text">
+                <span className="work-format-option__label">{opt.label}</span>
+                <span className="work-format-option__hint muted">{opt.description}</span>
+              </span>
             </label>
           )
         })}

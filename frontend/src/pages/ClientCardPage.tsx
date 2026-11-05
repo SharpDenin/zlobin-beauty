@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
+import { toast } from '@/shared/ui/Toast'
 import { Modal } from '@/shared/ui/Modal'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
@@ -169,6 +170,7 @@ export function ClientCardPage() {
       }),
     onSuccess: async () => {
       setOk('Автоподтверждение обновлено')
+      toast.success('Автоподтверждение обновлено')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-auto-confirm', clientUserId] })
     },
@@ -184,6 +186,7 @@ export function ClientCardPage() {
       }),
     onSuccess: async () => {
       setOk('Клиент разблокирован')
+      toast.success('Клиент разблокирован')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-blacklist', clientUserId] })
     },
@@ -201,6 +204,7 @@ export function ClientCardPage() {
     onSuccess: async () => {
       noteDraft.clear()
       setOk('Заметка сохранена')
+      toast.success('Заметка сохранена')
       setError(null)
       noteForm.reset()
     },
@@ -224,6 +228,7 @@ export function ClientCardPage() {
     onSuccess: async () => {
       formulaDraft.clear()
       setOk('Состав сохранён')
+      toast.success('Состав сохранён')
       setError(null)
       formulaForm.reset()
       setOmitFormula(false)
@@ -241,7 +246,9 @@ export function ClientCardPage() {
     onSuccess: async (res) => {
       setError(null)
       setDisputeDone(true)
-      setOk(Boolean(res.already_open) ? 'Несоответствие уже зарегистрировано' : 'Несоответствие зафиксировано')
+      const msg = Boolean(res.already_open) ? 'Несоответствие уже зарегистрировано' : 'Несоответствие зафиксировано'
+      setOk(msg)
+      toast.success(msg)
       await qc.invalidateQueries({ queryKey: ['client', id, appointmentId] })
     },
     onError: (e) => setError(formatUserError(e, 'Не удалось зафиксировать несоответствие')),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -69,6 +70,28 @@ func DecodeJSON(r *http.Request, dst any) error {
 	return dec.Decode(dst)
 }
 
+// DecodeJSONMessage turns json.Decoder errors into short user-facing validation text.
+// Unknown fields and type mismatches are surfaced; raw Go dump is avoided.
+func DecodeJSONMessage(err error) string {
+	if err == nil {
+		return "invalid json body"
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "json: unknown field ") {
+		field := strings.Trim(strings.TrimPrefix(msg, "json: unknown field "), `"`)
+		if field != "" {
+			return "unknown field: " + field
+		}
+	}
+	if strings.Contains(msg, "cannot unmarshal") {
+		return "invalid field type in json body"
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || msg == "EOF" {
+		return "empty or truncated json body"
+	}
+	return "invalid json body"
+}
+
 func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
 	rid := RequestID(r)
 	var ae *apperr.AppError
@@ -78,6 +101,24 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 				log.Error("request failed", "error", ae.Err, "code", ae.Code, "request_id", rid)
 			} else {
 				log.Info("request error", "code", ae.Code, "status", ae.HTTPStatus, "message", ae.Message, "request_id", rid)
+			}
+		}
+		if ae.Code == apperr.CodeRateLimited && ae.Details != nil {
+			if v, ok := ae.Details["retry_after"]; ok {
+				switch n := v.(type) {
+				case int:
+					if n > 0 {
+						w.Header().Set("Retry-After", strconv.Itoa(n))
+					}
+				case int64:
+					if n > 0 {
+						w.Header().Set("Retry-After", strconv.FormatInt(n, 10))
+					}
+				case float64:
+					if n > 0 {
+						w.Header().Set("Retry-After", strconv.Itoa(int(n)))
+					}
+				}
 			}
 		}
 		JSON(w, ae.HTTPStatus, ErrorBody{Error: ErrorDetail{

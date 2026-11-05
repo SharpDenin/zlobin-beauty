@@ -1,0 +1,8 @@
+{
+  "users": {
+    "LOCAL_SUPPLIER_USER_UUID": "PRODUCTION_SUPPLIER_USER_UUID"
+  },
+  "organizations": {
+    "LOCAL_SUPPLIER_ORG_UUID": "PRODUCTION_SUPPLIER_ORG_UUID"
+  }
+}

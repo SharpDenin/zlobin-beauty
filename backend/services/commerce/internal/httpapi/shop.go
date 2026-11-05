@@ -29,6 +29,7 @@ func (a *API) registerShopRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.Handle("POST /v1/commerce/shop/pickup/orders/{id}/handover", auth(http.HandlerFunc(a.handoverSalonPickupOrder)))
 	mux.Handle("GET /v1/commerce/shop/supplier/orders", auth(http.HandlerFunc(a.listSupplierClientOrders)))
 	mux.Handle("POST /v1/commerce/shop/supplier/orders/{id}/transition", auth(http.HandlerFunc(a.transitionClientOrder)))
+	mux.Handle("POST /v1/commerce/shop/supplier/orders/{id}/return", auth(http.HandlerFunc(a.returnClientOrder)))
 	mux.Handle("GET /v1/commerce/rep/deliveries", auth(http.HandlerFunc(a.listRepDeliveries)))
 	mux.Handle("POST /v1/commerce/rep/deliveries/{id}/complete", auth(http.HandlerFunc(a.completeRepDelivery)))
 	mux.Handle("GET /v1/commerce/rep/analytics", auth(http.HandlerFunc(a.repAnalytics)))
@@ -291,6 +292,15 @@ func (a *API) listSupplierClientOrders(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	ids := make([]uuid.UUID, 0, len(orders))
+	for _, o := range orders {
+		ids = append(ids, o.ID)
+	}
+	returned, err := a.svc.ClientOrdersReturnedMap(r.Context(), ids)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
 	out := make([]map[string]any, 0, len(orders))
 	for _, o := range orders {
 		items, err := a.svc.ClientOrderItems(r.Context(), o.ID)
@@ -298,9 +308,33 @@ func (a *API) listSupplierClientOrders(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, a.log, err)
 			return
 		}
-		out = append(out, clientOrderDTO(o, items, nil))
+		out = append(out, clientOrderDTOWithReturn(o, items, nil, returned[o.ID]))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) returnClientOrder(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	order, items, err := a.svc.ReturnClientOrder(r.Context(), claims.UserID, id, service.ReturnClientOrderInput{
+		Reason: req.Reason,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, clientOrderDTOWithReturn(*order, items, nil, true))
 }
 
 func (a *API) transitionClientOrder(w http.ResponseWriter, r *http.Request) {
@@ -545,6 +579,10 @@ func clientOrderSummaryDTO(o domain.ClientOrder) map[string]any {
 }
 
 func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem, history []domain.ClientOrderStatusHistory) map[string]any {
+	return clientOrderDTOWithReturn(o, items, history, false)
+}
+
+func clientOrderDTOWithReturn(o domain.ClientOrder, items []domain.ClientOrderItem, history []domain.ClientOrderStatusHistory, returned bool) map[string]any {
 	itemsOut := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		itemsOut = append(itemsOut, map[string]any{
@@ -582,7 +620,7 @@ func clientOrderDTO(o domain.ClientOrder, items []domain.ClientOrderItem, histor
 		"rep_user_id": repUser, "delivered_at": deliveredAt,
 		"delivery_note": o.DeliveryNote, "amount_collected_minor": o.AmountCollectedMinor,
 		"pickup_branch_id": pickup, "created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
-		"items": itemsOut, "status_history": historyOut,
+		"items": itemsOut, "status_history": historyOut, "returned": returned,
 	}
 }
 

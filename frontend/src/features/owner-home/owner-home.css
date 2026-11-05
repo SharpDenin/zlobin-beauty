@@ -598,11 +598,38 @@ html[data-theme="light"] body:has(.owner-start) {
   }
 }
 
-/* Tablet/desktop: forest left, glass phone column right */
-@media (min-width: 768px) {
+/*
+ * 768–1023: sidenav already takes ~240px, so main is ~528px.
+ * Keep a flexible strip + panel (no 360px min column) to avoid document overflow.
+ */
+@media (min-width: 768px) and (max-width: 1023px) {
   .owner-start {
-    grid-template-columns: minmax(240px, 1fr) minmax(360px, 440px);
-    max-width: 960px;
+    grid-template-columns: minmax(72px, 24%) minmax(0, 1fr);
+    max-width: 100%;
+    width: 100%;
+    margin: 0;
+    min-height: 100%;
+    border-radius: 0;
+    overflow: hidden;
+    box-shadow: none;
+  }
+
+  .owner-start-panel {
+    padding: 20px 16px 32px;
+    border-radius: 0;
+  }
+
+  body:has(.owner-start) .shell-main > :not(.topbar) {
+    background: transparent;
+  }
+}
+
+/* Desktop: forest left, glass phone column right (fits beside 260px sidenav) */
+@media (min-width: 1024px) {
+  .owner-start {
+    grid-template-columns: minmax(200px, 1fr) minmax(0, min(440px, 100%));
+    max-width: min(960px, 100%);
+    width: 100%;
     margin: 16px auto 24px;
     min-height: calc(100% - 40px);
     border-radius: 24px;
@@ -613,6 +640,7 @@ html[data-theme="light"] body:has(.owner-start) {
   .owner-start-panel {
     padding: 28px 24px 40px;
     border-radius: 0 24px 24px 0;
+    min-width: 0;
   }
 
   body:has(.owner-start) .shell-main > :not(.topbar) {

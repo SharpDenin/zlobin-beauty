@@ -12,6 +12,7 @@ import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Drawer } from '@/shared/ui/Drawer'
+import { SearchField } from '@/shared/ui/SearchField'
 import { CHART } from '@/shared/ui/chart-theme'
 import { productAudienceLabel } from '@/pages/knowledge-helpers'
 import {
@@ -105,15 +106,25 @@ type KnowledgeCard = {
 
 type SortKey = 'default' | 'price_asc' | 'price_desc' | 'name'
 
-const PAYMENTS = [
-  { value: 'cash', label: 'Оплата при получении' },
-  { value: 'bank_transfer', label: 'Банковский перевод' },
-  { value: 'card', label: 'Картой онлайн' },
+/** Pay-on-pickup methods for new checkout. Must match backend
+ * domain.ValidClientPickupPaymentMethod (cash, bank_transfer). */
+const CLIENT_PICKUP_PAYMENTS = [
+  { value: 'cash', label: 'Наличные при получении' },
+  { value: 'bank_transfer', label: 'Банковский перевод при получении' },
 ] as const
 
+const LEGACY_PAYMENT_LABELS: Record<string, string> = {
+  cash: 'Наличные при получении',
+  cash_on_delivery: 'Наличные при получении',
+  bank_transfer: 'Банковский перевод при получении',
+  card: 'Картой онлайн (архив)',
+  card_online: 'Картой онлайн (архив)',
+  invoice: 'Счёт / безнал (архив)',
+}
+
 function paymentLabel(method?: string) {
-  const normalized = method === 'cash_on_delivery' ? 'cash' : method
-  return PAYMENTS.find((p) => p.value === normalized)?.label ?? 'При получении'
+  if (!method) return 'При получении'
+  return LEGACY_PAYMENT_LABELS[method] ?? method
 }
 
 function shopPaymentStatus(order: ClientOrder) {
@@ -385,11 +396,16 @@ function CatalogView() {
           setSearch(q.trim())
         }}
       >
-        <input
+        <SearchField
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={setQ}
           placeholder="Поиск по названию или бренду"
           aria-label="Поиск"
+          clearable
+          onClear={() => {
+            setQ('')
+            setSearch('')
+          }}
         />
         <button className="btn btn-primary" type="submit">Найти</button>
         {compact ? (
@@ -817,8 +833,9 @@ function CheckoutView() {
   const [pickupId, setPickupId] = useState('')
   const [address, setAddress] = useState('')
   const [comment, setComment] = useState('')
-  const [payment, setPayment] = useState('cash')
+  const [payment, setPayment] = useState<string>(CLIENT_PICKUP_PAYMENTS[0].value)
   const [changeOpen, setChangeOpen] = useState(false)
+  const [branchQuery, setBranchQuery] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [confirmPrices, setConfirmPrices] = useState(false)
   const idempotencyKey = useRef(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()))
@@ -855,9 +872,19 @@ function CheckoutView() {
     return () => { cancelled = true }
   }, [accessToken])
 
+  const filteredPickup = useMemo(() => {
+    const q = branchQuery.trim().toLowerCase()
+    if (!q) return pickup
+    return pickup.filter((b) =>
+      [b.name, b.city, b.address_line]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q)),
+    )
+  }, [pickup, branchQuery])
+
   const selected = pickup.find((b) => b.id === pickupId) ?? pickup[0]
   const recommended = pickup[0]
-  const mapPoints = pickup.filter((b) => typeof b.latitude === 'number' && typeof b.longitude === 'number')
+  const mapPoints = filteredPickup.filter((b) => typeof b.latitude === 'number' && typeof b.longitude === 'number')
   const mapCenter: [number, number] = selected?.latitude && selected?.longitude
     ? [selected.latitude, selected.longitude]
     : mapPoints[0]
@@ -906,6 +933,17 @@ function CheckoutView() {
   const priceChanged = error instanceof ApiError && error.code === 'price_changed'
   const pickupPicker = (
     <section className="stack shop-pickup-picker">
+      <div className="field">
+        <label htmlFor="shop-branch-search">Поиск пункта выдачи</label>
+        <input
+          id="shop-branch-search"
+          value={branchQuery}
+          onChange={(e) => setBranchQuery(e.target.value)}
+          placeholder="Название, город, адрес…"
+          autoComplete="off"
+          enterKeyHint="search"
+        />
+      </div>
       <div className="pickup-map">
         <MapContainer center={mapCenter} zoom={12} style={{ height: 240, width: '100%' }} scrollWheelZoom={false}>
           <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
@@ -925,8 +963,15 @@ function CheckoutView() {
           ))}
         </MapContainer>
       </div>
+      {!pickupLoading && filteredPickup.length === 0 && (
+        <div className="state-box">
+          {branchQuery.trim()
+            ? 'Нет пунктов выдачи по этому запросу. Измените поиск или очистите поле.'
+            : 'Нет доступных пунктов выдачи.'}
+        </div>
+      )}
       <div className="list">
-        {pickup.map((b) => (
+        {filteredPickup.map((b) => (
           <button
             key={b.id}
             type="button"
@@ -943,6 +988,9 @@ function CheckoutView() {
           </button>
         ))}
       </div>
+      {selected && branchQuery.trim() && !filteredPickup.some((b) => b.id === selected.id) && (
+        <p className="muted">Выбранный пункт сохранён: {branchLabel(selected)}</p>
+      )}
     </section>
   )
 
@@ -1028,8 +1076,9 @@ function CheckoutView() {
 
           {step === 2 && (
             <section className="card stack">
-              <h2>Оплата</h2>
-              {PAYMENTS.map((p) => (
+              <h2>Оплата при получении</h2>
+              <p className="muted">Онлайн-оплата картой недоступна. Выберите способ расчёта в салоне.</p>
+              {CLIENT_PICKUP_PAYMENTS.map((p) => (
                 <label key={p.value} className="field-check">
                   <input type="radio" name="pay" checked={payment === p.value} onChange={() => setPayment(p.value)} />
                   {p.label}
@@ -1081,7 +1130,7 @@ function CheckoutView() {
           {step === 4 && (
             <section className="card stack">
               <h2>Подтверждение</h2>
-              <p>Заказ будет ожидать самовывоза в салоне. Оплата — при получении.</p>
+              <p>Заказ будет ожидать самовывоза в салоне. {paymentLabel(payment)}.</p>
               <p className="muted">{selected ? branchLabel(selected) : address}</p>
               <button
                 className="btn btn-primary btn-block"

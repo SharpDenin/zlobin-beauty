@@ -34,6 +34,7 @@ const (
 	CodeOccurrenceUnavailable       Code = "occurrence_unavailable"
 	CodeOccurrenceFull              Code = "occurrence_full"
 	CodeOccurrenceOverlap           Code = "occurrence_overlap"
+	CodeModelInterestOverlap        Code = "model_interest_overlap"
 	CodeBookingCutoff               Code = "booking_cutoff_passed"
 	CodeClientBlacklisted           Code = "client_blacklisted"
 	CodePlannerOutsideHours         Code = "planner_outside_hours"
@@ -155,6 +156,14 @@ func ContentNotAllowed(fields ...string) *AppError {
 
 func RateLimited(msg string) *AppError {
 	return New(CodeRateLimited, http.StatusTooManyRequests, msg)
+}
+
+// RateLimitedRetry returns 429 with details.retry_after (seconds) for Retry-After headers.
+func RateLimitedRetry(msg string, retryAfterSec int) *AppError {
+	if retryAfterSec < 1 {
+		retryAfterSec = 1
+	}
+	return RateLimited(msg).WithDetails(map[string]any{"retry_after": retryAfterSec})
 }
 
 func InvalidCredentials() *AppError {

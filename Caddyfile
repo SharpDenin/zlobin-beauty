@@ -1,0 +1,17 @@
+{
+    email admin@salon-x.ru
+}
+
+salon-x.ru {
+    encode zstd gzip
+    reverse_proxy frontend:80
+}
+
+www.salon-x.ru {
+    redir https://salon-x.ru{uri} permanent
+}
+
+api.salon-x.ru {
+    encode zstd gzip
+    reverse_proxy gateway:8080
+}

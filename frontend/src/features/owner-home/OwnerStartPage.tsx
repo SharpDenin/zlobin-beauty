@@ -16,6 +16,7 @@ import { userError } from '@/shared/lib/app-error'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
 import { notificationHref } from '@/features/notifications/notificationHref'
+import { isAppointmentNotification } from '@/features/notifications/groupBubbleNotifications'
 import { DevicePushCard } from '@/features/pwa/DevicePushCard'
 import {
   dayKey,
@@ -207,7 +208,8 @@ export function OwnerStartPage() {
   const photo = master?.photo_media_id
   const canEditPhoto = Boolean(master?.id || master?.display_name)
   const demo = isDemoAccount(user?.email)
-  const notes = notifications.data?.items ?? []
+  // Right column: appointment notifications only — chat messages live in bubbles / messenger.
+  const notes = (notifications.data?.items ?? []).filter(isAppointmentNotification)
   const unread = notes.filter((n) => !n.read_at)
   const branches = cabinet.selectedOrg?.branches ?? []
   const busyDays = useMemo(() => {

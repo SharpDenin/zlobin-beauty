@@ -50,6 +50,37 @@ export const tokens = {
     lg: '0 20px 48px rgba(0, 0, 0, 0.52)',
     glow: '0 0 0 1px rgba(124, 130, 255, 0.18), 0 12px 32px rgba(124, 130, 255, 0.12)',
   },
+  /** Global wallpaper CSS vars — keep in sync with styles.css `:root`. */
+  appBackground: {
+    image: "url('/backgrounds/forest-water.jpg')",
+    overlay:
+      'linear-gradient(90deg, color-mix(in srgb, #0B0D12 8%, transparent) 0%, color-mix(in srgb, #0B0D12 18%, transparent) 100%)',
+    position: 'center',
+    size: 'cover',
+  },
+  /**
+   * Glass Design System (dark defaults).
+   * CSS is source of truth for theme switching via `html[data-theme]`.
+   */
+  glass: {
+    fillSubtle: 'color-mix(in srgb, #0C1A18 18%, transparent)',
+    fill: 'color-mix(in srgb, #0B1614 58%, transparent)',
+    fillStrong: 'color-mix(in srgb, #0A1211 74%, transparent)',
+    chromeFill: 'color-mix(in srgb, #0B1614 58%, transparent)',
+    controlFill: 'color-mix(in srgb, #0B1614 78%, transparent)',
+    fillSubtleFallback: 'color-mix(in srgb, #0C1A18 86%, transparent)',
+    fillFallback: 'color-mix(in srgb, #0B1614 92%, transparent)',
+    fillStrongFallback: 'color-mix(in srgb, #0A1211 96%, transparent)',
+    chromeFillFallback: 'color-mix(in srgb, #0B1614 93%, transparent)',
+    controlFillFallback: 'color-mix(in srgb, #0B1614 96%, transparent)',
+    blurSubtle: '10px',
+    blur: '14px',
+    blurStrong: '18px',
+    border: 'color-mix(in srgb, #7C82FF 22%, transparent)',
+    borderStrong: 'color-mix(in srgb, #7C82FF 36%, transparent)',
+    shadow: '0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px rgba(0, 0, 0, 0.18)',
+    shadowStrong: '0 4px 12px rgba(0, 0, 0, 0.32), 0 16px 40px rgba(0, 0, 0, 0.28)',
+  },
   motion: {
     fast: '120ms',
     normal: '200ms',

@@ -38,6 +38,13 @@ describe('home backgrounds', () => {
     expect(preferenceFromStorage()).toEqual({ source: 'system', id: 'pebble-shore' })
   })
 
+  it('writes --app-bg-image and keeps --owner-bg-image alias in sync', () => {
+    setHomeBackground('mist-canyon')
+    const root = document.documentElement.style
+    expect(root.getPropertyValue('--app-bg-image')).toBe("url('/backgrounds/mist-canyon.jpg')")
+    expect(root.getPropertyValue('--owner-bg-image')).toBe("url('/backgrounds/mist-canyon.jpg')")
+  })
+
   it('falls back to default system wallpaper after clearing custom', () => {
     localStorage.setItem(HOME_BG_MEDIA_STORAGE_KEY, 'media-1')
     clearCustomHomeBackground()

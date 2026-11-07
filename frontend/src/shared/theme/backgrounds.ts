@@ -118,12 +118,22 @@ export function parseHomeBgPreference(raw: unknown): HomeBgPreference | null {
   return null
 }
 
+/** Canonical CSS var for the app wallpaper. `--owner-bg-image` remains as a compatibility alias. */
+export const APP_BG_IMAGE_VAR = '--app-bg-image'
+/** @deprecated Prefer `--app-bg-image`; kept for owner-home and legacy CSS. */
+export const OWNER_BG_IMAGE_VAR = '--owner-bg-image'
+
 function applyVisual(bg: HomeBackground, srcOverride?: string | null) {
   applyAccent(bg.accent)
   if (typeof document === 'undefined') return
   const src = srcOverride || bg.src
-  document.documentElement.dataset.homeBg = bg.id
-  document.documentElement.style.setProperty('--owner-bg-image', `url('${src}')`)
+  const value = `url('${src}')`
+  const root = document.documentElement
+  root.dataset.homeBg = bg.id
+  // Primary global token used by body::before atmosphere…
+  root.style.setProperty(APP_BG_IMAGE_VAR, value)
+  // …and legacy alias for any remaining --owner-bg-image consumers.
+  root.style.setProperty(OWNER_BG_IMAGE_VAR, value)
 }
 
 export function getHomeBackground(): HomeBackground {

@@ -13,7 +13,6 @@ import { AppIcon, type AppIconName } from '@/shared/ui/AppIcon'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
-import { useHomeBackground } from '@/shared/theme/backgrounds'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
 import { notificationHref } from '@/features/notifications/notificationHref'
@@ -120,7 +119,6 @@ function ownerRoleLabel(kind: string, fallback: string): string {
 export function OwnerStartPage() {
   const { user, accessToken } = useAuth()
   const cabinet = useCabinet()
-  const background = useHomeBackground()
   const messenger = useMessengerOptional()
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -268,12 +266,7 @@ export function OwnerStartPage() {
   }
 
   return (
-    <main
-      className="owner-start"
-      data-testid="owner-start-page"
-      style={{ ['--owner-bg-image' as string]: `url('${background.src}')` }}
-    >
-      <div className="owner-start-bg" aria-hidden="true" />
+    <main className="owner-start" data-testid="owner-start-page">
       <NotificationBubbles />
 
       <div className="owner-start-panel">

@@ -206,8 +206,10 @@
   position: sticky;
   top: var(--cal-sticky-top);
   z-index: calc(var(--z-sticky, 20) + 1);
-  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
-  backdrop-filter: blur(8px);
+  background: var(--glass-chrome-fill);
+  -webkit-backdrop-filter: blur(var(--glass-blur-subtle)) saturate(1.05);
+  backdrop-filter: blur(var(--glass-blur-subtle)) saturate(1.05);
+  border-bottom: 1px solid var(--glass-border);
   padding-bottom: var(--space-2);
   margin-bottom: var(--space-2);
 }

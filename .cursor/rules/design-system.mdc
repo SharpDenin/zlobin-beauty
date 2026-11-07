@@ -1,26 +1,42 @@
 ---
-description: Salon-X visual language is MIDNIGHT / SIGNAL. Follow it for every UI change.
+description: Salon-X visual language is MIDNIGHT / SIGNAL + global Glass. Follow it for every UI change.
 alwaysApply: true
 ---
 
-# MIDNIGHT / SIGNAL
+# MIDNIGHT / SIGNAL + Glass
 
 Salon-X has one permanent design system. Read `docs/DESIGN_SYSTEM.md` before changing UI.
 
-- Dark-first canvas `#0B0D12` with **atmospheric canvas gradient** (`--gradient-canvas`). Surfaces `#141821` / `#1D2230` / `#252B3B`. Text `#F5F7FA` / `#9EA6B5`.
-- Single accent `#7C82FF` (soft `#A8ACFF`). Do not purple entire screens.
+- Dark-first MIDNIGHT / SIGNAL color foundation: ink `#0B0D12`, surfaces `#141821` / `#1D2230` / `#252B3B`, text `#F5F7FA` / `#9EA6B5`.
+- **Global photographic background** on every route (including auth), plus readability scrim. Wallpaper via `backgrounds.ts` / `/backgrounds/*`. Continuity must not break on navigation.
+- Controlled **Glass Design System** over the photo — four levels: Background → Chrome (header / bottom nav / sidenav) → Panels/cards → Nested controls. Separate fill / blur / border tokens per level; panel blur slightly stronger than legacy home `8px`.
+- Single accent `#7C82FF` (soft `#A8ACFF`). Do not purple entire screens. Do **not** auto-derive accents from wallpaper until explicitly requested.
 - Semantic `#5DC08B` / `#FFB020` / `#EF7777` for success / warning / danger. Informational `#8B9BC7` only.
 - Font is Inter. 8px spacing. Radius 14px default, pills only for badges/avatars.
-- Primary button: `--gradient-primary-button`, text `#0B0D12`.
+- Primary button: `--gradient-primary-button`, text `#0B0D12` (opaque CTA).
 - Logo: `frontend/public/logo.png` via `BrandLogo`. Never recolor, stretch, or restyle.
 - Use CSS variables / `tokens.ts`. Do not introduce a second component kit or a new palette.
+- Light theme uses paper frost glass (higher opacity), not inverted dark translucency.
+
+## Hierarchy & exceptions
+
+- Home keeps reference-B composition; bottom nav stays hidden on `/`; still uses global tokens.
+- Calendar & messenger: glass shell, denser/opaque working surfaces (cells, bubbles, composer). No heavy blur on large scroll regions.
+- Auth: same global photo + dense glass form panels.
 
 ## Allowed depth (production)
 
-- Prescribed gradients only: canvas, hero, primary button, image fallback. Not on every card.
+- Prescribed gradients only: canvas fallback, hero, primary button, image fallback. Not on every card.
 - Soft accent glow (`--shadow-glow`) on selected cards and primary CTA — not neon, not idle chrome.
 - Image-first cards via `MediaImage` + `.media-frame*`. Never treat a 1×1 transparent PNG as content.
-- Motion tokens (`--motion-fast/normal/emphasized`) for hover, modal, drawer, toast. Respect `prefers-reduced-motion`.
-- Overlay architecture: `--overlay-scrim`, z-index scale `--z-sticky` → `--z-toast`. Use shared `Modal` / `Drawer` / `Overlay` (body scroll lock is built in). Do not invent a fourth overlay stack.
+- Motion tokens (`--motion-fast/normal/emphasized`) for hover, modal, drawer, toast. Respect `prefers-reduced-motion` (disable blur → raise opacity).
+- Overlay architecture: `--overlay-scrim`, z-index scale `--z-sticky` → `--z-toast`. Use shared `Modal` / `Drawer` / `Overlay` (body scroll lock is built in). Do not invent a fourth overlay stack. Scrim is not blurred; sheets use dense glass.
 
-New entities reuse card, badge, table, form, overlay, media-frame, and nav patterns already in the system.
+## Mobile PWA (priority)
+
+- Safe areas, `100dvh`, keyboard-safe layout.
+- ≤2 significant `backdrop-filter` layers in the primary viewport.
+- No heavy blur on large scroll containers.
+- Chrome must read as glass, not opaque foreign bars.
+
+New entities reuse card, badge, table, form, overlay, media-frame, nav, and glass-level patterns already in the system.

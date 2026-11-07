@@ -615,8 +615,12 @@
     margin-inline: 0;
     padding: var(--space-6);
     border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border);
-    background: var(--color-surface);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-fill);
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: blur(var(--glass-blur));
+    box-shadow: var(--glass-shadow);
+    isolation: isolate;
   }
   .mp-hero-photo {
     width: 176px;

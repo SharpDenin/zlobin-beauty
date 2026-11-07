@@ -359,6 +359,11 @@ html[data-theme="light"] {
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 html, body, #root { min-height: 100%; max-width: 100%; }
+/* Pan/scroll only — blocks browser pinch-zoom without killing taps. */
+html, body {
+  touch-action: pan-x pan-y;
+  -ms-touch-action: pan-x pan-y;
+}
 html {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
@@ -3739,6 +3744,33 @@ html[data-theme="light"] .auth-lead {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+
+/* Open dialog = immersive messenger (Telegram-like). Hide app chrome on phones. */
+@media (max-width: 767px) {
+  .app-shell:has(.messenger-page--thread) .bottomnav {
+    display: none;
+  }
+  .app-shell:has(.messenger-page--thread) .topbar {
+    display: none;
+  }
+  .app-shell:has(.messenger-page--thread) .messenger-page.page {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-inline: 0;
+    border-radius: 0;
+  }
+  .app-shell:has(.messenger-page--thread) .messenger-page .messenger-app--page {
+    border-radius: 0;
+    border: 0;
+    background: var(--color-surface);
+  }
+  .app-shell:has(.messenger-page--thread).app-shell--fill .shell-main > :not(.topbar) {
+    overflow: hidden;
+  }
+}
 .messenger-list,
 .messenger-thread {
   display: flex;
@@ -3828,20 +3860,29 @@ html[data-theme="light"] .auth-lead {
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  align-items: stretch;
+  gap: 8px;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .chat-bubble {
-  max-width: min(100%, 320px);
-  width: fit-content;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
+  /* flex-shrink:0 — default shrink was collapsing bubbles into each other. */
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(85%, 28rem);
+  padding: 8px 12px;
+  border-radius: 14px;
   background: var(--color-surface-2);
   align-self: flex-start;
   min-width: 0;
+  min-height: 0;
+  height: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
   overflow: hidden;
 }
 .chat-bubble.is-own {
@@ -3853,16 +3894,24 @@ html[data-theme="light"] .auth-lead {
 }
 .chat-bubble-text {
   margin: 0;
+  padding: 0;
+  width: 100%;
+  flex: 0 0 auto;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: pre-wrap;
-  position: relative;
-  z-index: 1;
+  line-height: 1.4;
+  color: var(--color-text-primary);
 }
 .chat-bubble-meta {
   display: block;
-  margin-top: 0;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  flex: 0 0 auto;
+  text-align: right;
   font-size: var(--text-xs);
+  line-height: 1.2;
   color: var(--color-text-muted);
 }
 .chat-media-image,
@@ -3910,9 +3959,26 @@ html[data-theme="light"] .auth-lead {
 }
 .messenger-composer {
   flex-shrink: 0;
-  padding: var(--space-2) var(--space-3) calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  padding: var(--space-2) var(--space-3);
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
+}
+.messenger-page--thread .messenger-composer {
+  /* Immersive thread already accounts for bottom safe-area on the page. */
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+}
+.messenger-thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  max-width: 55%;
+}
+.messenger-thread-actions .btn {
+  white-space: nowrap;
 }
 .composer-row {
   display: flex;
@@ -4012,6 +4078,10 @@ html[data-theme="light"] .auth-lead {
     background: transparent;
   }
   .messenger-app--page.has-thread .messenger-list { display: none; }
+  .messenger-app--page.has-thread .messenger-thread {
+    flex: 1;
+    min-height: 0;
+  }
   .messenger-overlay { place-items: stretch; padding: 0; }
   .messenger-panel {
     width: 100%;
@@ -4019,7 +4089,19 @@ html[data-theme="light"] .auth-lead {
     max-height: 100dvh;
     border-radius: 0;
   }
+  .chat-bubble {
+    max-width: min(88%, 22rem);
+  }
+  .messenger-thread-actions {
+    max-width: min(58%, 12rem);
+  }
+  .messenger-thread-actions .btn-compact {
+    min-height: 36px;
+    padding-inline: 10px;
+    font-size: var(--text-sm);
+  }
 }
+
 
 @media (min-width: 768px) {
   .messenger-overlay { place-items: end; }

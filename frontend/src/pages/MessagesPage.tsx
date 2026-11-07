@@ -8,7 +8,7 @@ export function MessagesPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   return (
-    <main className="page messenger-page">
+    <main className={`page messenger-page${id ? ' messenger-page--thread' : ''}`} data-testid="messages-page">
       <h1 className="visually-hidden">Сообщения</h1>
       <MessengerApp
         mode="page"

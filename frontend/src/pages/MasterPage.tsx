@@ -452,6 +452,13 @@ export function MasterPage() {
         <div className="mp-hero-body">
           <h1 className="mp-hero-name">{master.display_name}</h1>
           <p className="mp-hero-role">{roleLabels.join(' • ')}</p>
+          {(master.specializations?.length ?? 0) > 0 && (
+            <div className="chip-row mp-spec-chips" data-testid="master-public-specializations" role="list" aria-label="Специализации">
+              {master.specializations!.map((tag) => (
+                <span key={tag} className="chip badge-default" role="listitem">{tag}</span>
+              ))}
+            </div>
+          )}
           <div className="mp-hero-meta">
             <div className="mp-hero-meta-row">
               {ratingCount > 0 && (

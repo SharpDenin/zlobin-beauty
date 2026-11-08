@@ -87,6 +87,25 @@ describe('ServiceCardMedia', () => {
     expect(screen.getByRole('img', { name: 'Окрашивание' })).toHaveClass('media-fallback')
     expect(screen.getByRole('img', { name: 'Окрашивание' })).toHaveTextContent('ОК')
   })
+
+  it('keeps overlay text out of the cover when overlay is omitted (edge catalog cards)', () => {
+    const { container } = render(<ServiceCardMedia name="Стрижка" mediaId={null} aspect="square" />)
+    expect(container.querySelector('.media-first-overlay')).toBeNull()
+    expect(container.querySelector('.media-first-cover--square')).not.toBeNull()
+  })
+
+  it('renders overlay only when explicitly requested (hero/search cards)', () => {
+    const { container } = render(
+      <ServiceCardMedia
+        name="Анна"
+        mediaId={null}
+        aspect="hero"
+        overlay={{ title: 'Анна', meta: '★ 4.9' }}
+      />,
+    )
+    expect(container.querySelector('.media-first-overlay')).not.toBeNull()
+    expect(container.querySelector('.media-first-overlay strong')).toHaveTextContent('Анна')
+  })
 })
 
 describe('MasterPortrait', () => {

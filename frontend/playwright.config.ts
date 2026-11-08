@@ -30,6 +30,7 @@ export default defineConfig({
     { name: 'phone-430', use: { viewport: { width: 430, height: 932 } } },
     { name: 'tablet-768', use: { viewport: { width: 768, height: 1024 } } },
     { name: 'laptop-1366', use: { viewport: { width: 1366, height: 768 } } },
+    { name: 'desktop-1280', use: { viewport: { width: 1280, height: 800 } } },
     { name: 'desktop-1920', use: { viewport: { width: 1920, height: 1080 } } },
   ],
 })

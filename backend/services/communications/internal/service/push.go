@@ -47,13 +47,30 @@ func (webPushSender) Send(ctx context.Context, sub domain.PushSubscription, payl
 	return resp.StatusCode, nil
 }
 
+// normalizeVAPIDSubject prepares Options.Subscriber for webpush-go.
+// The library prepends "mailto:" unless the value already starts with "https:".
+// Our docs historically used "mailto:…", which produced invalid JWT sub
+// "mailto:mailto:…" and caused push providers to reject delivery.
+func normalizeVAPIDSubject(subject string) string {
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return "no-reply@salon-x.ru"
+	}
+	if strings.HasPrefix(subject, "https:") {
+		return subject
+	}
+	subject = strings.TrimPrefix(subject, "mailto:")
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return "no-reply@salon-x.ru"
+	}
+	return subject
+}
+
 func (s *Service) WithPush(publicKey, privateKey, subject string) *Service {
 	s.vapidPublic = strings.TrimSpace(publicKey)
 	s.vapidPrivate = strings.TrimSpace(privateKey)
-	s.vapidSubject = strings.TrimSpace(subject)
-	if s.vapidSubject == "" {
-		s.vapidSubject = "mailto:no-reply@salon-x.ru"
-	}
+	s.vapidSubject = normalizeVAPIDSubject(subject)
 	if s.pushSender == nil {
 		s.pushSender = webPushSender{}
 	}
@@ -142,7 +159,13 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 		repo = s.store
 	}
 	subs, err := repo.ListPushSubscriptions(ctx, userID)
-	if err != nil || len(subs) == 0 {
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("push list subscriptions failed", "err", err.Error())
+		}
+		return
+	}
+	if len(subs) == 0 {
 		return
 	}
 	payload, err := json.Marshal(map[string]string{
@@ -151,6 +174,9 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 		"url":   notificationTarget(entityType, entityID),
 	})
 	if err != nil {
+		if s.log != nil {
+			s.log.Warn("push payload marshal failed", "err", err.Error())
+		}
 		return
 	}
 	sender := s.pushSender
@@ -158,19 +184,42 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 		sender = webPushSender{}
 	}
 	for _, sub := range subs {
+		host := pushEndpointHost(sub.Endpoint)
 		status, err := sender.Send(ctx, sub, payload, s.vapidPublic, s.vapidPrivate, s.vapidSubject)
 		if err != nil {
 			if s.log != nil {
-				s.log.Warn("push delivery failed", "status", "error")
+				s.log.Warn("push delivery failed", "endpoint_host", host, "err", err.Error())
 			}
 			continue
 		}
 		if status == http.StatusGone || status == http.StatusNotFound {
 			_ = repo.DeletePushSubscription(ctx, userID, sub.Endpoint)
+			if s.log != nil {
+				s.log.Info("push subscription pruned", "endpoint_host", host, "http_status", status)
+			}
 			continue
 		}
-		if status >= 500 && s.log != nil {
-			s.log.Warn("push delivery temporary failure", "http_status", status)
+		if status >= 400 {
+			if s.log != nil {
+				s.log.Warn("push delivery rejected", "endpoint_host", host, "http_status", status)
+			}
+			continue
 		}
 	}
+}
+
+func pushEndpointHost(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return ""
+	}
+	// Avoid logging full endpoint paths (contain device tokens).
+	if i := strings.Index(endpoint, "://"); i >= 0 {
+		rest := endpoint[i+3:]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			return rest[:j]
+		}
+		return rest
+	}
+	return ""
 }

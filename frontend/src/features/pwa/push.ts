@@ -11,6 +11,8 @@ export type DevicePushUiStatus =
   | 'subscribed'
   | 'ready'
 
+const VAPID_PUBLIC_STORAGE_KEY = 'zb.push.vapidPublicKey'
+
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -25,6 +27,36 @@ export function browserSupportsWebPush() {
     && 'serviceWorker' in navigator
     && 'PushManager' in window
     && 'Notification' in window
+}
+
+export function rememberedVapidPublicKey(): string | null {
+  try {
+    return localStorage.getItem(VAPID_PUBLIC_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function rememberVapidPublicKey(publicKey: string) {
+  try {
+    localStorage.setItem(VAPID_PUBLIC_STORAGE_KEY, publicKey)
+  } catch {
+    /* private mode */
+  }
+}
+
+export function clearRememberedVapidPublicKey() {
+  try {
+    localStorage.removeItem(VAPID_PUBLIC_STORAGE_KEY)
+  } catch {
+    /* private mode */
+  }
+}
+
+/** True when browser subscription was created with a different VAPID public key. */
+export function vapidPublicKeyChanged(serverPublicKey: string): boolean {
+  const prev = rememberedVapidPublicKey()
+  return Boolean(prev && serverPublicKey && prev !== serverPublicKey)
 }
 
 export async function fetchPushConfig(token: string | null): Promise<PushConfig> {
@@ -44,14 +76,33 @@ export async function resolveDevicePushStatus(config: PushConfig | null | undefi
   if (!config.enabled || !config.public_key) return 'server_disabled'
   if (Notification.permission === 'denied') return 'denied'
   const sub = await getLocalPushSubscription()
-  if (sub) return 'subscribed'
+  if (sub) {
+    // Existing browser sub may be bound to a rotated VAPID key — treat as needing re-enable.
+    if (vapidPublicKeyChanged(config.public_key)) return 'ready'
+    return 'subscribed'
+  }
   if (Notification.permission === 'granted') return 'ready'
   return 'default'
 }
 
+async function putSubscription(token: string | null, subscription: PushSubscription) {
+  const json = subscription.toJSON()
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+    throw new Error('Не удалось получить ключи подписки')
+  }
+  await apiRequest('/v1/push/subscription', {
+    method: 'PUT',
+    token,
+    body: {
+      endpoint: json.endpoint,
+      keys: json.keys,
+    },
+  })
+}
+
 /**
  * Enable push after an explicit user gesture.
- * Reuses an existing browser subscription and always syncs it to the backend.
+ * Re-subscribes when the server VAPID public key changed (key rotation).
  */
 export async function enableDevicePush(token: string | null, publicKey: string) {
   if (!browserSupportsWebPush()) {
@@ -67,38 +118,45 @@ export async function enableDevicePush(token: string | null, publicKey: string) 
     throw new Error('Разрешение на уведомления не выдано. Включите их в настройках браузера или системы.')
   }
   const registration = await navigator.serviceWorker.ready
-  const existing = await registration.pushManager.getSubscription()
-  const subscription = existing ?? await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(publicKey),
-  })
-  const json = subscription.toJSON()
-  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
-    throw new Error('Не удалось получить ключи подписки')
+  let subscription = await registration.pushManager.getSubscription()
+  if (subscription && vapidPublicKeyChanged(publicKey)) {
+    try {
+      await subscription.unsubscribe()
+    } catch {
+      /* recreate below */
+    }
+    subscription = null
   }
-  await apiRequest('/v1/push/subscription', {
-    method: 'PUT',
-    token,
-    body: {
-      endpoint: json.endpoint,
-      keys: json.keys,
-    },
-  })
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    })
+  }
+  await putSubscription(token, subscription)
+  rememberVapidPublicKey(publicKey)
   return subscription
 }
 
-/** If the browser already has a subscription, sync it to the backend (no permission prompt). */
-export async function syncDevicePush(token: string | null) {
+/**
+ * If the browser already has a subscription for the current VAPID key, sync it to the backend.
+ * When the server key rotated, drop the stale browser subscription so UX shows «ready».
+ */
+export async function syncDevicePush(token: string | null, publicKey?: string) {
   if (!browserSupportsWebPush() || Notification.permission !== 'granted') return false
   const subscription = await getLocalPushSubscription()
   if (!subscription) return false
-  const json = subscription.toJSON()
-  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false
-  await apiRequest('/v1/push/subscription', {
-    method: 'PUT',
-    token,
-    body: { endpoint: json.endpoint, keys: json.keys },
-  })
+  if (publicKey && vapidPublicKeyChanged(publicKey)) {
+    try {
+      await subscription.unsubscribe()
+    } catch {
+      /* ignore */
+    }
+    clearRememberedVapidPublicKey()
+    return false
+  }
+  await putSubscription(token, subscription)
+  if (publicKey) rememberVapidPublicKey(publicKey)
   return true
 }
 
@@ -106,13 +164,17 @@ export async function disableDevicePush(token: string | null) {
   if (!('serviceWorker' in navigator)) return
   const registration = await navigator.serviceWorker.ready
   const subscription = await registration.pushManager.getSubscription()
-  if (!subscription) return
+  if (!subscription) {
+    clearRememberedVapidPublicKey()
+    return
+  }
   const endpoint = subscription.endpoint
   try {
     await subscription.unsubscribe()
   } catch {
     /* still remove on server */
   }
+  clearRememberedVapidPublicKey()
   await apiRequest('/v1/push/subscription', {
     method: 'DELETE',
     token,

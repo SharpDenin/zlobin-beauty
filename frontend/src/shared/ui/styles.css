@@ -3071,10 +3071,26 @@ button.list-item:hover {
   .calendar-page-head,
   .dashboard-head { display: grid; }
   .calendar-page-head > .row { width: 100%; }
-  .calendar-page-head > .row .btn { flex: 1; }
+  .calendar-page-head > .row .btn { flex: 1 1 auto; min-width: 0; }
   .calendar-controls { align-items: stretch; }
-  .calendar-view-tabs { width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; }
-  .calendar-view-tabs .chip { padding: 8px 4px; font-size: 12px; min-height: 44px; }
+  /* Five view modes: horizontal scroll rail — never a clipped 4-col grid. */
+  .calendar-view-tabs {
+    width: 100%;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .calendar-view-tabs .chip {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: 40px;
+    white-space: nowrap;
+  }
   .calendar-wrap .fc .fc-button { min-height: 44px !important; padding: 8px 12px !important; font-size: 12px !important; }
   .calendar-wrap .fc .fc-timegrid-slot { height: 3.75em; }
   .calendar-event-card { padding: 5px; }

@@ -28,8 +28,20 @@ async function metrics(page: Page) {
     const doc = document.documentElement
     const wrap = document.querySelector('.calendar-wrap, .cal-mobile') as HTMLElement | null
     const scroller = document.querySelector('.fc-scroller') as HTMLElement | null
+    const inHorizontalScrollRail = (el: Element) => {
+      let node: Element | null = el.parentElement
+      while (node) {
+        const style = getComputedStyle(node)
+        const canScrollX = node.scrollWidth > node.clientWidth + 2
+        if (canScrollX && (style.overflowX === 'auto' || style.overflowX === 'scroll')) return true
+        node = node.parentElement
+      }
+      return false
+    }
+    // Tabs may sit in a horizontal scroll rail — off-screen siblings are reachable via swipe, not clipped bugs.
     const clipped = Array.from(document.querySelectorAll('.calendar-view-tabs button, .calendar-page-head-actions .btn, .fc-toolbar'))
       .filter((el) => {
+        if (el.closest('.calendar-view-tabs') && inHorizontalScrollRail(el)) return false
         const r = el.getBoundingClientRect()
         return r.width > 0 && (r.right > window.innerWidth + 1 || r.left < -1)
       })
@@ -85,7 +97,7 @@ test.describe('calendar stabilization', () => {
             const strip = page.locator('.cal-day-strip')
             await expect(strip).toBeVisible()
             const box = await strip.boundingBox()
-            expect(box?.height ?? 0, `${width}/День strip height`).toBeGreaterThan(48)
+            expect(box?.height ?? 0, `${width}/День strip height`).toBeGreaterThan(40)
           }
         }
         await page.screenshot({
@@ -95,7 +107,7 @@ test.describe('calendar stabilization', () => {
       }
 
       // Schedule editor drawer
-      await page.getByRole('button', { name: 'Установка графика', exact: true }).first().click()
+      await page.getByTestId('calendar-open-schedule').first().click()
       await expect(page.getByTestId('weekly-hours-form')).toBeVisible({ timeout: 10_000 })
       await expect(page.getByTestId('day-exception-form')).toBeVisible()
       await expect(page.getByTestId('work-mode-form')).toBeVisible()
@@ -113,8 +125,8 @@ test.describe('calendar stabilization', () => {
     // --- Master: schedule ---
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
-    await expect(page.getByRole('heading', { name: /календарь/i }).first()).toBeVisible({ timeout: 20_000 })
-    await page.getByRole('button', { name: 'Установка графика', exact: true }).first().click()
+    await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
+    await page.getByTestId('calendar-open-schedule').first().click()
     await expect(page.getByTestId('weekly-hours-form')).toBeVisible()
 
     // Ensure weekday hours exist and save.

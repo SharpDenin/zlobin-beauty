@@ -137,6 +137,48 @@ func (s *Store) ListHairConsultationsForUser(ctx context.Context, userID uuid.UU
 	return out, rows.Err()
 }
 
+// ListHairConsultationsForClientOnCard returns consultations for a client user,
+// optionally narrowed to a specific card id when set on the row.
+func (s *Store) ListHairConsultationsForClientOnCard(ctx context.Context, clientUserID uuid.UUID, cardID *uuid.UUID, limit int) ([]domain.HairConsultation, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+consultCols+` FROM hair_consultations
+WHERE client_user_id=$1
+  AND ($2::uuid IS NULL OR client_card_id IS NULL OR client_card_id=$2)
+ORDER BY updated_at DESC LIMIT $3`, clientUserID, cardID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.HairConsultation
+	for rows.Next() {
+		c, err := scanConsult(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	if out == nil {
+		out = []domain.HairConsultation{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) FindClientCardID(ctx context.Context, orgID, clientUserID uuid.UUID) (*uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+SELECT id FROM client_cards WHERE organization_id=$1 AND user_id=$2`, orgID, clientUserID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 func (s *Store) ListHairConsultationVersions(ctx context.Context, consultationID uuid.UUID) ([]domain.HairConsultationVersion, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT `+versionCols+` FROM hair_consultation_versions

@@ -1855,6 +1855,128 @@ button.list-item:hover {
   box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
+/* Client CRM card — tabs + hero (Glass, existing tokens) */
+.client-card-page { gap: var(--space-4); }
+.client-card-hero { gap: var(--space-3); }
+.client-card-hero-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+.client-card-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius-md);
+}
+.client-card-hero-meta { min-width: 0; }
+.client-card-tabs {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+.client-skin-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.client-last-visit-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+.client-note-item {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+.client-note-item:last-child { border-bottom: 0; }
+
+/* Hair diagnostics — reference composition */
+.consult-detail { gap: var(--space-4); }
+.consult-param-list {
+  display: grid;
+  gap: var(--space-2);
+}
+.consult-param-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--glass-control-fill);
+  border: 1px solid var(--glass-border);
+  min-width: 0;
+}
+.consult-param-row select,
+.consult-param-row input {
+  max-width: 55%;
+  text-align: right;
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+}
+.consult-photo-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-success);
+  font-weight: 600;
+}
+.consult-price-card {
+  text-align: center;
+  padding: var(--space-4);
+}
+.consult-price-card .consult-price-value {
+  font-size: var(--text-xl);
+  font-weight: 800;
+  margin: var(--space-2) 0 0;
+}
+.consult-service-list {
+  display: grid;
+  gap: var(--space-2);
+}
+.consult-service-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-fill);
+}
+.consult-service-item.is-checked {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+.consult-master-block {
+  display: grid;
+  gap: var(--space-2);
+}
+.consult-master-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-control-fill);
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  cursor: pointer;
+}
+@media (max-width: 430px) {
+  .client-card-hero-row { grid-template-columns: 80px minmax(0, 1fr); }
+  .client-card-avatar { width: 80px; height: 80px; }
+}
+
 .dropzone-wrap { min-width: 0; }
 .dropzone {
   position: relative;

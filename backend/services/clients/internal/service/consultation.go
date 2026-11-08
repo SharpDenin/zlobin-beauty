@@ -36,6 +36,19 @@ func (s *Service) CreateHairConsultation(ctx context.Context, actor uuid.UUID, i
 	if in.MasterUserID == actor {
 		return nil, apperr.Validation("cannot create consultation with yourself")
 	}
+	// Resolve master's solo/salon org when the client did not pass organization_id.
+	// Services always belong to an organization in marketplace; private masters still have one.
+	if in.OrganizationID == nil {
+		if orgID, err := s.lookupMasterOrganization(ctx, in.MasterUserID); err == nil && orgID != nil {
+			in.OrganizationID = orgID
+		}
+	}
+	// Link to existing CRM card when possible so diagnostics appear under Analyses.
+	if in.ClientCardID == nil && in.OrganizationID != nil {
+		if cardID, err := s.store.FindClientCardID(ctx, *in.OrganizationID, actor); err == nil && cardID != nil {
+			in.ClientCardID = cardID
+		}
+	}
 	now := s.now().UTC()
 	cid := ids.New()
 	vid := ids.New()
@@ -65,6 +78,29 @@ func (s *Service) ListHairConsultations(ctx context.Context, actor uuid.UUID, as
 		return nil, apperr.Unauthorized("authentication required")
 	}
 	items, err := s.store.ListHairConsultationsForUser(ctx, actor, asMaster, 50, 0)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	for i := range items {
+		if items[i].CurrentVersionID != nil {
+			v, err := s.store.GetHairConsultationVersion(ctx, *items[i].CurrentVersionID)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			items[i].CurrentVersion = v
+		}
+	}
+	return items, nil
+}
+
+// ListConsultationsForCard returns diagnostics linked to the card's client (shared SoT).
+func (s *Service) ListConsultationsForCard(ctx context.Context, cardID, actor uuid.UUID) ([]domain.HairConsultation, error) {
+	card, err := s.GetCard(ctx, cardID, actor)
+	if err != nil {
+		return nil, err
+	}
+	cid := card.ID
+	items, err := s.store.ListHairConsultationsForClientOnCard(ctx, card.UserID, &cid, 50)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
@@ -278,7 +314,11 @@ func (s *Service) PatchPlan(ctx context.Context, id, actor uuid.UUID, in PatchPl
 		return nil, apperr.Conflict("plan can only be edited while work is in progress")
 	}
 	now := s.now().UTC()
-	v.Plan = normalizeJSON(in.Plan)
+	plan, err := s.normalizePlanPrices(ctx, in.Plan)
+	if err != nil {
+		return nil, err
+	}
+	v.Plan = plan
 	v.UpdatedAt = now
 	if err := s.store.UpdateHairConsultationVersionFields(ctx, *v, true); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -760,4 +800,129 @@ func validatePlanForSend(raw json.RawMessage) error {
 		return apperr.Validation("plan.formula is required")
 	}
 	return nil
+}
+
+// normalizePlanPrices recomputes price_total_minor from marketplace catalog prices for
+// selected_service_ids so the client cannot spoof the diagnostic total.
+func (s *Service) normalizePlanPrices(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	plan := map[string]any{}
+	if err := json.Unmarshal(normalizeJSON(raw), &plan); err != nil {
+		return nil, apperr.Validation("invalid plan")
+	}
+	ids := parseServiceIDList(plan["selected_service_ids"])
+	if len(ids) == 0 {
+		plan["selected_service_ids"] = []string{}
+		plan["price_total_minor"] = int64(0)
+		out, err := json.Marshal(plan)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		return out, nil
+	}
+	var total int64
+	normalized := make([]string, 0, len(ids))
+	for _, id := range ids {
+		price, err := s.lookupServicePriceMinor(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		total += price
+		normalized = append(normalized, id.String())
+	}
+	plan["selected_service_ids"] = normalized
+	plan["price_total_minor"] = total
+	out, err := json.Marshal(plan)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
+}
+
+func parseServiceIDList(raw any) []uuid.UUID {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]uuid.UUID, 0, len(arr))
+	seen := map[uuid.UUID]struct{}{}
+	for _, item := range arr {
+		s, ok := item.(string)
+		if !ok {
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimSpace(s))
+		if err != nil {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (s *Service) lookupServicePriceMinor(ctx context.Context, serviceID uuid.UUID) (int64, error) {
+	if s.marketplaceURL == "" {
+		return 0, apperr.Internal(errors.New("marketplace unavailable"))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/services/"+serviceID.String(), nil)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return 0, apperr.Validation("unknown service in selected_service_ids")
+	}
+	if resp.StatusCode >= 300 {
+		return 0, apperr.Internal(errors.New("marketplace unavailable"))
+	}
+	var body struct {
+		PriceMinor int64 `json:"price_minor"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, apperr.Internal(err)
+	}
+	if body.PriceMinor < 0 {
+		return 0, apperr.Validation("invalid service price")
+	}
+	return body.PriceMinor, nil
+}
+
+func (s *Service) lookupMasterOrganization(ctx context.Context, masterUserID uuid.UUID) (*uuid.UUID, error) {
+	if s.marketplaceURL == "" || s.internalToken == "" {
+		return nil, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/internal/masters/by-user/"+masterUserID.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, nil
+	}
+	var body struct {
+		OrganizationID string `json:"organization_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.OrganizationID) == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(body.OrganizationID)
+	if err != nil {
+		return nil, nil
+	}
+	return &id, nil
 }

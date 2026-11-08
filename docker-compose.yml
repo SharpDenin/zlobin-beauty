@@ -191,12 +191,15 @@ services:
       ORGANIZATIONS_URL: http://organizations:8080
       IDENTITY_URL: http://identity:8080
       COMMUNICATIONS_URL: http://communications:8080
+      MARKETPLACE_URL: http://marketplace:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:
       - ./backend/services/clients/migrations:/migrations:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      marketplace:
         condition: service_healthy
 
   commerce:

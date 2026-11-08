@@ -33,6 +33,7 @@
     "luxon": "^3.7.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-easy-crop": "^5.5.7",
     "react-grid-layout": "^2.2.4",
     "react-hook-form": "^7.55.0",
     "react-leaflet": "^5.0.0",

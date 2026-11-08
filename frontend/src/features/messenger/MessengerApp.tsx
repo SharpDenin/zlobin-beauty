@@ -26,6 +26,8 @@ import {
 } from '@/features/messenger/helpers'
 import { MESSAGE_PAGE_SIZE, type ChatMessage, type Conversation, type MessageListResponse } from '@/features/messenger/types'
 import { uploadMedia, MEDIA_ACCEPT_IMAGE_OR_VIDEO, validateMediaFile } from '@/shared/lib/mediaUpload'
+import { cropAspectForPurpose, shouldOpenImageCrop } from '@/shared/lib/imageCrop'
+import { ImageCropEditor } from '@/shared/ui/ImageCropEditor'
 import { toast } from '@/shared/ui/Toast'
 import { moderationError } from '@/shared/lib/moderation'
 
@@ -46,6 +48,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const [draft, setDraft] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [filePreview, setFilePreview] = useState<string | null>(null)
+  const [cropFile, setCropFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [local, setLocal] = useState<LocalMessage[]>([])
@@ -293,6 +296,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   function pickFile(next: File | null) {
     if (!next) {
       setFile(null)
+      setCropFile(null)
       return
     }
     const err = validateMediaFile(next, { allowVideo: true })
@@ -301,6 +305,10 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       return
     }
     setError(null)
+    if (shouldOpenImageCrop(next)) {
+      setCropFile(next)
+      return
+    }
     setFile(next)
   }
 
@@ -517,7 +525,10 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
             type="file"
             accept={MEDIA_ACCEPT_IMAGE_OR_VIDEO}
             hidden
-            onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              pickFile(e.target.files?.[0] ?? null)
+              e.target.value = ''
+            }}
           />
           <button
             className="btn btn-secondary composer-attach"
@@ -568,6 +579,25 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       >
         {lightbox && <MediaImage mediaId={lightbox} token={accessToken} alt="Вложение" />}
       </Overlay>
+      <ImageCropEditor
+        open={Boolean(cropFile)}
+        file={cropFile}
+        aspect={cropAspectForPurpose('message')}
+        title="Вложение"
+        confirmLabel="Готово"
+        onCancel={() => {
+          setCropFile(null)
+          if (fileInputRef.current) fileInputRef.current.value = ''
+        }}
+        onPickAnother={() => {
+          setCropFile(null)
+          requestAnimationFrame(() => fileInputRef.current?.click())
+        }}
+        onConfirm={(cropped) => {
+          setCropFile(null)
+          setFile(cropped)
+        }}
+      />
     </div>
   )
 }

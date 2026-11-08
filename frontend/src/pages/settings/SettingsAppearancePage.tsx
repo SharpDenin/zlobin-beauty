@@ -4,9 +4,11 @@ import { apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { usePreference } from '@/shared/lib/preferences'
 import { uploadMedia, MEDIA_ACCEPT_IMAGES, validateMediaFile } from '@/shared/lib/mediaUpload'
+import { cropAspectForPurpose, shouldOpenImageCrop } from '@/shared/lib/imageCrop'
 import { loadMediaBlobUrl } from '@/shared/lib/mediaCache'
 import { ThemeToggle } from '@/shared/ui/ThemeToggle'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { ImageCropEditor } from '@/shared/ui/ImageCropEditor'
 import {
   HOME_BACKGROUNDS,
   HOME_BG_PREF_KEY,
@@ -28,6 +30,7 @@ export function SettingsAppearancePage() {
   const [ok, setOk] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [cropFile, setCropFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const hydratedRemote = useRef(false)
 
@@ -53,15 +56,8 @@ export function SettingsAppearancePage() {
     setOk('Системный фон сохранён')
   }
 
-  async function onUpload(file: File | undefined) {
-    if (!file || !accessToken) return
-    setError(null)
-    setOk(null)
-    const invalid = validateMediaFile(file, { allowGif: false, allowVideo: false })
-    if (invalid) {
-      setError(invalid)
-      return
-    }
+  async function uploadWallpaper(file: File) {
+    if (!accessToken) return
     setUploading(true)
     try {
       const previousMedia = background.source === 'custom' ? background.mediaId : null
@@ -84,6 +80,22 @@ export function SettingsAppearancePage() {
       setUploading(false)
       if (fileRef.current) fileRef.current.value = ''
     }
+  }
+
+  function onUpload(file: File | undefined) {
+    if (!file || !accessToken) return
+    setError(null)
+    setOk(null)
+    const invalid = validateMediaFile(file, { allowGif: false, allowVideo: false })
+    if (invalid) {
+      setError(invalid)
+      return
+    }
+    if (shouldOpenImageCrop(file)) {
+      setCropFile(file)
+      return
+    }
+    void uploadWallpaper(file)
   }
 
   async function onDeleteCustom() {
@@ -158,7 +170,10 @@ export function SettingsAppearancePage() {
               hidden
               disabled={uploading || deleting}
               data-testid="settings-bg-upload"
-              onChange={(e) => void onUpload(e.target.files?.[0])}
+              onChange={(e) => {
+                onUpload(e.target.files?.[0])
+                e.target.value = ''
+              }}
             />
           </label>
           {background.source === 'custom' && (
@@ -182,6 +197,26 @@ export function SettingsAppearancePage() {
           )}
         </div>
       </section>
+
+      <ImageCropEditor
+        open={Boolean(cropFile)}
+        file={cropFile}
+        aspect={cropAspectForPurpose('wallpaper')}
+        title="Фон главной"
+        confirmLabel="Загрузить"
+        onCancel={() => {
+          setCropFile(null)
+          if (fileRef.current) fileRef.current.value = ''
+        }}
+        onPickAnother={() => {
+          setCropFile(null)
+          requestAnimationFrame(() => fileRef.current?.click())
+        }}
+        onConfirm={(cropped) => {
+          setCropFile(null)
+          void uploadWallpaper(cropped)
+        }}
+      />
     </div>
   )
 }

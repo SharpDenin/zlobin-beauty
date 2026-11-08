@@ -8,6 +8,8 @@ import { formatMoney } from '@/shared/lib/money'
 import { initials } from '@/shared/lib/initials'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { uploadMedia } from '@/shared/lib/mediaUpload'
+import { cropAspectForPurpose, shouldOpenImageCrop } from '@/shared/lib/imageCrop'
+import { ImageCropEditor } from '@/shared/ui/ImageCropEditor'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { AppIcon, type AppIconName } from '@/shared/ui/AppIcon'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
@@ -125,6 +127,7 @@ export function OwnerStartPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [selectedDay, setSelectedDay] = useState(() => new Date())
   const [photoBusy, setPhotoBusy] = useState(false)
+  const [cropFile, setCropFile] = useState<File | null>(null)
   const days = useMemo(() => weekDays(new Date()), [])
   const audience = homeAudience(cabinet.kind)
   const showSchedule = homeShowsSchedule(cabinet.kind)
@@ -233,8 +236,8 @@ export function OwnerStartPage() {
             ? (user?.display_name || 'Главная')
             : displayName
 
-  async function onPhoto(file: File | undefined) {
-    if (!file || !accessToken || !master) return
+  async function saveProfilePhoto(file: File) {
+    if (!accessToken || !master) return
     setPhotoBusy(true)
     try {
       const uploaded = await uploadMedia(file, 'profile', accessToken)
@@ -265,6 +268,15 @@ export function OwnerStartPage() {
       setPhotoBusy(false)
       if (fileRef.current) fileRef.current.value = ''
     }
+  }
+
+  function onPhoto(file: File | undefined) {
+    if (!file || !accessToken || !master) return
+    if (shouldOpenImageCrop(file)) {
+      setCropFile(file)
+      return
+    }
+    void saveProfilePhoto(file)
   }
 
   return (
@@ -313,7 +325,10 @@ export function OwnerStartPage() {
                     ref={fileRef}
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
-                    onChange={(e) => void onPhoto(e.target.files?.[0])}
+                    onChange={(e) => {
+                      onPhoto(e.target.files?.[0])
+                      e.target.value = ''
+                    }}
                   />
                   {photoBusy ? 'Сохраняем…' : 'Изменить фото'}
                 </label>
@@ -321,6 +336,26 @@ export function OwnerStartPage() {
             </div>
           </div>
         </header>
+
+        <ImageCropEditor
+          open={Boolean(cropFile)}
+          file={cropFile}
+          aspect={cropAspectForPurpose('profile')}
+          title="Фото профиля"
+          confirmLabel="Сохранить"
+          onCancel={() => {
+            setCropFile(null)
+            if (fileRef.current) fileRef.current.value = ''
+          }}
+          onPickAnother={() => {
+            setCropFile(null)
+            requestAnimationFrame(() => fileRef.current?.click())
+          }}
+          onConfirm={(cropped) => {
+            setCropFile(null)
+            void saveProfilePhoto(cropped)
+          }}
+        />
 
         <section className="owner-start-hero">
           <h1>{title}</h1>

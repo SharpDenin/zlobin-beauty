@@ -177,8 +177,11 @@ describe('MessengerApp', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(['hello'], 'tone.jpg', { type: 'image/jpeg' })
     fireEvent.change(input, { target: { files: [file] } })
-    expect(await screen.findByRole('button', { name: 'Убрать файл' })).toBeTruthy()
-    expect(screen.getByAltText('Предпросмотр')).toBeTruthy()
+    // Static photos open the shared crop editor before attaching.
+    expect(await screen.findByTestId('image-crop-editor')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('image-crop-cancel'))
+    expect(screen.queryByTestId('image-crop-editor')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Убрать файл' })).toBeNull()
   })
 
   it('previews a selected video before send', async () => {

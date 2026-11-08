@@ -72,6 +72,9 @@ test.describe('Settings hub appearance', () => {
 
     const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), '../public/backgrounds/pebble-shore.jpg')
     await page.getByTestId('settings-bg-upload').setInputFiles(fixture)
+    const crop = page.getByTestId('image-crop-editor')
+    await expect(crop).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId('image-crop-confirm').click()
     await expect(page.getByText('Свой фон загружен')).toBeVisible({ timeout: 30_000 })
     await expect(page.getByTestId('settings-bg-delete')).toBeVisible()
 

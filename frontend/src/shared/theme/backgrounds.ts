@@ -1,16 +1,18 @@
 import { useSyncExternalStore } from 'react'
-import { applyAccent } from '@/shared/theme/accent'
+import { applyAccent, DEFAULT_UI_ACCENT, readDocumentTheme } from '@/shared/theme/accent'
+import { extractDominantAccent } from '@/shared/theme/extractWallpaperAccent'
 import { loadMediaBlobUrl } from '@/shared/lib/mediaCache'
 
 export const HOME_BG_STORAGE_KEY = 'zb.home-bg'
 export const HOME_BG_MEDIA_STORAGE_KEY = 'zb.home-bg-media'
+export const HOME_BG_ACCENT_STORAGE_KEY = 'zb.home-bg-accent'
 export const HOME_BG_PREF_KEY = 'ui.home_bg'
 
 export type HomeBackground = {
   id: string
   label: string
   src: string
-  /** Base accent. Soft, ink, glow and button gradient are derived. */
+  /** Base accent (curated or extracted). Soft, ink, glow and button gradient are derived. */
   accent: string
   /** Dark photos keep light foreground glass. */
   tone: 'dark'
@@ -50,11 +52,26 @@ export const HOME_BACKGROUNDS: HomeBackground[] = [
   },
 ]
 
+type AccentCache = {
+  v: 1
+  map: Record<string, string>
+  activeKey: string | null
+}
+
 const listeners = new Set<() => void>()
 let customSrcOverride: string | null = null
+/** Monotonic generation — drop stale async extract results. */
+let accentExtractGeneration = 0
+/** Wallpaper keys currently being analyzed (dedupe concurrent extract). */
+const accentExtractInFlight = new Set<string>()
 
 export function backgroundById(id: string | null | undefined): HomeBackground {
   return HOME_BACKGROUNDS.find((b) => b.id === id) ?? HOME_BACKGROUNDS[0]
+}
+
+export function wallpaperAccentKey(bg: Pick<HomeBackground, 'source' | 'id' | 'mediaId'>): string {
+  if (bg.source === 'custom' && bg.mediaId) return `custom:${bg.mediaId}`
+  return `system:${bg.id.startsWith('custom:') ? readStoredBackgroundId() : bg.id}`
 }
 
 export function readStoredBackgroundId(): string {
@@ -73,6 +90,58 @@ export function readStoredCustomMediaId(): string | null {
   } catch {
     return null
   }
+}
+
+function emptyAccentCache(): AccentCache {
+  return { v: 1, map: {}, activeKey: null }
+}
+
+function readAccentCache(): AccentCache {
+  try {
+    const raw = localStorage.getItem(HOME_BG_ACCENT_STORAGE_KEY)
+    if (!raw) return emptyAccentCache()
+    const parsed = JSON.parse(raw) as Partial<AccentCache>
+    if (parsed?.v !== 1 || !parsed.map || typeof parsed.map !== 'object') return emptyAccentCache()
+    return {
+      v: 1,
+      map: parsed.map as Record<string, string>,
+      activeKey: typeof parsed.activeKey === 'string' ? parsed.activeKey : null,
+    }
+  } catch {
+    return emptyAccentCache()
+  }
+}
+
+function writeAccentCache(cache: AccentCache) {
+  try {
+    localStorage.setItem(HOME_BG_ACCENT_STORAGE_KEY, JSON.stringify(cache))
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function isHexColor(value: string | null | undefined): value is string {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim())
+}
+
+export function readCachedAccent(key: string): string | null {
+  const hex = readAccentCache().map[key]
+  return isHexColor(hex) ? hex : null
+}
+
+export function writeCachedAccent(key: string, hex: string) {
+  if (!isHexColor(hex)) return
+  const cache = readAccentCache()
+  cache.map[key] = hex.trim()
+  cache.activeKey = key
+  writeAccentCache(cache)
+}
+
+function markActiveAccentKey(key: string) {
+  const cache = readAccentCache()
+  if (cache.activeKey === key) return
+  cache.activeKey = key
+  writeAccentCache(cache)
 }
 
 function notify() {
@@ -123,34 +192,90 @@ export const APP_BG_IMAGE_VAR = '--app-bg-image'
 /** @deprecated Prefer `--app-bg-image`; kept for owner-home and legacy CSS. */
 export const OWNER_BG_IMAGE_VAR = '--owner-bg-image'
 
-function applyVisual(bg: HomeBackground, srcOverride?: string | null) {
-  applyAccent(bg.accent)
+function resolveAccentForBackground(bg: HomeBackground): string {
+  const key = wallpaperAccentKey(bg)
+  const cached = readCachedAccent(key)
+  if (cached) return cached
+  if (bg.source === 'system' && isHexColor(bg.accent)) return bg.accent
+  return DEFAULT_UI_ACCENT
+}
+
+/**
+ * Kick off client-side image analysis once per wallpaper key.
+ * Cached / curated accent is already applied synchronously — this only refines.
+ */
+function scheduleAccentExtraction(bg: HomeBackground, src: string) {
   if (typeof document === 'undefined') return
+  const key = wallpaperAccentKey(bg)
+  if (readCachedAccent(key)) {
+    markActiveAccentKey(key)
+    return
+  }
+  if (accentExtractInFlight.has(key)) return
+  accentExtractInFlight.add(key)
+  const generation = ++accentExtractGeneration
+
+  void (async () => {
+    try {
+      const raw = await extractDominantAccent(src)
+      // Persist even if a newer extract started — otherwise a raced applyVisual
+      // can leave the cache empty forever after an early generation return.
+      const hex = raw && isHexColor(raw) ? raw : bg.source === 'system' && isHexColor(bg.accent) ? bg.accent : DEFAULT_UI_ACCENT
+      if (!readCachedAccent(key)) writeCachedAccent(key, hex)
+      if (generation !== accentExtractGeneration) return
+      writeCachedAccent(key, hex)
+      const current = getHomeBackground()
+      if (wallpaperAccentKey(current) !== key) return
+      applyAccent(hex, readDocumentTheme())
+      notify()
+    } catch {
+      const fallback = bg.source === 'system' && isHexColor(bg.accent) ? bg.accent : DEFAULT_UI_ACCENT
+      if (!readCachedAccent(key)) writeCachedAccent(key, fallback)
+      if (generation !== accentExtractGeneration) return
+      writeCachedAccent(key, fallback)
+    } finally {
+      accentExtractInFlight.delete(key)
+    }
+  })()
+}
+
+function applyVisual(bg: HomeBackground, srcOverride?: string | null, opts?: { extract?: boolean }) {
   const src = srcOverride || bg.src
-  const value = `url('${src}')`
-  const root = document.documentElement
-  root.dataset.homeBg = bg.id
-  // Primary global token used by body::before atmosphere…
-  root.style.setProperty(APP_BG_IMAGE_VAR, value)
-  // …and legacy alias for any remaining --owner-bg-image consumers.
-  root.style.setProperty(OWNER_BG_IMAGE_VAR, value)
+  const accent = resolveAccentForBackground(bg)
+  const key = wallpaperAccentKey(bg)
+  markActiveAccentKey(key)
+  applyAccent(accent, readDocumentTheme())
+  if (typeof document !== 'undefined') {
+    const value = `url('${src}')`
+    const root = document.documentElement
+    root.dataset.homeBg = bg.id
+    // Primary global token used by body::before atmosphere…
+    root.style.setProperty(APP_BG_IMAGE_VAR, value)
+    // …and legacy alias for any remaining --owner-bg-image consumers.
+    root.style.setProperty(OWNER_BG_IMAGE_VAR, value)
+  }
+  if (opts?.extract !== false) {
+    scheduleAccentExtraction({ ...bg, accent }, src)
+  }
 }
 
 export function getHomeBackground(): HomeBackground {
   const mediaId = readStoredCustomMediaId()
   if (mediaId) {
     const fallback = backgroundById(readStoredBackgroundId())
-    return {
+    const partial = {
       id: `custom:${mediaId}`,
       label: 'Свой фон',
       src: customSrcOverride || fallback.src,
       accent: fallback.accent,
-      tone: 'dark',
+      tone: 'dark' as const,
       mediaId,
-      source: 'custom',
+      source: 'custom' as const,
     }
+    return { ...partial, accent: resolveAccentForBackground(partial) }
   }
-  return { ...backgroundById(readStoredBackgroundId()), source: 'system' }
+  const system = { ...backgroundById(readStoredBackgroundId()), source: 'system' as const }
+  return { ...system, accent: resolveAccentForBackground(system) }
 }
 
 export function subscribeHomeBackground(cb: () => void) {
@@ -220,7 +345,8 @@ export function applyStoredBackground() {
   }
   if (mediaId) {
     // Blob not ready yet — show last system art until hydrateCustomBackground resolves.
-    applyVisual(backgroundById(readStoredBackgroundId()))
+    // Do not extract from the wrong photo.
+    applyVisual(backgroundById(readStoredBackgroundId()), undefined, { extract: false })
     return
   }
   applyVisual(backgroundById(readStoredBackgroundId()))
@@ -259,7 +385,7 @@ export function useHomeBackground(): HomeBackground {
     subscribeHomeBackground,
     () => {
       const bg = getHomeBackground()
-      return `${bg.id}|${bg.src}|${bg.mediaId ?? ''}`
+      return `${bg.id}|${bg.src}|${bg.mediaId ?? ''}|${bg.accent}`
     },
     () => HOME_BACKGROUNDS[0].id,
   )

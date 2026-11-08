@@ -1,18 +1,28 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   HOME_BACKGROUNDS,
+  HOME_BG_ACCENT_STORAGE_KEY,
   HOME_BG_MEDIA_STORAGE_KEY,
   HOME_BG_STORAGE_KEY,
   backgroundById,
   clearCustomHomeBackground,
+  getHomeBackground,
   parseHomeBgPreference,
   preferenceFromStorage,
+  readCachedAccent,
   setHomeBackground,
+  wallpaperAccentKey,
+  writeCachedAccent,
 } from './backgrounds'
+
+vi.mock('@/shared/theme/extractWallpaperAccent', () => ({
+  extractDominantAccent: vi.fn(async () => null),
+}))
 
 describe('home backgrounds', () => {
   beforeEach(() => {
     localStorage.clear()
+    document.documentElement.dataset.theme = 'dark'
   })
 
   it('falls back to the first system background', () => {
@@ -50,5 +60,22 @@ describe('home backgrounds', () => {
     clearCustomHomeBackground()
     expect(localStorage.getItem(HOME_BG_MEDIA_STORAGE_KEY)).toBeNull()
     expect(localStorage.getItem(HOME_BG_STORAGE_KEY)).toBe(HOME_BACKGROUNDS[0].id)
+  })
+
+  it('persists wallpaper accent cache and restores it on selection', () => {
+    const key = wallpaperAccentKey({ source: 'system', id: 'pebble-shore' })
+    writeCachedAccent(key, '#D4A017')
+    expect(readCachedAccent(key)).toBe('#D4A017')
+    setHomeBackground('pebble-shore')
+    expect(getHomeBackground().accent).toBe('#D4A017')
+    expect(document.documentElement.style.getPropertyValue('--color-primary')).toBeTruthy()
+    const raw = localStorage.getItem(HOME_BG_ACCENT_STORAGE_KEY)
+    expect(raw).toContain('pebble-shore')
+    expect(raw).toContain('#D4A017')
+  })
+
+  it('applies curated accent immediately when cache is empty', () => {
+    setHomeBackground('mist-canyon')
+    expect(getHomeBackground().accent).toBe(HOME_BACKGROUNDS.find((b) => b.id === 'mist-canyon')!.accent)
   })
 })

@@ -20,16 +20,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const background = useHomeBackground()
 
   useLayoutEffect(() => {
+    // Theme first so accent tuning reads the correct data-theme.
+    applyTheme(theme)
     applyStoredBackground()
   }, [background.id, background.accent, background.src, theme])
 
   useEffect(() => {
     void hydrateCustomBackground()
   }, [])
-
-  useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: light)')

@@ -41,12 +41,29 @@ test.describe('Settings hub appearance', () => {
     await page.reload()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
 
-    await page.getByTestId('settings-bg-mist-canyon').click()
+    await Promise.all([
+      page.waitForResponse((res) =>
+        res.url().includes('/v1/me/preferences/') && res.request().method() === 'PUT' && res.ok(),
+      ),
+      page.getByTestId('settings-bg-mist-canyon').click(),
+    ])
     await expect(page.getByText('Системный фон сохранён')).toBeVisible()
     await page.reload()
     await expect(page.getByTestId('settings-bg-mist-canyon')).toHaveAttribute('aria-pressed', 'true')
 
+    // Wallpaper accent cache is written (curated or extracted) and survives reload.
+    await expect.poll(async () => page.evaluate(() => localStorage.getItem('zb.home-bg-accent'))).toContain('mist-canyon')
+    const primary = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim(),
+    )
+    expect(primary).toMatch(/^#?[0-9a-fA-F]{3,8}$|^rgb/i)
+
     await page.getByRole('radio', { name: 'Тёмная тема' }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    const primaryDark = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim(),
+    )
+    expect(primaryDark).toBeTruthy()
   })
 
   test('custom wallpaper upload delete and ownership', async ({ page, request }) => {

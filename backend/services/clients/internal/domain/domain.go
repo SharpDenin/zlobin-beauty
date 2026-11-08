@@ -8,16 +8,34 @@ import (
 )
 
 type ClientCard struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	UserID         uuid.UUID
-	DisplayName    string
-	Phone          *string
-	Email          *string
-	Preferences    string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	ContactsHidden bool
+	ID                 uuid.UUID
+	OrganizationID     uuid.UUID
+	UserID             uuid.UUID
+	DisplayName        string
+	Phone              *string
+	Email              *string
+	Preferences        string
+	PhotoMediaID       *uuid.UUID
+	BirthDate          *time.Time
+	LoyaltyStatus      string
+	SkinType           string
+	SkinFeatures       string
+	SkinPhotoMediaIDs  json.RawMessage
+	GeneralNotes       string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	ContactsHidden     bool
+}
+
+// VisitNoteView is a visit note with visit context for card history.
+type VisitNoteView struct {
+	ID           uuid.UUID
+	VisitID      uuid.UUID
+	AuthorUserID uuid.UUID
+	Body         string
+	CreatedAt    time.Time
+	ServiceName  string
+	CompletedAt  time.Time
 }
 
 // ClientCardListItem is a card with visit aggregates for master CRM segments.
@@ -98,11 +116,29 @@ type DisputeEvent struct {
 
 func AllowedDisputeField(key string) bool {
 	switch key {
-	case "hair_color", "hair_condition", "preferences", "display_name", "phone", "email":
+	case "hair_color", "hair_condition", "preferences", "display_name", "phone", "email",
+		"skin_type", "skin_features", "loyalty_status", "birth_date", "general_notes":
 		return true
 	default:
 		return false
 	}
+}
+
+// PatchClientCardInput is a partial update for the shared CRM card profile.
+type PatchClientCardInput struct {
+	DisplayName       *string
+	Phone             *string
+	Email             *string
+	Preferences       *string
+	PhotoMediaID      *uuid.UUID
+	ClearPhoto        bool
+	BirthDate         *time.Time
+	ClearBirthDate    bool
+	LoyaltyStatus     *string
+	SkinType          *string
+	SkinFeatures      *string
+	SkinPhotoMediaIDs json.RawMessage
+	GeneralNotes      *string
 }
 
 type Consent struct {

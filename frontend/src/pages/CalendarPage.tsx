@@ -1511,6 +1511,116 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     </div>
   )
 
+  const settingsPanel = (
+    <div className="stack calendar-color-settings" data-testid="calendar-settings">
+      <div>
+        <strong>Показ категорий</strong>
+        <p className="muted">Скрытые категории не отображаются в календаре. Настройки сохраняются до перезагрузки сессии.</p>
+      </div>
+      <div className="calendar-category-row calendar-category-row--settings" role="group" aria-label="Фильтры категорий">
+        {palette.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            className={`calendar-category-chip ${hidden.includes(c.id) ? 'is-hidden' : ''}`}
+            aria-pressed={!hidden.includes(c.id)}
+            onClick={() => setHidden((h) => (h.includes(c.id) ? h.filter((x) => x !== c.id) : [...h, c.id]))}
+          >
+            <span style={{ backgroundColor: calendarColorCss(c.color, c.id) } as CSSProperties}>{c.icon}</span>
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      <div>
+        <strong>Диапазон сетки</strong>
+        <p className="muted">Отображаемые часы, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится.</p>
+      </div>
+      <div className="calendar-display-range">
+        <div className="field">
+          <label htmlFor="cal-range-from">Начало</label>
+          <input id="cal-range-from" type="time" step={1800} value={rangeDraft.from} onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))} aria-required="true" />
+        </div>
+        <div className="field">
+          <label htmlFor="cal-range-to">Конец</label>
+          <input id="cal-range-to" type="time" step={1800} value={rangeDraft.to} onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))} aria-required="true" />
+        </div>
+      </div>
+      {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
+      <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить диапазон сетки</button>
+      {rememberedInterval ? (
+        <button
+          className="btn btn-ghost"
+          type="button"
+          onClick={() => {
+            setDisplayRangePref(rememberedInterval)
+            setRangeDraft(rememberedInterval)
+            toast.success(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
+          }}
+        >
+          Применить сохранённый интервал ({rememberedInterval.from}–{rememberedInterval.to})
+        </button>
+      ) : null}
+
+      <div>
+        <strong>Навигация</strong>
+        <p className="muted">Свайп листает день / неделю / месяц. По умолчанию — кнопки, чтобы не мешать прокрутке и перетаскиванию.</p>
+      </div>
+      <div className="segmented segmented--2" role="radiogroup" aria-label="Навигация календаря" data-testid="calendar-nav-mode">
+        <label className={navMode === 'buttons' ? 'is-active' : undefined}>
+          <input
+            type="radio"
+            name="calendar-nav-mode"
+            checked={navMode === 'buttons'}
+            onChange={() => setNavModePref('buttons')}
+          />
+          Кнопками
+        </label>
+        <label className={navMode === 'swipe' ? 'is-active' : undefined}>
+          <input
+            type="radio"
+            name="calendar-nav-mode"
+            checked={navMode === 'swipe'}
+            onChange={() => setNavModePref('swipe')}
+          />
+          Свайпом
+        </label>
+      </div>
+
+      <div>
+        <strong>Цвета и категории</strong>
+        <p className="muted">Цвет записи клиента нельзя менять. Для личных задач цвет сохраняется в событии и в профиле категории.</p>
+      </div>
+      <div className="calendar-color-grid stack">
+        {palette.map((c) => (
+          <div key={c.id} className={c.system ? 'is-disabled' : ''}>
+            <span>{c.label}</span>
+            {c.system ? (
+              <span className="muted">нельзя менять</span>
+            ) : (
+              colorTokenPicker(normalizeCalendarColor(c.color, c.id), (token) => colorSave.mutate({ category: c.id, color: token }))
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="row wrap gap">
+        <button
+          className="btn btn-secondary"
+          type="button"
+          data-testid="settings-open-schedule"
+          onClick={() => {
+            setSettingsOpen(false)
+            openSchedulePanel('hours')
+          }}
+        >
+          Установка графика
+        </button>
+        <Link className="btn btn-secondary" to="/master" onClick={() => setSettingsOpen(false)}>Профиль мастера</Link>
+      </div>
+    </div>
+  )
+
   const body = (
     <div
       className={`stack calendar-shell ${showMobileDayList ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
@@ -1520,212 +1630,114 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       onPointerUp={onPointerUpSwipe}
       onPointerCancel={() => { swipeStart.current = null }}
     >
-      {!embedded && (
-        <div className="calendar-page-head calendar-toolbar-sticky">
-          {showMobileDayList ? (
-            <h1 className="visually-hidden">{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
-          ) : (
-            <div className="stack-sm">
-              <p className="eyebrow">Расписание</p>
-              <h1>{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
-              {!compact ? (
+      <div className="calendar-chrome calendar-toolbar-sticky" ref={toolbarRef}>
+        {!embedded && (
+          <div className="calendar-page-head">
+            {showMobileDayList || compact ? (
+              <h1 className={showMobileDayList ? 'visually-hidden' : 'calendar-page-title'}>
+                {ownerMode ? 'Календарь салона' : 'Мой календарь'}
+              </h1>
+            ) : (
+              <div className="stack-sm">
+                <p className="eyebrow">Расписание</p>
+                <h1>{ownerMode ? 'Календарь салона' : 'Мой календарь'}</h1>
                 <p className="muted">
                   Переносите события — при конфликте изменение отменится.
                   <Hint id="cal-dnd" title="Работа с расписанием">Личные события можно переносить и растягивать с начала и с конца. Записи клиента — только через подтверждение переноса. Завершённые и чужие события только для просмотра.</Hint>
                 </p>
-              ) : (
-                <p className="muted">Долгое нажатие — меню. Перетаскивайте задачи, чтобы менять время.</p>
-              )}
+              </div>
+            )}
+            <div className={`row calendar-page-head-actions ${showMobileDayList ? 'is-compact-day' : ''}`}>
+              {!readOnlyOverlay ? (
+                <button
+                  className="btn btn-secondary btn-compact"
+                  type="button"
+                  data-testid="calendar-open-schedule"
+                  onClick={() => openSchedulePanel('hours')}
+                >
+                  {compact ? 'График' : 'Установка графика'}
+                </button>
+              ) : null}
+              {!showMobileDayList && !compact ? (
+                <button className="btn btn-ghost btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
+                  Диапазон сетки
+                </button>
+              ) : null}
+              {!readOnlyOverlay ? (
+                <button className="btn btn-primary btn-compact" type="button" onClick={() => (blockStart && blockEnd ? setEditorOpen(true) : openCreateAt(selectedDate))}>+ Событие</button>
+              ) : null}
             </div>
-          )}
-          <div className={`row calendar-page-head-actions ${showMobileDayList ? 'is-compact-day' : ''}`}>
-            {!readOnlyOverlay ? (
-              <button
-                className="btn btn-secondary btn-compact"
-                type="button"
-                data-testid="calendar-open-schedule"
-                onClick={() => openSchedulePanel('hours')}
-              >
-                Установка графика
-              </button>
-            ) : null}
-            {!showMobileDayList ? (
-              <button className="btn btn-ghost btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
-                Диапазон сетки
-              </button>
-            ) : null}
-            {!readOnlyOverlay ? (
-              <button className="btn btn-primary btn-compact" type="button" onClick={() => (blockStart && blockEnd ? setEditorOpen(true) : openCreateAt(selectedDate))}>+ Событие</button>
-            ) : null}
           </div>
+        )}
+
+        {ownerMode && (
+          <section className="calendar-resource-bar">
+            <div className="field">
+              <label htmlFor="cal-master-filter">Мастер</label>
+              <select id="cal-master-filter" value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
+                <option value="">Все мастера</option>
+                {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id] ?? 'Мастер'}</option>)}
+              </select>
+            </div>
+            {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) && (
+              <div className="field">
+                <label htmlFor="calendar-branch-switcher">Филиал</label>
+                <select
+                  id="calendar-branch-switcher"
+                  value={branchFilter}
+                  onChange={(e) => {
+                    setBranchFilter(e.target.value)
+                    if (e.target.value) cabinet.setSelectedBranchId(e.target.value)
+                  }}
+                  data-testid="calendar-branch-switcher"
+                >
+                  <option value="">Все филиалы</option>
+                  {salonBranches.map((b) => <option key={b.id} value={b.id}>{branchLabel(b, salonBranches)}</option>)}
+                </select>
+              </div>
+            )}
+          </section>
+        )}
+
+        <div className="calendar-controls">
+          <div className="calendar-view-tabs" aria-label="Режим календаря" data-testid="calendar-view-tabs">
+            {([
+              ['timeGridDay', 'День'],
+              ['timeGridThreeDay', '3 дня'],
+              ['timeGridWeek', 'Неделя'],
+              ['dayGridMonth', 'Месяц'],
+              ['listWeek', 'Список'],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`chip ${currentView === id ? 'active' : ''}`}
+                aria-pressed={currentView === id}
+                onClick={() => changeView(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn btn-ghost btn-compact calendar-settings-trigger"
+            type="button"
+            aria-expanded={settingsOpen}
+            data-testid="calendar-open-settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            Настройки
+          </button>
         </div>
-      )}
+      </div>
 
       {!editorOpen && !selected ? <ErrorBanner error={error} fallbackTitle="Не удалось изменить расписание" /> : null}
       {moving ? <p className="muted" aria-live="polite">Сохраняем перенос…</p> : null}
       {intervalMode ? <p className="state-box">Выберите начало и конец интервала, затем сохраните</p> : null}
 
-      {ownerMode && (
-        <section className="calendar-resource-bar">
-          <div className="field">
-            <label htmlFor="cal-master-filter">Мастер</label>
-            <select id="cal-master-filter" value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
-              <option value="">Все мастера</option>
-              {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id] ?? 'Мастер'}</option>)}
-            </select>
-          </div>
-          {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) && (
-            <div className="field">
-              <label htmlFor="calendar-branch-switcher">Филиал</label>
-              <select
-                id="calendar-branch-switcher"
-                value={branchFilter}
-                onChange={(e) => {
-                  setBranchFilter(e.target.value)
-                  if (e.target.value) cabinet.setSelectedBranchId(e.target.value)
-                }}
-                data-testid="calendar-branch-switcher"
-              >
-                <option value="">Все филиалы</option>
-                {salonBranches.map((b) => <option key={b.id} value={b.id}>{branchLabel(b, salonBranches)}</option>)}
-              </select>
-            </div>
-          )}
-        </section>
-      )}
-
-      <div className="calendar-controls calendar-toolbar-sticky" ref={toolbarRef}>
-        <div className="calendar-view-tabs" aria-label="Режим календаря" data-testid="calendar-view-tabs">
-          {([
-            ['timeGridDay', 'День'],
-            ['timeGridThreeDay', '3 дня'],
-            ['timeGridWeek', 'Неделя'],
-            ['dayGridMonth', 'Месяц'],
-            ['listWeek', 'Список'],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`chip ${currentView === id ? 'active' : ''}`}
-              aria-pressed={currentView === id}
-              onClick={() => changeView(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <button className="btn-link" type="button" onClick={() => setSettingsOpen((v) => !v)}>Настройки календаря</button>
-      </div>
-
       {rangeExtendedHint ? (
         <p className="calendar-outside-hint muted" role="status">{rangeExtendedHint}</p>
       ) : null}
-
-      {settingsOpen && (
-        <section className="card calendar-color-settings stack" data-testid="calendar-settings">
-          <div>
-            <strong>Показ категорий</strong>
-            <p className="muted">Скрытые категории не отображаются в календаре. Настройки сохраняются до перезагрузки сессии.</p>
-          </div>
-          <div className="calendar-category-row calendar-category-row--settings" role="group" aria-label="Фильтры категорий">
-            {palette.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`calendar-category-chip ${hidden.includes(c.id) ? 'is-hidden' : ''}`}
-                aria-pressed={!hidden.includes(c.id)}
-                onClick={() => setHidden((h) => h.includes(c.id) ? h.filter((x) => x !== c.id) : [...h, c.id])}
-              >
-                <span style={{ backgroundColor: calendarColorCss(c.color, c.id) } as CSSProperties}>{c.icon}</span>{c.label}
-              </button>
-            ))}
-          </div>
-
-          <div>
-            <strong>Диапазон сетки</strong>
-            <p className="muted">Отображаемые часы, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится. Недельный график мастера задаётся отдельно.</p>
-          </div>
-          <div className="calendar-display-range">
-            <div className="field">
-              <label htmlFor="cal-range-from">Начало</label>
-              <input id="cal-range-from" type="time" step={1800} value={rangeDraft.from} onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))} aria-required="true" />
-            </div>
-            <div className="field">
-              <label htmlFor="cal-range-to">Конец</label>
-              <input id="cal-range-to" type="time" step={1800} value={rangeDraft.to} onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))} aria-required="true" />
-            </div>
-          </div>
-          {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
-          <button className="btn btn-secondary" type="button" onClick={saveDisplayRange}>Сохранить диапазон сетки</button>
-          {rememberedInterval ? (
-            <button
-              className="btn btn-ghost"
-              type="button"
-              onClick={() => {
-                setDisplayRangePref(rememberedInterval)
-                setRangeDraft(rememberedInterval)
-                toast.success(`Применён интервал ${rememberedInterval.from}–${rememberedInterval.to}`)
-              }}
-            >
-              Применить сохранённый интервал ({rememberedInterval.from}–{rememberedInterval.to})
-            </button>
-          ) : null}
-
-          <div>
-            <strong>Навигация</strong>
-            <p className="muted">Свайп листает день / неделю / месяц. По умолчанию — кнопки, чтобы не мешать прокрутке и перетаскиванию.</p>
-          </div>
-          <div className="segmented segmented--2" role="radiogroup" aria-label="Навигация календаря" data-testid="calendar-nav-mode">
-            <label className={navMode === 'buttons' ? 'is-active' : undefined}>
-              <input
-                type="radio"
-                name="calendar-nav-mode"
-                checked={navMode === 'buttons'}
-                onChange={() => setNavModePref('buttons')}
-              />
-              Кнопками
-            </label>
-            <label className={navMode === 'swipe' ? 'is-active' : undefined}>
-              <input
-                type="radio"
-                name="calendar-nav-mode"
-                checked={navMode === 'swipe'}
-                onChange={() => setNavModePref('swipe')}
-              />
-              Свайпом
-            </label>
-          </div>
-
-          <div><strong>Цвета и категории</strong><p className="muted">Цвет записи клиента нельзя менять. Для личных задач цвет сохраняется в событии и в профиле категории.</p></div>
-          <div className="calendar-color-grid stack">
-            {palette.map((c) => (
-              <div key={c.id} className={c.system ? 'is-disabled' : ''}>
-                <span>{c.label}</span>
-                {c.system ? (
-                  <span className="muted">нельзя менять</span>
-                ) : (
-                  colorTokenPicker(normalizeCalendarColor(c.color, c.id), (token) => colorSave.mutate({ category: c.id, color: token }))
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div className="row wrap gap">
-            <button
-              className="btn btn-secondary"
-              type="button"
-              data-testid="settings-open-schedule"
-              onClick={() => {
-                setSettingsOpen(false)
-                openSchedulePanel('hours')
-              }}
-            >
-              Установка графика
-            </button>
-            <Link className="btn btn-secondary" to="/master">Профиль мастера</Link>
-          </div>
-        </section>
-      )}
 
       {showMobileDayList ? (
         <CalendarMobile
@@ -1886,6 +1898,27 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       ) : (
         <Modal open={editorOpen} onClose={() => setEditorOpen(false)} title="Новое событие">
           {editorForm}
+        </Modal>
+      )}
+
+      {compact ? (
+        <Drawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          title="Настройки календаря"
+          panelClassName="calendar-settings-drawer"
+        >
+          {settingsPanel}
+        </Drawer>
+      ) : (
+        <Modal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          title="Настройки календаря"
+          size="lg"
+          className="calendar-settings-modal"
+        >
+          {settingsPanel}
         </Modal>
       )}
 

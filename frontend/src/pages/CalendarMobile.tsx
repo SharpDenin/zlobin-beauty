@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
 import type { EventInput } from '@fullcalendar/core'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { AppIcon } from '@/shared/ui/AppIcon'
@@ -9,6 +9,7 @@ import {
   calendarColorClass,
   eventCoversSlot,
   eventOverlapsDay,
+  eventSlotSpan,
   LONG_PRESS_MS,
   longPressMoved,
   minutesFromMidnight,
@@ -411,11 +412,6 @@ export function CalendarMobile({
           {work.status === 'day_off' ? (
             <li className="cal-hours-hint muted" role="status">Выходной по графику — показаны существующие события</li>
           ) : null}
-          {isToday && work.status === 'open' && nowMin >= work.startMin && nowMin < work.endMin ? (
-            <li className="cal-now-banner" aria-current="time" style={{ scrollMarginTop: 120 }}>
-              Сейчас {nowLabel}
-            </li>
-          ) : null}
           {(work.status === 'day_off' && slots.length === 0
             ? Array.from(
                 new Set(
@@ -427,6 +423,30 @@ export function CalendarMobile({
               ).sort((a, b) => a - b)
             : slots
           ).flatMap((slotMin) => {
+            const rows: ReactElement[] = []
+            const showNow =
+              isToday &&
+              work.status === 'open' &&
+              nowMin >= slotMin &&
+              nowMin < slotMin + 30 &&
+              nowMin >= work.startMin &&
+              nowMin < work.endMin
+
+            if (showNow) {
+              rows.push(
+                <li
+                  key={`now-${slotMin}`}
+                  className="cal-now-marker"
+                  aria-current="time"
+                  data-testid="calendar-now-marker"
+                  style={{ scrollMarginTop: 96 }}
+                >
+                  <span className="cal-now-marker-line" aria-hidden />
+                  <span className="cal-now-marker-label">Сейчас {nowLabel}</span>
+                </li>,
+              )
+            }
+
             const inInterval =
               intervalSelecting &&
               intervalStartMin != null &&
@@ -444,26 +464,36 @@ export function CalendarMobile({
             })
 
             if (startingHere.length > 0 && !intervalSelecting) {
-              return startingHere.map((e) => {
+              for (const e of startingHere) {
                 const start = String(e.start)
                 const end = e.end ? String(e.end) : start
+                const span = eventSlotSpan(start, end, timezone)
                 const classes = Array.isArray(e.classNames) ? e.classNames.join(' ') : String(e.classNames ?? '')
                 const colorClass = calendarColorClass(String(e.extendedProps?.color ?? ''), String(e.extendedProps?.category ?? 'task'))
                 const client = String(e.extendedProps?.clientName ?? '')
                 const status = String(e.extendedProps?.statusLabel ?? '')
-                return (
-                  <li key={String(e.id)} className="cal-slot-row is-busy">
+                const accentStyle =
+                  colorClass === 'cal-color-hex'
+                    ? ({
+                        ['--cal-event-accent' as string]: String(e.extendedProps?.colorCss ?? e.extendedProps?.color),
+                        ['--cal-event-span' as string]: String(span),
+                      } as CSSProperties)
+                    : ({ ['--cal-event-span' as string]: String(span) } as CSSProperties)
+                rows.push(
+                  <li
+                    key={String(e.id)}
+                    className="cal-slot-row is-busy is-event-span"
+                    data-testid="calendar-event-span"
+                    data-span={span}
+                    style={accentStyle}
+                  >
                     <time className="cal-slot-time is-busy" dateTime={start}>
                       {padTime(slotMin)}
                     </time>
                     <button
                       type="button"
                       className={`cal-slot-event ${classes} ${colorClass}`}
-                      style={
-                        colorClass === 'cal-color-hex'
-                          ? ({ ['--cal-event-accent' as string]: String(e.extendedProps?.colorCss ?? e.extendedProps?.color) } as CSSProperties)
-                          : undefined
-                      }
+                      style={accentStyle}
                       onClick={(ev) => {
                         if (suppressClickIfLongPress(ev)) return
                         if (e.id) onEventClick(String(e.id))
@@ -487,39 +517,15 @@ export function CalendarMobile({
                         {status ? ` · ${status}` : ''}
                       </span>
                     </button>
-                  </li>
+                  </li>,
                 )
-              })
+              }
+              return rows
             }
 
+            // Continuation of a multi-slot event: height already claimed by the start row.
             if (covering.length > 0 && !intervalSelecting) {
-              const e = covering[0]
-              return [(
-                <li key={`busy-${slotMin}`} className="cal-slot-row is-busy">
-                  <span className="cal-slot-time is-busy" aria-hidden>{padTime(slotMin)}</span>
-                  <button
-                    type="button"
-                    className="cal-slot-body is-busy"
-                    onClick={(ev) => {
-                      if (suppressClickIfLongPress(ev)) return
-                      if (e.id) onEventClick(String(e.id))
-                    }}
-                    onPointerDown={(ev) => {
-                      pressOrigin.current = { x: ev.clientX, y: ev.clientY }
-                      if (e.id && onEventLongPress) {
-                        armLongPress(() => onEventLongPress(String(e.id)))
-                      }
-                    }}
-                    onPointerMove={onPressMove}
-                    onPointerUp={clearLongPress}
-                    onPointerCancel={clearLongPress}
-                    onPointerLeave={clearLongPress}
-                  >
-                    <span>Занято</span>
-                    <span className="chev" aria-hidden>›</span>
-                  </button>
-                </li>
-              )]
+              return rows
             }
 
             const openSlot = () => {
@@ -530,7 +536,7 @@ export function CalendarMobile({
               onCreateSlot?.(wallDateAt(selectedDate, ymd, slotMin))
             }
 
-            return [(
+            rows.push(
               <li key={slotMin} className={`cal-slot-row is-free ${inInterval ? 'is-interval' : ''}`}>
                 <button
                   type="button"
@@ -577,8 +583,9 @@ export function CalendarMobile({
                   </span>
                   <span className="chev" aria-hidden>›</span>
                 </button>
-              </li>
-            )]
+              </li>,
+            )
+            return rows
           })}
         </ol>
       )}

@@ -438,7 +438,12 @@ func (a *API) slots(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": slots})
+	busy, err := a.svc.DayBusy(r.Context(), masterUserID, day, tz)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": slots, "busy": busy})
 }
 
 func parseInt(dst *int, s string) (int, error) {

@@ -1,13 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { userError } from '@/shared/lib/app-error'
+import { formatMoney } from '@/shared/lib/money'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Modal } from '@/shared/ui/Modal'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { openConversation } from '@/features/messenger/api'
 import { toast } from '@/shared/ui/Toast'
@@ -46,6 +48,8 @@ type Consultation = {
   id: string
   client_user_id: string
   master_user_id: string
+  organization_id?: string | null
+  client_card_id?: string | null
   status: string
   current_version_id?: string
   conversation_id?: string | null
@@ -54,6 +58,15 @@ type Consultation = {
   current_version?: Version
   versions?: Version[]
   events?: EventRow[]
+}
+
+type CatalogService = {
+  id: string
+  name: string
+  category?: string
+  price_minor: number
+  duration_minutes?: number
+  published?: boolean
 }
 
 type Questionnaire = {
@@ -70,6 +83,10 @@ type Questionnaire = {
   dye_reactions: string
   budget: string
   ready_to_maintain: boolean
+  root_tone_level: string
+  gray_percent: string
+  highlighting: string
+  light_strands_level: string
 }
 
 type Assessment = {
@@ -106,6 +123,9 @@ type Plan = {
   strand_test: string
   allergy_test: string
   care_recommendations: string
+  tone_correction: string
+  selected_service_ids: string[]
+  price_total_minor: number
 }
 
 const emptyQ = (): Questionnaire => ({
@@ -122,6 +142,10 @@ const emptyQ = (): Questionnaire => ({
   dye_reactions: '',
   budget: '',
   ready_to_maintain: false,
+  root_tone_level: '',
+  gray_percent: '',
+  highlighting: '',
+  light_strands_level: '',
 })
 
 const emptyA = (): Assessment => ({
@@ -158,16 +182,23 @@ const emptyP = (): Plan => ({
   strand_test: '',
   allergy_test: '',
   care_recommendations: '',
+  tone_correction: '',
+  selected_service_ids: [],
+  price_total_minor: 0,
 })
 
 const PHOTO_SLOTS: { slot: string; label: string; hint: string }[] = [
+  { slot: 'strand_a4', label: 'Прядь на A4', hint: 'Прядь на белом листе A4 при естественном и искусственном свете' },
   { slot: 'overview', label: 'Общий вид', hint: 'При естественном свете, без фильтров' },
   { slot: 'roots', label: 'Корни', hint: 'Крупно корни у пробора' },
   { slot: 'length', label: 'Длина', hint: 'Средняя часть полотна' },
   { slot: 'ends', label: 'Концы', hint: 'Состояние кончиков' },
-  { slot: 'strand_a4', label: 'Прядь на A4', hint: 'Прядь на белом листе A4' },
   { slot: 'reference', label: 'Референс', hint: 'Желаемый образ (необязательно)' },
 ]
+
+const ROOT_LEVELS = ['3.0', '4.0', '5.0', '6.0', '7.0', '8.0', '9.0', '10.0']
+const GRAY_OPTIONS = ['0%', '5%', '10%', '15%', '20%', '30%', '40%', '50%', '70%', '100%']
+const LIGHT_LEVELS = ['7–8 уровень', '8–9 уровень', '9–10 уровень', '10+ уровень']
 
 function statusLabel(status: string) {
   switch (status) {
@@ -247,6 +278,10 @@ function asQuestionnaire(raw: Record<string, unknown> | undefined): Questionnair
     dye_reactions: String(raw.dye_reactions ?? ''),
     budget: String(raw.budget ?? ''),
     ready_to_maintain: Boolean(raw.ready_to_maintain),
+    root_tone_level: String(raw.root_tone_level ?? ''),
+    gray_percent: String(raw.gray_percent ?? ''),
+    highlighting: String(raw.highlighting ?? ''),
+    light_strands_level: String(raw.light_strands_level ?? ''),
   }
 }
 
@@ -263,11 +298,40 @@ function asAssessment(raw: Record<string, unknown> | undefined): Assessment {
 function asPlan(raw: Record<string, unknown> | undefined): Plan {
   const p = emptyP()
   if (!raw) return p
-  const out = { ...p }
-  for (const k of Object.keys(p) as (keyof Plan)[]) {
-    if (raw[k] != null) out[k] = String(raw[k])
+  const ids = Array.isArray(raw.selected_service_ids)
+    ? raw.selected_service_ids.map((x) => String(x)).filter(Boolean)
+    : []
+  const price =
+    typeof raw.price_total_minor === 'number'
+      ? raw.price_total_minor
+      : Number(raw.price_total_minor) || 0
+  return {
+    ...p,
+    desired_result: String(raw.desired_result ?? ''),
+    technique: String(raw.technique ?? ''),
+    zone_map: String(raw.zone_map ?? ''),
+    level_roots: String(raw.level_roots ?? ''),
+    level_length: String(raw.level_length ?? ''),
+    level_ends: String(raw.level_ends ?? ''),
+    formula: String(raw.formula ?? ''),
+    brand_line: String(raw.brand_line ?? ''),
+    shades_ratios: String(raw.shades_ratios ?? ''),
+    oxidant: String(raw.oxidant ?? ''),
+    processing_time: String(raw.processing_time ?? ''),
+    lightening_or_fill: String(raw.lightening_or_fill ?? ''),
+    strand_test: String(raw.strand_test ?? ''),
+    allergy_test: String(raw.allergy_test ?? ''),
+    care_recommendations: String(raw.care_recommendations ?? ''),
+    tone_correction: String(raw.tone_correction ?? ''),
+    selected_service_ids: ids,
+    price_total_minor: price,
   }
-  return out
+}
+
+function hairCategory(name: string, category?: string): 'main' | 'popular' {
+  const hay = `${category ?? ''} ${name}`.toLowerCase()
+  if (/уход|ботокс|кератин|кончик|восстанов|стрижк/.test(hay)) return 'popular'
+  return 'main'
 }
 
 export function HairConsultationsPage() {
@@ -304,10 +368,13 @@ export function HairConsultationsPage() {
     mutationFn: async () => {
       const mid = masterId.trim()
       if (!mid) throw new ApiError('Выберите мастера', 'validation_error', 400)
+      const body: Record<string, string> = { master_user_id: mid }
+      const orgId = cabinet.selectedOrg?.organization.id
+      if (orgId) body.organization_id = orgId
       return apiRequest<Consultation>('/v1/hair-consultations', {
         method: 'POST',
         token: accessToken,
-        body: { master_user_id: mid },
+        body,
       })
     },
     onSuccess: (c) => {
@@ -403,6 +470,7 @@ export function HairConsultationsPage() {
 export function HairConsultationDetailPage() {
   const { id } = useParams()
   const { accessToken, user } = useAuth()
+  const cabinet = useCabinet()
   const messenger = useMessenger()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -413,6 +481,9 @@ export function HairConsultationDetailPage() {
   const [returnComment, setReturnComment] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [viewVersionId, setViewVersionId] = useState<string | null>(null)
+  const [servicesOpen, setServicesOpen] = useState(false)
+  const [schemeOpen, setSchemeOpen] = useState(false)
+  const [serviceQuery, setServiceQuery] = useState('')
 
   const detail = useQuery({
     queryKey: ['hair-consultation', id],
@@ -423,6 +494,33 @@ export function HairConsultationDetailPage() {
   const c = detail.data
   const isClient = Boolean(c && user?.id === c.client_user_id)
   const isMaster = Boolean(c && user?.id === c.master_user_id)
+
+  // Marketplace services always belong to an organization (solo masters still have a solo org).
+  // Prefer the assigned master's attached services; otherwise resolve org and list published catalog.
+  const masterBundle = useQuery({
+    queryKey: ['consult-master-bundle', c?.master_user_id],
+    queryFn: () =>
+      apiRequest<{
+        master: { organization_id?: string | null; user_id?: string }
+        services?: CatalogService[]
+      }>(`/v1/masters/${c!.master_user_id}`, { token: accessToken }),
+    enabled: Boolean(accessToken && c?.master_user_id),
+  })
+  const orgId =
+    detail.data?.organization_id ||
+    cabinet.selectedOrg?.organization.id ||
+    masterBundle.data?.master?.organization_id ||
+    undefined
+  const masterServices = masterBundle.data?.services ?? []
+  const services = useQuery({
+    queryKey: ['consult-services', orgId],
+    queryFn: () =>
+      apiRequest<{ items: CatalogService[] }>(
+        `/v1/services?organization_id=${encodeURIComponent(orgId!)}`,
+        { token: accessToken },
+      ),
+    enabled: Boolean(accessToken && orgId && masterServices.length === 0),
+  })
   const current = c?.current_version
   const viewing = useMemo(() => {
     if (!c?.versions?.length) return current
@@ -526,6 +624,7 @@ export function HairConsultationDetailPage() {
       }),
     onSuccess: (res) => {
       qc.setQueryData(['hair-consultation', id], res)
+      if (res.current_version?.plan) setP(asPlan(res.current_version.plan))
       toast.success('План сохранён')
     },
     onError: (e) => setError(userError(e, 'Не удалось сохранить план')),
@@ -600,29 +699,64 @@ export function HairConsultationDetailPage() {
     (viewing.status === 'sent' || viewing.status === 'approved' || viewing.status === 'changes_requested' || viewing.status === 'superseded')
   const canApprove = isClient && c?.status === 'awaiting_client' && current?.status === 'sent'
 
+  const catalog = masterServices.length > 0 ? masterServices : (services.data?.items ?? [])
+  const filteredServices = catalog.filter((s) => {
+    if (!serviceQuery.trim()) return true
+    const qv = serviceQuery.trim().toLowerCase()
+    return s.name.toLowerCase().includes(qv) || (s.category ?? '').toLowerCase().includes(qv)
+  })
+  const mainServices = filteredServices.filter((s) => hairCategory(s.name, s.category) === 'main')
+  const popularServices = filteredServices.filter((s) => hairCategory(s.name, s.category) === 'popular')
+  const selectedServices = catalog.filter((s) => p.selected_service_ids.includes(s.id))
+  // Prefer live catalog sum when services are loaded; fall back to server-normalized total.
+  const computedPrice = selectedServices.reduce((sum, s) => sum + (s.price_minor || 0), 0)
+  const displayPrice =
+    selectedServices.length > 0
+      ? computedPrice
+      : p.price_total_minor > 0
+        ? p.price_total_minor
+        : 0
+  const strandPhoto = slotMedia('strand_a4') || slotMedia('overview')
+  const roleBadge = isMaster ? 'Мастер' : 'Клиент'
+
+  function toggleService(svc: CatalogService) {
+    const has = p.selected_service_ids.includes(svc.id)
+    const ids = has ? p.selected_service_ids.filter((x) => x !== svc.id) : [...p.selected_service_ids, svc.id]
+    const next = catalog.filter((s) => ids.includes(s.id))
+    setP({
+      ...p,
+      selected_service_ids: ids,
+      price_total_minor: next.reduce((sum, s) => sum + (s.price_minor || 0), 0),
+    })
+  }
+
   if (detail.isLoading) return <div className="page"><p className="muted">Загрузка…</p></div>
   if (!c) return <div className="page"><ErrorBanner error={error || 'Консультация не найдена'} /></div>
 
   return (
     <div className="page stack-gap consult-detail" data-testid="hair-consultation-detail">
       <Link className="btn btn-ghost btn-compact" to="/consultations">← К консультациям</Link>
-      <header className="page-header">
-        <h1>Консультация</h1>
-        <p className="muted">
-          {statusLabel(c.status)} · версия {current?.version_no ?? '—'} ({statusLabel(current?.status || '')})
-        </p>
+      <header className="page-header row between">
+        <div>
+          <h1>Диагностика волос</h1>
+          <p className="muted">
+            {statusLabel(c.status)} · версия {current?.version_no ?? '—'}
+            {c.client_card_id ? (
+              <>
+                {' · '}
+                <Link to={`/clients/${c.client_card_id}`}>Карточка клиента</Link>
+              </>
+            ) : null}
+          </p>
+        </div>
+        <span className="badge" data-testid="consult-role-badge">{roleBadge}</span>
       </header>
       {error && <ErrorBanner error={error} />}
       {ok && <p className="ok-banner" role="status">{ok}</p>}
 
       <div className="row-wrap gap-sm">
         {c.conversation_id && (
-          <button
-            type="button"
-            className="btn btn-secondary btn-compact"
-            data-testid="consult-open-chat"
-            onClick={() => messenger.open(c.conversation_id!)}
-          >
+          <button type="button" className="btn btn-secondary btn-compact" data-testid="consult-open-chat" onClick={() => messenger.open(c.conversation_id!)}>
             Открыть чат
           </button>
         )}
@@ -634,6 +768,11 @@ export function HairConsultationDetailPage() {
         {isMaster && c.status === 'approved' && (
           <button type="button" className="btn btn-secondary" data-testid="consult-revision" onClick={() => revision.mutate()} disabled={revision.isPending}>
             Новая версия
+          </button>
+        )}
+        {(isMaster || isClient) && (
+          <button type="button" className="btn btn-secondary btn-compact" data-testid="consult-open-services" onClick={() => setServicesOpen(true)}>
+            Услуги для волос
           </button>
         )}
       </div>
@@ -657,80 +796,154 @@ export function HairConsultationDetailPage() {
         </section>
       )}
 
+      <section className="card stack-gap" data-testid="consult-strand-photo">
+        <h2>Фото пряди</h2>
+        <p className="muted">Прядь на листе A4 при естественном и искусственном освещении.</p>
+        {strandPhoto ? (
+          <>
+            <div className="media-frame media-frame--landscape">
+              <MediaImage mediaId={strandPhoto} alt="Прядь на A4" />
+            </div>
+            <p className="consult-photo-status" data-testid="consult-photo-uploaded">✓ Фото загружено</p>
+          </>
+        ) : (
+          <p className="muted">Фото ещё не загружено</p>
+        )}
+        {clientEditable && (
+          <MediaDropzone
+            purpose="hair_consultation"
+            value={slotMedia('strand_a4')}
+            allowGif={false}
+            accept="image/jpeg,image/png,image/webp"
+            label="Загрузить прядь на A4"
+            onChange={(mediaId) => {
+              const mid = slotMedia('strand_a4')
+              if (!mediaId) {
+                if (mid) detach.mutate(mid)
+                return
+              }
+              attach.mutate({ mediaId, slot: 'strand_a4' })
+            }}
+          />
+        )}
+      </section>
+
       <section className="card stack-gap" data-testid="consult-questionnaire">
-        <h2>Анкета клиента</h2>
-        <fieldset className="stack-gap" disabled={!clientEditable}>
-          <legend className="sr-only">История волос</legend>
-          <h3>История волос и процедур</h3>
-          <label className="field">
-            <span>Тип волос</span>
-            <select value={q.hair_type} onChange={(e) => setQ({ ...q, hair_type: e.target.value })} data-testid="q-hair-type">
-              <option value="">Выберите</option>
+        <h2>Параметры волос</h2>
+        <fieldset className="consult-param-list" disabled={!clientEditable && !masterEditable}>
+          <label className="consult-param-row">
+            <span>Уровень глубины тона корней</span>
+            <select
+              value={q.root_tone_level || a.natural_level_roots}
+              onChange={(e) => {
+                const v = e.target.value
+                if (clientEditable) setQ({ ...q, root_tone_level: v })
+                else setA({ ...a, natural_level_roots: v })
+              }}
+              data-testid="q-root-tone"
+            >
+              <option value="">—</option>
+              {ROOT_LEVELS.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </label>
+          <label className="consult-param-row">
+            <span>Процент седины</span>
+            <select
+              value={q.gray_percent || a.gray_percent}
+              onChange={(e) => {
+                const v = e.target.value
+                if (clientEditable) setQ({ ...q, gray_percent: v })
+                else setA({ ...a, gray_percent: v })
+              }}
+              data-testid="q-gray"
+            >
+              <option value="">—</option>
+              {GRAY_OPTIONS.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </label>
+          <label className="consult-param-row">
+            <span>Натуральные или окрашенные</span>
+            <select value={q.hair_type} onChange={(e) => setQ({ ...q, hair_type: e.target.value })} data-testid="q-hair-type" disabled={!clientEditable}>
+              <option value="">—</option>
               <option value="natural">Натуральные</option>
               <option value="colored">Окрашенные</option>
             </select>
           </label>
-          <label className="check"><input type="checkbox" checked={q.salon_coloring} onChange={(e) => setQ({ ...q, salon_coloring: e.target.checked })} /> Салонное окрашивание</label>
-          <label className="check"><input type="checkbox" checked={q.home_coloring} onChange={(e) => setQ({ ...q, home_coloring: e.target.checked })} /> Домашнее/коробочное окрашивание</label>
-          <label className="check"><input type="checkbox" checked={q.bleaching} onChange={(e) => setQ({ ...q, bleaching: e.target.checked })} /> Осветление</label>
-          <label className="field"><span>Хна и другие составы</span>
-            <input value={q.henna_or_other} onChange={(e) => setQ({ ...q, henna_or_other: e.target.value })} /></label>
-          <label className="field"><span>Дата последней процедуры</span>
-            <input type="date" value={q.last_procedure_date} onChange={(e) => setQ({ ...q, last_procedure_date: e.target.value })} /></label>
-
-          <h3>Пожелания</h3>
-          <label className="field"><span>Желаемый результат</span>
-            <textarea value={q.desired_result} onChange={(e) => setQ({ ...q, desired_result: e.target.value })} rows={3} data-testid="q-desired" /></label>
-          <label className="field"><span>Референсы (описание)</span>
-            <textarea value={q.references_note} onChange={(e) => setQ({ ...q, references_note: e.target.value })} rows={2} /></label>
-          <label className="field"><span>Комментарии</span>
-            <textarea value={q.comments} onChange={(e) => setQ({ ...q, comments: e.target.value })} rows={2} /></label>
-
-          <h3>Особенности</h3>
-          <label className="field"><span>Аллергии и чувствительность</span>
-            <textarea value={q.allergies} onChange={(e) => setQ({ ...q, allergies: e.target.value })} rows={2} /></label>
-          <label className="field"><span>Известные реакции на красители</span>
-            <textarea value={q.dye_reactions} onChange={(e) => setQ({ ...q, dye_reactions: e.target.value })} rows={2} /></label>
-          <label className="field"><span>Бюджет</span>
-            <input value={q.budget} onChange={(e) => setQ({ ...q, budget: e.target.value })} /></label>
-          <label className="check"><input type="checkbox" checked={q.ready_to_maintain} onChange={(e) => setQ({ ...q, ready_to_maintain: e.target.checked })} /> Готов(а) поддерживать результат и уход</label>
+          <label className="consult-param-row">
+            <span>Мелирование</span>
+            <select value={q.highlighting} onChange={(e) => setQ({ ...q, highlighting: e.target.value })} data-testid="q-highlighting" disabled={!clientEditable}>
+              <option value="">—</option>
+              <option value="yes">Да</option>
+              <option value="no">Нет</option>
+            </select>
+          </label>
+          <label className="consult-param-row">
+            <span>Уровень светлых прядей</span>
+            <select value={q.light_strands_level} onChange={(e) => setQ({ ...q, light_strands_level: e.target.value })} data-testid="q-light-level" disabled={!clientEditable}>
+              <option value="">—</option>
+              {LIGHT_LEVELS.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </label>
         </fieldset>
 
-        <h3>Фотографии</h3>
-        <p className="muted">Снимайте при естественном освещении, без фильтров и обработки.</p>
-        <div className="consult-photo-grid">
-          {PHOTO_SLOTS.map((s) => {
-            const mid = slotMedia(s.slot)
-            return (
-              <div key={s.slot} className="stack-gap-sm" data-testid={`photo-slot-${s.slot}`}>
-                <strong>{s.label}</strong>
-                <span className="muted">{s.hint}</span>
-                {clientEditable ? (
-                  <MediaDropzone
-                    purpose="hair_consultation"
-                    value={mid}
-                    allowGif={false}
-                    accept="image/jpeg,image/png,image/webp"
-                    label={`Загрузить: ${s.label}`}
-                    onChange={(mediaId) => {
-                      if (!mediaId) {
-                        if (mid) detach.mutate(mid)
-                        return
-                      }
-                      attach.mutate({ mediaId, slot: s.slot })
-                    }}
-                  />
-                ) : mid ? (
-                  <div className="media-frame media-frame--square">
-                    <MediaImage mediaId={mid} alt={s.label} />
+        {(clientEditable || q.desired_result || q.comments) && (
+          <div className="stack-sm">
+            <h3>Со слов клиентки</h3>
+            {clientEditable ? (
+              <textarea
+                value={q.desired_result || q.comments}
+                onChange={(e) => setQ({ ...q, desired_result: e.target.value, comments: e.target.value })}
+                rows={3}
+                data-testid="q-desired"
+                placeholder="Пожелания к результату"
+              />
+            ) : (
+              <p data-testid="consult-client-words">{q.desired_result || q.comments || '—'}</p>
+            )}
+          </div>
+        )}
+
+        {clientEditable && (
+          <details className="stack-sm">
+            <summary>Дополнительная анкета</summary>
+            <label className="check"><input type="checkbox" checked={q.salon_coloring} onChange={(e) => setQ({ ...q, salon_coloring: e.target.checked })} /> Салонное окрашивание</label>
+            <label className="check"><input type="checkbox" checked={q.home_coloring} onChange={(e) => setQ({ ...q, home_coloring: e.target.checked })} /> Домашнее окрашивание</label>
+            <label className="check"><input type="checkbox" checked={q.bleaching} onChange={(e) => setQ({ ...q, bleaching: e.target.checked })} /> Осветление</label>
+            <label className="field"><span>Аллергии</span><textarea value={q.allergies} onChange={(e) => setQ({ ...q, allergies: e.target.value })} rows={2} /></label>
+            <label className="field"><span>Бюджет</span><input value={q.budget} onChange={(e) => setQ({ ...q, budget: e.target.value })} /></label>
+            <div className="consult-photo-grid">
+              {PHOTO_SLOTS.filter((s) => s.slot !== 'strand_a4').map((s) => {
+                const mid = slotMedia(s.slot)
+                return (
+                  <div key={s.slot} className="stack-gap-sm" data-testid={`photo-slot-${s.slot}`}>
+                    <strong>{s.label}</strong>
+                    <span className="muted">{s.hint}</span>
+                    <MediaDropzone
+                      purpose="hair_consultation"
+                      value={mid}
+                      allowGif={false}
+                      accept="image/jpeg,image/png,image/webp"
+                      label={`Загрузить: ${s.label}`}
+                      onChange={(mediaId) => {
+                        if (!mediaId) {
+                          if (mid) detach.mutate(mid)
+                          return
+                        }
+                        attach.mutate({ mediaId, slot: s.slot })
+                      }}
+                    />
                   </div>
-                ) : (
-                  <p className="muted">Нет фото</p>
-                )}
-              </div>
-            )
-          })}
-        </div>
+                )
+              })}
+            </div>
+          </details>
+        )}
 
         {clientEditable && (
           <div className="row-wrap gap-sm">
@@ -738,93 +951,79 @@ export function HairConsultationDetailPage() {
               Сохранить черновик
             </button>
             <button type="button" className="btn btn-primary" data-testid="consult-submit" onClick={() => submitQ.mutate()} disabled={submitQ.isPending}>
-              Отправить анкету
+              Подтвердить диагностику
             </button>
           </div>
         )}
       </section>
 
-      {(isMaster || showPlanToClient || (viewing && Object.keys(viewing.master_assessment || {}).length > 0)) && (
-        <section className="card stack-gap" data-testid="consult-assessment">
-          <h2>Профессиональная оценка</h2>
-          <fieldset className="stack-gap" disabled={!masterEditable}>
-            <label className="field"><span>Натуральный уровень корней</span>
-              <input value={a.natural_level_roots} onChange={(e) => setA({ ...a, natural_level_roots: e.target.value })} data-testid="a-natural-level" /></label>
-            <label className="field"><span>% седины</span>
-              <input value={a.gray_percent} onChange={(e) => setA({ ...a, gray_percent: e.target.value })} /></label>
-            <label className="field"><span>Искусственные красители</span>
-              <input value={a.artificial_color} onChange={(e) => setA({ ...a, artificial_color: e.target.value })} /></label>
-            <label className="field"><span>Светлые участки</span>
-              <input value={a.lightened_areas} onChange={(e) => setA({ ...a, lightened_areas: e.target.value })} /></label>
-            <div className="consult-zone-grid">
-              <label className="field"><span>Пористость · корни</span><input value={a.porosity_roots} onChange={(e) => setA({ ...a, porosity_roots: e.target.value })} /></label>
-              <label className="field"><span>Пористость · длина</span><input value={a.porosity_length} onChange={(e) => setA({ ...a, porosity_length: e.target.value })} /></label>
-              <label className="field"><span>Пористость · концы</span><input value={a.porosity_ends} onChange={(e) => setA({ ...a, porosity_ends: e.target.value })} /></label>
-              <label className="field"><span>Эластичность · корни</span><input value={a.elasticity_roots} onChange={(e) => setA({ ...a, elasticity_roots: e.target.value })} /></label>
-              <label className="field"><span>Эластичность · длина</span><input value={a.elasticity_length} onChange={(e) => setA({ ...a, elasticity_length: e.target.value })} /></label>
-              <label className="field"><span>Эластичность · концы</span><input value={a.elasticity_ends} onChange={(e) => setA({ ...a, elasticity_ends: e.target.value })} /></label>
+      {isMaster && (
+        <section className="card stack-gap consult-master-block" data-testid="consult-master-extras">
+          <h2>Данные мастера</h2>
+          <button type="button" className="consult-master-link" data-testid="consult-scheme-open" onClick={() => setSchemeOpen(true)}>
+            <div>
+              <strong>Схема окрашивания</strong>
+              <p className="muted">
+                {[p.technique && `Техника: ${p.technique}`, p.tone_correction && `Коррекция: ${p.tone_correction}`, p.desired_result && `Результат: ${p.desired_result}`]
+                  .filter(Boolean)
+                  .join(' · ') || 'Заполнить схему'}
+              </p>
             </div>
-            <label className="field"><span>Текстура</span><input value={a.texture} onChange={(e) => setA({ ...a, texture: e.target.value })} /></label>
-            <label className="field"><span>Диаметр</span><input value={a.diameter} onChange={(e) => setA({ ...a, diameter: e.target.value })} /></label>
-            <label className="field"><span>Густота</span><input value={a.density} onChange={(e) => setA({ ...a, density: e.target.value })} /></label>
-            <label className="field"><span>Кожа головы</span><input value={a.scalp_condition} onChange={(e) => setA({ ...a, scalp_condition: e.target.value })} /></label>
-            <label className="field"><span>Заметки</span><textarea value={a.notes} onChange={(e) => setA({ ...a, notes: e.target.value })} rows={2} /></label>
-          </fieldset>
+            <span aria-hidden>›</span>
+          </button>
+          <div className="consult-param-row">
+            <span>Косметика</span>
+            <input
+              value={p.brand_line}
+              onChange={(e) => setP({ ...p, brand_line: e.target.value })}
+              disabled={!masterEditable}
+              placeholder="Бренд / линейка"
+              data-testid="p-brand"
+            />
+          </div>
+          <div className="consult-param-row">
+            <span>Оксид</span>
+            <input
+              value={p.oxidant}
+              onChange={(e) => setP({ ...p, oxidant: e.target.value })}
+              disabled={!masterEditable}
+              placeholder="например, 3%"
+              data-testid="p-oxidant"
+            />
+          </div>
           {masterEditable && (
-            <button type="button" className="btn btn-secondary" onClick={() => saveAssessment.mutate()} disabled={saveAssessment.isPending}>
-              Сохранить оценку
-            </button>
+            <div className="row-wrap gap-sm">
+              <button type="button" className="btn btn-secondary" onClick={() => { void saveAssessment.mutateAsync(); void savePlan.mutateAsync() }} disabled={savePlan.isPending}>
+                Сохранить
+              </button>
+              <button type="button" className="btn btn-primary" data-testid="consult-send-plan" onClick={() => sendPlan.mutate()} disabled={sendPlan.isPending}>
+                Подтвердить диагностику
+              </button>
+            </div>
           )}
         </section>
       )}
 
-      {(isMaster || showPlanToClient) && (
-        <section className="card stack-gap" data-testid="consult-plan">
-          <h2>План окрашивания</h2>
+      {(isMaster || showPlanToClient || (viewing && Object.keys(viewing.master_assessment || {}).length > 0)) && (
+        <details className="card stack-gap" data-testid="consult-assessment">
+          <summary>Профессиональная оценка (подробно)</summary>
           <fieldset className="stack-gap" disabled={!masterEditable}>
-            <label className="field"><span>Желаемый результат</span>
-              <textarea value={p.desired_result} onChange={(e) => setP({ ...p, desired_result: e.target.value })} rows={2} data-testid="p-desired" /></label>
-            <label className="field"><span>Техника</span>
-              <input value={p.technique} onChange={(e) => setP({ ...p, technique: e.target.value })} data-testid="p-technique" /></label>
-            <label className="field"><span>Карта зон</span>
-              <textarea value={p.zone_map} onChange={(e) => setP({ ...p, zone_map: e.target.value })} rows={2} /></label>
-            <div className="consult-zone-grid">
-              <label className="field"><span>Уровень корней</span><input value={p.level_roots} onChange={(e) => setP({ ...p, level_roots: e.target.value })} /></label>
-              <label className="field"><span>Уровень длины</span><input value={p.level_length} onChange={(e) => setP({ ...p, level_length: e.target.value })} /></label>
-              <label className="field"><span>Уровень концов</span><input value={p.level_ends} onChange={(e) => setP({ ...p, level_ends: e.target.value })} /></label>
-            </div>
-            <label className="field"><span>Формула</span>
-              <textarea value={p.formula} onChange={(e) => setP({ ...p, formula: e.target.value })} rows={4} data-testid="p-formula" /></label>
-            <label className="field"><span>Бренд и линейка</span>
-              <input value={p.brand_line} onChange={(e) => setP({ ...p, brand_line: e.target.value })} /></label>
-            <label className="field"><span>Оттенки и пропорции</span>
-              <textarea value={p.shades_ratios} onChange={(e) => setP({ ...p, shades_ratios: e.target.value })} rows={2} /></label>
-            <label className="field"><span>Оксидант</span>
-              <input value={p.oxidant} onChange={(e) => setP({ ...p, oxidant: e.target.value })} /></label>
-            <label className="field"><span>Время выдержки</span>
-              <input value={p.processing_time} onChange={(e) => setP({ ...p, processing_time: e.target.value })} /></label>
-            <label className="field"><span>Осветление / смывка / заполнение</span>
-              <textarea value={p.lightening_or_fill} onChange={(e) => setP({ ...p, lightening_or_fill: e.target.value })} rows={2} /></label>
-            <label className="field"><span>Тест пряди</span>
-              <textarea value={p.strand_test} onChange={(e) => setP({ ...p, strand_test: e.target.value })} rows={2} data-testid="p-strand-test" /></label>
-            <label className="field"><span>Аллергопроба</span>
-              <textarea value={p.allergy_test} onChange={(e) => setP({ ...p, allergy_test: e.target.value })} rows={2} data-testid="p-allergy-test" /></label>
-            <p className="muted">Тест пряди и аллергопроба — разные процедуры. Интервалы — по инструкции производителя.</p>
-            <label className="field"><span>Рекомендации по уходу</span>
-              <textarea value={p.care_recommendations} onChange={(e) => setP({ ...p, care_recommendations: e.target.value })} rows={3} /></label>
+            <label className="field"><span>Искусственные красители</span>
+              <input value={a.artificial_color} onChange={(e) => setA({ ...a, artificial_color: e.target.value })} /></label>
+            <label className="field"><span>Светлые участки</span>
+              <input value={a.lightened_areas} onChange={(e) => setA({ ...a, lightened_areas: e.target.value })} /></label>
+            <label className="field"><span>Заметки</span><textarea value={a.notes} onChange={(e) => setA({ ...a, notes: e.target.value })} rows={2} /></label>
           </fieldset>
-          {masterEditable && (
-            <div className="row-wrap gap-sm">
-              <button type="button" className="btn btn-secondary" onClick={() => savePlan.mutate()} disabled={savePlan.isPending}>
-                Сохранить план
-              </button>
-              <button type="button" className="btn btn-primary" data-testid="consult-send-plan" onClick={() => sendPlan.mutate()} disabled={sendPlan.isPending}>
-                Отправить клиенту
-              </button>
-            </div>
-          )}
-        </section>
+        </details>
       )}
+
+      <section className="card consult-price-card" data-testid="consult-price">
+        <p className="muted">Окончательная сумма</p>
+        <p className="consult-price-value">{displayPrice > 0 ? formatMoney(displayPrice) : '—'}</p>
+        {selectedServices.length > 0 && (
+          <p className="muted">{selectedServices.map((s) => s.name).join(', ')}</p>
+        )}
+      </section>
 
       {canApprove && (
         <section className="card stack-gap" data-testid="consult-approve-block">
@@ -874,6 +1073,113 @@ export function HairConsultationDetailPage() {
           </ul>
         )}
       </section>
+
+      <Modal open={schemeOpen} onClose={() => setSchemeOpen(false)} title="Схема окрашивания" size="lg">
+        <fieldset className="stack-gap" disabled={!masterEditable}>
+          <label className="field"><span>Техника</span>
+            <input value={p.technique} onChange={(e) => setP({ ...p, technique: e.target.value })} data-testid="p-technique" /></label>
+          <label className="field"><span>Коррекция оттенка</span>
+            <input value={p.tone_correction} onChange={(e) => setP({ ...p, tone_correction: e.target.value })} data-testid="p-tone-correction" /></label>
+          <label className="field"><span>Желаемый результат</span>
+            <textarea value={p.desired_result} onChange={(e) => setP({ ...p, desired_result: e.target.value })} rows={2} data-testid="p-desired" /></label>
+          <label className="field"><span>Формула</span>
+            <textarea value={p.formula} onChange={(e) => setP({ ...p, formula: e.target.value })} rows={3} data-testid="p-formula" /></label>
+          <label className="field"><span>Оттенки и пропорции</span>
+            <textarea value={p.shades_ratios} onChange={(e) => setP({ ...p, shades_ratios: e.target.value })} rows={2} /></label>
+          <label className="field"><span>Тест пряди</span>
+            <textarea value={p.strand_test} onChange={(e) => setP({ ...p, strand_test: e.target.value })} rows={2} data-testid="p-strand-test" /></label>
+          <label className="field"><span>Аллергопроба</span>
+            <textarea value={p.allergy_test} onChange={(e) => setP({ ...p, allergy_test: e.target.value })} rows={2} data-testid="p-allergy-test" /></label>
+        </fieldset>
+        {masterEditable && (
+          <button type="button" className="btn btn-primary" onClick={() => { savePlan.mutate(); setSchemeOpen(false) }}>
+            Готово
+          </button>
+        )}
+      </Modal>
+
+      <Modal open={servicesOpen} onClose={() => setServicesOpen(false)} title="Услуги для волос" size="lg">
+        <p className="muted">Выберите услуги из каталога. Итоговая сумма попадёт в диагностику.</p>
+        <label className="field">
+          <span className="visually-hidden">Поиск</span>
+          <input
+            value={serviceQuery}
+            onChange={(e) => setServiceQuery(e.target.value)}
+            placeholder="Поиск услуги…"
+            data-testid="consult-service-search"
+          />
+        </label>
+        {!orgId && (
+          <p className="muted" data-testid="consult-services-no-org">
+            Каталог услуг недоступен: у мастера не найдена организация. В Salon-X услуги всегда привязаны к организации
+            (в том числе у частного мастера — к его solo-организации).
+          </p>
+        )}
+        {orgId && services.isLoading && <p className="muted">Загрузка услуг…</p>}
+        <div className="stack-gap" data-testid="consult-service-picker">
+          {mainServices.length > 0 && (
+            <div className="stack-sm">
+              <h3>Основные</h3>
+              <div className="consult-service-list">
+                {mainServices.map((s) => {
+                  const checked = p.selected_service_ids.includes(s.id)
+                  return (
+                    <label key={s.id} className={`consult-service-item${checked ? ' is-checked' : ''}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleService(s)} disabled={!masterEditable && !clientEditable} />
+                      <span>{s.name}</span>
+                      <strong>{formatMoney(s.price_minor)}</strong>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          {popularServices.length > 0 && (
+            <div className="stack-sm">
+              <h3>Популярные манипуляции</h3>
+              <div className="consult-service-list">
+                {popularServices.map((s) => {
+                  const checked = p.selected_service_ids.includes(s.id)
+                  return (
+                    <label key={s.id} className={`consult-service-item${checked ? ' is-checked' : ''}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleService(s)} disabled={!masterEditable && !clientEditable} />
+                      <span>{s.name}</span>
+                      <strong>{formatMoney(s.price_minor)}</strong>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="consult-price-card">
+          <p className="muted">Окончательная сумма</p>
+          <p className="consult-price-value">{formatMoney(computedPrice)}</p>
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          data-testid="consult-services-apply"
+          onClick={() => {
+            const next = { ...p, price_total_minor: computedPrice }
+            setP(next)
+            setServicesOpen(false)
+            if (masterEditable) {
+              void apiRequest<Consultation>(`/v1/hair-consultations/${id}/plan`, {
+                method: 'PATCH',
+                token: accessToken,
+                body: { plan: next },
+              }).then((res) => {
+                qc.setQueryData(['hair-consultation', id], res)
+                if (res.current_version?.plan) setP(asPlan(res.current_version.plan))
+                toast.success('Услуги применены')
+              }).catch((e) => setError(userError(e, 'Не удалось сохранить услуги')))
+            }
+          }}
+        >
+          Применить
+        </button>
+      </Modal>
     </div>
   )
 }

@@ -37,6 +37,8 @@ const (
 	CodeModelInterestOverlap        Code = "model_interest_overlap"
 	CodeBookingCutoff               Code = "booking_cutoff_passed"
 	CodeClientBlacklisted           Code = "client_blacklisted"
+	CodeSelfBooking                 Code = "self_booking_forbidden"
+	CodeMasterUnavailable           Code = "master_unavailable"
 	CodePlannerOutsideHours         Code = "planner_outside_hours"
 	CodePlannerOverlap              Code = "planner_overlap"
 	CodeMediaUnsupportedType        Code = "media_unsupported_type"

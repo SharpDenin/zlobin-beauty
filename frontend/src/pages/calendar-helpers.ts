@@ -399,3 +399,30 @@ export function eventCoversSlot(
   const slotEnd = slotMin + 30
   return startMin < slotEnd && endMin > slotMin
 }
+
+/** Wall-clock duration in minutes for calendar event geometry (same-day preferred). */
+export function eventDurationMinutes(
+  startIso: string,
+  endIso: string | undefined,
+  timeZone: string,
+): number {
+  const start = new Date(startIso)
+  if (Number.isNaN(start.getTime())) return 30
+  const end = endIso ? new Date(endIso) : new Date(start.getTime() + 30 * 60 * 1000)
+  if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) return 30
+  const startDay = zonedYmd(start, timeZone)
+  const endDay = zonedYmd(end, timeZone)
+  if (startDay === endDay) {
+    return Math.max(15, minutesFromMidnight(end, timeZone) - minutesFromMidnight(start, timeZone))
+  }
+  return Math.max(15, Math.round((end.getTime() - start.getTime()) / 60_000))
+}
+
+/** How many half-hour rows a day-list event should span. */
+export function eventSlotSpan(
+  startIso: string,
+  endIso: string | undefined,
+  timeZone: string,
+): number {
+  return Math.max(1, Math.ceil(eventDurationMinutes(startIso, endIso, timeZone) / 30))
+}

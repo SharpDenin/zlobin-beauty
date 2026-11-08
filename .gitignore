@@ -36,3 +36,5 @@ coverage.*
 *.coverprofile
 profile.cov
 
+
+docs/

@@ -25,6 +25,8 @@ import {
   zonedYmd,
   resolveDayWorkWindow,
   eventCoversSlot,
+  eventDurationMinutes,
+  eventSlotSpan,
   buildHalfHourSlots,
 } from './calendar-helpers'
 
@@ -162,5 +164,13 @@ describe('calendar helpers', () => {
     expect(eventCoversSlot('2026-05-14T10:00:00+07:00', '2026-05-14T11:00:00+07:00', 10 * 60, tz)).toBe(true)
     expect(eventCoversSlot('2026-05-14T10:00:00+07:00', '2026-05-14T11:00:00+07:00', 10 * 60 + 30, tz)).toBe(true)
     expect(eventCoversSlot('2026-05-14T10:00:00+07:00', '2026-05-14T11:00:00+07:00', 11 * 60, tz)).toBe(false)
+  })
+
+  it('maps appointment duration to day-list slot span', () => {
+    const tz = 'Asia/Krasnoyarsk'
+    expect(eventDurationMinutes('2026-05-14T10:00:00+07:00', '2026-05-14T11:30:00+07:00', tz)).toBe(90)
+    expect(eventSlotSpan('2026-05-14T10:00:00+07:00', '2026-05-14T11:30:00+07:00', tz)).toBe(3)
+    expect(eventSlotSpan('2026-05-14T10:00:00+07:00', '2026-05-14T10:30:00+07:00', tz)).toBe(1)
+    expect(eventSlotSpan('2026-05-14T10:00:00+07:00', undefined, tz)).toBe(1)
   })
 })

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,10 +29,13 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/clients/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/clients/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
 	mux.Handle("GET /v1/clients/id/{id}", auth(http.HandlerFunc(a.getCard)))
+	mux.Handle("PATCH /v1/clients/id/{id}", auth(http.HandlerFunc(a.patchCard)))
 	mux.Handle("GET /v1/clients/id/{id}/visits", auth(http.HandlerFunc(a.visits)))
+	mux.Handle("GET /v1/clients/id/{id}/notes", auth(http.HandlerFunc(a.listNotes)))
 	mux.Handle("POST /v1/clients/id/{id}/notes", auth(http.HandlerFunc(a.addNote)))
 	mux.Handle("POST /v1/clients/id/{id}/formulas", auth(http.HandlerFunc(a.addFormula)))
 	mux.Handle("GET /v1/clients/id/{id}/formulas", auth(http.HandlerFunc(a.formulas)))
+	mux.Handle("GET /v1/clients/id/{id}/consultations", auth(http.HandlerFunc(a.listCardConsultations)))
 	mux.Handle("POST /v1/clients/id/{id}/consents", auth(http.HandlerFunc(a.consent)))
 	mux.Handle("GET /v1/clients/id/{id}/disputes", auth(http.HandlerFunc(a.listDisputes)))
 	mux.Handle("POST /v1/clients/id/{id}/disputes", auth(http.HandlerFunc(a.createDispute)))
@@ -46,10 +50,13 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/client-cards/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/client-cards/appointment/{appointmentID}", auth(http.HandlerFunc(a.byAppointment)))
 	mux.Handle("GET /v1/client-cards/id/{id}", auth(http.HandlerFunc(a.getCard)))
+	mux.Handle("PATCH /v1/client-cards/id/{id}", auth(http.HandlerFunc(a.patchCard)))
 	mux.Handle("GET /v1/client-cards/id/{id}/visits", auth(http.HandlerFunc(a.visits)))
+	mux.Handle("GET /v1/client-cards/id/{id}/notes", auth(http.HandlerFunc(a.listNotes)))
 	mux.Handle("POST /v1/client-cards/id/{id}/notes", auth(http.HandlerFunc(a.addNote)))
 	mux.Handle("POST /v1/client-cards/id/{id}/formulas", auth(http.HandlerFunc(a.addFormula)))
 	mux.Handle("GET /v1/client-cards/id/{id}/formulas", auth(http.HandlerFunc(a.formulas)))
+	mux.Handle("GET /v1/client-cards/id/{id}/consultations", auth(http.HandlerFunc(a.listCardConsultations)))
 	mux.Handle("POST /v1/client-cards/id/{id}/consents", auth(http.HandlerFunc(a.consent)))
 	mux.Handle("GET /v1/client-cards/id/{id}/disputes", auth(http.HandlerFunc(a.listDisputes)))
 	mux.Handle("POST /v1/client-cards/id/{id}/disputes", auth(http.HandlerFunc(a.createDispute)))
@@ -154,6 +161,104 @@ func (a *API) getCard(w http.ResponseWriter, r *http.Request) {
 	}
 	a.svc.ApplyContactPolicy(r.Context(), claims.UserID, claims.Roles, card)
 	httpx.JSON(w, http.StatusOK, cardDTO(*card))
+}
+
+func (a *API) patchCard(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		DisplayName       *string          `json:"display_name"`
+		Phone             *string          `json:"phone"`
+		Email             *string          `json:"email"`
+		Preferences       *string          `json:"preferences"`
+		PhotoMediaID      *string          `json:"photo_media_id"`
+		ClearPhoto        bool             `json:"clear_photo"`
+		BirthDate         *string          `json:"birth_date"`
+		ClearBirthDate    bool             `json:"clear_birth_date"`
+		LoyaltyStatus     *string          `json:"loyalty_status"`
+		SkinType          *string          `json:"skin_type"`
+		SkinFeatures      *string          `json:"skin_features"`
+		SkinPhotoMediaIDs json.RawMessage  `json:"skin_photo_media_ids"`
+		GeneralNotes      *string          `json:"general_notes"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	in := domain.PatchClientCardInput{
+		DisplayName: req.DisplayName, Phone: req.Phone, Email: req.Email, Preferences: req.Preferences,
+		ClearPhoto: req.ClearPhoto, ClearBirthDate: req.ClearBirthDate,
+		LoyaltyStatus: req.LoyaltyStatus, SkinType: req.SkinType, SkinFeatures: req.SkinFeatures,
+		SkinPhotoMediaIDs: req.SkinPhotoMediaIDs, GeneralNotes: req.GeneralNotes,
+	}
+	if req.PhotoMediaID != nil && strings.TrimSpace(*req.PhotoMediaID) != "" {
+		pid, err := uuid.Parse(strings.TrimSpace(*req.PhotoMediaID))
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid photo_media_id"))
+			return
+		}
+		in.PhotoMediaID = &pid
+	}
+	if req.BirthDate != nil && strings.TrimSpace(*req.BirthDate) != "" {
+		t, err := time.Parse("2006-01-02", strings.TrimSpace(*req.BirthDate))
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("birth_date must be YYYY-MM-DD"))
+			return
+		}
+		in.BirthDate = &t
+	}
+	card, err := a.svc.PatchCard(r.Context(), id, claims.UserID, in)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	a.svc.ApplyContactPolicy(r.Context(), claims.UserID, claims.Roles, card)
+	httpx.JSON(w, http.StatusOK, cardDTO(*card))
+}
+
+func (a *API) listNotes(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListNotes(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, n := range items {
+		out = append(out, map[string]any{
+			"id": n.ID.String(), "visit_id": n.VisitID.String(), "author_user_id": n.AuthorUserID.String(),
+			"body": n.Body, "created_at": n.CreatedAt, "service_name": n.ServiceName, "completed_at": n.CompletedAt,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) listCardConsultations(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	items, err := a.svc.ListConsultationsForCard(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, c := range items {
+		out = append(out, consultListDTO(c))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) visits(w http.ResponseWriter, r *http.Request) {
@@ -286,11 +391,25 @@ func (a *API) consent(w http.ResponseWriter, r *http.Request) {
 }
 
 func cardDTO(c domain.ClientCard) map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"id": c.ID.String(), "organization_id": c.OrganizationID.String(), "user_id": c.UserID.String(),
 		"display_name": c.DisplayName, "phone": c.Phone, "email": c.Email, "preferences": c.Preferences,
 		"contacts_hidden": c.ContactsHidden,
+		"loyalty_status": c.LoyaltyStatus, "skin_type": c.SkinType, "skin_features": c.SkinFeatures,
+		"general_notes": c.GeneralNotes,
+		"skin_photo_media_ids": jsonRaw(c.SkinPhotoMediaIDs),
 	}
+	if c.PhotoMediaID != nil {
+		m["photo_media_id"] = c.PhotoMediaID.String()
+	} else {
+		m["photo_media_id"] = nil
+	}
+	if c.BirthDate != nil {
+		m["birth_date"] = c.BirthDate.Format("2006-01-02")
+	} else {
+		m["birth_date"] = nil
+	}
+	return m
 }
 
 func cardListDTO(item domain.ClientCardListItem) map[string]any {

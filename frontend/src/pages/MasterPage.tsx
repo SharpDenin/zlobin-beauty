@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -63,6 +63,8 @@ type MasterDetails = {
 }
 
 type Slot = { starts_at: string; ends_at: string }
+type BusyBlock = { starts_at: string; ends_at: string; kind?: string }
+type SlotsResponse = { items: Slot[]; busy?: BusyBlock[] }
 
 type Occurrence = {
   id: string
@@ -164,6 +166,7 @@ export function MasterPage() {
   const [viewerIndex, setViewerIndex] = useState(0)
   const [bookingFocus, setBookingFocus] = useState(false)
   const [serviceDeepLinkHandled, setServiceDeepLinkHandled] = useState(false)
+  const idempotencyKeyRef = useRef<string | null>(null)
 
   const masterQuery = useQuery({
     queryKey: ['master', id],
@@ -232,7 +235,7 @@ export function MasterPage() {
   const slotsQuery = useQuery({
     queryKey: ['slots', masterQuery.data?.master.user_id, date, selectedService?.duration_minutes],
     queryFn: () =>
-      apiRequest<{ items: Slot[] }>(
+      apiRequest<SlotsResponse>(
         `/v1/masters/${masterQuery.data!.master.user_id}/slots?date=${date}&duration_minutes=${selectedService!.duration_minutes}`,
       ),
     enabled: Boolean(masterQuery.data?.master.user_id && selectedService && !isFixed && (step >= 2 || bookingFocus)),
@@ -265,25 +268,31 @@ export function MasterPage() {
   const book = useMutation({
     mutationFn: async () => {
       if (!accessToken) throw new ApiError('Требуется вход', 'unauthorized', 401)
+      const masterId = masterQuery.data?.master.id || id
+      if (!masterId) throw new ApiError('Мастер не найден', 'master_unavailable', 404)
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = crypto.randomUUID()
+      }
       const body = isFixed
         ? {
-            master_id: id,
+            master_id: masterId,
             service_id: serviceId,
             occurrence_id: occurrenceId,
             starts_at: selectedOccurrence!.starts_at,
           }
         : {
-            master_id: id,
+            master_id: masterId,
             service_id: serviceId,
             starts_at: slot,
           }
       return apiRequest<BookedAppointment>('/v1/appointments', {
         token: accessToken,
         body,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: idempotencyKeyRef.current,
       })
     },
     onSuccess: async (res) => {
+      idempotencyKeyRef.current = null
       const confirmed = res.status === 'confirmed'
       setMessage(confirmed ? 'Запись подтверждена автоматически' : 'Запись создана и ожидает подтверждения мастера')
       setError(null)
@@ -299,6 +308,16 @@ export function MasterPage() {
       setMessage(null)
       setError(msg)
       toast.error(msg)
+      // Keep the same idempotency key on conflict/network so retry cannot duplicate
+      // a successful first attempt. Rotate only when the client must pick a new slot.
+      const code = (e as { code?: string } | null)?.code
+      if (code === 'appointment_time_conflict' || code === 'occurrence_unavailable' || code === 'occurrence_full') {
+        idempotencyKeyRef.current = null
+        setSlot('')
+        setOccurrenceId('')
+        if (!isFixed) setStep(2)
+        else setStep(1)
+      }
     },
   })
 
@@ -332,17 +351,37 @@ export function MasterPage() {
   const ratingAvg = master.rating_avg ?? 0
   const ratingCount = master.rating_count ?? 0
   const experienceYears = master.experience_years ?? 0
+  const isSelf = Boolean(user?.id && master.user_id === user.id)
 
   const summaryStartsAt = isFixed ? selectedOccurrence?.starts_at : slot
+  const summaryEndsAt = summaryStartsAt && selectedService
+    ? new Date(new Date(summaryStartsAt).getTime() + selectedService.duration_minutes * 60_000).toISOString()
+    : null
   const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || ''
   const summaryAddress = booked?.location_address
   const confirmStep = isFixed ? 2 : 3
-  const canConfirm = isFixed ? Boolean(occurrenceId && selectedOccurrence) : Boolean(slot)
+  const canConfirm = !isSelf && (isFixed ? Boolean(occurrenceId && selectedOccurrence) : Boolean(slot))
+  const busyBlocks = slotsQuery.data?.busy ?? []
 
   function scrollToBooking() {
+    if (isSelf) return
     setBookingFocus(true)
     setStep(0)
     document.getElementById('mp-booking')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  function selectSlot(startsAt: string) {
+    idempotencyKeyRef.current = null
+    setSlot(startsAt)
+    setError(null)
+    setStep(3)
+  }
+
+  function selectOccurrence(oid: string) {
+    idempotencyKeyRef.current = null
+    setOccurrenceId(oid)
+    setError(null)
+    setStep(2)
   }
 
   function starsLabel(n: number) {
@@ -437,10 +476,14 @@ export function MasterPage() {
           </div>
         </div>
         <div className="mp-hero-cta">
-          <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
-            Записаться
-          </button>
-          {accessToken && (
+          {isSelf ? (
+            <span className="badge badge-default mp-self-badge" data-testid="mp-self-badge">Это вы</span>
+          ) : (
+            <button className="btn btn-primary" type="button" onClick={scrollToBooking} data-testid="mp-hero-book">
+              Записаться
+            </button>
+          )}
+          {!isSelf && accessToken && (
             <Link
               className="btn btn-secondary"
               to={`/consultations?master=${master.user_id}`}
@@ -449,7 +492,7 @@ export function MasterPage() {
               Консультация
             </Link>
           )}
-          {accessToken && (
+          {!isSelf && accessToken && (
             <button
               className="btn btn-secondary mp-msg-btn"
               type="button"
@@ -544,10 +587,17 @@ export function MasterPage() {
       )}
 
       <section id="mp-booking" className="stack">
-        {error && step < 3 ? <ErrorBanner error={error} /> : null}
+        {error && step < confirmStep ? <ErrorBanner error={error} /> : null}
         <h2 className="mp-section-title">
           {step === 0 ? 'Услуги' : step === 1 && selectedService ? selectedService.name : 'Запись'}
         </h2>
+        {isSelf ? (
+          <div className="empty-state" data-testid="mp-self-booking-blocked">
+            <h2>Это ваш профиль</h2>
+            <p>Записаться к самому себе нельзя. Выберите другого мастера в поиске.</p>
+          </div>
+        ) : (
+          <>
         <div className="wizard-steps" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
           {steps.map((label, idx) => (
             <div
@@ -745,17 +795,35 @@ export function MasterPage() {
                 </button>
               </div>
             )}
-            {slotsQuery.data && slotsQuery.data.items.length > 0 && (
+            {slotsQuery.data && (slotsQuery.data.items.length > 0 || busyBlocks.length > 0) && (
               <p className="mp-schedule-hint">
-                Свободное время на{' '}
+                Расписание на{' '}
                 {new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', {
                   weekday: 'long',
                   day: 'numeric',
                   month: 'long',
                 })}
+                {selectedService ? ` · услуга ${selectedService.duration_minutes} мин` : ''}
               </p>
             )}
-            <div className="slot-grid mp-slot-grid">
+            {busyBlocks.length > 0 && (
+              <div className="mp-day-busy" data-testid="mp-day-busy" aria-label="Занятые интервалы">
+                <p className="muted caption">Занято (без деталей чужих записей)</p>
+                <ul className="mp-day-busy-list">
+                  {busyBlocks.map((b) => {
+                    const from = new Date(b.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+                    const to = new Date(b.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+                    return (
+                      <li key={`${b.starts_at}-${b.ends_at}`} className="mp-day-busy-item" data-testid="mp-busy-block">
+                        <span>{from}–{to}</span>
+                        <span className="badge badge-default">Занято</span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )}
+            <div className="slot-grid mp-slot-grid" data-testid="mp-slot-grid">
               {slotsQuery.data?.items.map((s) => {
                 const label = new Date(s.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
                 return (
@@ -764,7 +832,7 @@ export function MasterPage() {
                     type="button"
                     className={`slot ${slot === s.starts_at ? 'active' : ''}`}
                     data-testid="mp-slot"
-                    onClick={() => { setSlot(s.starts_at); setStep(3) }}
+                    onClick={() => selectSlot(s.starts_at)}
                   >
                     {label}
                   </button>
@@ -799,7 +867,7 @@ export function MasterPage() {
                       type="button"
                       className={`occurrence-card ${occurrenceId === o.id ? 'selected' : ''}`}
                       disabled={disabled}
-                      onClick={() => { setOccurrenceId(o.id); setStep(2) }}
+                      onClick={() => selectOccurrence(o.id)}
                     >
                       <div className="row between">
                         <strong>{o.title || 'Сеанс'}</strong>
@@ -850,11 +918,19 @@ export function MasterPage() {
                 <div>
                   <dt>Время</dt>
                   <dd>
-                    {summaryTz
-                      ? formatDualTime(summaryStartsAt, summaryTz, { withDate: true })
-                      : new Date(summaryStartsAt).toLocaleString('ru-RU', {
-                          weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-                        })}
+                    {summaryTz && summaryEndsAt
+                      ? formatRangeInTimezone(summaryStartsAt, summaryEndsAt, summaryTz)
+                      : summaryEndsAt
+                        ? `${new Date(summaryStartsAt).toLocaleString('ru-RU', {
+                            weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+                          })} – ${new Date(summaryEndsAt).toLocaleTimeString('ru-RU', {
+                            hour: '2-digit', minute: '2-digit',
+                          })}`
+                        : summaryTz
+                          ? formatDualTime(summaryStartsAt, summaryTz, { withDate: true })
+                          : new Date(summaryStartsAt).toLocaleString('ru-RU', {
+                              weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+                            })}
                   </dd>
                 </div>
                 <div>
@@ -885,9 +961,11 @@ export function MasterPage() {
             </div>
           </div>
         )}
+          </>
+        )}
       </section>
 
-      {selectedService && master.organization_id && (
+      {!isSelf && selectedService && master.organization_id && (
         <MultiServiceBookingDialog
           open={multiOpen}
           onClose={() => setMultiOpen(false)}
@@ -963,12 +1041,6 @@ export function MasterPage() {
         onClose={() => setViewerOpen(false)}
         onIndexChange={setViewerIndex}
       />
-
-      <div className="mp-sticky-cta">
-        <button className="btn btn-primary" type="button" onClick={scrollToBooking}>
-          Записаться
-        </button>
-      </div>
     </main>
   )
 }

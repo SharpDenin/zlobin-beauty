@@ -14,6 +14,16 @@ describe('normalizeError', () => {
     expect(formatUserError(n)).toContain('Это время уже занято')
   })
 
+  it('maps self_booking_forbidden and master_unavailable', () => {
+    expect(formatUserError({ code: 'self_booking_forbidden', status: 403, message: 'cannot book an appointment with yourself' })).toContain(
+      'самому себе',
+    )
+    expect(formatUserError({ code: 'master_unavailable', status: 409, message: 'master is not available for booking' })).toContain(
+      'недоступен для записи',
+    )
+    expect(normalizeError({ code: 'not_found', status: 404, message: 'master not found' }).code).toBe('master_unavailable')
+  })
+
   it('maps procedure_order_invalid with a Russian reason', () => {
     const n = normalizeError({
       code: 'procedure_order_invalid',

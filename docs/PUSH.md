@@ -28,7 +28,7 @@ Salon-X доставляет **системные** Web Push поверх уже
 | --- | --- | --- |
 | `VAPID_PUBLIC_KEY` | communications (+ FE через config API) | публичный ключ |
 | `VAPID_PRIVATE_KEY` | только communications | приватный ключ, никогда во frontend / логи |
-| `VAPID_SUBJECT` | communications | `mailto:…` или `https://…` контакта владельца |
+| `VAPID_SUBJECT` | communications | email контакта (`ops@…`) или `https://…`. Префикс `mailto:` допустим и нормализуется — библиотека `webpush-go` сама добавляет `mailto:` |
 
 Без ключей сервис **стартует**; push просто выключен (`enabled: false`). Один и тот же key pair должен использоваться всеми инстансами communications.
 
@@ -43,16 +43,22 @@ npx web-push generate-vapid-keys
 ```env
 VAPID_PUBLIC_KEY=<public>
 VAPID_PRIVATE_KEY=<private>
-VAPID_SUBJECT=mailto:no-reply@salon-x.ru
+VAPID_SUBJECT=no-reply@salon-x.ru
 ```
 
-Перезапустите `communications`:
+Перезапустите `communications` (после деплоя фикса `normalizeVAPIDSubject`):
 
 ```bash
-docker compose up -d --force-recreate communications
+docker compose up -d --build --force-recreate communications
 ```
 
 В логах: `web push enabled` или предупреждение `web push disabled…`. Приватный ключ в логах не печатается.
+
+### Известный дефект (исправлен)
+
+Если `VAPID_SUBJECT` задан как `mailto:…`, старые сборки передавали это значение в `webpush-go` как есть. Библиотека снова добавляла `mailto:`, и JWT claim `sub` становился `mailto:mailto:…`. Push-провайдеры (FCM и др.) отклоняли доставку; подписка при этом сохранялась, in-app уведомления работали. Communications теперь снимает лишний `mailto:` перед отправкой.
+
+После деплоя фикса пользователям со **сменёнными** VAPID-ключами нужно снова нажать «Включить» (FE пересоздаёт подписку при смене public key).
 
 ## Frontend UX
 
@@ -74,7 +80,8 @@ Service worker (`sw-push.js`, подключается через Workbox `impor
 | --- | --- |
 | `enabled: false` | `VAPID_*` в env communications |
 | Кнопка «Включить» → denied | настройки сайта/ОС |
-| Нет системного баннера | PWA/HTTPS, SW зарегистрирован, подписка в БД |
+| Нет системного баннера | PWA/HTTPS, SW зарегистрирован, подписка в БД; логи `push delivery rejected` / `failed` |
+| `push delivery rejected` http 401/403 | VAPID keys mismatch или битый subject (до фикса — double mailto) |
 | 410 после ротации ключей | пользователю нужно включить push снова (старые подписки невалидны) |
 
 ## Ручная проверка устройств

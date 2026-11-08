@@ -60,3 +60,22 @@ export const DESKTOP_MESSENGER_MQ = '(min-width: 768px)'
 export function isDesktopMessenger() {
   return typeof window !== 'undefined' && window.matchMedia(DESKTOP_MESSENGER_MQ).matches
 }
+
+/**
+ * Master user id to open the existing booking flow (`/masters/:id`) from a chat.
+ * Shown when the peer participates as master and the current user is not that master.
+ * Skips supplier threads (not a client booking context).
+ */
+export function bookingMasterUserId(
+  conversation: { type?: string; participants?: Array<{ user_id: string; role: string }> } | null | undefined,
+  currentUserId: string | null | undefined,
+): string | null {
+  if (!conversation || !currentUserId) return null
+  if (conversation.type === 'master_supplier') return null
+  const parts = conversation.participants ?? []
+  const me = parts.find((p) => p.user_id === currentUserId)
+  if (me?.role === 'master' || me?.role === 'supplier') return null
+  const master = parts.find((p) => p.role === 'master')
+  if (!master || master.user_id === currentUserId) return null
+  return master.user_id
+}

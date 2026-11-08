@@ -1,6 +1,7 @@
 /** Derived accent tokens from one base color. Same token names as the design system. */
 
 export type Rgb = { r: number; g: number; b: number }
+export type AccentTheme = 'light' | 'dark'
 
 export type AccentTokens = {
   primary: string
@@ -15,6 +16,10 @@ export type AccentTokens = {
   canvas: string
   hero: string
 }
+
+export const DEFAULT_UI_ACCENT = '#7C82FF'
+
+type Hsl = { h: number; s: number; l: number }
 
 export function parseHex(input: string): Rgb {
   const hex = input.trim().replace('#', '')
@@ -40,6 +45,50 @@ function mix(a: Rgb, b: Rgb, t: number): Rgb {
   }
 }
 
+function rgbToHsl({ r, g, b }: Rgb): Hsl {
+  const rn = r / 255
+  const gn = g / 255
+  const bn = b / 255
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const l = (max + min) / 2
+  if (max === min) return { h: 0, s: 0, l }
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h = 0
+  if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6
+  else if (max === gn) h = ((bn - rn) / d + 2) / 6
+  else h = ((rn - gn) / d + 4) / 6
+  return { h, s, l }
+}
+
+function hslToRgb({ h, s, l }: Hsl): Rgb {
+  if (s === 0) {
+    const v = l * 255
+    return { r: v, g: v, b: v }
+  }
+  const hue2rgb = (p: number, q: number, t: number) => {
+    let tt = t
+    if (tt < 0) tt += 1
+    if (tt > 1) tt -= 1
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt
+    if (tt < 1 / 2) return q
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6
+    return p
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  return {
+    r: hue2rgb(p, q, h + 1 / 3) * 255,
+    g: hue2rgb(p, q, h) * 255,
+    b: hue2rgb(p, q, h - 1 / 3) * 255,
+  }
+}
+
+function clamp01(n: number) {
+  return Math.max(0, Math.min(1, n))
+}
+
 /** Relative luminance, 0–1, sRGB. */
 export function luminance(rgb: Rgb): number {
   const f = (c: number) => {
@@ -56,6 +105,34 @@ function rgba(rgb: Rgb, alpha: number): string {
 /** Ink that stays readable on the accent fill (buttons, selected chips). */
 export function contrastInk(rgb: Rgb): string {
   return luminance(rgb) > 0.42 ? '#0B0D12' : '#F5F7FA'
+}
+
+/**
+ * Shape a raw photo color into a UI accent for the active theme.
+ * Does not re-analyze the image — safe to call on every theme toggle.
+ */
+export function tuneAccentForUi(baseHex: string, theme: AccentTheme = 'dark'): string {
+  const hsl = rgbToHsl(parseHex(baseHex))
+  if (hsl.s < 0.08) return DEFAULT_UI_ACCENT
+
+  hsl.s = clamp01(Math.max(hsl.s, theme === 'light' ? 0.42 : 0.36))
+  hsl.s = clamp01(Math.min(hsl.s, 0.88))
+
+  if (theme === 'light') {
+    hsl.l = clamp01(Math.min(Math.max(hsl.l, 0.30), 0.52))
+  } else {
+    hsl.l = clamp01(Math.min(Math.max(hsl.l, 0.40), 0.68))
+  }
+
+  const rgb = hslToRgb(hsl)
+  const lum = luminance(rgb)
+  if (theme === 'light' && lum > 0.62) {
+    return toHex(hslToRgb({ ...hsl, l: clamp01(hsl.l - 0.12) }))
+  }
+  if (theme === 'dark' && lum < 0.18) {
+    return toHex(hslToRgb({ ...hsl, l: clamp01(hsl.l + 0.18) }))
+  }
+  return toHex(rgb)
 }
 
 export function deriveAccent(baseHex: string): AccentTokens {
@@ -81,9 +158,19 @@ export function deriveAccent(baseHex: string): AccentTokens {
   }
 }
 
-export function applyAccent(baseHex: string) {
+export function readDocumentTheme(): AccentTheme {
+  if (typeof document === 'undefined') return 'dark'
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
+}
+
+/**
+ * Apply wallpaper-derived (or curated) accent onto shared CSS variables.
+ * Theme tweaks run before derivation so theme toggles do not re-scan the photo.
+ */
+export function applyAccent(baseHex: string, theme: AccentTheme = readDocumentTheme()) {
   if (typeof document === 'undefined') return
-  const tokens = deriveAccent(baseHex)
+  const tuned = tuneAccentForUi(baseHex, theme)
+  const tokens = deriveAccent(tuned)
   const root = document.documentElement
   const set = (name: string, value: string) => root.style.setProperty(name, value)
   set('--color-primary', tokens.primary)
@@ -101,4 +188,5 @@ export function applyAccent(baseHex: string) {
   set('--gradient-canvas', tokens.canvas)
   set('--gradient-hero', tokens.hero)
   set('--gradient-image-fallback', `linear-gradient(145deg, ${tokens.muted} 0%, var(--color-surface-2) 48%, var(--color-surface) 100%)`)
+  root.dataset.accent = tokens.primary
 }

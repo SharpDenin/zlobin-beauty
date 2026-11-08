@@ -121,6 +121,12 @@ describe('MessengerApp', () => {
     })
   })
 
+  it('offers booking link to the peer master for client_master chats', async () => {
+    renderApp('c1')
+    const book = await screen.findByTestId('messenger-book-master')
+    expect(book).toHaveAttribute('href', '/masters/u2')
+  })
+
   it('keeps failed text and allows retry', async () => {
     let attempts = 0
     mockedRequest.mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) => {
@@ -171,8 +177,11 @@ describe('MessengerApp', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(['hello'], 'tone.jpg', { type: 'image/jpeg' })
     fireEvent.change(input, { target: { files: [file] } })
-    expect(await screen.findByRole('button', { name: 'Убрать файл' })).toBeTruthy()
-    expect(screen.getByAltText('Предпросмотр')).toBeTruthy()
+    // Static photos open the shared crop editor before attaching.
+    expect(await screen.findByTestId('image-crop-editor')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('image-crop-cancel'))
+    expect(screen.queryByTestId('image-crop-editor')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Убрать файл' })).toBeNull()
   })
 
   it('previews a selected video before send', async () => {

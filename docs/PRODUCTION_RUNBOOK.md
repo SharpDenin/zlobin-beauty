@@ -87,7 +87,7 @@ Frontend: для same-origin (nginx SPA + `/v1/` → gateway) оставьте `
 | --- | --- | --- | --- | --- |
 | `VAPID_PUBLIC_KEY` | публичный VAPID | оба ключа нужны для `enabled: true` | **communications** | communications |
 | `VAPID_PRIVATE_KEY` | приватный VAPID (**только backend**, не FE, не логи) | см. выше | communications | communications |
-| `VAPID_SUBJECT` | `mailto:…` или `https://…` | рекомендуется | communications | communications |
+| `VAPID_SUBJECT` | email (`ops@…`) или `https://…` (`mailto:` нормализуется) | рекомендуется | communications | communications |
 
 Без ключей: communications стартует, лог `web push disabled…`, `GET /v1/push/config` → `{ enabled: false }`.
 
@@ -193,20 +193,24 @@ npx web-push generate-vapid-keys
 ```env
 VAPID_PUBLIC_KEY=<public>
 VAPID_PRIVATE_KEY=<private>
-VAPID_SUBJECT=mailto:no-reply@salon-x.ru
+VAPID_SUBJECT=no-reply@salon-x.ru
 ```
 
 - Private key — только secrets store / production `.env` на сервере.
 - Один key pair на все инстансы `communications`.
 - Ротация ключей инвалидирует старые подписки (клиентам нужно включить push снова).
 
-Перезапуск:
+Перезапуск (нужен **rebuild** образа после фикса `normalizeVAPIDSubject`):
 
 ```bash
-docker compose up -d --force-recreate communications
+docker compose up -d --build --force-recreate communications
+# после деплоя SPA/nginx (кэш sw-push.js):
+docker compose up -d --build --force-recreate frontend
 ```
 
 Ожидание в логах: `web push enabled` (не `web push disabled…`).
+
+Если в production `.env` ещё стоит `VAPID_SUBJECT=mailto:…`, можно оставить — код снимет префикс. Предпочтительно заменить на email без `mailto:`.
 
 ### 5.2 Проверки
 

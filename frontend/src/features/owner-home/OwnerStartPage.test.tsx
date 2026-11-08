@@ -68,7 +68,49 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: String(query).includes('max-width'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
   mockedRequest.mockImplementation(async (path: string) => {
+    if (path === '/v1/notifications' || path === '/v1/notifications/bubbles') {
+      return {
+        items: [
+          {
+            id: 'n-appt',
+            type: 'appointment.confirmed',
+            title: 'Запись подтверждена',
+            body: 'Стрижка',
+            entity_type: 'appointment',
+            entity_id: 'a1',
+            read_at: null,
+            created_at: '2026-08-30T10:00:00.000Z',
+          },
+          {
+            id: 'n-chat',
+            type: 'new_message',
+            title: 'Новое сообщение от Анна',
+            body: 'Привет',
+            entity_type: 'conversation',
+            entity_id: 'c1',
+            read_at: null,
+            created_at: '2026-08-30T11:00:00.000Z',
+          },
+        ],
+      }
+    }
+    if (path.startsWith('/v1/conversations')) {
+      return { items: [] }
+    }
     if (path.startsWith('/v1/calendar/appointments')) {
       const start = new Date()
       start.setHours(10, 0, 0, 0)
@@ -138,5 +180,14 @@ describe('OwnerStartPage', () => {
     expect(other).toBeTruthy()
     fireEvent.click(other!)
     expect(other).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('right notes block lists appointment notifications only', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Уведомления' })).toHaveTextContent('Запись подтверждена')
+    })
+    const notes = screen.getByRole('region', { name: 'Уведомления' })
+    expect(notes).not.toHaveTextContent('Новое сообщение от Анна')
   })
 })

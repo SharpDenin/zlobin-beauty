@@ -225,8 +225,14 @@ export function SearchPage() {
           const services = servicesLine(m)
           const prices = priceRangeLine(m)
           const loc = locationLine(m, selectedCity)
+          const isSelf = Boolean(user?.id && m.user_id === user.id)
           return (
-            <Link key={m.id} to={`/masters/${m.id}`} className="list-item search-master-card media-first-card">
+            <Link
+              key={m.id}
+              to={`/masters/${m.id}`}
+              className="list-item search-master-card media-first-card"
+              data-testid={isSelf ? 'search-master-self' : 'search-master-card'}
+            >
               <ServiceCardMedia
                 mediaId={m.photo_media_id}
                 name={name}
@@ -242,6 +248,9 @@ export function SearchPage() {
                     <span className="search-master-district" data-testid="search-onsite-district">{loc.district}</span>
                   )}
                   <span className={`city-badge${loc.otherCity ? ' city-badge--other' : ''}`}>{loc.city}</span>
+                  {isSelf && (
+                    <span className="badge badge-default" data-testid="search-self-badge">Это вы</span>
+                  )}
                 </div>
                 {services && (
                   <p className="search-master-services" data-testid="search-master-services">{services}</p>

@@ -324,29 +324,28 @@ export function ServicesPage() {
         {services.map((s) => {
           const state = s.archived_at ? 'archived' : s.published ? 'active' : 'inactive'
           return (
-            <article key={s.id} className="service-card service-card--media service-card--edge media-first-card">
+            <article key={s.id} className="service-card service-card--media service-card--edge media-first-card" data-testid="service-card">
+              {/* Edge thumb: photo only — title/meta live in the body so they never sit under the image. */}
               <ServiceCardMedia
                 mediaId={s.photo_media_id}
                 name={s.name}
                 token={accessToken}
-                aspect="landscape"
-                overlay={{
-                  title: s.name,
-                  meta: `${s.duration_minutes} мин · ${s.price_display || formatMoney(s.price_minor)}`,
-                }}
+                aspect="square"
               />
               <div className="service-card-body media-first-body">
                 <div className="row between">
                   <span className={`badge ${statusBadgeClass(state)}`}>{productStateLabel(state)}</span>
                   <span className="chip">{bookingModeLabel(s.booking_mode)}</span>
                 </div>
+                <h3 className="service-card-title">{s.name}</h3>
                 <div className="service-card-meta">
                   <span className="chip">{s.category}</span>
+                  <span className="muted">{s.duration_minutes} мин</span>
                 </div>
                 {s.description ? <p className="muted">{s.description}</p> : null}
-                <div className="row between">
+                <div className="row between service-card-footer">
                   <strong className="service-card-price">{s.price_display || formatMoney(s.price_minor)}</strong>
-                  <div className="row">
+                  <div className="row service-card-actions">
                     {s.published && !s.archived_at && master.data?.master.id && (
                       <Link
                         className="btn btn-primary btn-compact"

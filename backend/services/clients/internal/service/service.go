@@ -23,12 +23,18 @@ type Service struct {
 	organizationsURL   string
 	identityURL        string
 	communicationsURL  string
+	marketplaceURL     string
 	httpClient         *http.Client
 	now                func() time.Time
 }
 
 func New(st *store.Store, internalToken string) *Service {
 	return &Service{store: st, internalToken: internalToken, httpClient: &http.Client{Timeout: 4 * time.Second}, now: time.Now}
+}
+
+func (s *Service) WithMarketplace(url string) *Service {
+	s.marketplaceURL = strings.TrimRight(url, "/")
+	return s
 }
 
 func (s *Service) WithOrganizations(url string) *Service {
@@ -231,6 +237,108 @@ func (s *Service) ListVisits(ctx context.Context, cardID, actor uuid.UUID) ([]do
 		items = []domain.Visit{}
 	}
 	return items, nil
+}
+
+func (s *Service) ListNotes(ctx context.Context, cardID, actor uuid.UUID) ([]domain.VisitNoteView, error) {
+	if _, err := s.GetCard(ctx, cardID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListNotesForCard(ctx, cardID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if items == nil {
+		items = []domain.VisitNoteView{}
+	}
+	return items, nil
+}
+
+// PatchCard updates the shared CRM profile. Clients may edit personal fields;
+// masters with card access may edit clinical / loyalty annotations.
+func (s *Service) PatchCard(ctx context.Context, cardID, actor uuid.UUID, in domain.PatchClientCardInput) (*domain.ClientCard, error) {
+	card, err := s.GetCard(ctx, cardID, actor)
+	if err != nil {
+		return nil, err
+	}
+	isOwner := card.UserID == actor
+	privileged := s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin")
+	served, _ := s.store.MasterHasVisitOnCard(ctx, cardID, actor)
+	isMasterEditor := privileged || served
+
+	if !isOwner && !isMasterEditor {
+		return nil, apperr.Forbidden("no access")
+	}
+
+	if in.DisplayName != nil && (isOwner || isMasterEditor) {
+		name := strings.TrimSpace(*in.DisplayName)
+		if name != "" {
+			card.DisplayName = name
+		}
+	}
+	if in.Phone != nil && (isOwner || isMasterEditor) {
+		v := strings.TrimSpace(*in.Phone)
+		if v == "" {
+			card.Phone = nil
+		} else {
+			card.Phone = &v
+		}
+	}
+	if in.Email != nil && (isOwner || isMasterEditor) {
+		v := strings.TrimSpace(*in.Email)
+		if v == "" {
+			card.Email = nil
+		} else {
+			card.Email = &v
+		}
+	}
+	if in.Preferences != nil && (isOwner || isMasterEditor) {
+		card.Preferences = strings.TrimSpace(*in.Preferences)
+	}
+	if in.ClearPhoto && (isOwner || isMasterEditor) {
+		card.PhotoMediaID = nil
+	} else if in.PhotoMediaID != nil && (isOwner || isMasterEditor) {
+		card.PhotoMediaID = in.PhotoMediaID
+	}
+	if in.ClearBirthDate && (isOwner || isMasterEditor) {
+		card.BirthDate = nil
+	} else if in.BirthDate != nil && (isOwner || isMasterEditor) {
+		card.BirthDate = in.BirthDate
+	}
+
+	// Clinical / loyalty annotations: masters (and org staff) only.
+	if isMasterEditor {
+		if in.LoyaltyStatus != nil {
+			card.LoyaltyStatus = strings.TrimSpace(*in.LoyaltyStatus)
+		}
+		if in.SkinType != nil {
+			card.SkinType = strings.TrimSpace(*in.SkinType)
+		}
+		if in.SkinFeatures != nil {
+			card.SkinFeatures = strings.TrimSpace(*in.SkinFeatures)
+		}
+		if in.GeneralNotes != nil {
+			card.GeneralNotes = strings.TrimSpace(*in.GeneralNotes)
+		}
+		if in.SkinPhotoMediaIDs != nil {
+			if !json.Valid(in.SkinPhotoMediaIDs) {
+				return nil, apperr.Validation("skin_photo_media_ids must be valid json")
+			}
+			card.SkinPhotoMediaIDs = in.SkinPhotoMediaIDs
+		}
+	} else if in.LoyaltyStatus != nil || in.SkinType != nil || in.SkinFeatures != nil ||
+		in.GeneralNotes != nil || in.SkinPhotoMediaIDs != nil {
+		return nil, apperr.Forbidden("only master can edit clinical card fields")
+	}
+
+	card.UpdatedAt = s.now().UTC()
+	out, err := s.store.UpdateCardProfile(ctx, *card)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if out == nil {
+		return nil, apperr.NotFound("client card not found")
+	}
+	return out, nil
 }
 
 func (s *Service) AddNote(ctx context.Context, cardID, actor, visitID uuid.UUID, body string) error {

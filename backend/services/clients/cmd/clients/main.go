@@ -46,7 +46,8 @@ func main() {
 	api := httpapi.New(service.New(st, os.Getenv("INTERNAL_TOKEN")).
 		WithOrganizations(os.Getenv("ORGANIZATIONS_URL")).
 		WithIdentity(os.Getenv("IDENTITY_URL")).
-		WithCommunications(os.Getenv("COMMUNICATIONS_URL")), log)
+		WithCommunications(os.Getenv("COMMUNICATIONS_URL")).
+		WithMarketplace(os.Getenv("MARKETPLACE_URL")), log)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

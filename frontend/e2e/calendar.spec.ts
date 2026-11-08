@@ -27,7 +27,10 @@ async function assertNoPageOverflow(page: import('@playwright/test').Page) {
 
 test.describe('production calendar', () => {
   test('master opens calendar, switches day, and can open create', async ({ page }, info) => {
-    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'key viewports')
+    test.skip(
+      info.project.name !== 'phone-390' && info.project.name !== 'desktop-1280' && info.project.name !== 'desktop-1920',
+      'key viewports',
+    )
     if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar')
@@ -68,6 +71,12 @@ test.describe('production calendar', () => {
       }
     }
 
+    // Close any leftover sheet/detail before creating an event.
+    for (let i = 0; i < 3; i++) {
+      if ((await page.locator('[data-overlay="true"]').count()) === 0) break
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+    }
     await page.getByRole('button', { name: '+ Событие' }).click()
     await expect(page.getByRole('heading', { name: 'Новое событие' })).toBeVisible()
     await page.getByLabel('Конец').fill('2000-01-01T00:00')
@@ -75,12 +84,35 @@ test.describe('production calendar', () => {
     await expect(page.getByRole('dialog').getByRole('alert').filter({ hasText: /позже начала|Не удалось/ })).toBeVisible()
     await page.getByRole('button', { name: 'Закрыть' }).click()
 
+    if (info.project.name === 'phone-390') {
+      const todayCount = await page.locator('.cal-day-chip.is-today').count()
+      expect(todayCount).toBeLessThanOrEqual(1)
+      const span = page.getByTestId('calendar-event-span').first()
+      if (await span.count()) {
+        const spanSlots = Number(await span.getAttribute('data-span'))
+        expect(spanSlots).toBeGreaterThanOrEqual(1)
+        const h = await span.evaluate((el) => el.getBoundingClientRect().height)
+        expect(h).toBeGreaterThanOrEqual(40 * spanSlots - 8)
+      }
+    }
+
     // Category filters live in settings — not permanently in the main calendar chrome.
     await expect(page.locator('.calendar-shell > .calendar-category-row')).toHaveCount(0)
-    await page.getByRole('button', { name: 'Настройки календаря' }).click()
+    await page.getByTestId('calendar-open-settings').click()
     await expect(page.getByTestId('calendar-settings')).toBeVisible()
     await expect(page.getByRole('group', { name: 'Фильтры категорий' })).toBeVisible()
     await expect(page.getByRole('button', { name: /Клиент/ }).first()).toBeVisible()
+    const settingsScroll = await page.getByTestId('calendar-settings').evaluate((el) => {
+      const panel = el.closest('[data-overlay-scroll]') as HTMLElement | null
+      if (!panel) return { ok: false, reason: 'no-scroll-panel' }
+      const style = getComputedStyle(panel)
+      return {
+        ok: style.overflow === 'auto' || style.overflowY === 'auto' || style.overflowY === 'scroll',
+        reason: 'ok',
+      }
+    })
+    expect(settingsScroll.ok, JSON.stringify(settingsScroll)).toBe(true)
+
     await page.getByTestId('settings-open-schedule').click()
     await expect(page).toHaveURL(/panel=schedule/)
     await expect(page.getByTestId('weekly-hours-form')).toBeVisible()
@@ -88,7 +120,10 @@ test.describe('production calendar', () => {
   })
 
   test('calendar?panel=schedule opens weekly hours editor', async ({ page }, info) => {
-    test.skip(info.project.name !== 'phone-390' && info.project.name !== 'desktop-1920', 'key viewports')
+    test.skip(
+      info.project.name !== 'phone-390' && info.project.name !== 'desktop-1280' && info.project.name !== 'desktop-1920',
+      'key viewports',
+    )
     if (!(await apiHealthy())) test.skip(true, `API unhealthy at ${api}`)
     await loginUI(page, 'master1@demo.local')
     await page.goto('/calendar?panel=schedule')

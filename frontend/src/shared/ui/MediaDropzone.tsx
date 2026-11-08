@@ -9,9 +9,11 @@ import {
   mediaFileApiError,
   uploadMedia,
 } from '@/shared/lib/mediaUpload'
+import { cropAspectForPurpose, shouldOpenImageCrop } from '@/shared/lib/imageCrop'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { MediaVideo } from '@/shared/ui/MediaVideo'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { ImageCropEditor } from '@/shared/ui/ImageCropEditor'
 
 type DropzoneState = 'idle' | 'dragging' | 'uploading' | 'error' | 'preview'
 
@@ -24,6 +26,10 @@ type Props = {
   allowVideo?: boolean
   /** Animated GIF is accepted by default where the backend allows it for the purpose. */
   allowGif?: boolean
+  /** Skip zoom/crop editor (still images upload as picked). Default: open editor for photos. */
+  enableCrop?: boolean
+  /** Override aspect; `null` keeps source ratio. Default follows purpose. */
+  cropAspect?: number | null
   label?: string
   disabled?: boolean
   className?: string
@@ -37,6 +43,8 @@ export function MediaDropzone({
   maxBytes = MEDIA_MAX_BYTES_DEFAULT,
   allowVideo = false,
   allowGif = true,
+  enableCrop = true,
+  cropAspect,
   label = 'Перетащите файл или нажмите для выбора',
   disabled = false,
   className,
@@ -52,8 +60,10 @@ export function MediaDropzone({
   const [localPreview, setLocalPreview] = useState<string | null>(null)
   const [localIsVideo, setLocalIsVideo] = useState(false)
   const [remoteIsVideo, setRemoteIsVideo] = useState(false)
+  const [cropFile, setCropFile] = useState<File | null>(null)
 
   const resolvedAccept = accept ?? (allowVideo ? (allowGif ? MEDIA_ACCEPT_ANY_VISUAL : MEDIA_ACCEPT_ANY_VISUAL.replace(',image/gif', '')) : allowGif ? MEDIA_ACCEPT_IMAGES_GIF : 'image/jpeg,image/png,image/webp')
+  const resolvedAspect = cropAspect !== undefined ? cropAspect : cropAspectForPurpose(purpose)
 
   useEffect(() => {
     if (value) {
@@ -86,19 +96,8 @@ export function MediaDropzone({
     setLocalIsVideo(isVideoFile(file))
   }
 
-  async function handleFile(file: File) {
+  async function uploadFile(file: File) {
     if (disabled) return
-    const validation = mediaFileApiError(file, {
-      allowVideo,
-      allowGif,
-      maxImageBytes: maxBytes,
-      maxVideoBytes: MEDIA_MAX_VIDEO_BYTES,
-    })
-    if (validation) {
-      setError(validation)
-      setState('error')
-      return
-    }
     if (!accessToken) {
       setError('Войдите, чтобы загрузить файл')
       setState('error')
@@ -126,8 +125,35 @@ export function MediaDropzone({
     }
   }
 
+  async function handleFile(file: File) {
+    if (disabled) return
+    const validation = mediaFileApiError(file, {
+      allowVideo,
+      allowGif,
+      maxImageBytes: maxBytes,
+      maxVideoBytes: MEDIA_MAX_VIDEO_BYTES,
+    })
+    if (validation) {
+      setError(validation)
+      setState('error')
+      return
+    }
+    if (!accessToken) {
+      setError('Войдите, чтобы загрузить файл')
+      setState('error')
+      return
+    }
+
+    setError(null)
+    if (enableCrop && shouldOpenImageCrop(file)) {
+      setCropFile(file)
+      return
+    }
+    await uploadFile(file)
+  }
+
   function openPicker() {
-    if (disabled || state === 'uploading') return
+    if (disabled || state === 'uploading' || cropFile) return
     inputRef.current?.click()
   }
 
@@ -141,7 +167,7 @@ export function MediaDropzone({
   function onDragOver(e: DragEvent) {
     e.preventDefault()
     e.stopPropagation()
-    if (disabled || state === 'uploading') return
+    if (disabled || state === 'uploading' || cropFile) return
     setState('dragging')
   }
 
@@ -154,7 +180,7 @@ export function MediaDropzone({
   function onDrop(e: DragEvent) {
     e.preventDefault()
     e.stopPropagation()
-    if (disabled || state === 'uploading') return
+    if (disabled || state === 'uploading' || cropFile) return
     const file = e.dataTransfer.files?.[0]
     if (file) void handleFile(file)
     else setState(value ? 'preview' : 'idle')
@@ -168,6 +194,7 @@ export function MediaDropzone({
     setRemoteIsVideo(false)
     setError(null)
     setProgress(0)
+    setCropFile(null)
     setState('idle')
     onChange(null)
     if (inputRef.current) inputRef.current.value = ''
@@ -269,6 +296,23 @@ export function MediaDropzone({
           Удалить
         </button>
       )}
+
+      <ImageCropEditor
+        open={Boolean(cropFile)}
+        file={cropFile}
+        aspect={resolvedAspect}
+        title="Обрезка фото"
+        confirmLabel="Загрузить"
+        onCancel={() => setCropFile(null)}
+        onPickAnother={() => {
+          setCropFile(null)
+          requestAnimationFrame(() => inputRef.current?.click())
+        }}
+        onConfirm={(cropped) => {
+          setCropFile(null)
+          void uploadFile(cropped)
+        }}
+      />
     </div>
   )
 }

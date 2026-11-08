@@ -3,7 +3,10 @@ package domain
 import "testing"
 
 func TestAllowedDisputeField(t *testing.T) {
-	ok := []string{"hair_color", "hair_condition", "preferences", "display_name", "phone", "email"}
+	ok := []string{
+		"hair_color", "hair_condition", "preferences", "display_name", "phone", "email",
+		"skin_type", "skin_features", "loyalty_status", "birth_date", "general_notes",
+	}
 	for _, k := range ok {
 		if !AllowedDisputeField(k) {
 			t.Fatalf("expected allowed field %s", k)

@@ -1,7 +1,10 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -104,5 +107,71 @@ func TestHasSlot(t *testing.T) {
 	}
 	if hasSlot(media, domain.SlotStrandA4) {
 		t.Fatal("unexpected strand")
+	}
+}
+
+func TestParseServiceIDList(t *testing.T) {
+	a := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	b := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	got := parseServiceIDList([]any{a.String(), "not-a-uuid", b.String(), a.String(), 12})
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("got %#v", got)
+	}
+	if parseServiceIDList(nil) != nil {
+		t.Fatal("nil input")
+	}
+	if parseServiceIDList("x") != nil {
+		t.Fatal("non-array")
+	}
+}
+
+func TestNormalizePlanPricesEmptyAndSpoof(t *testing.T) {
+	s := &Service{}
+	out, err := s.normalizePlanPrices(context.Background(), json.RawMessage(`{"desired_result":"x","price_total_minor":99999}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(out, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan["price_total_minor"].(float64) != 0 {
+		t.Fatalf("expected zero total without services, got %v", plan["price_total_minor"])
+	}
+	ids, _ := plan["selected_service_ids"].([]any)
+	if len(ids) != 0 {
+		t.Fatalf("expected empty ids, got %#v", ids)
+	}
+}
+
+func TestNormalizePlanPricesFromCatalog(t *testing.T) {
+	svcA := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	svcB := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/services/"+svcA.String(), func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"price_minor": 150000})
+	})
+	mux.HandleFunc("GET /v1/services/"+svcB.String(), func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"price_minor": 250000})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	s := &Service{marketplaceURL: srv.URL, httpClient: srv.Client()}
+	raw := json.RawMessage(`{
+		"desired_result":"blond",
+		"selected_service_ids":["` + svcA.String() + `","` + svcB.String() + `"],
+		"price_total_minor":1
+	}`)
+	out, err := s.normalizePlanPrices(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(out, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan["price_total_minor"].(float64) != 400000 {
+		t.Fatalf("expected catalog sum 400000, got %v", plan["price_total_minor"])
 	}
 }

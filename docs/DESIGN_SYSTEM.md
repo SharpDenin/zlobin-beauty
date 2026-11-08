@@ -16,7 +16,9 @@ It should feel: **premium, atmospheric, polished, modern, controlled, production
 
 It must not feel like: a generic CRM, a cheap UI-kit template, typical purple SaaS, neon cyberpunk, a game UI, glassmorphism everywhere, or a flat unfilled MVP.
 
-**MIDNIGHT / SIGNAL** is a dark-first interface with one expressive violet accent, now with **visual depth**: layered canvas light, reserved gradients, imagery, and meaningful motion. The light theme keeps that accent and the same spacing, type, and components on a cool paper canvas (`#F3F5FA` / `#FFFFFF`) with deeper ink (`#1C2130`) and a slightly deeper violet (`#545BE0`) so text and buttons stay readable. User choice is stored in `localStorage` (`zb.theme`) and wins over `prefers-color-scheme`.
+**MIDNIGHT / SIGNAL** is a dark-first interface with one expressive violet accent by default (`#7C82FF`), now with **visual depth**: layered canvas light, reserved gradients, imagery, and meaningful motion. The light theme keeps that accent and the same spacing, type, and components on a cool paper canvas (`#F3F5FA` / `#FFFFFF`) with deeper ink (`#1C2130`) and a slightly deeper violet (`#545BE0`) so text and buttons stay readable. User choice is stored in `localStorage` (`zb.theme`) and wins over `prefers-color-scheme`.
+
+Wallpaper accents: when the user sets a photo background, the client extracts a dominant hue, tunes it for the active theme (`tuneAccentForUi`), and writes the shared `--color-primary*` / `--color-accent*` tokens via `applyAccent`. Surfaces, text, and semantic colors stay fixed. Extracted base hues are cached in `localStorage` (`zb.home-bg-accent`) so navigation and reloads do not re-analyze the image. If extraction fails (mono / decode error), fall back to the curated wallpaper accent or `#7C82FF`.
 
 The product should communicate with **images, hierarchy, and space** first. Long instructional paragraphs are a last resort.
 

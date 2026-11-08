@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  bookingMasterUserId,
   canSendMessage,
   conversationTypeLabel,
   emptyMessengerAction,
@@ -46,5 +47,20 @@ describe('messenger helpers', () => {
     expect(isNearBottom(el)).toBe(true)
     el.scrollTop = 10
     expect(isNearBottom(el)).toBe(false)
+  })
+
+  it('resolves booking master for client/model chats, not for master or supplier side', () => {
+    const conv = {
+      type: 'client_master',
+      participants: [
+        { user_id: 'client-1', role: 'client' },
+        { user_id: 'master-1', role: 'master' },
+      ],
+    }
+    expect(bookingMasterUserId(conv, 'client-1')).toBe('master-1')
+    expect(bookingMasterUserId(conv, 'master-1')).toBeNull()
+    expect(bookingMasterUserId({ ...conv, type: 'model_request' }, 'client-1')).toBe('master-1')
+    expect(bookingMasterUserId({ ...conv, type: 'master_supplier' }, 'client-1')).toBeNull()
+    expect(bookingMasterUserId(conv, undefined)).toBeNull()
   })
 })

@@ -355,6 +355,9 @@ func consultListDTO(c domain.HairConsultation) map[string]any {
 	if c.OrganizationID != nil {
 		m["organization_id"] = c.OrganizationID.String()
 	}
+	if c.ClientCardID != nil {
+		m["client_card_id"] = c.ClientCardID.String()
+	}
 	if c.CurrentVersionID != nil {
 		m["current_version_id"] = c.CurrentVersionID.String()
 	}

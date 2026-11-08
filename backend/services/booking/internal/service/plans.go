@@ -464,11 +464,14 @@ func (s *Service) composeFlexibleLeg(ctx context.Context, in CreateInput, known 
 		return nil, err
 	}
 	if !payload.Master.Published {
-		return nil, apperr.NotFound("master not found")
+		return nil, apperr.ConflictCode(apperr.CodeMasterUnavailable, "master is not available for booking")
 	}
 	masterUserID, err := uuid.Parse(payload.Master.UserID)
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("bad master user id"))
+	}
+	if in.ClientUserID == masterUserID {
+		return nil, apperr.ForbiddenCode(apperr.CodeSelfBooking, "cannot book an appointment with yourself")
 	}
 	blocked, err := s.store.IsBlacklisted(ctx, masterUserID, in.ClientUserID)
 	if err != nil {

@@ -169,6 +169,38 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 	return computeFreeSlots(localDay, slotWindows, durationMinutes, s.now(), existing, excludeAppointmentID, blocks, modes), nil
 }
 
+// DayBusy returns anonymized busy intervals for a master's local calendar day.
+func (s *Service) DayBusy(ctx context.Context, masterUserID uuid.UUID, day time.Time, timezone string) ([]BusyBlock, error) {
+	if timezone == "" {
+		timezone = defaultTimezone
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, apperr.Validation("invalid timezone")
+	}
+	localDay := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+	fromUTC := localDay.UTC()
+	toUTC := localDay.Add(24 * time.Hour).UTC()
+
+	existing, err := s.store.ListAppointmentsInRange(ctx, masterUserID, fromUTC, toUTC)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	blocks, err := s.store.ListPlannerBlocks(ctx, masterUserID, fromUTC, toUTC)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+
+	out := make([]BusyBlock, 0, len(existing)+len(blocks))
+	for _, a := range existing {
+		out = append(out, BusyBlock{StartsAt: a.StartsAt.UTC(), EndsAt: a.EndsAt.UTC(), Kind: "appointment"})
+	}
+	for _, b := range blocks {
+		out = append(out, BusyBlock{StartsAt: b.StartsAt.UTC(), EndsAt: b.EndsAt.UTC(), Kind: "planner"})
+	}
+	return out, nil
+}
+
 const defaultTimezone = "Europe/Moscow"
 
 // ResolveTimezone determines which IANA timezone to use for a master's
@@ -485,6 +517,14 @@ type Slot struct {
 	WorkMode string    `json:"work_mode,omitempty"`
 }
 
+// BusyBlock is an anonymized occupied interval for public master day views.
+// It never includes client names, services, or comments.
+type BusyBlock struct {
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Kind     string    `json:"kind"` // appointment | planner
+}
+
 type CreateInput struct {
 	ClientUserID   uuid.UUID
 	ActorUserID    uuid.UUID
@@ -554,7 +594,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		return nil, err
 	}
 	if !payload.Master.Published {
-		return nil, apperr.NotFound("master not found")
+		return nil, apperr.ConflictCode(apperr.CodeMasterUnavailable, "master is not available for booking")
 	}
 	masterUserID, err := uuid.Parse(payload.Master.UserID)
 	if err != nil {
@@ -562,6 +602,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	}
 	if in.ActorUserID == uuid.Nil {
 		in.ActorUserID = in.ClientUserID
+	}
+	if in.ClientUserID == masterUserID {
+		return nil, apperr.ForbiddenCode(apperr.CodeSelfBooking, "cannot book an appointment with yourself")
 	}
 	if in.ClientUserID != in.ActorUserID && in.ActorUserID != masterUserID {
 		return nil, apperr.Forbidden("only the assigned master can book for a client")
@@ -656,18 +699,20 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		if in.StartsAt.Before(s.now().UTC()) {
 			return nil, apperr.Validation("starts_at must be in the future")
 		}
-		slots, err := s.FreeSlots(ctx, masterUserID, in.StartsAt, duration, s.timezoneForBranch(ctx, branchID), uuid.Nil)
+		tz := s.timezoneForBranch(ctx, branchID)
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			return nil, apperr.Validation("invalid timezone")
+		}
+		// FreeSlots treats Year/Month/Day of `day` as the salon calendar date in `tz`
+		// (same as Reschedule / visit plans). Passing UTC wall-clock YMD breaks late-evening
+		// Moscow slots and was a source of false "unavailable" conflicts.
+		localStart := startsAt.In(loc)
+		slots, err := s.FreeSlots(ctx, masterUserID, localStart, duration, tz, uuid.Nil)
 		if err != nil {
 			return nil, err
 		}
-		okSlot := false
-		for _, slot := range slots {
-			if slot.StartsAt.Equal(startsAt) {
-				okSlot = true
-				break
-			}
-		}
-		if !okSlot {
+		if !ContainsSlotStart(slots, startsAt) {
 			return nil, apperr.ConflictCode(apperr.CodeAppointmentTimeConflict, "selected time is not available")
 		}
 	}
@@ -742,24 +787,25 @@ func (s *Service) fetchOccurrence(ctx context.Context, id uuid.UUID) (*occurrenc
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, apperr.NotFound("occurrence not found")
+		return nil, apperr.ConflictCode(apperr.CodeOccurrenceUnavailable, "occurrence is not available")
 	}
 	if resp.StatusCode >= 300 {
 		return nil, apperr.Internal(fmt.Errorf("marketplace occurrence status %d", resp.StatusCode))
 	}
-	var payload struct {
+	var wrapped struct {
 		Occurrence occurrencePayload `json:"occurrence"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		// Also accept bare object.
-		if err2 := json.Unmarshal(body, &payload.Occurrence); err2 != nil {
-			return nil, apperr.Internal(err)
-		}
+	var bare occurrencePayload
+	if err := json.Unmarshal(body, &wrapped); err == nil && wrapped.Occurrence.ID != "" {
+		return &wrapped.Occurrence, nil
 	}
-	if payload.Occurrence.ID == "" {
-		return nil, apperr.NotFound("occurrence not found")
+	// Bare DTO from marketplace GET /v1/occurrences/{id}. Unmarshal into the
+	// wrapped shape succeeds with empty Occurrence when "occurrence" is absent,
+	// so we must explicitly fall back instead of treating that as not-found.
+	if err := json.Unmarshal(body, &bare); err != nil || bare.ID == "" {
+		return nil, apperr.ConflictCode(apperr.CodeOccurrenceUnavailable, "occurrence is not available")
 	}
-	return &payload.Occurrence, nil
+	return &bare, nil
 }
 
 func (s *Service) bookOccurrence(ctx context.Context, id uuid.UUID) error {

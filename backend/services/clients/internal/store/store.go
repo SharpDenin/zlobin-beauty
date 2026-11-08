@@ -17,6 +17,10 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
+const cardColumns = `id, organization_id, user_id, display_name, phone, email, preferences,
+	photo_media_id, birth_date, loyalty_status, skin_type, skin_features, skin_photo_media_ids, general_notes,
+	created_at, updated_at`
+
 // UpsertCardAndVisit gets-or-creates the client card for (organization_id, user_id)
 // and idempotently inserts the visit row (unique on appointment_id). The
 // returned bool reports whether a new visit row was actually inserted.
@@ -27,8 +31,7 @@ func (s *Store) UpsertCardAndVisit(ctx context.Context, card domain.ClientCard, 
 	}
 	defer tx.Rollback(ctx)
 
-	var outCard domain.ClientCard
-	if err := tx.QueryRow(ctx, `
+	outCard, err := scanCard(tx.QueryRow(ctx, `
 INSERT INTO client_cards(id, organization_id, user_id, display_name, phone, email, preferences, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT (organization_id, user_id) DO UPDATE SET
@@ -36,9 +39,10 @@ ON CONFLICT (organization_id, user_id) DO UPDATE SET
   phone = COALESCE(EXCLUDED.phone, client_cards.phone),
   email = COALESCE(EXCLUDED.email, client_cards.email),
   updated_at = EXCLUDED.updated_at
-RETURNING id, organization_id, user_id, display_name, phone, email, preferences, created_at, updated_at`,
+RETURNING `+cardColumns,
 		card.ID, card.OrganizationID, card.UserID, card.DisplayName, card.Phone, card.Email, card.Preferences, card.CreatedAt, card.UpdatedAt,
-	).Scan(&outCard.ID, &outCard.OrganizationID, &outCard.UserID, &outCard.DisplayName, &outCard.Phone, &outCard.Email, &outCard.Preferences, &outCard.CreatedAt, &outCard.UpdatedAt); err != nil {
+	))
+	if err != nil || outCard == nil {
 		return nil, nil, false, err
 	}
 
@@ -60,7 +64,7 @@ ON CONFLICT (appointment_id) DO NOTHING`,
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, false, err
 	}
-	return &outCard, outVisit, created, nil
+	return outCard, outVisit, created, nil
 }
 
 func (s *Store) getVisitByAppointmentTx(ctx context.Context, tx pgx.Tx, appointmentID uuid.UUID) (*domain.Visit, error) {
@@ -71,16 +75,12 @@ FROM visits WHERE appointment_id=$1`, appointmentID)
 }
 
 func (s *Store) GetCard(ctx context.Context, id uuid.UUID) (*domain.ClientCard, error) {
-	return scanCard(s.pool.QueryRow(ctx, `
-SELECT id, organization_id, user_id, display_name, phone, email, preferences, created_at, updated_at
-FROM client_cards WHERE id=$1`, id))
+	return scanCard(s.pool.QueryRow(ctx, `SELECT `+cardColumns+` FROM client_cards WHERE id=$1`, id))
 }
 
 // ListCardsForUser returns the card(s) owned by the given user (as a client).
 func (s *Store) ListCardsForUser(ctx context.Context, userID uuid.UUID) ([]domain.ClientCard, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT id, organization_id, user_id, display_name, phone, email, preferences, created_at, updated_at
-FROM client_cards WHERE user_id=$1 ORDER BY updated_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT `+cardColumns+` FROM client_cards WHERE user_id=$1 ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -92,16 +92,77 @@ FROM client_cards WHERE user_id=$1 ORDER BY updated_at DESC`, userID)
 // optionally filtered to a single organization.
 func (s *Store) ListCardsForMaster(ctx context.Context, masterUserID uuid.UUID, orgID *uuid.UUID) ([]domain.ClientCard, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT DISTINCT c.id, c.organization_id, c.user_id, c.display_name, c.phone, c.email, c.preferences, c.created_at, c.updated_at
+SELECT DISTINCT ON (c.id) `+prefixedCardColumns("c")+`
 FROM client_cards c
 JOIN visits v ON v.client_card_id = c.id
 WHERE v.master_user_id=$1 AND ($2::uuid IS NULL OR c.organization_id=$2)
-ORDER BY c.updated_at DESC`, masterUserID, orgID)
+ORDER BY c.id, c.updated_at DESC`, masterUserID, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanCards(rows)
+	cards, err := scanCards(rows)
+	if err != nil {
+		return nil, err
+	}
+	// Re-sort by updated_at desc for UI (DISTINCT ON required id-first order).
+	for i := 0; i < len(cards); i++ {
+		for j := i + 1; j < len(cards); j++ {
+			if cards[j].UpdatedAt.After(cards[i].UpdatedAt) {
+				cards[i], cards[j] = cards[j], cards[i]
+			}
+		}
+	}
+	return cards, nil
+}
+
+func prefixedCardColumns(alias string) string {
+	return alias + `.id, ` + alias + `.organization_id, ` + alias + `.user_id, ` + alias + `.display_name, ` +
+		alias + `.phone, ` + alias + `.email, ` + alias + `.preferences, ` +
+		alias + `.photo_media_id, ` + alias + `.birth_date, ` + alias + `.loyalty_status, ` +
+		alias + `.skin_type, ` + alias + `.skin_features, ` + alias + `.skin_photo_media_ids, ` +
+		alias + `.general_notes, ` + alias + `.created_at, ` + alias + `.updated_at`
+}
+
+func (s *Store) UpdateCardProfile(ctx context.Context, card domain.ClientCard) (*domain.ClientCard, error) {
+	skinIDs := card.SkinPhotoMediaIDs
+	if len(skinIDs) == 0 {
+		skinIDs = []byte("[]")
+	}
+	return scanCard(s.pool.QueryRow(ctx, `
+UPDATE client_cards SET
+  display_name=$2, phone=$3, email=$4, preferences=$5,
+  photo_media_id=$6, birth_date=$7, loyalty_status=$8,
+  skin_type=$9, skin_features=$10, skin_photo_media_ids=$11, general_notes=$12,
+  updated_at=$13
+WHERE id=$1
+RETURNING `+cardColumns,
+		card.ID, card.DisplayName, card.Phone, card.Email, card.Preferences,
+		card.PhotoMediaID, card.BirthDate, card.LoyaltyStatus,
+		card.SkinType, card.SkinFeatures, skinIDs, card.GeneralNotes, card.UpdatedAt,
+	))
+}
+
+func (s *Store) ListNotesForCard(ctx context.Context, cardID uuid.UUID) ([]domain.VisitNoteView, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT n.id, n.visit_id, n.author_user_id, n.body, n.created_at, v.service_name, v.completed_at
+FROM visit_notes n
+JOIN visits v ON v.id = n.visit_id
+WHERE v.client_card_id=$1
+ORDER BY n.created_at DESC`, cardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.VisitNoteView
+	for rows.Next() {
+		var n domain.VisitNoteView
+		if err := rows.Scan(&n.ID, &n.VisitID, &n.AuthorUserID, &n.Body, &n.CreatedAt, &n.ServiceName, &n.CompletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 type VisitStats struct {
@@ -230,11 +291,18 @@ RETURNING id, client_card_id, consent_type, granted, created_at`,
 
 func scanCard(row pgx.Row) (*domain.ClientCard, error) {
 	var c domain.ClientCard
-	if err := row.Scan(&c.ID, &c.OrganizationID, &c.UserID, &c.DisplayName, &c.Phone, &c.Email, &c.Preferences, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&c.ID, &c.OrganizationID, &c.UserID, &c.DisplayName, &c.Phone, &c.Email, &c.Preferences,
+		&c.PhotoMediaID, &c.BirthDate, &c.LoyaltyStatus, &c.SkinType, &c.SkinFeatures, &c.SkinPhotoMediaIDs, &c.GeneralNotes,
+		&c.CreatedAt, &c.UpdatedAt,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if len(c.SkinPhotoMediaIDs) == 0 {
+		c.SkinPhotoMediaIDs = []byte("[]")
 	}
 	return &c, nil
 }
@@ -243,8 +311,15 @@ func scanCards(rows pgx.Rows) ([]domain.ClientCard, error) {
 	var out []domain.ClientCard
 	for rows.Next() {
 		var c domain.ClientCard
-		if err := rows.Scan(&c.ID, &c.OrganizationID, &c.UserID, &c.DisplayName, &c.Phone, &c.Email, &c.Preferences, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&c.ID, &c.OrganizationID, &c.UserID, &c.DisplayName, &c.Phone, &c.Email, &c.Preferences,
+			&c.PhotoMediaID, &c.BirthDate, &c.LoyaltyStatus, &c.SkinType, &c.SkinFeatures, &c.SkinPhotoMediaIDs, &c.GeneralNotes,
+			&c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
 			return nil, err
+		}
+		if len(c.SkinPhotoMediaIDs) == 0 {
+			c.SkinPhotoMediaIDs = []byte("[]")
 		}
 		out = append(out, c)
 	}

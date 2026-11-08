@@ -63,9 +63,9 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
     ;(async () => {
       const next = await resolveDevicePushStatus(config.data)
       if (!cancelled) setStatus(next)
-      if (config.data?.enabled && accessToken) {
+      if (config.data?.enabled && config.data.public_key && accessToken) {
         try {
-          await syncDevicePush(accessToken)
+          await syncDevicePush(accessToken, config.data.public_key)
           if (!cancelled) {
             const after = await resolveDevicePushStatus(config.data)
             setStatus(after)

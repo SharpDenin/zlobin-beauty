@@ -18,6 +18,7 @@ func (a *API) registerOccurrenceRoutes(mux *http.ServeMux, jwtSecret string) {
 
 	mux.Handle("POST /v1/services/{id}/occurrences", auth(http.HandlerFunc(a.createOccurrence)))
 	mux.Handle("GET /v1/services/{id}/occurrences", optional(http.HandlerFunc(a.listOccurrences)))
+	mux.Handle("GET /v1/occurrences/{id}", optional(http.HandlerFunc(a.getOccurrence)))
 	mux.Handle("PATCH /v1/occurrences/{id}", auth(http.HandlerFunc(a.updateOccurrence)))
 	mux.Handle("DELETE /v1/occurrences/{id}", auth(http.HandlerFunc(a.cancelOccurrence)))
 	mux.Handle("POST /v1/internal/occurrences/{id}/book", internal(http.HandlerFunc(a.internalBookOccurrence)))
@@ -123,6 +124,20 @@ func (a *API) listOccurrences(w http.ResponseWriter, r *http.Request) {
 		out = append(out, occurrenceDTO(item))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) getOccurrence(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	item, err := a.svc.GetOccurrence(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"occurrence": occurrenceDTO(*item)})
 }
 
 func (a *API) updateOccurrence(w http.ResponseWriter, r *http.Request) {

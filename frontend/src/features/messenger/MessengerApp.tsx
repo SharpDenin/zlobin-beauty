@@ -14,6 +14,7 @@ import { ChatMedia } from '@/features/messenger/ChatMedia'
 import { ContactPickerModal } from '@/features/contacts/ContactPickerModal'
 import { addContact, listContacts } from '@/features/contacts/api'
 import {
+  bookingMasterUserId,
   canSendMessage,
   conversationTypeLabel,
   emptyMessengerAction,
@@ -25,6 +26,8 @@ import {
 } from '@/features/messenger/helpers'
 import { MESSAGE_PAGE_SIZE, type ChatMessage, type Conversation, type MessageListResponse } from '@/features/messenger/types'
 import { uploadMedia, MEDIA_ACCEPT_IMAGE_OR_VIDEO, validateMediaFile } from '@/shared/lib/mediaUpload'
+import { cropAspectForPurpose, shouldOpenImageCrop } from '@/shared/lib/imageCrop'
+import { ImageCropEditor } from '@/shared/ui/ImageCropEditor'
 import { toast } from '@/shared/ui/Toast'
 import { moderationError } from '@/shared/lib/moderation'
 
@@ -45,6 +48,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const [draft, setDraft] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [filePreview, setFilePreview] = useState<string | null>(null)
+  const [cropFile, setCropFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [local, setLocal] = useState<LocalMessage[]>([])
@@ -160,6 +164,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const peerParticipant = conversation.data?.participants.find((p) => p.user_id !== user?.id)
   const peer = conversation.data?.peer_name || peerParticipant?.display_name || 'Собеседник'
   const peerUserId = peerParticipant?.user_id
+  const bookMasterId = bookingMasterUserId(conversation.data, user?.id)
   const emptyAction = emptyMessengerAction(cabinet.kind)
   const showList = mode === 'overlay' ? !id : true
   const showThread = Boolean(id)
@@ -291,6 +296,7 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   function pickFile(next: File | null) {
     if (!next) {
       setFile(null)
+      setCropFile(null)
       return
     }
     const err = validateMediaFile(next, { allowVideo: true })
@@ -299,6 +305,10 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       return
     }
     setError(null)
+    if (shouldOpenImageCrop(next)) {
+      setCropFile(next)
+      return
+    }
     setFile(next)
   }
 
@@ -404,26 +414,37 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
           <h2>{peer}</h2>
           <p className="muted">{conversation.data ? conversationTypeLabel(conversation.data.type) : 'Диалог'}</p>
         </div>
-        {peerUserId && (
-          peerContact ? (
-            <span className="badge badge-success" data-testid="messenger-in-contacts">В контактах</span>
-          ) : (
-            <button
-              className="btn btn-secondary btn-compact"
-              type="button"
-              disabled={addPeerMut.isPending}
-              onClick={() => addPeerMut.mutate()}
-              data-testid="messenger-add-contact"
+        <div className="messenger-thread-actions">
+          {bookMasterId && (
+            <Link
+              className="btn btn-primary btn-compact"
+              to={`/masters/${bookMasterId}`}
+              data-testid="messenger-book-master"
             >
-              Добавить в контакты
+              Запись
+            </Link>
+          )}
+          {peerUserId && (
+            peerContact ? (
+              <span className="badge badge-success" data-testid="messenger-in-contacts">В контактах</span>
+            ) : (
+              <button
+                className="btn btn-secondary btn-compact"
+                type="button"
+                disabled={addPeerMut.isPending}
+                onClick={() => addPeerMut.mutate()}
+                data-testid="messenger-add-contact"
+              >
+                В контакты
+              </button>
+            )
+          )}
+          {onClose && mode === 'overlay' && showThread && !showList && (
+            <button className="btn btn-secondary btn-compact" type="button" onClick={onClose} aria-label="Закрыть">
+              Закрыть
             </button>
-          )
-        )}
-        {onClose && mode === 'overlay' && showThread && !showList && (
-          <button className="btn btn-secondary btn-compact" type="button" onClick={onClose} aria-label="Закрыть">
-            Закрыть
-          </button>
-        )}
+          )}
+        </div>
       </header>
       {conversation.isError && <ErrorBanner error={conversation.error} fallbackTitle="Нет доступа к диалогу" />}
       {error && <ErrorBanner error={error} fallbackTitle="Не удалось отправить сообщение" />}
@@ -504,7 +525,10 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
             type="file"
             accept={MEDIA_ACCEPT_IMAGE_OR_VIDEO}
             hidden
-            onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              pickFile(e.target.files?.[0] ?? null)
+              e.target.value = ''
+            }}
           />
           <button
             className="btn btn-secondary composer-attach"
@@ -555,6 +579,25 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       >
         {lightbox && <MediaImage mediaId={lightbox} token={accessToken} alt="Вложение" />}
       </Overlay>
+      <ImageCropEditor
+        open={Boolean(cropFile)}
+        file={cropFile}
+        aspect={cropAspectForPurpose('message')}
+        title="Вложение"
+        confirmLabel="Готово"
+        onCancel={() => {
+          setCropFile(null)
+          if (fileInputRef.current) fileInputRef.current.value = ''
+        }}
+        onPickAnother={() => {
+          setCropFile(null)
+          requestAnimationFrame(() => fileInputRef.current?.click())
+        }}
+        onConfirm={(cropped) => {
+          setCropFile(null)
+          setFile(cropped)
+        }}
+      />
     </div>
   )
 }

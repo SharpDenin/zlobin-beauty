@@ -438,9 +438,13 @@ func (a *API) internalMasterByUser(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"id": m.ID.String(), "user_id": m.UserID.String(), "published": m.Published, "display_name": m.DisplayName,
-	})
+	}
+	if m.OrganizationID != uuid.Nil {
+		out["organization_id"] = m.OrganizationID.String()
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 func (a *API) internalMasterclassAccess(w http.ResponseWriter, r *http.Request) {

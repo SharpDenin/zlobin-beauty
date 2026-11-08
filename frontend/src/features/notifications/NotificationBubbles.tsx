@@ -1,30 +1,25 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { notificationHref } from '@/features/notifications/notificationHref'
+import {
+  groupBubbleNotifications,
+  type BubbleItem,
+  type NotificationRow,
+} from '@/features/notifications/groupBubbleNotifications'
+import type { Conversation } from '@/features/messenger/types'
 import { AppIcon } from '@/shared/ui/AppIcon'
 import './notification-bubbles.css'
 
-export type NotificationRow = {
-  id: string
-  type: string
-  title: string
-  body: string
-  entity_type: string
-  entity_id: string | null
-  read_at: string | null
-  hidden_at?: string | null
-  deleted_at?: string | null
-  created_at: string
-}
-
 function useCompactBubbles(breakpointPx = 768) {
-  const [compact, setCompact] = useState(() =>
-    typeof window !== 'undefined' ? window.matchMedia(`(max-width: ${breakpointPx - 1}px)`).matches : true,
-  )
+  const [compact, setCompact] = useState(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+    return window.matchMedia(`(max-width: ${breakpointPx - 1}px)`).matches
+  })
   useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
     const mq = window.matchMedia(`(max-width: ${breakpointPx - 1}px)`)
     const onChange = () => setCompact(mq.matches)
     onChange()
@@ -34,12 +29,17 @@ function useCompactBubbles(breakpointPx = 768) {
   return compact
 }
 
+function formatCount(n: number) {
+  return n > 9 ? '9+' : String(n)
+}
+
 export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
   const { accessToken } = useAuth()
   const qc = useQueryClient()
   const compact = useCompactBubbles(768)
   const panelId = useId()
-  const [openId, setOpenId] = useState<string | null>(null)
+  const rootRef = useRef<HTMLElement | null>(null)
+  const [openKey, setOpenKey] = useState<string | null>(null)
 
   const bubbles = useQuery({
     queryKey: ['notification-bubbles'],
@@ -48,63 +48,135 @@ export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
     refetchInterval: 20_000,
   })
 
-  const markRead = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest(`/v1/notifications/${id}/read`, { method: 'POST', token: accessToken }),
+  // Shared with MessengerProvider — unread_count is the chat counter source of truth.
+  const conversations = useQuery({
+    queryKey: ['conversations'],
+    queryFn: () => apiRequest<{ items: Conversation[] }>('/v1/conversations?limit=50', { token: accessToken }),
+    enabled: Boolean(accessToken),
+    refetchInterval: 20_000,
+  })
+
+  const unreadByConversation = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const c of conversations.data?.items ?? []) {
+      map[c.id] = c.unread_count || 0
+    }
+    return map
+  }, [conversations.data])
+
+  const items = useMemo(() => {
+    const grouped = groupBubbleNotifications(bubbles.data?.items ?? [], unreadByConversation)
+    return grouped.slice(0, limit)
+  }, [bubbles.data, unreadByConversation, limit])
+
+  const invalidate = async () => {
+    await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
+    await qc.invalidateQueries({ queryKey: ['notifications'] })
+    await qc.invalidateQueries({ queryKey: ['conversations'] })
+  }
+
+  const markReadMany = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        try {
+          await apiRequest(`/v1/notifications/${id}/read`, { method: 'POST', token: accessToken })
+        } catch {
+          /* already read / gone */
+        }
+      }
+    },
+    onSuccess: () => void invalidate(),
+  })
+
+  const hideMany = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        try {
+          await apiRequest(`/v1/notifications/${id}`, { method: 'PATCH', token: accessToken, body: { hidden: true } })
+        } catch {
+          /* ignore */
+        }
+      }
+    },
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
-      await qc.invalidateQueries({ queryKey: ['notifications'] })
+      await invalidate()
+      setOpenKey(null)
     },
   })
 
-  const hide = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest(`/v1/notifications/${id}`, { method: 'PATCH', token: accessToken, body: { hidden: true } }),
+  const removeMany = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        try {
+          await apiRequest(`/v1/notifications/${id}`, { method: 'DELETE', token: accessToken })
+        } catch {
+          /* ignore */
+        }
+      }
+    },
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
-      await qc.invalidateQueries({ queryKey: ['notifications'] })
-      setOpenId(null)
+      await invalidate()
+      setOpenKey(null)
     },
   })
 
-  const remove = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest(`/v1/notifications/${id}`, { method: 'DELETE', token: accessToken }),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['notification-bubbles'] })
-      await qc.invalidateQueries({ queryKey: ['notifications'] })
-      setOpenId(null)
-    },
-  })
-
-  const items = (bubbles.data?.items ?? []).slice(0, limit)
   useEffect(() => {
-    if (openId && !items.some((n) => n.id === openId)) setOpenId(null)
-  }, [items, openId])
+    if (openKey && !items.some((n) => n.groupKey === openKey)) setOpenKey(null)
+  }, [items, openKey])
+
+  // Collapse expanded compact bubble when pointer lands outside the bubbles root.
+  useEffect(() => {
+    if (!compact || !openKey) return
+    const onPointerDown = (event: PointerEvent) => {
+      const root = rootRef.current
+      const target = event.target
+      if (!root || !(target instanceof Node)) return
+      if (root.contains(target)) return
+      setOpenKey(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [compact, openKey])
 
   if (!accessToken || items.length === 0) return null
 
-  const openItem = openId ? items.find((n) => n.id === openId) ?? null : null
+  const openItem = openKey ? items.find((n) => n.groupKey === openKey) ?? null : null
 
-  const card = (n: NotificationRow) => (
-    <article key={n.id} className={`notif-bubble${!n.read_at ? ' is-unread' : ''}`} data-testid={`notif-bubble-${n.id}`}>
+  const card = (n: BubbleItem) => (
+    <article
+      key={n.groupKey}
+      className={`notif-bubble${!n.read_at ? ' is-unread' : ''}`}
+      data-testid={`notif-bubble-${n.id}`}
+      data-group-key={n.groupKey}
+    >
       <Link
         className="notif-bubble__link"
         to={notificationHref(n)}
         onClick={() => {
-          if (!n.read_at) markRead.mutate(n.id)
-          setOpenId(null)
+          const unreadIds = n.groupIds.filter((id) => {
+            const src = (bubbles.data?.items ?? []).find((row) => row.id === id)
+            return src ? !src.read_at : id === n.id && !n.read_at
+          })
+          if (unreadIds.length) markReadMany.mutate(unreadIds)
+          setOpenKey(null)
         }}
       >
-        <strong>{n.title}</strong>
+        <strong className="notif-bubble__title">
+          <span className="notif-bubble__title-text">{n.title}</span>
+          {typeof n.messageCount === 'number' && n.messageCount > 0 ? (
+            <span className="notif-bubble__count" aria-label={`${n.messageCount} непрочитанных`}>
+              {formatCount(n.messageCount)}
+            </span>
+          ) : null}
+        </strong>
         <span>{n.body}</span>
       </Link>
       <div className="notif-bubble__actions">
         <button
           type="button"
           className="btn btn-ghost btn-compact"
-          disabled={hide.isPending}
-          onClick={() => hide.mutate(n.id)}
+          disabled={hideMany.isPending}
+          onClick={() => hideMany.mutate(n.groupIds)}
           aria-label="Скрыть уведомление"
         >
           Скрыть
@@ -112,8 +184,8 @@ export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
         <button
           type="button"
           className="btn btn-ghost btn-compact"
-          disabled={remove.isPending}
-          onClick={() => remove.mutate(n.id)}
+          disabled={removeMany.isPending}
+          onClick={() => removeMany.mutate(n.groupIds)}
           aria-label="Удалить уведомление"
         >
           Удалить
@@ -124,7 +196,12 @@ export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
 
   if (!compact) {
     return (
-      <aside className="notif-bubbles notif-bubbles--desktop" aria-label="Уведомления" data-testid="notification-bubbles">
+      <aside
+        ref={rootRef}
+        className="notif-bubbles notif-bubbles--desktop"
+        aria-label="Уведомления"
+        data-testid="notification-bubbles"
+      >
         {items.map(card)}
       </aside>
     )
@@ -132,6 +209,7 @@ export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
 
   return (
     <aside
+      ref={rootRef}
       className="notif-bubbles notif-bubbles--compact"
       aria-label="Уведомления"
       data-testid="notification-bubbles"
@@ -139,20 +217,30 @@ export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
     >
       <div className="notif-bubbles__rail" role="toolbar" aria-orientation="vertical" aria-label="Индикаторы уведомлений">
         {items.map((n) => {
-          const selected = openId === n.id
+          const selected = openKey === n.groupKey
+          const count = n.messageCount ?? (!n.read_at ? 1 : 0)
           return (
             <button
-              key={n.id}
+              key={n.groupKey}
               type="button"
               className={`notif-dot${!n.read_at ? ' is-unread' : ''}${selected ? ' is-open' : ''}`}
-              aria-label={n.title}
+              aria-label={
+                typeof n.messageCount === 'number' && n.messageCount > 0
+                  ? `${n.title}, ${n.messageCount} непрочитанных`
+                  : n.title
+              }
               aria-expanded={selected}
               aria-controls={selected ? panelId : undefined}
               data-testid={`notif-dot-${n.id}`}
-              onClick={() => setOpenId((cur) => (cur === n.id ? null : n.id))}
+              data-group-key={n.groupKey}
+              onClick={() => setOpenKey((cur) => (cur === n.groupKey ? null : n.groupKey))}
             >
-              <AppIcon name="bell" size={18} />
-              {!n.read_at ? <span className="notif-dot__badge" aria-hidden="true" /> : null}
+              <AppIcon name={n.entity_type === 'conversation' ? 'chat' : 'bell'} size={18} />
+              {count > 0 ? (
+                <span className={`notif-dot__badge${typeof n.messageCount === 'number' ? ' notif-dot__badge--count' : ''}`} aria-hidden="true">
+                  {typeof n.messageCount === 'number' ? formatCount(n.messageCount) : null}
+                </span>
+              ) : null}
             </button>
           )
         })}
@@ -160,7 +248,7 @@ export function NotificationBubbles({ limit = 3 }: { limit?: number }) {
       {openItem ? (
         <div id={panelId} className="notif-bubbles__panel" role="dialog" aria-label={openItem.title}>
           {card(openItem)}
-          <button type="button" className="btn btn-ghost btn-compact notif-bubbles__close" onClick={() => setOpenId(null)}>
+          <button type="button" className="btn btn-ghost btn-compact notif-bubbles__close" onClick={() => setOpenKey(null)}>
             Закрыть
           </button>
         </div>

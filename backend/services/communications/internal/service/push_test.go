@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -42,8 +43,43 @@ func TestPushEnabledRequiresBothKeys(t *testing.T) {
 	if !s.PushEnabled() || s.PushPublicKey() != "pub" {
 		t.Fatal("both keys enable push")
 	}
-	if s.vapidSubject != "mailto:no-reply@salon-x.ru" {
+	if s.vapidSubject != "no-reply@salon-x.ru" {
 		t.Fatalf("default subject: %s", s.vapidSubject)
+	}
+}
+
+func TestNormalizeVAPIDSubject(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", "no-reply@salon-x.ru"},
+		{"mailto:no-reply@salon-x.ru", "no-reply@salon-x.ru"},
+		{"no-reply@salon-x.ru", "no-reply@salon-x.ru"},
+		{"  mailto:ops@example.com  ", "ops@example.com"},
+		{"https://salon-x.example", "https://salon-x.example"},
+	}
+	for _, tc := range cases {
+		got := normalizeVAPIDSubject(tc.in)
+		if got != tc.want {
+			t.Fatalf("normalizeVAPIDSubject(%q)=%q want %q", tc.in, got, tc.want)
+		}
+		// Simulate webpush-go: prepend mailto: unless https:
+		final := got
+		if !strings.HasPrefix(final, "https:") {
+			final = "mailto:" + final
+		}
+		if strings.Contains(final, "mailto:mailto:") {
+			t.Fatalf("double mailto for input %q → %q", tc.in, final)
+		}
+	}
+}
+
+func TestPushEndpointHost(t *testing.T) {
+	if got := pushEndpointHost("https://fcm.googleapis.com/fcm/send/TOKEN"); got != "fcm.googleapis.com" {
+		t.Fatalf("got %q", got)
+	}
+	if got := pushEndpointHost(""); got != "" {
+		t.Fatalf("empty: %q", got)
 	}
 }
 

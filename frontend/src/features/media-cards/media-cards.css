@@ -7,8 +7,8 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--glass-border);
   background: var(--glass-fill);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   box-shadow: var(--glass-shadow);
   isolation: isolate;
   color: inherit;
@@ -108,8 +108,8 @@
   border-bottom: 1px solid var(--glass-border);
   box-shadow: none;
   background: var(--glass-fill);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   isolation: isolate;
 }
 .cards-grid.services .service-card--edge .media-first-cover,

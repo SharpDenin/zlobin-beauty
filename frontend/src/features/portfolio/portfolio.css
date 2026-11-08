@@ -106,7 +106,7 @@
   min-height: 36px;
   padding: 0 var(--space-2);
   background: color-mix(in srgb, var(--color-surface) 88%, transparent);
-  backdrop-filter: blur(6px);
+  backdrop-filter: none;
 }
 
 .portfolio-viewer-host {

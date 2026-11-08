@@ -207,8 +207,18 @@ const CATALOG: Record<string, CatalogEntry> = {
   },
   client_blacklisted: {
     kind: 'authorization',
-    title: 'Запись к этому мастеру недоступна',
+    title: 'Запись к этому мастеру сейчас недоступна',
     hint: 'Выберите другого мастера.',
+  },
+  self_booking_forbidden: {
+    kind: 'authorization',
+    title: 'Нельзя записаться к самому себе',
+    hint: 'Выберите другого мастера.',
+  },
+  master_unavailable: {
+    kind: 'conflict',
+    title: 'Мастер сейчас недоступен для записи',
+    hint: 'Обновите страницу или выберите другого мастера.',
   },
   planner_outside_hours: {
     kind: 'conflict',
@@ -358,6 +368,9 @@ const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
   { match: 'time slot is not available', code: 'appointment_time_conflict' },
   { match: 'это время уже занято', code: 'appointment_time_conflict' },
   { match: 'client is blacklisted', code: 'client_blacklisted' },
+  { match: 'cannot book an appointment with yourself', code: 'self_booking_forbidden' },
+  { match: 'master is not available for booking', code: 'master_unavailable' },
+  { match: 'master not found', code: 'master_unavailable' },
   { match: 'invalid appointment status transition', code: 'appointment_status_invalid' },
   { match: 'cannot reschedule in current status', code: 'appointment_status_invalid' },
   { match: 'occurrence is not available', code: 'occurrence_unavailable' },

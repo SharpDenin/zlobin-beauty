@@ -4,7 +4,7 @@
 .mp-page {
   display: grid;
   gap: var(--space-5);
-  padding-bottom: calc(var(--nav-h) + 88px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--nav-h) + var(--space-6) + env(safe-area-inset-bottom, 0px));
 }
 
 /* ── Hero — circular portrait + CTAs (other_pages screen 1) ───────── */
@@ -571,27 +571,39 @@
   line-height: 1.5;
 }
 
-/* Sticky CTA */
-
-.mp-sticky-cta {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-  z-index: var(--z-sticky, 20);
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--color-background) 88%, transparent);
-  backdrop-filter: blur(10px);
-  border-top: 1px solid var(--color-border);
-  display: none;
+.mp-self-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: var(--space-4);
+  font-size: var(--text-sm);
 }
-@media (max-width: 767px) {
-  .mp-sticky-cta { display: block; }
-  .mp-sticky-cta .btn {
-    width: 100%;
-    min-height: 52px;
-    border-radius: var(--radius-pill);
-  }
+
+.mp-day-busy {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md, 14px);
+  background: var(--glass-panel-fill, color-mix(in srgb, var(--color-surface) 82%, transparent));
+  border: 1px solid var(--glass-panel-border, var(--color-border));
+}
+
+.mp-day-busy-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.mp-day-busy-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 40px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
 }
 
 @media (max-width: 359px) {

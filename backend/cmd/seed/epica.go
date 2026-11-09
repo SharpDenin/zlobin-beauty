@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const epicaBrand = "EPICA Professional"
@@ -39,7 +40,16 @@ type epicaProduct struct {
 	ImageFile   string            `json:"imageFile"`
 }
 
+type epicaExistingArt struct {
+	ID    string
+	Cover string
+}
+
 func seedEpicaKnowledge(c *http.Client, base string, user authUser, orgID string) error {
+	return seedEpicaKnowledgePtr(c, base, &user, orgID)
+}
+
+func seedEpicaKnowledgePtr(c *http.Client, base string, user *authUser, orgID string) error {
 	path := findEpicaCatalog()
 	if path == "" {
 		log.Printf("warn epica catalog json not found, skip")
@@ -58,7 +68,10 @@ func seedEpicaKnowledge(c *http.Client, base string, user authUser, orgID string
 		log.Printf("warn epica catalog is empty")
 		return nil
 	}
-	have, err := existingEpicaTitles(c, base, user.Token)
+	if err := user.ensureSession(c, base); err != nil {
+		return err
+	}
+	have, err := existingEpicaArticles(c, base, user.Token)
 	if err != nil {
 		return err
 	}
@@ -66,14 +79,52 @@ func seedEpicaKnowledge(c *http.Client, base string, user authUser, orgID string
 	for _, p := range products {
 		articles = append(articles, epicaProductArticle(p))
 	}
-	created := 0
+	created, covered, skipped := 0, 0, 0
 	for i, a := range articles {
-		if _, ok := have[a.Title]; ok {
-			continue
+		if err := user.ensureSession(c, base); err != nil {
+			return err
 		}
 		cover := ""
 		if a.CoverFile != "" {
-			cover = uploadSeedAssetIfExists(c, base, user.Token, "article", a.CoverFile)
+			cover = uploadEpicaCover(c, base, user, a.CoverFile)
+		}
+		if ex, ok := have[a.Title]; ok {
+			if a.CoverFile == "" || cover == "" || ex.Cover != "" || ex.ID == "" {
+				skipped++
+				continue
+			}
+			var full struct {
+				Title         string `json:"title"`
+				Category      string `json:"category"`
+				Content       string `json:"content"`
+				ContentFormat string `json:"content_format"`
+				Brand         string `json:"brand"`
+			}
+			st, err := doJSON(c, http.MethodGet, base+"/v1/knowledge/"+ex.ID, user.Token, nil, &full)
+			if st == http.StatusUnauthorized {
+				_ = user.ensureSession(c, base)
+				st, err = doJSON(c, http.MethodGet, base+"/v1/knowledge/"+ex.ID, user.Token, nil, &full)
+			}
+			if err != nil || st >= 300 || strings.TrimSpace(full.Content) == "" {
+				log.Printf("warn epica cover fetch %q status=%d err=%v", a.Title, st, err)
+				continue
+			}
+			st, err = doJSON(c, http.MethodPut, base+"/v1/knowledge/"+ex.ID, user.Token, map[string]any{
+				"title": full.Title, "category": full.Category, "content": full.Content,
+				"content_format": full.ContentFormat, "brand": full.Brand,
+				"cover_media_id": cover,
+			}, nil)
+			if err != nil || st >= 300 {
+				log.Printf("warn epica cover put %q status=%d err=%v", a.Title, st, err)
+				continue
+			}
+			ex.Cover = cover
+			have[a.Title] = ex
+			covered++
+			if covered%40 == 0 {
+				log.Printf("epica covers %d/%d", i+1, len(articles))
+			}
+			continue
 		}
 		payload := map[string]any{
 			"title": a.Title, "category": a.Category, "content": a.Content, "brand": a.Brand,
@@ -92,21 +143,46 @@ func seedEpicaKnowledge(c *http.Client, base string, user authUser, orgID string
 			continue
 		}
 		created++
-		have[a.Title] = struct{}{}
+		have[a.Title] = epicaExistingArt{Cover: cover}
 		if created%40 == 0 {
 			log.Printf("epica knowledge %d/%d", i+1, len(articles))
 		}
 	}
-	log.Printf("ok epica knowledge created=%d total=%d", created, len(articles))
+	log.Printf("ok epica knowledge created=%d covered=%d skipped=%d total=%d", created, covered, skipped, len(articles))
 	return nil
 }
 
-func existingEpicaTitles(c *http.Client, base, token string) (map[string]struct{}, error) {
-	have := map[string]struct{}{}
+// uploadEpicaCover paces uploads under media's ~40/min limiter and retries 429/401.
+func uploadEpicaCover(c *http.Client, base string, user *authUser, rel string) string {
+	const maxAttempts = 8
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		_ = user.ensureSession(c, base)
+		id := uploadSeedAssetIfExists(c, base, user.Token, "article", rel)
+		if id != "" {
+			// Stay under uploadsPerMinute=40 on production media.
+			time.Sleep(1800 * time.Millisecond)
+			return id
+		}
+		// Force re-auth on likely expiry, then back off for rate limits.
+		user.AuthedAt = time.Time{}
+		wait := time.Duration(attempt*8) * time.Second
+		if wait > 45*time.Second {
+			wait = 45 * time.Second
+		}
+		log.Printf("epica cover retry %s attempt=%d sleep=%s", rel, attempt, wait)
+		time.Sleep(wait)
+	}
+	return ""
+}
+
+func existingEpicaArticles(c *http.Client, base, token string) (map[string]epicaExistingArt, error) {
+	have := map[string]epicaExistingArt{}
 	for offset := 0; offset < 5000; offset += 100 {
 		var list struct {
 			Items []struct {
-				Title string `json:"title"`
+				ID           string  `json:"id"`
+				Title        string  `json:"title"`
+				CoverMediaID *string `json:"cover_media_id"`
 			} `json:"items"`
 			Total int `json:"total"`
 		}
@@ -122,7 +198,11 @@ func existingEpicaTitles(c *http.Client, base, token string) (map[string]struct{
 			break
 		}
 		for _, item := range list.Items {
-			have[item.Title] = struct{}{}
+			cover := ""
+			if item.CoverMediaID != nil {
+				cover = strings.TrimSpace(*item.CoverMediaID)
+			}
+			have[item.Title] = epicaExistingArt{ID: item.ID, Cover: cover}
 		}
 		if offset+len(list.Items) >= list.Total {
 			break

@@ -29,17 +29,25 @@ func main() {
 
 	log.Printf("seed: gateway=%s", base)
 	if envOr("SEED_EPICA_ONLY", "") == "true" {
+		// Optional overrides for production fill (existing supplier account + org).
+		email := envOr("SEED_EMAIL", "supplier1@demo.local")
+		displayName := envOr("SEED_DISPLAY_NAME", "Марина Котова")
+		orgName := envOr("SEED_ORG_NAME", "ПрофиКосмет")
+		orgCity := envOr("SEED_ORG_CITY", "Москва")
+		orgAddress := envOr("SEED_ORG_ADDRESS", "Склад")
+		client.Timeout = 120 * time.Second
 		supplier, err := loginOrRegister(client, base, accountSpec{
-			Email: "supplier1@demo.local", Name: "Марина Котова", Role: "supplier",
+			Email: email, Name: displayName, Role: "supplier",
 		}, password)
 		if err != nil {
 			fatal("epica supplier login: %v", err)
 		}
-		orgID, _, err := ensureOrg(client, base, supplier, "supplier", "ПрофиКосмет", "Склад", "Москва", "", "Europe/Moscow")
+		orgID, _, err := ensureOrg(client, base, supplier, "supplier", orgName, "Склад", orgCity, orgAddress, "Europe/Moscow")
 		if err != nil || orgID == "" {
 			fatal("epica supplier org: %v", err)
 		}
-		if err := seedEpicaKnowledge(client, base, supplier, orgID); err != nil {
+		log.Printf("epica-only: user=%s org=%s", supplier.ID, orgID)
+		if err := seedEpicaKnowledgePtr(client, base, &supplier, orgID); err != nil {
 			fatal("epica knowledge: %v", err)
 		}
 		return
@@ -486,10 +494,13 @@ type accountSpec struct {
 }
 
 type authUser struct {
-	Token string
-	ID    string
-	Email string
-	Roles []string
+	Token        string
+	RefreshToken string
+	Password     string
+	ID           string
+	Email        string
+	Roles        []string
+	AuthedAt     time.Time
 }
 
 type serviceSpec struct {
@@ -569,8 +580,9 @@ func supplier2Products() []prodSpec {
 
 func loginOrRegister(c *http.Client, base string, a accountSpec, password string) (authUser, error) {
 	var loginResp struct {
-		AccessToken string `json:"access_token"`
-		User        struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		User         struct {
 			ID    string   `json:"id"`
 			Roles []string `json:"roles"`
 		} `json:"user"`
@@ -579,7 +591,10 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 		"email": a.Email, "password": password,
 	}, &loginResp)
 	if err == nil && status < 300 {
-		return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles}, nil
+		return authUser{
+			Token: loginResp.AccessToken, RefreshToken: loginResp.RefreshToken, Password: password,
+			ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles, AuthedAt: time.Now(),
+		}, nil
 	}
 	if status == http.StatusForbidden {
 		return authUser{}, &apiError{Status: status, Body: "account_blocked " + a.Email}
@@ -608,7 +623,50 @@ func loginOrRegister(c *http.Client, base string, a accountSpec, password string
 	if status >= 300 {
 		return authUser{}, &apiError{Status: status, Body: fmt.Sprintf("register failed for %s", a.Email)}
 	}
-	return authUser{Token: loginResp.AccessToken, ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles}, nil
+	return authUser{
+		Token: loginResp.AccessToken, RefreshToken: loginResp.RefreshToken, Password: password,
+		ID: loginResp.User.ID, Email: a.Email, Roles: loginResp.User.Roles, AuthedAt: time.Now(),
+	}, nil
+}
+
+func (u *authUser) ensureSession(c *http.Client, base string) error {
+	if u == nil {
+		return fmt.Errorf("nil auth user")
+	}
+	if time.Since(u.AuthedAt) < 10*time.Minute && u.Token != "" {
+		return nil
+	}
+	if u.RefreshToken != "" {
+		var out struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		}
+		st, err := doJSON(c, http.MethodPost, base+"/v1/auth/refresh", "", map[string]any{
+			"refresh_token": u.RefreshToken,
+		}, &out)
+		if err == nil && st < 300 && out.AccessToken != "" {
+			u.Token = out.AccessToken
+			if out.RefreshToken != "" {
+				u.RefreshToken = out.RefreshToken
+			}
+			u.AuthedAt = time.Now()
+			return nil
+		}
+	}
+	if u.Email == "" || u.Password == "" {
+		return fmt.Errorf("cannot refresh session for %s", u.Email)
+	}
+	fresh, err := loginOrRegister(c, base, accountSpec{Email: u.Email, Name: u.Email, Role: "supplier"}, u.Password)
+	if err != nil {
+		return err
+	}
+	u.Token = fresh.Token
+	u.RefreshToken = fresh.RefreshToken
+	u.AuthedAt = fresh.AuthedAt
+	if fresh.ID != "" {
+		u.ID = fresh.ID
+	}
+	return nil
 }
 
 func patchUserProfile(c *http.Client, base string, user authUser, name, city string) error {

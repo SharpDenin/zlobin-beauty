@@ -18,7 +18,7 @@ import (
 
 // pushSender abstracts the HTTP push delivery for tests.
 type pushSender interface {
-	Send(ctx context.Context, sub domain.PushSubscription, payload []byte, publicKey, privateKey, subject string) (status int, err error)
+	Send(ctx context.Context, sub domain.PushSubscription, payload []byte, publicKey, privateKey, subject string) (status int, bodySnippet string, err error)
 }
 
 // pushSubRepo is the subscription slice of the store (tests may inject a fake).
@@ -29,7 +29,12 @@ type pushSubRepo interface {
 
 type webPushSender struct{}
 
-func (webPushSender) Send(ctx context.Context, sub domain.PushSubscription, payload []byte, publicKey, privateKey, subject string) (int, error) {
+// pushTTLSeconds: how long the push service may retain the message while the
+// device is offline. 60s (previous default) dropped salon notifications whenever
+// the phone was briefly locked or offline — FCM/Mozilla discard expired messages.
+const pushTTLSeconds = 86400
+
+func (webPushSender) Send(ctx context.Context, sub domain.PushSubscription, payload []byte, publicKey, privateKey, subject string) (status int, bodySnippet string, err error) {
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
 		Endpoint: sub.Endpoint,
 		Keys:     webpush.Keys{P256dh: sub.P256dh, Auth: sub.Auth},
@@ -37,14 +42,17 @@ func (webPushSender) Send(ctx context.Context, sub domain.PushSubscription, payl
 		Subscriber:      subject,
 		VAPIDPublicKey:  publicKey,
 		VAPIDPrivateKey: privateKey,
-		TTL:             60,
+		TTL:             pushTTLSeconds,
+		Urgency:         webpush.UrgencyHigh,
 	})
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer resp.Body.Close()
+	// Capture a short provider body for diagnostics (never log keys / full endpoint).
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode, nil
+	return resp.StatusCode, strings.TrimSpace(string(snippet)), nil
 }
 
 // normalizeVAPIDSubject prepares Options.Subscriber for webpush-go.
@@ -127,6 +135,8 @@ func notificationTarget(entityType string, entityID *uuid.UUID) string {
 		return "/models/" + entityID.String()
 	case "client_order":
 		return "/orders/" + entityID.String()
+	case "hair_consultation":
+		return "/consultations/" + entityID.String()
 	default:
 		return "/notifications"
 	}
@@ -161,11 +171,19 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 	subs, err := repo.ListPushSubscriptions(ctx, userID)
 	if err != nil {
 		if s.log != nil {
-			s.log.Warn("push list subscriptions failed", "err", err.Error())
+			s.log.Warn("push list subscriptions failed",
+				"user_id", userID.String(),
+				"entity_type", entityType,
+				"err", err.Error())
 		}
 		return
 	}
 	if len(subs) == 0 {
+		if s.log != nil {
+			s.log.Info("push skipped: no subscriptions",
+				"user_id", userID.String(),
+				"entity_type", entityType)
+		}
 		return
 	}
 	payload, err := json.Marshal(map[string]string{
@@ -175,7 +193,10 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 	})
 	if err != nil {
 		if s.log != nil {
-			s.log.Warn("push payload marshal failed", "err", err.Error())
+			s.log.Warn("push payload marshal failed",
+				"user_id", userID.String(),
+				"entity_type", entityType,
+				"err", err.Error())
 		}
 		return
 	}
@@ -183,29 +204,85 @@ func (s *Service) dispatchPush(ctx context.Context, userID uuid.UUID, title, bod
 	if sender == nil {
 		sender = webPushSender{}
 	}
+	sent, failed, pruned := 0, 0, 0
 	for _, sub := range subs {
 		host := pushEndpointHost(sub.Endpoint)
-		status, err := sender.Send(ctx, sub, payload, s.vapidPublic, s.vapidPrivate, s.vapidSubject)
+		status, snippet, err := sender.Send(ctx, sub, payload, s.vapidPublic, s.vapidPrivate, s.vapidSubject)
 		if err != nil {
+			failed++
 			if s.log != nil {
-				s.log.Warn("push delivery failed", "endpoint_host", host, "err", err.Error())
+				s.log.Warn("push delivery failed",
+					"user_id", userID.String(),
+					"entity_type", entityType,
+					"endpoint_host", host,
+					"err", err.Error())
 			}
 			continue
 		}
 		if status == http.StatusGone || status == http.StatusNotFound {
+			pruned++
 			_ = repo.DeletePushSubscription(ctx, userID, sub.Endpoint)
 			if s.log != nil {
-				s.log.Info("push subscription pruned", "endpoint_host", host, "http_status", status)
+				s.log.Info("push subscription pruned",
+					"user_id", userID.String(),
+					"endpoint_host", host,
+					"http_status", status)
+			}
+			continue
+		}
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			failed++
+			if s.log != nil {
+				s.log.Warn("push delivery rejected: check VAPID key pair matches subscription",
+					"user_id", userID.String(),
+					"entity_type", entityType,
+					"endpoint_host", host,
+					"http_status", status,
+					"provider_body", truncatePushDiag(snippet, 160))
 			}
 			continue
 		}
 		if status >= 400 {
+			failed++
 			if s.log != nil {
-				s.log.Warn("push delivery rejected", "endpoint_host", host, "http_status", status)
+				s.log.Warn("push delivery rejected",
+					"user_id", userID.String(),
+					"entity_type", entityType,
+					"endpoint_host", host,
+					"http_status", status,
+					"provider_body", truncatePushDiag(snippet, 160))
 			}
 			continue
 		}
+		sent++
 	}
+	if s.log != nil {
+		s.log.Info("push dispatch finished",
+			"user_id", userID.String(),
+			"entity_type", entityType,
+			"subscriptions", len(subs),
+			"sent", sent,
+			"failed", failed,
+			"pruned", pruned)
+	}
+}
+
+func truncatePushDiag(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if s == "" || max <= 0 {
+		return ""
+	}
+	// Strip control chars so logs stay single-line and safe.
+	s = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return -1
+		}
+		return r
+	}, s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 func pushEndpointHost(endpoint string) string {

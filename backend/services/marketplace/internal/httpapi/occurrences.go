@@ -12,8 +12,8 @@ import (
 )
 
 func (a *API) registerOccurrenceRoutes(mux *http.ServeMux, jwtSecret string) {
-	auth := httpx.BearerAuth(jwtSecret)
-	optional := httpx.OptionalBearerAuth(jwtSecret)
+	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
+	optional := httpx.OptionalBearerAuthGated(jwtSecret, a.gate)
 	internal := httpx.InternalAuth(a.internalToken)
 
 	mux.Handle("POST /v1/services/{id}/occurrences", auth(http.HandlerFunc(a.createOccurrence)))

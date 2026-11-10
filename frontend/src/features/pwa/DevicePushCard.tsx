@@ -31,8 +31,8 @@ const STATUS_COPY: Record<DevicePushUiStatus, { title: string; hint: string }> =
     hint: 'Мы запросим разрешение системы только после вашего нажатия.',
   },
   ready: {
-    title: 'Разрешение есть, подписка не сохранена',
-    hint: 'Нажмите «Включить», чтобы синхронизировать это устройство с сервером.',
+    title: 'Нужно подтвердить подписку на сервере',
+    hint: 'Разрешение браузера есть, но сервер ещё не получил подписку этого устройства. Нажмите «Включить».',
   },
   subscribed: {
     title: 'Уведомления на этом устройстве включены',
@@ -61,19 +61,20 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const next = await resolveDevicePushStatus(config.data)
-      if (!cancelled) setStatus(next)
-      if (config.data?.enabled && config.data.public_key && accessToken) {
+      if (!config.data) {
+        if (!cancelled) setStatus('loading')
+        return
+      }
+      let serverSynced = false
+      if (config.data.enabled && config.data.public_key && accessToken) {
         try {
-          await syncDevicePush(accessToken, config.data.public_key)
-          if (!cancelled) {
-            const after = await resolveDevicePushStatus(config.data)
-            setStatus(after)
-          }
+          serverSynced = await syncDevicePush(accessToken, config.data.public_key)
         } catch {
-          /* sync is best-effort */
+          serverSynced = false
         }
       }
+      const next = await resolveDevicePushStatus(config.data, { serverSynced })
+      if (!cancelled) setStatus(next)
     })()
     return () => {
       cancelled = true
@@ -88,13 +89,13 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
     onSuccess: async () => {
       setError(null)
       setOk('Уведомления на устройстве включены')
-      setStatus(await resolveDevicePushStatus(config.data))
+      setStatus(await resolveDevicePushStatus(config.data, { serverSynced: true }))
       void qc.invalidateQueries({ queryKey: ['push-config'] })
     },
     onError: (e) => {
       setOk(null)
       setError(userError(e, 'Не удалось включить уведомления'))
-      void resolveDevicePushStatus(config.data).then(setStatus)
+      void resolveDevicePushStatus(config.data, { serverSynced: false }).then(setStatus)
     },
   })
 
@@ -103,7 +104,7 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
     onSuccess: async () => {
       setError(null)
       setOk('Уведомления на устройстве отключены')
-      setStatus(await resolveDevicePushStatus(config.data))
+      setStatus(await resolveDevicePushStatus(config.data, { serverSynced: false }))
     },
     onError: (e) => {
       setOk(null)

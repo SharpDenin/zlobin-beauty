@@ -60,6 +60,21 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Аккаунт недоступен',
     hint: 'Обратитесь в поддержку, если это ошибка.',
   },
+  account_owned_organizations: {
+    kind: 'conflict',
+    title: 'Сначала передайте владение салоном',
+    hint: 'Удаление недоступно, пока вы владелец организации.',
+  },
+  account_already_deleted: {
+    kind: 'conflict',
+    title: 'Аккаунт уже удалён',
+    hint: 'Войдите с другим аккаунтом или зарегистрируйтесь заново.',
+  },
+  session_invalid: {
+    kind: 'authentication',
+    title: 'Сессия завершилась',
+    hint: 'Войдите в аккаунт снова.',
+  },
   contact_self: {
     kind: 'validation',
     title: 'Нельзя добавить себя',

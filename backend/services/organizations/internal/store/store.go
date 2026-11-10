@@ -117,6 +117,16 @@ FROM memberships WHERE user_id=$1 AND status='active' ORDER BY created_at`, user
 	return out, rows.Err()
 }
 
+// DeactivateMembershipsForUser marks all active memberships for a user as removed (account deletion).
+func (s *Store) DeactivateMembershipsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE memberships SET status='removed' WHERE user_id=$1 AND status='active'`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Store) GetOrg(ctx context.Context, id uuid.UUID) (*domain.Organization, error) {
 	return scanOrg(s.pool.QueryRow(ctx, `SELECT `+orgCols+` FROM organizations WHERE id=$1`, id))
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/httpapi"
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/service"
 	"github.com/zlobin/zlobin-beauty/backend/services/organizations/internal/store"
+	"github.com/zlobin/zlobin-beauty/backend/shared/accesscheck"
 	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/db"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
@@ -43,7 +44,8 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	api := httpapi.New(service.New(st).WithAudit(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")), log, os.Getenv("INTERNAL_TOKEN"))
+	api := httpapi.New(service.New(st).WithAudit(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")), log, os.Getenv("INTERNAL_TOKEN")).
+		WithAccessGate(accesscheck.NewHTTPGate(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

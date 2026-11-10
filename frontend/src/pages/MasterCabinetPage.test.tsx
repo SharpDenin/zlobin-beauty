@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
@@ -31,9 +32,36 @@ vi.mock('@/shared/ui/MediaDropzone', () => ({
 vi.mock('@/shared/ui/MediaImage', () => ({ MediaImage: () => null }))
 vi.mock('@/shared/ui/ProfessionTypePicker', () => ({
   ProfessionTypePicker: () => <div data-testid="profession-picker" />,
+  useProfessionTypes: () => ({
+    data: {
+      items: [
+        { id: '11111111-1111-1111-1111-111111111111', slug: 'colorist', name: 'Колорист', is_active: true },
+      ],
+    },
+    isLoading: false,
+    isError: false,
+  }),
+}))
+vi.mock('@/shared/ui/SpecializationPicker', () => ({
+  SpecializationPicker: ({ value }: { value: string[] }) => (
+    <div data-testid="specialization-picker">
+      {value.map((t) => (
+        <span key={t}>{t}</span>
+      ))}
+    </div>
+  ),
 }))
 vi.mock('@/shared/ui/WorkFormatPicker', () => ({
   WorkFormatPicker: () => <div data-testid="work-format-picker" />,
+}))
+vi.mock('@/shared/ui/Modal', () => ({
+  Modal: ({ open, children, footer }: { open: boolean; children: ReactNode; footer?: ReactNode }) =>
+    open ? (
+      <div data-testid="type-change-modal">
+        {children}
+        {footer}
+      </div>
+    ) : null,
 }))
 vi.mock('@/shared/lib/useFormDraft', () => ({
   useFormDraft: () => ({ clear: vi.fn() }),
@@ -168,12 +196,11 @@ describe('MasterCabinetPage PROF-01..05', () => {
     await waitFor(() => expect(screen.getByText('Телефон филиала сохранён')).toBeInTheDocument())
   })
 
-  it('preserves legacy specializations as chips and on photo upload', async () => {
+  it('loads specializations into picker and preserves them on photo upload', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('master-readiness-missing')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByTestId('master-legacy-specializations')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('specialization-picker')).toBeInTheDocument())
     expect(screen.getByText('колористика')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Дополнительные теги')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Загрузить фото профиля' }))
     await waitFor(() => {
       const put = mockedRequest.mock.calls.find((c) => c[0] === '/v1/me/master' && (c[1] as { method?: string })?.method === 'PUT')

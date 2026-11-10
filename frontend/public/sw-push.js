@@ -1,10 +1,20 @@
-/* Push display for the generated service worker. Delivery requires VAPID keys on the communications service. */
+/* Push display for the generated service worker. Delivery requires VAPID keys on the communications service.
+ * Backend payload shape: { title, body, url } (JSON). Always call showNotification — Chrome may drop the
+ * push subscription if a push event finishes without a visible notification.
+ */
 self.addEventListener('push', (event) => {
   let payload = { title: 'Salon-X', body: '', url: '/notifications' }
   try {
-    if (event.data) payload = { ...payload, ...event.data.json() }
+    if (event.data) {
+      const parsed = event.data.json()
+      if (parsed && typeof parsed === 'object') payload = { ...payload, ...parsed }
+    }
   } catch {
-    payload.body = event.data ? event.data.text() : ''
+    try {
+      payload.body = event.data ? event.data.text() : ''
+    } catch {
+      payload.body = ''
+    }
   }
   const title = (payload.title && String(payload.title).trim()) || 'Salon-X'
   const body = payload.body != null ? String(payload.body) : ''

@@ -6,9 +6,12 @@ Salon-X доставляет **системные** Web Push поверх уже
 
 1. Событие приложения (booking, messenger, commerce, …) создаёт уведомление через `POST /v1/internal/notifications` или внутренний `CreateNotification`.
 2. Communications сохраняет in-app уведомление (unread / лента / bubbles без изменений).
-3. Затем **асинхронно** отправляет Web Push на все активные `push_subscriptions` этого пользователя.
+3. Затем **асинхронно** отправляет Web Push на все активные `push_subscriptions` этого пользователя
+   (`TTL=86400`, `Urgency=high` — сообщение ждёт офлайн-устройство до суток).
 4. Ошибка push **не** откатывает и не блокирует in-app уведомление.
 5. Ответы `404` / `410` от push-сервиса удаляют подписку устройства.
+6. UI показывает «включено» **только** после успешного `PUT /v1/push/subscription`.
+   Локальная подписка браузера без строки в БД = состояние «нужно подтвердить» (кнопка «Включить»).
 
 Таблица `push_subscriptions` (миграция `005_push_subscriptions.sql`) уже существовала — схема не менялась.
 
@@ -80,9 +83,12 @@ Service worker (`sw-push.js`, подключается через Workbox `impor
 | --- | --- |
 | `enabled: false` | `VAPID_*` в env communications |
 | Кнопка «Включить» → denied | настройки сайта/ОС |
-| Нет системного баннера | PWA/HTTPS, SW зарегистрирован, подписка в БД; логи `push delivery rejected` / `failed` |
-| `push delivery rejected` http 401/403 | VAPID keys mismatch или битый subject (до фикса — double mailto) |
+| Нет системного баннера | PWA/HTTPS, SW зарегистрирован, **строка в `push_subscriptions`**, логи `push dispatch finished` / `push skipped: no subscriptions` |
+| UI «включено», но баннера нет | раньше UI мог врать по локальной подписке; нужна успешная синхронизация на сервер |
+| `push skipped: no subscriptions` | пользователь не завершил «Включить» или PUT не дошёл до communications |
+| `push delivery rejected` http 401/403 | VAPID public/private mismatch или битый subject (до фикса — double mailto); смотри `provider_body` |
 | 410 после ротации ключей | пользователю нужно включить push снова (старые подписки невалидны) |
+| Баннер только если приложение открыто | проверьте, что задеплоен communications с `TTL≥3600` (раньше TTL=60с дропал офлайн-доставку) |
 
 ## Ручная проверка устройств
 

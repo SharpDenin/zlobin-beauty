@@ -22,16 +22,19 @@ import (
 )
 
 type Service struct {
-	store           *store.Store
-	jwtSecret       string
-	allowDevBilling bool
-	mediaURL        string
-	internalToken   string
-	mailer          mailer.Mailer
-	publicAppURL    string
-	log             *slog.Logger
-	httpClient      *http.Client
-	now             func() time.Time
+	store              *store.Store
+	jwtSecret          string
+	allowDevBilling    bool
+	mediaURL           string
+	internalToken      string
+	organizationsURL   string
+	communicationsURL  string
+	marketplaceURL     string
+	mailer             mailer.Mailer
+	publicAppURL       string
+	log                *slog.Logger
+	httpClient         *http.Client
+	now                func() time.Time
 	// captureActionToken is set only by live SMTP e2e tests; must never log the raw value.
 	captureActionToken func(purpose, raw string)
 }
@@ -302,6 +305,41 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (*domain.User, error
 	return user, nil
 }
 
+// ValidateAccess reports whether an access JWT session may call protected APIs.
+func (s *Service) ValidateAccess(ctx context.Context, sessionID, userID uuid.UUID) (store.AccessValidation, error) {
+	v, err := s.store.ValidateAccess(ctx, sessionID, userID, s.now().UTC())
+	if err != nil {
+		return store.AccessValidation{}, apperr.Internal(err)
+	}
+	return v, nil
+}
+
+// LocalAccessGate checks session + user status against the identity database.
+type LocalAccessGate struct{ svc *Service }
+
+func (s *Service) LocalAccessGate() LocalAccessGate { return LocalAccessGate{svc: s} }
+
+func (g LocalAccessGate) Check(ctx context.Context, claims *auth.Claims) error {
+	if claims == nil {
+		return apperr.SessionInvalid()
+	}
+	v, err := g.svc.ValidateAccess(ctx, claims.SessionID, claims.UserID)
+	if err != nil {
+		return err
+	}
+	if v.Active {
+		return nil
+	}
+	switch v.Reason {
+	case "account_blocked", "account_deleted", "account_unavailable":
+		return apperr.AccountBlocked()
+	case "session_expired":
+		return apperr.SessionExpired()
+	default:
+		return apperr.SessionInvalid()
+	}
+}
+
 type UpdateProfileInput struct {
 	DisplayName *string
 	City        *string
@@ -311,6 +349,9 @@ func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, in Update
 	user, err := s.Me(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if user.Status != "active" {
+		return nil, apperr.AccountBlocked()
 	}
 	if in.DisplayName != nil {
 		name := strings.TrimSpace(*in.DisplayName)

@@ -19,14 +19,20 @@ type API struct {
 	svc           *service.Service
 	log           *slog.Logger
 	internalToken string
+	gate          httpx.AccessGate
 }
 
 func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 	return &API{svc: svc, log: log, internalToken: internalToken}
 }
 
+func (a *API) WithAccessGate(gate httpx.AccessGate) *API {
+	a.gate = gate
+	return a
+}
+
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
-	auth := httpx.BearerAuth(jwtSecret)
+	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
 	mux.Handle("POST /v1/organizations", auth(http.HandlerFunc(a.create)))
 	mux.Handle("GET /v1/organizations/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/organizations/{orgID}/readiness", auth(http.HandlerFunc(a.orgReadiness)))
@@ -64,6 +70,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/suppliers/{id}", a.getSupplier)
 	mux.HandleFunc("GET /v1/internal/memberships/check", a.checkMembership)
 	mux.HandleFunc("GET /v1/internal/users/{userID}/supplier-organization", a.internalSupplierOrgForUser)
+	mux.HandleFunc("GET /v1/internal/users/{userID}/owned-organizations", a.internalOwnedOrganizations)
+	mux.HandleFunc("POST /v1/internal/users/{userID}/deactivate-memberships", a.internalDeactivateMemberships)
 	mux.HandleFunc("GET /v1/internal/branches/{branchID}/publication", a.branchPublication)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
@@ -112,6 +120,50 @@ func (a *API) internalSupplierOrgForUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"organization_id": orgID.String()})
+}
+
+func (a *API) internalOwnedOrganizations(w http.ResponseWriter, r *http.Request) {
+	expected := a.internalToken
+	if expected == "" || r.Header.Get("X-Internal-Token") != expected {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	orgs, err := a.svc.ListOwnedOrganizations(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(orgs))
+	for _, o := range orgs {
+		items = append(items, map[string]any{
+			"id": o.ID.String(), "name": o.Name, "type": o.Type,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) internalDeactivateMemberships(w http.ResponseWriter, r *http.Request) {
+	expected := a.internalToken
+	if expected == "" || r.Header.Get("X-Internal-Token") != expected {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	n, err := a.svc.DeactivateMembershipsForUser(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"deactivated": n})
 }
 
 func (a *API) branchPublication(w http.ResponseWriter, r *http.Request) {

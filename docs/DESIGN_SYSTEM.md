@@ -28,9 +28,9 @@ Do not say «Кабинет» in the UI. Role labels come from `cabinetLabel` (�
 
 Только домашняя страница владельца салона (`OwnerStartPage`, `owner-home.css`):
 
-- Фон — **атмосферное лесное фото** (`/owner-atmosphere*.jpg`) + затемнение; поверх — glass panel (translucent + blur). Не общий `--gradient-canvas`.
-- Композиция как у референса B: левый strip фона, справа glass UI; крупный hero, KPI в одну полосу, день салона, appointment cards, mint CTA, management tiles 2×2.
-- Не переносить photo/glass атмосферу на остальные экраны. Остальной продукт — MIDNIGHT / SIGNAL.
+- Фон — **глобальный фотофон** (`body::before`) + **полноэкранная линза** (`body::after`); home не дублирует blur.
+- Композиция как у референса B: левый strip атмосферы, справа work-панель поверх линзы (fill без локального blur); крупный hero, KPI в одну полосу, день салона, appointment cards, primary CTA, management tiles 2×2.
+- Photo + Glass — продуктовая система для всех маршрутов; home задаёт композицию Reference B, не отдельную палитру.
 
 ## Product UX (обязательные правила)
 
@@ -58,7 +58,7 @@ Prefer `var(--token)` / imported JS tokens. Do not scatter hex across pages.
 | `--color-surface-2` | `#1D2230` | Nested surfaces, hover, default border |
 | `--color-surface-3` | `#252B3B` | Elevated hover / skeleton highlight |
 | `--color-text-primary` | `#F5F7FA` | Main text. Never pure `#FFFFFF` for all copy. |
-| `--color-text-secondary` | `#9EA6B5` | Meta, placeholders, inactive nav |
+| `--color-text-secondary` | `#B8BFC9` | Meta, placeholders, inactive nav (readable on photo + glass) |
 | `--color-primary` | `#7C82FF` | Main action / selected / focus |
 | `--color-primary-soft` | `#A8ACFF` | Secondary accent text, icon, button highlight |
 | `--color-success` | `#5DC08B` | Success only |
@@ -188,15 +188,20 @@ Do not invent `z-index: 9999`. Shared `Modal` / `Drawer` / `Overlay` use this sc
 
 | Layer | Treatment |
 | --- | --- |
-| App canvas | `--gradient-canvas` on `body` |
-| Page | Transparent over canvas; content in `.page` |
-| Hero / intro | `--gradient-hero` |
-| Section | No extra fill unless a card/grid |
-| Card | Solid `--color-surface` |
-| Modal overlay | `--overlay-scrim` |
-| Modal sheet | Solid surface + `--shadow-lg` |
+| Photo wallpaper | `body::before` — `--app-bg-image` + `--app-bg-overlay` scrim (all routes) |
+| Fullscreen lens | `body::after` — `--glass-lens-fill` + `--glass-lens-blur` (the primary blur layer) |
+| App canvas fallback | `--gradient-canvas` when wallpaper is unavailable |
+| Page | Transparent over lens; content in `.page` |
+| Chrome | Topbar / bottomnav / sidenav — `--glass-chrome-fill`, **no** local blur |
+| Work surface | Calendar grid / dense work areas — `--glass-work-fill`, no cell blur |
+| Panel / card | `--glass-fill` / `--glass-fill-subtle`, fill only |
+| Control | Inputs / chips / secondary buttons — `--glass-control-fill` |
+| Modal / drawer | `--glass-fill-strong` + `--glass-blur-strong` when open |
+| Modal overlay | `--overlay-scrim` (not blurred) |
 
-Readability wins. If a gradient sits under text, keep contrast: primary text on dark, never thin grey on violet wash.
+Hierarchy: photo → lens → chrome/panels/cards → strong overlays → controls. Do not stack multiple heavy `backdrop-filter` layers in the primary viewport (budget: ≤2 significant blurs — lens + open overlay).
+
+Readability wins. Secondary text is `#B8BFC9` (dark) / `#4A5366` (light). Prefer denser glass fill over text-shadow when contrast fails on a bright wallpaper.
 
 ## Components
 
@@ -212,7 +217,7 @@ Readability wins. If a gradient sits under text, keep contrast: primary text on 
 
 ### Inputs
 
-Default: background `#0B0D12`, border `#1D2230`, text `#F5F7FA`, placeholder `#9EA6B5`.
+Default: background `--glass-control-fill`, border `--glass-border`, text `--color-text-primary`, placeholder `--color-text-secondary`.
 Focus: border `#7C82FF` + `--color-focus-ring`.
 Error: `#EF7777`.
 Checkbox / radio: `accent-color` primary, 18px.
@@ -221,7 +226,7 @@ Always use a visible label. Placeholder is not a label.
 
 ### Cards
 
-All cards: radius 14px, 1px `--color-border`, `--shadow-sm`, padding 16px, solid surface.
+All cards: radius 14px, 1px `--glass-border`, `--glass-shadow`, padding 16px, translucent `--glass-fill` (no per-card blur).
 
 | Kind | Extra |
 | --- | --- |

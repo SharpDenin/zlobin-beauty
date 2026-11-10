@@ -135,6 +135,50 @@ func (s *Store) GetSessionByID(ctx context.Context, id uuid.UUID) (*domain.Sessi
 	return s.scanSession(s.pool.QueryRow(ctx, `SELECT `+sessionCols+` FROM sessions WHERE id=$1`, id))
 }
 
+// AccessValidation is the result of checking whether an access JWT session may proceed.
+type AccessValidation struct {
+	Active bool
+	Reason string
+}
+
+// ValidateAccess checks session liveness and that the owning user is still active.
+func (s *Store) ValidateAccess(ctx context.Context, sessionID, userID uuid.UUID, now time.Time) (AccessValidation, error) {
+	var sessUser uuid.UUID
+	var expiresAt time.Time
+	var revokedAt *time.Time
+	var status string
+	err := s.pool.QueryRow(ctx, `
+SELECT s.user_id, s.expires_at, s.revoked_at, u.status
+FROM sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.id = $1`, sessionID).Scan(&sessUser, &expiresAt, &revokedAt, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AccessValidation{Active: false, Reason: "session_missing"}, nil
+		}
+		return AccessValidation{}, err
+	}
+	if sessUser != userID {
+		return AccessValidation{Active: false, Reason: "user_mismatch"}, nil
+	}
+	if revokedAt != nil {
+		return AccessValidation{Active: false, Reason: "session_revoked"}, nil
+	}
+	if !expiresAt.After(now) {
+		return AccessValidation{Active: false, Reason: "session_expired"}, nil
+	}
+	switch status {
+	case "active":
+		return AccessValidation{Active: true}, nil
+	case "blocked":
+		return AccessValidation{Active: false, Reason: "account_blocked"}, nil
+	case "deleted":
+		return AccessValidation{Active: false, Reason: "account_deleted"}, nil
+	default:
+		return AccessValidation{Active: false, Reason: "account_unavailable"}, nil
+	}
+}
+
 func (s *Store) RevokeSession(ctx context.Context, id uuid.UUID, at time.Time) error {
 	_, err := s.pool.Exec(ctx, `UPDATE sessions SET revoked_at=$2 WHERE id=$1 AND revoked_at IS NULL`, id, at)
 	return err

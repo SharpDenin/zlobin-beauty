@@ -181,6 +181,43 @@ func (s *Service) AddBranch(ctx context.Context, actor, orgID uuid.UUID, in AddB
 	return &b, nil
 }
 
+// ListOwnedOrganizations returns orgs where the user has an active owner membership.
+func (s *Service) ListOwnedOrganizations(ctx context.Context, userID uuid.UUID) ([]domain.Organization, error) {
+	memberships, err := s.store.ListMembershipsByUser(ctx, userID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	out := make([]domain.Organization, 0)
+	seen := map[uuid.UUID]struct{}{}
+	for _, m := range memberships {
+		if m.Role != "owner" {
+			continue
+		}
+		if _, ok := seen[m.OrganizationID]; ok {
+			continue
+		}
+		seen[m.OrganizationID] = struct{}{}
+		org, err := s.store.GetOrg(ctx, m.OrganizationID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if org == nil {
+			continue
+		}
+		out = append(out, *org)
+	}
+	return out, nil
+}
+
+// DeactivateMembershipsForUser removes all active memberships for account deletion cleanup.
+func (s *Service) DeactivateMembershipsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	n, err := s.store.DeactivateMembershipsForUser(ctx, userID)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	return n, nil
+}
+
 func (s *Service) MyOrgs(ctx context.Context, userID uuid.UUID) ([]domain.Organization, map[uuid.UUID][]domain.Branch, map[uuid.UUID][]domain.Membership, error) {
 	memberships, err := s.store.ListMembershipsByUser(ctx, userID)
 	if err != nil {

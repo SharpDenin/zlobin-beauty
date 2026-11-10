@@ -23,6 +23,8 @@ const (
 	CodeInvalidCredentials          Code = "invalid_credentials"
 	CodeEmailTaken                  Code = "email_already_registered"
 	CodeAccountBlocked              Code = "account_blocked"
+	CodeAccountOwnedOrganizations   Code = "account_owned_organizations"
+	CodeAccountAlreadyDeleted       Code = "account_already_deleted"
 	CodeSessionExpired              Code = "session_expired"
 	CodeAppointmentTimeConflict     Code = "appointment_time_conflict"
 	CodeAppointmentStatusInvalid    Code = "appointment_status_invalid"
@@ -180,8 +182,35 @@ func AccountBlocked() *AppError {
 	return ForbiddenCode(CodeAccountBlocked, "account is blocked")
 }
 
+func AccountOwnedOrganizations(orgNames []string) *AppError {
+	details := map[string]any{}
+	if len(orgNames) > 0 {
+		details["organizations"] = orgNames
+	}
+	return ConflictCode(CodeAccountOwnedOrganizations, "cannot delete account while owning an organization").WithDetails(details)
+}
+
+func AccountAlreadyDeleted() *AppError {
+	return ConflictCode(CodeAccountAlreadyDeleted, "account already deleted")
+}
+
 func SessionExpired() *AppError {
 	return UnauthorizedCode(CodeSessionExpired, "session expired")
+}
+
+func SessionInvalid() *AppError {
+	return UnauthorizedCode(CodeSessionInvalid, "session is no longer valid")
+}
+
+// AccountCleanupFailed is returned when cross-service cleanup required before
+// soft-delete could not complete; the account is left intact so the client can retry.
+func AccountCleanupFailed(failedSteps []string) *AppError {
+	details := map[string]any{}
+	if len(failedSteps) > 0 {
+		details["failed_steps"] = failedSteps
+	}
+	return New(CodeConflict, http.StatusServiceUnavailable, "account deletion temporarily unavailable; retry later").
+		WithDetails(details)
 }
 
 func InviteInvalid() *AppError {

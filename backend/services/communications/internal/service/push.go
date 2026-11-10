@@ -120,6 +120,14 @@ func (s *Service) RemovePushSubscription(ctx context.Context, userID uuid.UUID, 
 	return wrap(s.store.DeletePushSubscription(ctx, userID, strings.TrimSpace(endpoint)))
 }
 
+func (s *Service) DeletePushSubscriptionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	n, err := s.store.DeletePushSubscriptionsForUser(ctx, userID)
+	if err != nil {
+		return 0, wrap(err)
+	}
+	return n, nil
+}
+
 func notificationTarget(entityType string, entityID *uuid.UUID) string {
 	if entityID == nil {
 		return "/notifications"

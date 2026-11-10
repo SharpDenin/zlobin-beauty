@@ -12,6 +12,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/httpapi"
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/service"
 	"github.com/zlobin/zlobin-beauty/backend/services/communications/internal/store"
+	"github.com/zlobin/zlobin-beauty/backend/shared/accesscheck"
 	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/db"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
@@ -56,7 +57,8 @@ func main() {
 	} else {
 		log.Info("web push enabled")
 	}
-	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN"))
+	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN")).
+		WithAccessGate(accesscheck.NewHTTPGate(getenv("IDENTITY_URL", "http://identity:8080"), os.Getenv("INTERNAL_TOKEN")))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

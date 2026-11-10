@@ -112,6 +112,26 @@ func (s *Store) SetUserStatus(ctx context.Context, id uuid.UUID, status string, 
 	return err
 }
 
+// SoftDeleteUser anonymizes PII, sets status=deleted, and replaces the password hash.
+// Returns false when the row was already deleted (idempotent).
+func (s *Store) SoftDeleteUser(ctx context.Context, id uuid.UUID, anonEmail, displayName, passwordHash string, at time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE users
+SET status = 'deleted',
+    email = $2,
+    phone = NULL,
+    display_name = $3,
+    password_hash = $4,
+    email_verified = FALSE,
+    phone_verified = FALSE,
+    updated_at = $5
+WHERE id = $1 AND status <> 'deleted'`, id, anonEmail, displayName, passwordHash, at)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) RevokeSessionsForUser(ctx context.Context, userID uuid.UUID, at time.Time) error {
 	_, err := s.pool.Exec(ctx, `UPDATE sessions SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, userID, at)
 	return err

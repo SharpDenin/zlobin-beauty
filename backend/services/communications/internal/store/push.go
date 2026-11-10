@@ -21,6 +21,14 @@ func (s *Store) DeletePushSubscription(ctx context.Context, userID uuid.UUID, en
 	return err
 }
 
+func (s *Store) DeletePushSubscriptionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM push_subscriptions WHERE user_id=$1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Store) ListPushSubscriptions(ctx context.Context, userID uuid.UUID) ([]domain.PushSubscription, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT id, user_id, endpoint, p256dh, auth_key, created_at

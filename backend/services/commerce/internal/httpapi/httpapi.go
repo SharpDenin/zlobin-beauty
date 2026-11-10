@@ -19,6 +19,7 @@ type API struct {
 	log           *slog.Logger
 	internalToken string
 	allowDev      bool
+	gate          httpx.AccessGate
 }
 
 func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
@@ -26,8 +27,13 @@ func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 	return &API{svc: svc, log: log, internalToken: internalToken, allowDev: env != "production"}
 }
 
+func (a *API) WithAccessGate(gate httpx.AccessGate) *API {
+	a.gate = gate
+	return a
+}
+
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
-	auth := httpx.BearerAuth(jwtSecret)
+	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
 	internal := httpx.InternalAuth(a.internalToken)
 	mux.Handle("POST /v1/commerce/locations", auth(http.HandlerFunc(a.createLocation)))
 	mux.Handle("GET /v1/commerce/locations", auth(http.HandlerFunc(a.listLocations)))

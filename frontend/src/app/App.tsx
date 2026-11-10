@@ -77,6 +77,7 @@ import { SettingsLayout } from '@/pages/settings/SettingsLayout'
 import { SettingsAppearancePage } from '@/pages/settings/SettingsAppearancePage'
 import { SettingsNotificationsPage } from '@/pages/settings/SettingsNotificationsPage'
 import { SettingsSalonsPage } from '@/pages/settings/SettingsSalonsPage'
+import { SettingsAccountPage } from '@/pages/settings/SettingsAccountPage'
 import { ChairMarketplacePage } from '@/pages/ChairMarketplacePage'
 import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { MessagesPage } from '@/pages/MessagesPage'
@@ -149,6 +150,7 @@ export function App() {
                   <Route path="appearance" element={<SettingsAppearancePage />} />
                   <Route path="notifications" element={<SettingsNotificationsPage />} />
                   <Route path="salons" element={<SettingsSalonsPage />} />
+                  <Route path="account" element={<SettingsAccountPage />} />
                 </Route>
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/shop/cart" element={<ShopPage />} />

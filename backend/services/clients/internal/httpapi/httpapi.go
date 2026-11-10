@@ -15,14 +15,20 @@ import (
 )
 
 type API struct {
-	svc *service.Service
-	log *slog.Logger
+	svc  *service.Service
+	log  *slog.Logger
+	gate httpx.AccessGate
 }
 
 func New(svc *service.Service, log *slog.Logger) *API { return &API{svc: svc, log: log} }
 
+func (a *API) WithAccessGate(gate httpx.AccessGate) *API {
+	a.gate = gate
+	return a
+}
+
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
-	auth := httpx.BearerAuth(jwtSecret)
+	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
 	mux.HandleFunc("POST /v1/internal/visits/from-appointment", a.fromAppointment)
 	mux.HandleFunc("POST /v1/internal/formulas", a.internalFormula)
 	// Literal prefixes avoid ServeMux conflicts between "{id}/visits" and "by-appointment/{id}".

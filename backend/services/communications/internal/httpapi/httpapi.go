@@ -16,14 +16,20 @@ type API struct {
 	svc           *service.Service
 	log           *slog.Logger
 	internalToken string
+	gate          httpx.AccessGate
 }
 
 func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 	return &API{svc: svc, log: log, internalToken: internalToken}
 }
 
+func (a *API) WithAccessGate(gate httpx.AccessGate) *API {
+	a.gate = gate
+	return a
+}
+
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
-	auth := httpx.BearerAuth(jwtSecret)
+	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
 	internal := httpx.InternalAuth(a.internalToken)
 	mux.Handle("POST /v1/internal/notifications", internal(http.HandlerFunc(a.createNotification)))
 	mux.Handle("GET /v1/internal/reviews/stats", internal(http.HandlerFunc(a.reviewStats)))
@@ -38,7 +44,22 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	a.registerMessengerRoutes(mux, auth)
 	a.registerContactRoutes(mux, auth)
 	a.registerPushRoutes(mux, auth)
+	mux.Handle("DELETE /v1/internal/users/{userID}/push-subscriptions", internal(http.HandlerFunc(a.deleteUserPushSubscriptions)))
 	mux.Handle("GET /v1/internal/media/{id}/access", internal(http.HandlerFunc(a.mediaAccess)))
+}
+
+func (a *API) deleteUserPushSubscriptions(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	n, err := a.svc.DeletePushSubscriptionsForUser(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 
 func (a *API) createNotification(w http.ResponseWriter, r *http.Request) {

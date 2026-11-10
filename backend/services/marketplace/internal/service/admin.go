@@ -46,6 +46,15 @@ func (s *Service) AdminGetMaster(ctx context.Context, id uuid.UUID) (*domain.Mas
 	return m, svcs, nil
 }
 
+// UnpublishMasterByUserID hides a master profile during account deletion. Idempotent when absent/already unpublished.
+func (s *Service) UnpublishMasterByUserID(ctx context.Context, userID uuid.UUID) (bool, error) {
+	changed, err := s.store.UnpublishMasterByUser(ctx, userID, s.now().UTC())
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return changed, nil
+}
+
 func (s *Service) AdminSetMasterPublished(ctx context.Context, actor, id uuid.UUID, published bool) (*domain.MasterProfile, error) {
 	m, err := s.store.GetMaster(ctx, id)
 	if err != nil {

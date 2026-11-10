@@ -60,6 +60,12 @@ func main() {
 	svc := service.New(st, cfg.JWTSecret).
 		WithDevBilling(allowDev).
 		WithMedia(os.Getenv("MEDIA_URL"), os.Getenv("INTERNAL_TOKEN")).
+		WithAccountDeleteDeps(
+			os.Getenv("ORGANIZATIONS_URL"),
+			os.Getenv("COMMUNICATIONS_URL"),
+			os.Getenv("MARKETPLACE_URL"),
+			os.Getenv("INTERNAL_TOKEN"),
+		).
 		WithMailer(ml).
 		WithPublicAppURL(firstNonEmpty(os.Getenv("PUBLIC_APP_URL"), os.Getenv("APP_PUBLIC_URL"))).
 		WithLogger(log)

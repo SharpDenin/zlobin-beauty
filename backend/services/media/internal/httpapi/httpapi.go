@@ -19,15 +19,21 @@ type API struct {
 	svc           *service.Service
 	log           *slog.Logger
 	internalToken string
+	gate          httpx.AccessGate
 }
 
 func New(svc *service.Service, log *slog.Logger, internalToken string) *API {
 	return &API{svc: svc, log: log, internalToken: internalToken}
 }
 
+func (a *API) WithAccessGate(gate httpx.AccessGate) *API {
+	a.gate = gate
+	return a
+}
+
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
-	auth := httpx.BearerAuth(jwtSecret)
-	optional := httpx.OptionalBearerAuth(jwtSecret)
+	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
+	optional := httpx.OptionalBearerAuthGated(jwtSecret, a.gate)
 	internal := httpx.InternalAuth(a.internalToken)
 	mux.Handle("POST /v1/media", auth(http.HandlerFunc(a.upload)))
 	mux.Handle("GET /v1/media/{id}", optional(http.HandlerFunc(a.getMetadata)))

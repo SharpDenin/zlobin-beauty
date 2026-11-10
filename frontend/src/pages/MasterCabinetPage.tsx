@@ -2,19 +2,27 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
 import { hasLegacyEmployeeFormat, primaryWorkType, uniqueCanonicalWorkTypes, workTypesLabel } from '@/shared/lib/work-types'
-import { ProfessionTypePicker } from '@/shared/ui/ProfessionTypePicker'
+import { ProfessionTypePicker, useProfessionTypes } from '@/shared/ui/ProfessionTypePicker'
+import { SpecializationPicker } from '@/shared/ui/SpecializationPicker'
 import type { ProfessionType } from '@/shared/lib/profession-types'
 import { selectedProfessionIds } from '@/shared/lib/profession-types'
+import {
+  filterSpecializationsForSlugs,
+  incompatibleSpecializations,
+  slugsForProfessionIds,
+  uniqueSpecializationTags,
+} from '@/shared/lib/master-specializations'
 import { useFormDraft } from '@/shared/lib/useFormDraft'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Modal } from '@/shared/ui/Modal'
 import { useToast } from '@/shared/ui/Toast'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { moderationError } from '@/shared/lib/moderation'
@@ -36,11 +44,11 @@ const masterSchema = z.object({
   display_name: z.string().min(2, 'Укажите имя'),
   city: z.string().min(2, 'Укажите город'),
   bio: z.string().optional(),
-  specializations: z.string().optional(),
+  specializations: z.array(z.string()).min(1, 'Выберите хотя бы одну специализацию'),
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
   work_types: z.array(z.string()).min(1, 'Выберите формат работы'),
-  profession_type_ids: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один профессиональный тип'),
+  profession_type_ids: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один тип мастера'),
   published: z.boolean(),
 })
 
@@ -55,6 +63,10 @@ export function MasterCabinetPage() {
   const [profilePhotoDraft, setProfilePhotoDraft] = useState<string | null>(null)
   const [portfolioDraft, setPortfolioDraft] = useState<string | null>(null)
   const [salonDraft, setSalonDraft] = useState<string | null>(null)
+  const [typeChangePending, setTypeChangePending] = useState<{
+    nextIds: string[]
+    dropping: string[]
+  } | null>(null)
 
   const orgs = useQuery({
     queryKey: ['orgs-mine'],
@@ -166,12 +178,20 @@ export function MasterCabinetPage() {
       city: 'Красноярск',
       experience_years: 1,
       education: '',
+      specializations: [],
       work_types: ['private_practice'],
       profession_type_ids: [],
     },
   })
   const masterDraft = useFormDraft(masterForm, 'master-profile-form')
   const watchedWorkTypes = masterForm.watch('work_types')
+  const watchedProfessionIds = masterForm.watch('profession_type_ids')
+  const watchedSpecializations = masterForm.watch('specializations')
+  const professionCatalog = useProfessionTypes()
+  const professionSlugs = useMemo(
+    () => slugsForProfessionIds(watchedProfessionIds ?? [], professionCatalog.data?.items ?? []),
+    [watchedProfessionIds, professionCatalog.data?.items],
+  )
   const hasSalon = Boolean(master.data?.master.organization_id || orgs.data?.items.some((o) => o.organization.type !== 'supplier'))
   const legacyEmployee = hasLegacyEmployeeFormat(
     master.data?.master.work_types?.length
@@ -210,7 +230,7 @@ export function MasterCabinetPage() {
       display_name: m.display_name || user?.display_name || '',
       city: m.city || 'Красноярск',
       bio: m.bio ?? '',
-      specializations: (m.specializations ?? []).join(', '),
+      specializations: uniqueSpecializationTags(m.specializations),
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
       work_types: types.length ? types : ['private_practice'],
@@ -218,6 +238,31 @@ export function MasterCabinetPage() {
       published: Boolean(m.published),
     })
   }, [master.data, masterForm, user?.display_name])
+
+  function applyProfessionTypeIds(nextIds: string[]) {
+    const slugs = slugsForProfessionIds(nextIds, professionCatalog.data?.items ?? [])
+    const current = uniqueSpecializationTags(masterForm.getValues('specializations'))
+    const dropping = incompatibleSpecializations(current, slugs)
+    if (dropping.length > 0) {
+      setTypeChangePending({ nextIds, dropping })
+      return
+    }
+    masterForm.setValue('profession_type_ids', nextIds, { shouldValidate: true, shouldDirty: true })
+    masterForm.setValue('specializations', filterSpecializationsForSlugs(current, slugs), {
+      shouldValidate: true,
+      shouldDirty: true,
+    })
+  }
+
+  function confirmProfessionTypeChange() {
+    if (!typeChangePending) return
+    const { nextIds } = typeChangePending
+    const slugs = slugsForProfessionIds(nextIds, professionCatalog.data?.items ?? [])
+    const kept = filterSpecializationsForSlugs(masterForm.getValues('specializations'), slugs)
+    masterForm.setValue('profession_type_ids', nextIds, { shouldValidate: true, shouldDirty: true })
+    masterForm.setValue('specializations', kept, { shouldValidate: true, shouldDirty: true })
+    setTypeChangePending(null)
+  }
 
   const createOrg = useMutation({
     mutationFn: async (payload: CreateSalonPayload) => {
@@ -290,7 +335,16 @@ export function MasterCabinetPage() {
 
   const saveMaster = useMutation({
     mutationFn: (values: z.infer<typeof masterSchema>) => {
-      const banned = moderationError([values.display_name, values.bio ?? '', values.education ?? '', values.specializations ?? ''].join(' '))
+      const specs = filterSpecializationsForSlugs(
+        values.specializations,
+        slugsForProfessionIds(values.profession_type_ids, professionCatalog.data?.items ?? []),
+      )
+      if (specs.length === 0) {
+        throw new ApiError('Выберите хотя бы одну специализацию', 'validation_error', 400)
+      }
+      const banned = moderationError(
+        [values.display_name, values.bio ?? '', values.education ?? '', specs.join(' ')].join(' '),
+      )
       if (banned) throw new ApiError(banned, 'content_not_allowed', 400)
       const org = primaryOrg
       const boundOrg = Boolean(master.data?.master.organization_id)
@@ -308,8 +362,7 @@ export function MasterCabinetPage() {
           display_name: values.display_name,
           city: values.city,
           bio: values.bio ?? '',
-          // Preserve legacy specializations; new directions use profession_type_ids only.
-          specializations: master.data?.master.specializations ?? [],
+          specializations: specs,
           experience_years: values.experience_years,
           education: values.education ?? '',
           work_type: primaryWorkType(types),
@@ -375,8 +428,11 @@ export function MasterCabinetPage() {
     if (!accessToken) return
     const org = primaryOrg
     const existing = master.data?.master
-    // Legacy specializations are preserved as-is; directions are profession_type_ids.
-    const specializations = existing?.specializations ?? []
+    const specializations = uniqueSpecializationTags(
+      masterForm.getValues('specializations')?.length
+        ? masterForm.getValues('specializations')
+        : existing?.specializations,
+    )
     const workTypes = uniqueCanonicalWorkTypes(
       (masterForm.getValues('work_types')?.length
         ? masterForm.getValues('work_types')
@@ -668,7 +724,7 @@ export function MasterCabinetPage() {
             }}
             label="Загрузить фото профиля"
           />
-          <p className="hint">Фото можно сохранить без специализации и описания.</p>
+          <p className="hint">Фото можно сохранить отдельно от полного заполнения профиля.</p>
         </div>
         <form
           className="stack master-profile-form"
@@ -676,7 +732,7 @@ export function MasterCabinetPage() {
             const banned =
               moderationError(v.display_name) ||
               moderationError(v.bio ?? '') ||
-              moderationError(v.specializations ?? '') ||
+              moderationError((v.specializations ?? []).join(' ')) ||
               moderationError(v.education ?? '')
             if (banned) {
               setOk(null)
@@ -714,30 +770,30 @@ export function MasterCabinetPage() {
           </div>
           <div id="master-profession-types">
             <ProfessionTypePicker
-              value={masterForm.watch('profession_type_ids') ?? []}
+              value={watchedProfessionIds ?? []}
               lockedIds={(master.data?.master.profession_types ?? []).filter((t) => t.locked_at).map((t) => t.id)}
-              onChange={(ids) => masterForm.setValue('profession_type_ids', ids, { shouldValidate: true, shouldDirty: true })}
+              onChange={applyProfessionTypeIds}
               error={masterForm.formState.errors.profession_type_ids?.message}
             />
             {!masterForm.formState.errors.profession_type_ids && fieldHint('profession_types') && (
               <span className="hint field-need" role="status">{fieldHint('profession_types')}</span>
             )}
           </div>
-          <div id="master-specializations" className="field" data-testid="master-legacy-specializations">
-            <span>Дополнительные теги (архив)</span>
-            <p className="muted">
-              Направления задаются через «Тип мастера» выше. Свободный ввод отключён.
-            </p>
-            {(master.data?.master.specializations?.length ?? 0) > 0 ? (
-              <div className="row wrap" role="list">
-                {master.data!.master.specializations!.map((tag) => (
-                  <span key={tag} className="chip badge-default" role="listitem">{tag}</span>
-                ))}
-              </div>
-            ) : (
-              <p className="muted">Сохранённых свободных тегов нет.</p>
+          <div id="master-specializations">
+            <SpecializationPicker
+              professionSlugs={professionSlugs}
+              value={watchedSpecializations ?? []}
+              onChange={(tags) =>
+                masterForm.setValue('specializations', uniqueSpecializationTags(tags), {
+                  shouldValidate: true,
+                  shouldDirty: true,
+                })
+              }
+              error={masterForm.formState.errors.specializations?.message}
+            />
+            {!masterForm.formState.errors.specializations && fieldHint('specializations') && (
+              <span className="hint field-need" role="status">{fieldHint('specializations')}</span>
             )}
-            {fieldHint('specializations') && <span className="hint field-need" role="status">{fieldHint('specializations')}</span>}
           </div>
           <div className="field">
             <label htmlFor="master-experience">Опыт, лет</label>
@@ -889,6 +945,32 @@ export function MasterCabinetPage() {
           <Link className="btn btn-secondary" to="/cosmetics">Косметика</Link>
         </div>
       </section>
+
+      <Modal
+        open={Boolean(typeChangePending)}
+        onClose={() => setTypeChangePending(null)}
+        title="Сменить тип мастера?"
+        size="sm"
+        footer={(
+          <div className="row gap wrap">
+            <button type="button" className="btn btn-secondary" onClick={() => setTypeChangePending(null)}>
+              Отмена
+            </button>
+            <button type="button" className="btn btn-primary" data-testid="confirm-profession-type-change" onClick={confirmProfessionTypeChange}>
+              Сменить и убрать теги
+            </button>
+          </div>
+        )}
+      >
+        <p>
+          Некоторые выбранные специализации не подходят к новому типу и будут сняты:
+        </p>
+        <ul className="stack-sm">
+          {(typeChangePending?.dropping ?? []).map((tag) => (
+            <li key={tag}>{tag}</li>
+          ))}
+        </ul>
+      </Modal>
     </main>
   )
 }

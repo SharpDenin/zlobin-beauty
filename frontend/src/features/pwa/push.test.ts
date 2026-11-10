@@ -4,6 +4,7 @@ import {
   clearRememberedVapidPublicKey,
   rememberVapidPublicKey,
   rememberedVapidPublicKey,
+  resolveDevicePushStatus,
   urlBase64ToUint8Array,
   vapidPublicKeyChanged,
 } from '@/features/pwa/push'
@@ -42,5 +43,43 @@ describe('push helpers', () => {
     })
     expect(() => rememberVapidPublicKey('k')).not.toThrow()
     spy.mockRestore()
+  })
+})
+
+describe('resolveDevicePushStatus server sync gate', () => {
+  const config = { enabled: true, public_key: 'BTESTPUBLICKEY' }
+
+  beforeEach(() => {
+    clearRememberedVapidPublicKey()
+    rememberVapidPublicKey(config.public_key)
+    Object.defineProperty(window, 'Notification', {
+      configurable: true,
+      value: { permission: 'granted' },
+    })
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        ready: Promise.resolve({
+          pushManager: {
+            getSubscription: async () => ({ endpoint: 'https://push.example/x' }),
+          },
+        }),
+      },
+    })
+    vi.stubGlobal('PushManager', function PushManager() {})
+  })
+
+  it('does not report subscribed without confirmed server sync', async () => {
+    await expect(resolveDevicePushStatus(config)).resolves.toBe('ready')
+    await expect(resolveDevicePushStatus(config, { serverSynced: false })).resolves.toBe('ready')
+  })
+
+  it('reports subscribed only after successful server sync', async () => {
+    await expect(resolveDevicePushStatus(config, { serverSynced: true })).resolves.toBe('subscribed')
+  })
+
+  it('treats rotated VAPID key as ready even if sync flagged true', async () => {
+    rememberVapidPublicKey('old-key')
+    await expect(resolveDevicePushStatus(config, { serverSynced: true })).resolves.toBe('ready')
   })
 })

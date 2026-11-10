@@ -67,6 +67,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       MEDIA_URL: http://media:8080
+      ORGANIZATIONS_URL: http://organizations:8080
+      COMMUNICATIONS_URL: http://communications:8080
+      MARKETPLACE_URL: http://marketplace:8080
       ALLOW_DEV_BILLING: ${ALLOW_DEV_BILLING:-true}
       APP_ENV: ${APP_ENV:-development}
       MIGRATIONS_DIR: /migrations
@@ -276,6 +279,7 @@ services:
       MINIO_BUCKET: zlobin-media
       MINIO_USE_SSL: "false"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      IDENTITY_URL: http://identity:8080
       COMMUNICATIONS_URL: http://communications:8080
       BOOKING_URL: http://booking:8080
       CLIENTS_URL: http://clients:8080
@@ -301,6 +305,7 @@ services:
     environment:
       HTTP_ADDR: ":8080"
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       IDENTITY_URL: http://identity:8080
       ORGANIZATIONS_URL: http://organizations:8080
       MARKETPLACE_URL: http://marketplace:8080

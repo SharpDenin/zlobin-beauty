@@ -111,6 +111,18 @@ func (s *Store) SetMasterPublished(ctx context.Context, id uuid.UUID, published 
 	return err
 }
 
+// UnpublishMasterByUser sets published=false for the user's master profile (account deletion cleanup).
+// Returns false when no profile exists.
+func (s *Store) UnpublishMasterByUser(ctx context.Context, userID uuid.UUID, at time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE master_profiles SET published=FALSE, updated_at=$2
+WHERE user_id=$1 AND published=TRUE`, userID, at)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) ListServicesAdmin(ctx context.Context, f ServiceListFilter) ([]domain.ServiceItem, error) {
 	limit, offset := adminPage(f.Limit, f.Offset)
 	q := strings.TrimSpace(f.Query)

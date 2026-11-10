@@ -42,6 +42,7 @@ func (a *API) registerPhase4Routes(mux *http.ServeMux, auth func(http.Handler) h
 	mux.Handle("DELETE /v1/model-requests/{id}/interest", auth(http.HandlerFunc(a.removeModelRequestInterest)))
 
 	mux.Handle("GET /v1/internal/masters/by-user/{userID}", internal(http.HandlerFunc(a.internalMasterByUser)))
+	mux.Handle("POST /v1/internal/users/{userID}/unpublish-master", internal(http.HandlerFunc(a.internalUnpublishMaster)))
 	mux.Handle("GET /v1/internal/masterclasses/{id}/access", internal(http.HandlerFunc(a.internalMasterclassAccess)))
 	mux.Handle("GET /v1/internal/model-requests/{id}/access", internal(http.HandlerFunc(a.internalModelAccess)))
 }
@@ -445,6 +446,20 @@ func (a *API) internalMasterByUser(w http.ResponseWriter, r *http.Request) {
 		out["organization_id"] = m.OrganizationID.String()
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+func (a *API) internalUnpublishMaster(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	changed, err := a.svc.UnpublishMasterByUserID(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"unpublished": changed})
 }
 
 func (a *API) internalMasterclassAccess(w http.ResponseWriter, r *http.Request) {

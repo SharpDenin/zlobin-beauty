@@ -22,6 +22,9 @@ func TestNotificationTarget(t *testing.T) {
 	if got := notificationTarget("conversation", &id); got != "/messages/"+id.String() {
 		t.Fatalf("conversation: %s", got)
 	}
+	if got := notificationTarget("hair_consultation", &id); got != "/consultations/"+id.String() {
+		t.Fatalf("hair_consultation: %s", got)
+	}
 	if got := notificationTarget("unknown", &id); got != "/notifications" {
 		t.Fatalf("fallback: %s", got)
 	}
@@ -123,18 +126,22 @@ type fakeSender struct {
 	last    []byte
 }
 
-func (f *fakeSender) Send(_ context.Context, sub domain.PushSubscription, payload []byte, _, _, _ string) (int, error) {
+func (f *fakeSender) Send(_ context.Context, sub domain.PushSubscription, payload []byte, _, _, _ string) (int, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.last = append([]byte(nil), payload...)
 	if err, ok := f.failFor[sub.Endpoint]; ok {
-		return 0, err
+		return 0, "", err
 	}
 	if st, ok := f.status[sub.Endpoint]; ok {
-		return st, nil
+		body := ""
+		if st == http.StatusUnauthorized {
+			body = "invalid VAPID JWT"
+		}
+		return st, body, nil
 	}
-	return http.StatusCreated, nil
+	return http.StatusCreated, "", nil
 }
 
 func TestDispatchPushMultiDeviceAndGoneCleanup(t *testing.T) {
@@ -192,5 +199,39 @@ func TestDispatchPushNoVAPIDNoop(t *testing.T) {
 	svc.dispatchPush(context.Background(), ids.New(), "T", "B", "", nil)
 	if sender.calls != 0 {
 		t.Fatal("disabled push must not send")
+	}
+}
+
+func TestDispatchPushUnauthorizedKeepsSubscription(t *testing.T) {
+	user := ids.New()
+	repo := &memPushSubs{subs: []domain.PushSubscription{
+		{ID: ids.New(), UserID: user, Endpoint: "https://fcm.googleapis.com/fcm/send/x", P256dh: "x", Auth: "y"},
+	}}
+	sender := &fakeSender{status: map[string]int{
+		"https://fcm.googleapis.com/fcm/send/x": http.StatusUnauthorized,
+	}}
+	svc := New(nil, "").WithPush("pub", "priv", "mailto:t@example.com")
+	svc.pushSubs = repo
+	svc.pushSender = sender
+	svc.dispatchPush(context.Background(), user, "T", "B", "appointment", nil)
+	left, _ := repo.ListPushSubscriptions(context.Background(), user)
+	if len(left) != 1 {
+		t.Fatal("401 must keep subscription (ops may fix VAPID without forcing re-opt-in)")
+	}
+}
+
+func TestTruncatePushDiag(t *testing.T) {
+	if got := truncatePushDiag("  hello\nworld  ", 20); got != "helloworld" {
+		t.Fatalf("got %q", got)
+	}
+	long := strings.Repeat("a", 200)
+	if got := truncatePushDiag(long, 10); got != "aaaaaaaaaa…" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestPushTTLConstant(t *testing.T) {
+	if pushTTLSeconds < 3600 {
+		t.Fatalf("TTL too short for offline devices: %d", pushTTLSeconds)
 	}
 }

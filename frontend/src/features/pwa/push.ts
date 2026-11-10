@@ -69,8 +69,16 @@ export async function getLocalPushSubscription() {
   return registration.pushManager.getSubscription()
 }
 
-/** Resolve UX status without requesting permission. */
-export async function resolveDevicePushStatus(config: PushConfig | null | undefined): Promise<DevicePushUiStatus> {
+/**
+ * Resolve UX status without requesting permission.
+ * `serverSynced === true` means the local subscription was successfully PUT to the API.
+ * A browser-only subscription must not look like “enabled” — otherwise UI lies while
+ * communications has zero rows and push is silently skipped.
+ */
+export async function resolveDevicePushStatus(
+  config: PushConfig | null | undefined,
+  opts?: { serverSynced?: boolean },
+): Promise<DevicePushUiStatus> {
   if (!config) return 'loading'
   if (!browserSupportsWebPush()) return 'unsupported'
   if (!config.enabled || !config.public_key) return 'server_disabled'
@@ -79,7 +87,11 @@ export async function resolveDevicePushStatus(config: PushConfig | null | undefi
   if (sub) {
     // Existing browser sub may be bound to a rotated VAPID key — treat as needing re-enable.
     if (vapidPublicKeyChanged(config.public_key)) return 'ready'
-    return 'subscribed'
+    if (opts?.serverSynced === true) return 'subscribed'
+    // Local sub without confirmed server sync → prompt to enable / retry sync.
+    if (opts?.serverSynced === false) return 'ready'
+    // Unknown sync state (legacy callers): prefer ready over a false “subscribed”.
+    return 'ready'
   }
   if (Notification.permission === 'granted') return 'ready'
   return 'default'
@@ -100,6 +112,22 @@ async function putSubscription(token: string | null, subscription: PushSubscript
   })
 }
 
+/** Activate a waiting service worker so push handlers (sw-push.js) are current. */
+async function activateWaitingServiceWorker(registration: ServiceWorkerRegistration) {
+  try {
+    await registration.update()
+  } catch {
+    /* offline / ignored */
+  }
+  if (!registration.waiting) return
+  await new Promise<void>((resolve) => {
+    const done = () => resolve()
+    navigator.serviceWorker.addEventListener('controllerchange', done, { once: true })
+    registration.waiting?.postMessage({ type: 'SKIP_WAITING' })
+    window.setTimeout(done, 2500)
+  })
+}
+
 /**
  * Enable push after an explicit user gesture.
  * Re-subscribes when the server VAPID public key changed (key rotation).
@@ -117,7 +145,9 @@ export async function enableDevicePush(token: string | null, publicKey: string) 
   if (permission !== 'granted') {
     throw new Error('Разрешение на уведомления не выдано. Включите их в настройках браузера или системы.')
   }
-  const registration = await navigator.serviceWorker.ready
+  let registration = await navigator.serviceWorker.ready
+  await activateWaitingServiceWorker(registration)
+  registration = await navigator.serviceWorker.ready
   let subscription = await registration.pushManager.getSubscription()
   if (subscription && vapidPublicKeyChanged(publicKey)) {
     try {

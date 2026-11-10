@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zlobin/zlobin-beauty/backend/shared/accesscheck"
 	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 	"github.com/zlobin/zlobin-beauty/backend/shared/logging"
@@ -156,17 +157,25 @@ func main() {
 		marketplace.ServeHTTP(w, r)
 	}))
 
+	// Reject Bearer tokens whose session/user was revoked (delete, block, logout).
+	// Positive cache is short so revoke takes effect within ~2s without a DB hit on every hop.
+	accessGate := accesscheck.NewHTTPGate(
+		getenv("IDENTITY_URL", "http://identity:8080"),
+		os.Getenv("INTERNAL_TOKEN"),
+	)
+
 	// Order (outermost first): request id -> panic guard -> security headers -> CORS -> rate limit ->
-	// per-request deadlines -> body limit -> access log -> routes. Server-wide Read/WriteTimeout are
-	// disabled on purpose: they kill slow mobile uploads; httpx.Deadlines applies per-route budgets.
+	// access revoke gate -> per-request deadlines -> body limit -> access log -> routes.
 	handler := httpx.WithRequestID(
 		recoverPanics(
 			httpx.SecurityHeaders(
 				httpx.CORS(corsOrigins)(
 					rateLimit()(
-						httpx.Deadlines(30*time.Second, 60*time.Second, edgeDeadlines)(
-							bodyLimit(
-								httpx.AccessLog(log)(mux),
+						httpx.RequireBearerAccess(os.Getenv("JWT_SECRET"), accessGate)(
+							httpx.Deadlines(30*time.Second, 60*time.Second, edgeDeadlines)(
+								bodyLimit(
+									httpx.AccessLog(log)(mux),
+								),
 							),
 						),
 					),

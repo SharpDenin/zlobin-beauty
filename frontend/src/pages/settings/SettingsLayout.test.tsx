@@ -19,5 +19,6 @@ describe('SettingsLayout', () => {
     expect(screen.getByRole('link', { name: 'Оформление' })).toHaveAttribute('href', '/settings/appearance')
     expect(screen.getByRole('link', { name: 'Уведомления' })).toHaveAttribute('href', '/settings/notifications')
     expect(screen.getByRole('link', { name: 'Мои салоны' })).toHaveAttribute('href', '/settings/salons')
+    expect(screen.getByRole('link', { name: 'Аккаунт' })).toHaveAttribute('href', '/settings/account')
   })
 })

@@ -230,12 +230,9 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	}
 	m := domain.MasterProfile{
 		UserID: in.UserID, OrganizationID: orgID, BranchID: in.BranchID,
-		DisplayName: name, Bio: strings.TrimSpace(in.Bio), Specializations: in.Specializations,
+		DisplayName: name, Bio: strings.TrimSpace(in.Bio),
 		City: city, ExperienceYears: in.ExperienceYears, Education: strings.TrimSpace(in.Education),
 		PhotoMediaID: in.PhotoMediaID, WorkType: workType, WorkTypes: workTypes, Published: in.Published, UpdatedAt: now,
-	}
-	if m.Specializations == nil {
-		m.Specializations = []string{}
 	}
 	if existing == nil {
 		m.ID = ids.New()
@@ -252,9 +249,19 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 	if existing == nil && (in.ProfessionTypeIDs == nil || len(*in.ProfessionTypeIDs) == 0) {
 		return nil, apperr.ProfessionTypesRequired()
 	}
+	typesChanged := false
 	if in.ProfessionTypeIDs != nil {
 		for _, id := range *in.ProfessionTypeIDs {
 			m.ProfessionTypes = append(m.ProfessionTypes, domain.ProfessionType{ID: id})
+		}
+		if existing != nil {
+			prevTypes, err := s.store.ListMasterProfessionTypes(ctx, in.UserID)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			typesChanged = !sameProfessionTypeIDs(prevTypes, *in.ProfessionTypeIDs)
+		} else {
+			typesChanged = true
 		}
 	} else if existing != nil {
 		types, err := s.store.ListMasterProfessionTypes(ctx, in.UserID)
@@ -263,6 +270,15 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		}
 		m.ProfessionTypes = types
 	}
+	slugs, err := s.professionSlugsForTypes(ctx, m.ProfessionTypes)
+	if err != nil {
+		return nil, err
+	}
+	specs, err := resolveSpecializations(in.Specializations, slugs, existing, typesChanged)
+	if err != nil {
+		return nil, err
+	}
+	m.Specializations = specs
 	if m.Published {
 		ready, err := s.evaluateReadiness(ctx, &m, in.AccessToken)
 		if err != nil {
@@ -306,7 +322,7 @@ func (s *Service) evaluateReadiness(ctx context.Context, m *domain.MasterProfile
 	checks := []domain.ReadinessCheck{
 		{Key: "display_name", Label: "Имя для публикации", OK: strings.TrimSpace(m.DisplayName) != ""},
 		{Key: "city", Label: "Город", OK: strings.TrimSpace(m.City) != ""},
-		{Key: "specializations", Label: "Специализация", OK: len(m.Specializations) > 0},
+		{Key: "specializations", Label: "Специализация", OK: domain.HasValidSpecialization(m.Specializations)},
 		{Key: "profession_types", Label: "Профессиональный тип", OK: len(m.ProfessionTypes) > 0},
 		{Key: "bio", Label: "Описание (от 10 символов)", OK: len([]rune(strings.TrimSpace(m.Bio))) >= 10},
 		{Key: "experience", Label: "Опыт (лет)", OK: m.ExperienceYears > 0},

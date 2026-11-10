@@ -111,3 +111,73 @@ test.describe('Settings hub appearance', () => {
     await expect(page.getByTestId('settings-bg-delete')).toHaveCount(0)
   })
 })
+
+test.describe('Settings account deletion', () => {
+  test.beforeEach(async () => {
+    if (!(await apiHealthy())) {
+      test.skip(true, `API unhealthy at ${api}`)
+    }
+  })
+
+  test('confirm modal requires password and owner cannot self-delete', async ({ page, browserName }, info) => {
+    // Mobile + desktop confirmation UX
+    await page.setViewportSize(info.project.name.includes('mobile') || browserName === 'webkit'
+      ? { width: 390, height: 844 }
+      : { width: 1280, height: 800 })
+
+    await loginUI(page, 'master1@demo.local')
+    await page.goto('/settings/account')
+    await expect(page.getByTestId('settings-account-page')).toBeVisible()
+    await page.getByTestId('settings-account-delete-open').click()
+    await expect(page.getByTestId('settings-account-delete-password')).toBeVisible()
+    await expect(page.getByTestId('settings-account-delete-confirm')).toBeDisabled()
+
+    await page.getByTestId('settings-account-delete-password').fill(password)
+    await expect(page.getByTestId('settings-account-delete-confirm')).toBeEnabled()
+    await page.getByTestId('settings-account-delete-confirm').click()
+    await expect(page.getByRole('alert')).toContainText(/владел|организац/i, { timeout: 15_000 })
+    await expect(page).toHaveURL(/\/settings\/account/)
+  })
+
+  test('client can delete own account and cannot reuse session', async ({ page, request }) => {
+    const email = `delete-me-${Date.now()}@demo.local`
+    const reg = await request.post(`${api}/v1/auth/register`, {
+      data: { email, password, display_name: 'Delete Me' },
+    })
+    expect(reg.ok()).toBeTruthy()
+
+    await loginUI(page, email)
+    const refreshToken = await page.evaluate(() => {
+      const raw = localStorage.getItem('zb.auth')
+      if (!raw) return null
+      try {
+        return (JSON.parse(raw) as { refreshToken?: string }).refreshToken ?? null
+      } catch {
+        return null
+      }
+    })
+    expect(refreshToken).toBeTruthy()
+
+    await page.goto('/settings/account')
+    await page.getByTestId('settings-account-delete-open').click()
+    await page.getByTestId('settings-account-delete-password').fill(password)
+    await Promise.all([
+      page.waitForURL(/\/login/, { timeout: 20_000 }),
+      page.getByTestId('settings-account-delete-confirm').click(),
+    ])
+    await expect(page).toHaveURL(/\/login/)
+
+    const refresh = await request.post(`${api}/v1/auth/refresh`, {
+      data: { refresh_token: refreshToken },
+    })
+    expect(refresh.status()).toBeGreaterThanOrEqual(400)
+
+    const login = await request.post(`${api}/v1/auth/login`, {
+      data: { email, password },
+    })
+    expect(login.status()).toBeGreaterThanOrEqual(400)
+
+    await page.goto('/settings/account')
+    await expect(page).toHaveURL(/\/login/)
+  })
+})

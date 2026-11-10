@@ -25,6 +25,7 @@ function styleSnapshot(sel) {
 async function measure(page) {
   return page.evaluate(() => {
     const before = getComputedStyle(document.body, '::before')
+    const after = getComputedStyle(document.body, '::after')
     const root = getComputedStyle(document.documentElement)
     const pick = (sel) => {
       const el = document.querySelector(sel)
@@ -40,13 +41,23 @@ async function measure(page) {
     return {
       theme: document.documentElement.getAttribute('data-theme') || 'dark',
       appBgImage: root.getPropertyValue('--app-bg-image').trim(),
+      glassLensFill: root.getPropertyValue('--glass-lens-fill').trim(),
+      glassLensBlur: root.getPropertyValue('--glass-lens-blur').trim(),
       glassFill: root.getPropertyValue('--glass-fill').trim(),
       glassStrong: root.getPropertyValue('--glass-fill-strong').trim(),
       glassControl: root.getPropertyValue('--glass-control-fill').trim(),
+      glassWork: root.getPropertyValue('--glass-work-fill').trim(),
+      glassBlur: root.getPropertyValue('--glass-blur').trim(),
       bodyBefore: {
         content: before.content,
         position: before.position,
         bgImage: before.backgroundImage.slice(0, 120),
+      },
+      bodyAfter: {
+        content: after.content,
+        position: after.position,
+        backdrop: after.backdropFilter || after.webkitBackdropFilter,
+        bg: after.backgroundColor || after.background.slice(0, 80),
       },
       topbar: pick('.topbar'),
       bottomnav: pick('.bottomnav'),

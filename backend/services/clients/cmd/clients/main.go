@@ -12,6 +12,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/httpapi"
 	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/service"
 	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/store"
+	"github.com/zlobin/zlobin-beauty/backend/shared/accesscheck"
 	"github.com/zlobin/zlobin-beauty/backend/shared/config"
 	"github.com/zlobin/zlobin-beauty/backend/shared/db"
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
@@ -47,7 +48,8 @@ func main() {
 		WithOrganizations(os.Getenv("ORGANIZATIONS_URL")).
 		WithIdentity(os.Getenv("IDENTITY_URL")).
 		WithCommunications(os.Getenv("COMMUNICATIONS_URL")).
-		WithMarketplace(os.Getenv("MARKETPLACE_URL")), log)
+		WithMarketplace(os.Getenv("MARKETPLACE_URL")), log).
+		WithAccessGate(accesscheck.NewHTTPGate(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", httpx.Readyz(st.Ping))

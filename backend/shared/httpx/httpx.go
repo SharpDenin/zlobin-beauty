@@ -189,7 +189,18 @@ func ParseOptionalBool(raw string) (*bool, error) {
 	}
 }
 
+// AccessGate validates that a parsed access token is still usable (active
+// session + active user). Nil keeps parse-only behaviour for unit tests.
+type AccessGate interface {
+	Check(ctx context.Context, claims *auth.Claims) error
+}
+
 func BearerAuth(secret string) func(http.Handler) http.Handler {
+	return BearerAuthGated(secret, nil)
+}
+
+// BearerAuthGated parses the access JWT then optionally runs AccessGate (session/user status).
+func BearerAuthGated(secret string, gate AccessGate) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
@@ -204,6 +215,21 @@ func BearerAuth(secret string) func(http.Handler) http.Handler {
 				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 				WriteError(w, r, nil, apperr.SessionExpired())
 				return
+			}
+			if gate != nil {
+				if err := gate.Check(r.Context(), claims); err != nil {
+					if ae, ok := apperr.As(err); ok && ae.Code == apperr.CodeAccountBlocked {
+						WriteError(w, r, nil, ae)
+						return
+					}
+					w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+					if ae, ok := apperr.As(err); ok {
+						WriteError(w, r, nil, ae)
+						return
+					}
+					WriteError(w, r, nil, apperr.SessionInvalid())
+					return
+				}
 			}
 			ctx := context.WithValue(r.Context(), KeyClaims, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -227,14 +253,56 @@ func InternalAuth(token string) func(http.Handler) http.Handler {
 }
 
 func OptionalBearerAuth(secret string) func(http.Handler) http.Handler {
+	return OptionalBearerAuthGated(secret, nil)
+}
+
+// OptionalBearerAuthGated injects claims only when the token parses and the gate allows it.
+// Revoked/blocked tokens are treated as anonymous (no 401) so public pages keep working.
+func OptionalBearerAuthGated(secret string, gate AccessGate) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
 			if strings.HasPrefix(h, "Bearer ") {
 				claims, err := auth.ParseAccessToken(secret, strings.TrimPrefix(h, "Bearer "))
 				if err == nil {
-					r = r.WithContext(context.WithValue(r.Context(), KeyClaims, claims))
+					if gate == nil || gate.Check(r.Context(), claims) == nil {
+						r = r.WithContext(context.WithValue(r.Context(), KeyClaims, claims))
+					}
 				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireBearerAccess rejects requests that present a Bearer token that fails AccessGate.
+// Requests without Authorization pass through (public routes). Used at the gateway edge.
+func RequireBearerAccess(secret string, gate AccessGate) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := r.Header.Get("Authorization")
+			if !strings.HasPrefix(h, "Bearer ") || gate == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims, err := auth.ParseAccessToken(secret, strings.TrimPrefix(h, "Bearer "))
+			if err != nil {
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+				WriteError(w, r, nil, apperr.SessionExpired())
+				return
+			}
+			if err := gate.Check(r.Context(), claims); err != nil {
+				if ae, ok := apperr.As(err); ok && ae.Code == apperr.CodeAccountBlocked {
+					WriteError(w, r, nil, ae)
+					return
+				}
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+				if ae, ok := apperr.As(err); ok {
+					WriteError(w, r, nil, ae)
+					return
+				}
+				WriteError(w, r, nil, apperr.SessionInvalid())
+				return
 			}
 			next.ServeHTTP(w, r)
 		})

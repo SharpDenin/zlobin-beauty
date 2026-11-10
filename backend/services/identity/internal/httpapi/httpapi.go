@@ -27,7 +27,7 @@ func New(svc *service.Service, log *slog.Logger) *API {
 }
 
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
-	authMW := httpx.BearerAuth(jwtSecret)
+	authMW := httpx.BearerAuthGated(jwtSecret, a.svc.LocalAccessGate())
 	mux.HandleFunc("POST /v1/auth/register", a.register)
 	mux.HandleFunc("POST /v1/auth/login", a.login)
 	mux.HandleFunc("POST /v1/auth/refresh", a.refresh)
@@ -37,6 +37,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("POST /v1/auth/email-verification/confirm", a.emailVerifyConfirm)
 	mux.Handle("POST /v1/auth/email-verification/request", authMW(http.HandlerFunc(a.emailVerifyRequest)))
 	mux.Handle("GET /v1/auth/me", authMW(http.HandlerFunc(a.me)))
+	mux.Handle("DELETE /v1/auth/account", authMW(http.HandlerFunc(a.deleteAccount)))
 	mux.Handle("POST /v1/auth/lookup", authMW(http.HandlerFunc(a.lookup)))
 	mux.Handle("PATCH /v1/auth/me", authMW(http.HandlerFunc(a.updateMe)))
 	mux.Handle("GET /v1/me/subscription", authMW(http.HandlerFunc(a.getSubscription)))
@@ -55,7 +56,46 @@ func (a *API) InternalRoutes(mux *http.ServeMux, internalToken string) {
 	mux.Handle("GET /v1/internal/users/{userID}", internal(http.HandlerFunc(a.internalUser)))
 	mux.Handle("POST /v1/internal/users/grant-role", internal(http.HandlerFunc(a.grantRole)))
 	mux.Handle("POST /v1/internal/audit", internal(http.HandlerFunc(a.ingestAudit)))
+	mux.Handle("POST /v1/internal/auth/validate-access", internal(http.HandlerFunc(a.validateAccess)))
+	mux.Handle("POST /v1/internal/users/{userID}/account-cleanup", internal(http.HandlerFunc(a.internalAccountCleanup)))
 	a.registerDirectoryRoutes(mux, internal)
+}
+
+func (a *API) validateAccess(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		UserID    string `json:"user_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation(httpx.DecodeJSONMessage(err)))
+		return
+	}
+	sid, err1 := uuid.Parse(req.SessionID)
+	uid, err2 := uuid.Parse(req.UserID)
+	if err1 != nil || err2 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("session_id and user_id are required"))
+		return
+	}
+	v, err := a.svc.ValidateAccess(r.Context(), sid, uid)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"active": v.Active, "reason": v.Reason})
+}
+
+func (a *API) internalAccountCleanup(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	result, err := a.svc.RunAccountCleanup(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, result)
 }
 
 func (a *API) internalUser(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +312,31 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	if user.Status != "active" {
+		httpx.WriteError(w, r, a.log, apperr.AccountBlocked())
+		return
+	}
 	httpx.JSON(w, http.StatusOK, toUserDTO(*user))
+}
+
+func (a *API) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.ClaimsFrom(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("unauthorized"))
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation(httpx.DecodeJSONMessage(err)))
+		return
+	}
+	if err := a.svc.DeleteMyAccount(r.Context(), claims.UserID, req.Password); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) lookup(w http.ResponseWriter, r *http.Request) {

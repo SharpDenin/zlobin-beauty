@@ -236,7 +236,7 @@
   background: color-mix(in srgb, var(--color-surface) 92%, transparent);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
 }
 
 .dashboard-work.is-editing {
@@ -289,8 +289,8 @@
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   background: var(--glass-fill);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* ——— Grid / widgets ——— */
@@ -310,8 +310,8 @@
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   isolation: isolate;
 }
 

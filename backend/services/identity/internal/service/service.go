@@ -22,19 +22,19 @@ import (
 )
 
 type Service struct {
-	store              *store.Store
-	jwtSecret          string
-	allowDevBilling    bool
-	mediaURL           string
-	internalToken      string
-	organizationsURL   string
-	communicationsURL  string
-	marketplaceURL     string
-	mailer             mailer.Mailer
-	publicAppURL       string
-	log                *slog.Logger
-	httpClient         *http.Client
-	now                func() time.Time
+	store             *store.Store
+	jwtSecret         string
+	allowDevBilling   bool
+	mediaURL          string
+	internalToken     string
+	organizationsURL  string
+	communicationsURL string
+	marketplaceURL    string
+	mailer            mailer.Mailer
+	publicAppURL      string
+	log               *slog.Logger
+	httpClient        *http.Client
+	now               func() time.Time
 	// captureActionToken is set only by live SMTP e2e tests; must never log the raw value.
 	captureActionToken func(purpose, raw string)
 }
@@ -68,14 +68,16 @@ type RegisterInput struct {
 	AsSupplier    bool
 	AsSupplierRep bool
 	AsSalonAdmin  bool
+	ClientIP      string
 }
 
 type AuthResult struct {
-	User         domain.User
-	AccessToken  string
-	RefreshToken string
-	AccessExp    time.Time
-	RefreshExp   time.Time
+	User                  domain.User
+	AccessToken           string
+	RefreshToken          string
+	AccessExp             time.Time
+	RefreshExp            time.Time
+	EmailVerificationSent bool
 }
 
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, error) {
@@ -169,7 +171,23 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 		return nil, apperr.Internal(err)
 	}
 	_ = s.security(ctx, &user.ID, "user.registered", map[string]any{})
-	return s.issue(ctx, user, nil, nil)
+	res, err := s.issue(ctx, user, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if email != "" {
+		sent := false
+		if err := s.RequestEmailVerification(ctx, user.ID, in.ClientIP); err != nil {
+			// Registration must succeed; never claim the letter was sent when delivery failed.
+			s.warn("register email_verify failed", "error", err.Error())
+		} else {
+			sent = true
+		}
+		res.EmailVerificationSent = sent
+		prompt, _ := json.Marshal(map[string]any{"status": "pending", "sent": sent})
+		_ = s.store.UpsertPreference(ctx, user.ID, "ui.email_verify_prompt", prompt, s.now().UTC())
+	}
+	return res, nil
 }
 
 func (s *Service) Login(ctx context.Context, email, password, ip, ua string) (*AuthResult, error) {

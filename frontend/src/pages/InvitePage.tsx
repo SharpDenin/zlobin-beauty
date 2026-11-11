@@ -95,10 +95,11 @@ export function InvitePage() {
               <>
                 {accept.isError && <ErrorBanner error={accept.error} />}
                 <button
-                  className="btn btn-primary btn-block"
+                  className={`btn btn-primary btn-block${accept.isPending ? ' btn-loading' : ''}`}
                   type="button"
                   disabled={accept.isPending}
                   onClick={() => accept.mutate()}
+                  data-testid="invite-accept-btn"
                 >
                   {accept.isPending ? 'Присоединяем…' : 'Присоединиться к салону'}
                 </button>

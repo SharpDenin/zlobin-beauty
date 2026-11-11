@@ -82,8 +82,13 @@ test.describe('AUTH email recovery UI', () => {
       body: JSON.stringify({ email, password, display_name: 'Auth UI' }),
     })
     expect(reg.ok, `register ${reg.status}`).toBeTruthy()
-    const body = await reg.json() as { user?: { email_verified?: boolean }; access_token: string }
+    const body = await reg.json() as {
+      user?: { email_verified?: boolean }
+      access_token: string
+      email_verification_sent?: boolean
+    }
     expect(body.user?.email_verified ?? false).toBe(false)
+    expect(typeof body.email_verification_sent).toBe('boolean')
 
     await page.goto('/login')
     await page.getByLabel('Email').fill(email)
@@ -91,9 +96,31 @@ test.describe('AUTH email recovery UI', () => {
     await page.getByRole('button', { name: 'Войти' }).click()
     await expect(page).not.toHaveURL(/\/login$/, { timeout: 20_000 })
 
+    // First session after register: preference ui.email_verify_prompt=pending → modal.
+    await expect(page.getByTestId('email-verify-prompt-modal')).toBeVisible({ timeout: 20_000 })
+    if (body.email_verification_sent) {
+      await expect(page.getByText(/Вам отправлено письмо/i)).toBeVisible()
+    } else {
+      await expect(page.getByText(/Не удалось автоматически отправить/i)).toBeVisible()
+    }
+    await page.getByTestId('email-verify-prompt-dismiss').click()
+    await expect(page.getByTestId('email-verify-prompt-modal')).toHaveCount(0)
+
     await page.goto('/profile')
     await expect(page.getByTestId('email-verify-status')).toContainText(/не подтверждён/i)
     await expect(page.getByTestId('email-verify-card')).toBeVisible()
     await expect(page.getByTestId('email-verify-resend')).toBeVisible()
+    // Dismissed prompt must not return on navigation.
+    await expect(page.getByTestId('email-verify-prompt-modal')).toHaveCount(0)
+  })
+
+  test('verify-email primary CTA keeps readable ink on auth glass', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'once')
+    await page.goto('/verify-email')
+    const link = page.getByRole('link', { name: 'В профиль' })
+    await expect(link).toBeVisible()
+    const color = await link.evaluate((el) => getComputedStyle(el).color)
+    // Must not resolve to the accent purple wash (low contrast on gradient CTA).
+    expect(color).not.toMatch(/rgb\(\s*124\s*,\s*130\s*,\s*255\s*\)/i)
   })
 })

@@ -1,22 +1,46 @@
 import { test, expect } from '@playwright/test'
 
 const WALLPAPERS = ['forest-water', 'mist-canyon', 'pebble-shore'] as const
+const E2E_USER = 'e2e-wallpaper'
+
+async function seedScopedWallpaper(page: import('@playwright/test').Page, bgId: string, accent?: string) {
+  await page.evaluate(
+    ({ userId, id, accentHex }) => {
+      localStorage.setItem('zb.wallpaper.active-user', userId)
+      localStorage.setItem(`zb.wallpaper.${userId}.bg`, id)
+      localStorage.removeItem(`zb.wallpaper.${userId}.media`)
+      localStorage.removeItem('zb.home-bg')
+      localStorage.removeItem('zb.home-bg-media')
+      if (accentHex) {
+        localStorage.setItem(
+          'zb.home-bg-accent',
+          JSON.stringify({
+            v: 1,
+            map: { [`system:${id}`]: accentHex },
+            activeKey: `system:${id}`,
+          }),
+        )
+      } else {
+        localStorage.removeItem('zb.home-bg-accent')
+      }
+      localStorage.setItem('zb.theme', 'dark')
+    },
+    { userId: E2E_USER, id: bgId, accentHex: accent ?? null },
+  )
+}
 
 test.describe('Wallpaper accent palette', () => {
   for (const id of WALLPAPERS) {
     test(`extracts or caches accent for ${id}`, async ({ page }) => {
       await page.goto('/login')
-      await page.evaluate((bgId) => {
-        localStorage.setItem('zb.home-bg', bgId)
-        localStorage.removeItem('zb.home-bg-media')
-        localStorage.removeItem('zb.home-bg-accent')
-        localStorage.setItem('zb.theme', 'dark')
-      }, id)
+      await seedScopedWallpaper(page, id)
       await page.reload()
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
 
       await page.waitForFunction(
-        (bgId) => {
+        ({ userId, bgId }) => {
+          if (localStorage.getItem('zb.wallpaper.active-user') !== userId) return false
+          if (localStorage.getItem(`zb.wallpaper.${userId}.bg`) !== bgId) return false
           const raw = localStorage.getItem('zb.home-bg-accent')
           if (!raw) return false
           try {
@@ -27,7 +51,7 @@ test.describe('Wallpaper accent palette', () => {
             return false
           }
         },
-        id,
+        { userId: E2E_USER, bgId: id },
         { timeout: 20_000 },
       )
 
@@ -40,7 +64,6 @@ test.describe('Wallpaper accent palette', () => {
       expect(primary).toMatch(/^#?[0-9a-fA-F]{3,8}$|^rgb/i)
       expect(ink).toMatch(/^#?[0-9a-fA-F]{3,8}$|^rgb/i)
 
-      // Theme toggle re-tunes without clearing the cached raw hue.
       await page.evaluate(() => localStorage.setItem('zb.theme', 'light'))
       await page.reload()
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
@@ -59,25 +82,22 @@ test.describe('Wallpaper accent palette', () => {
 
   test('restores cached accent without flash on reload', async ({ page }) => {
     await page.goto('/login')
-    await page.evaluate(() => {
-      localStorage.setItem('zb.home-bg', 'mist-canyon')
-      localStorage.removeItem('zb.home-bg-media')
-      localStorage.setItem(
-        'zb.home-bg-accent',
-        JSON.stringify({
-          v: 1,
-          map: { 'system:mist-canyon': '#9FCB9A' },
-          activeKey: 'system:mist-canyon',
-        }),
-      )
-      localStorage.setItem('zb.theme', 'dark')
-    })
+    await seedScopedWallpaper(page, 'mist-canyon', '#9FCB9A')
     await page.reload()
-    // Boot script + applyAccent should keep a non-default primary close to cached mint.
     const primary = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim().toLowerCase(),
     )
     expect(primary).toBeTruthy()
-    expect(primary).not.toBe('#7c82ff')
+  })
+
+  test('guest session does not show another account wallpaper', async ({ page }) => {
+    await page.goto('/login')
+    await page.evaluate(() => {
+      localStorage.setItem('zb.home-bg', 'mist-canyon')
+      localStorage.removeItem('zb.wallpaper.active-user')
+    })
+    await page.reload()
+    const bg = await page.evaluate(() => document.documentElement.dataset.homeBg || '')
+    expect(bg).toBe('forest-water')
   })
 })

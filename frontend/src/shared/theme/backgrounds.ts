@@ -3,10 +3,15 @@ import { applyAccent, DEFAULT_UI_ACCENT, readDocumentTheme } from '@/shared/them
 import { extractDominantAccent } from '@/shared/theme/extractWallpaperAccent'
 import { loadMediaBlobUrl } from '@/shared/lib/mediaCache'
 
+/** @deprecated Legacy device-global key — never apply across accounts; scoped keys replace it. */
 export const HOME_BG_STORAGE_KEY = 'zb.home-bg'
+/** @deprecated Legacy device-global key — see WALLPAPER_ACTIVE_USER_KEY. */
 export const HOME_BG_MEDIA_STORAGE_KEY = 'zb.home-bg-media'
+/** Content-addressed accent cache (safe to share); active wallpaper is user-scoped. */
 export const HOME_BG_ACCENT_STORAGE_KEY = 'zb.home-bg-accent'
 export const HOME_BG_PREF_KEY = 'ui.home_bg'
+/** Last authenticated user whose wallpaper may be restored on boot. Cleared on logout. */
+export const WALLPAPER_ACTIVE_USER_KEY = 'zb.wallpaper.active-user'
 
 export type HomeBackground = {
   id: string
@@ -60,10 +65,74 @@ type AccentCache = {
 
 const listeners = new Set<() => void>()
 let customSrcOverride: string | null = null
+/** Authenticated user scope for wallpaper localStorage. Null = guest → default only. */
+let activeUserId: string | null = null
 /** Monotonic generation — drop stale async extract results. */
 let accentExtractGeneration = 0
 /** Wallpaper keys currently being analyzed (dedupe concurrent extract). */
 const accentExtractInFlight = new Set<string>()
+
+function wallpaperScopeKey(suffix: 'bg' | 'media'): string | null {
+  if (!activeUserId) return null
+  return `zb.wallpaper.${activeUserId}.${suffix}`
+}
+
+function purgeLegacyWallpaperKeys() {
+  try {
+    localStorage.removeItem(HOME_BG_STORAGE_KEY)
+    localStorage.removeItem(HOME_BG_MEDIA_STORAGE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Restore scope from localStorage before first paint / applyStoredBackground. */
+export function restoreWallpaperScopeFromStorage() {
+  try {
+    const id = localStorage.getItem(WALLPAPER_ACTIVE_USER_KEY)?.trim()
+    activeUserId = id || null
+  } catch {
+    activeUserId = null
+  }
+}
+
+export function getWallpaperActiveUserId(): string | null {
+  return activeUserId
+}
+
+/**
+ * Bind wallpaper storage to a user (login / hydrate) or clear it (logout).
+ * Never migrates legacy `zb.home-bg*` into a user scope — that would leak across accounts.
+ */
+export function bindWallpaperUser(userId: string | null) {
+  const next = userId?.trim() || null
+  const changed = next !== activeUserId
+  activeUserId = next
+  try {
+    if (activeUserId) localStorage.setItem(WALLPAPER_ACTIVE_USER_KEY, activeUserId)
+    else localStorage.removeItem(WALLPAPER_ACTIVE_USER_KEY)
+  } catch {
+    /* ignore */
+  }
+  purgeLegacyWallpaperKeys()
+  if (changed) customSrcOverride = null
+  applyStoredBackground()
+  notify()
+}
+
+/** Logout / session end: drop scope and show the default wallpaper immediately. */
+export function clearWallpaperSession() {
+  customSrcOverride = null
+  activeUserId = null
+  try {
+    localStorage.removeItem(WALLPAPER_ACTIVE_USER_KEY)
+  } catch {
+    /* ignore */
+  }
+  purgeLegacyWallpaperKeys()
+  applyVisual(HOME_BACKGROUNDS[0], undefined, { extract: false })
+  notify()
+}
 
 export function backgroundById(id: string | null | undefined): HomeBackground {
   return HOME_BACKGROUNDS.find((b) => b.id === id) ?? HOME_BACKGROUNDS[0]
@@ -76,7 +145,9 @@ export function wallpaperAccentKey(bg: Pick<HomeBackground, 'source' | 'id' | 'm
 
 export function readStoredBackgroundId(): string {
   try {
-    const value = localStorage.getItem(HOME_BG_STORAGE_KEY)
+    const key = wallpaperScopeKey('bg')
+    if (!key) return HOME_BACKGROUNDS[0].id
+    const value = localStorage.getItem(key)
     return backgroundById(value).id
   } catch {
     return HOME_BACKGROUNDS[0].id
@@ -85,7 +156,9 @@ export function readStoredBackgroundId(): string {
 
 export function readStoredCustomMediaId(): string | null {
   try {
-    const value = localStorage.getItem(HOME_BG_MEDIA_STORAGE_KEY)?.trim()
+    const key = wallpaperScopeKey('media')
+    if (!key) return null
+    const value = localStorage.getItem(key)?.trim()
     return value || null
   } catch {
     return null
@@ -150,7 +223,9 @@ function notify() {
 
 function writeSystemId(id: string) {
   try {
-    localStorage.setItem(HOME_BG_STORAGE_KEY, id)
+    const key = wallpaperScopeKey('bg')
+    if (!key) return
+    localStorage.setItem(key, id)
   } catch {
     /* ignore quota */
   }
@@ -158,8 +233,10 @@ function writeSystemId(id: string) {
 
 function writeCustomMediaId(mediaId: string | null) {
   try {
-    if (mediaId) localStorage.setItem(HOME_BG_MEDIA_STORAGE_KEY, mediaId)
-    else localStorage.removeItem(HOME_BG_MEDIA_STORAGE_KEY)
+    const key = wallpaperScopeKey('media')
+    if (!key) return
+    if (mediaId) localStorage.setItem(key, mediaId)
+    else localStorage.removeItem(key)
   } catch {
     /* ignore */
   }
@@ -326,6 +403,13 @@ export function clearCustomHomeBackground(fallbackSystemId?: string) {
 }
 
 export function applyStoredBackground() {
+  restoreWallpaperScopeFromStorage()
+  // Guest / logged-out: always the default — never legacy zb.home-bg* (cross-account leak).
+  if (!activeUserId) {
+    customSrcOverride = null
+    applyVisual(HOME_BACKGROUNDS[0], undefined, { extract: false })
+    return
+  }
   const mediaId = readStoredCustomMediaId()
   if (mediaId && customSrcOverride) {
     const fallback = backgroundById(readStoredBackgroundId())

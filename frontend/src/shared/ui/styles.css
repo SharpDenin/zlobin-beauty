@@ -874,6 +874,37 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
 }
 .auth-screen .card { text-align: left; width: 100%; }
 .auth-screen a { color: var(--color-primary); }
+/* Button-styled links must keep CTA ink — `.auth-screen a` must not wash primary text into the accent. */
+.auth-screen a.btn-primary,
+.auth-screen a.btn.btn-primary {
+  color: var(--color-primary-ink);
+}
+.auth-screen a.btn-primary:hover,
+.auth-screen a.btn.btn-primary:hover,
+.auth-screen a.btn-primary:active,
+.auth-screen a.btn.btn-primary:active {
+  color: var(--color-primary-ink);
+}
+.auth-screen a.btn-primary:focus-visible,
+.auth-screen a.btn.btn-primary:focus-visible {
+  color: var(--color-primary-ink);
+}
+.auth-screen a.btn-secondary,
+.auth-screen a.btn.btn-secondary {
+  color: var(--color-text);
+}
+.auth-screen a.btn-secondary:hover,
+.auth-screen a.btn.btn-secondary:hover,
+.auth-screen a.btn-secondary:active,
+.auth-screen a.btn.btn-secondary:active,
+.auth-screen a.btn-secondary:focus-visible,
+.auth-screen a.btn.btn-secondary:focus-visible {
+  color: var(--color-text);
+}
+.auth-screen a.btn:disabled,
+.auth-screen a.btn.btn-loading {
+  color: inherit;
+}
 h1 { font-size: var(--text-3xl); font-weight: 700; letter-spacing: -0.02em; color: var(--color-text-primary); }
 h2 { font-size: var(--text-2xl); font-weight: 600; color: var(--color-text-primary); }
 h3 { font-size: var(--text-xl); font-weight: 600; color: var(--color-text-primary); }

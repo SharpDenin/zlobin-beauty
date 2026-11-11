@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
+import { usePreference } from '@/shared/lib/preferences'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import {
   disableDevicePush,
@@ -11,6 +12,14 @@ import {
   syncDevicePush,
   type DevicePushUiStatus,
 } from '@/features/pwa/push'
+
+export const PUSH_ONBOARDING_PREF_KEY = 'ui.push_onboarding'
+
+export type PushOnboardingPref = {
+  declined: boolean
+}
+
+const DEFAULT_PUSH_ONBOARDING: PushOnboardingPref = { declined: false }
 
 const STATUS_COPY: Record<DevicePushUiStatus, { title: string; hint: string }> = {
   loading: { title: 'Проверяем…', hint: '' },
@@ -43,14 +52,20 @@ const STATUS_COPY: Record<DevicePushUiStatus, { title: string; hint: string }> =
 type Props = {
   compact?: boolean
   className?: string
+  /** Home onboarding: hide after enable or explicit decline; show «Не включать». */
+  homePrompt?: boolean
 }
 
-export function DevicePushCard({ compact = false, className = '' }: Props) {
+export function DevicePushCard({ compact = false, className = '', homePrompt = false }: Props) {
   const { accessToken } = useAuth()
   const qc = useQueryClient()
   const [status, setStatus] = useState<DevicePushUiStatus>('loading')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [onboarding, setOnboarding] = usePreference<PushOnboardingPref>(
+    PUSH_ONBOARDING_PREF_KEY,
+    DEFAULT_PUSH_ONBOARDING,
+  )
 
   const config = useQuery({
     queryKey: ['push-config'],
@@ -89,6 +104,7 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
     onSuccess: async () => {
       setError(null)
       setOk('Уведомления на устройстве включены')
+      setOnboarding({ declined: false })
       setStatus(await resolveDevicePushStatus(config.data, { serverSynced: true }))
       void qc.invalidateQueries({ queryKey: ['push-config'] })
     },
@@ -112,10 +128,24 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
     },
   })
 
+  function declineHomePrompt() {
+    setOnboarding({ declined: true })
+    setError(null)
+    setOk(null)
+  }
+
   const copy = STATUS_COPY[status]
   const canEnable = status === 'default' || status === 'ready' || status === 'denied'
   const canDisable = status === 'subscribed'
-  const enableBlocked = status === 'denied' // button still shown so user can retry after fixing OS settings
+  const enableBlocked = status === 'denied'
+
+  // Home: hide after successful subscribe or explicit decline (settings keep the full card).
+  if (homePrompt && (status === 'subscribed' || onboarding.declined)) {
+    return null
+  }
+  if (homePrompt && (status === 'unsupported' || status === 'server_disabled')) {
+    return null
+  }
 
   return (
     <section className={`card stack ${className}`.trim()} data-testid="device-push-card">
@@ -134,7 +164,18 @@ export function DevicePushCard({ compact = false, className = '' }: Props) {
             onClick={() => enable.mutate()}
             aria-describedby={enableBlocked ? 'device-push-status' : undefined}
           >
-            {enable.isPending ? 'Включаем…' : 'Включить'}
+            {enable.isPending ? 'Включаем…' : homePrompt ? 'Включить уведомления' : 'Включить'}
+          </button>
+        )}
+        {homePrompt && canEnable && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            data-testid="device-push-decline"
+            disabled={enable.isPending}
+            onClick={declineHomePrompt}
+          >
+            Не включать
           </button>
         )}
         {canDisable && (

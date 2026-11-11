@@ -17,6 +17,11 @@ function ownedOrgMessage(err: unknown): string | null {
   return 'Нельзя удалить аккаунт, пока вы владелец организации. Передайте владение или закройте салон, затем повторите.'
 }
 
+function alreadyDeletedMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'account_already_deleted') return null
+  return 'Аккаунт уже удалён. Войдите с другим аккаунтом или зарегистрируйтесь заново.'
+}
+
 function cleanupFailedMessage(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null
   if (err.status !== 503 && err.code !== 'conflict') return null
@@ -71,7 +76,7 @@ export function SettingsAccountPage() {
       await logout()
       navigate('/login', { replace: true })
     } catch (err) {
-      setError(ownedOrgMessage(err) ?? cleanupFailedMessage(err) ?? err)
+      setError(ownedOrgMessage(err) ?? alreadyDeletedMessage(err) ?? cleanupFailedMessage(err) ?? err)
       setBusy(false)
     }
   }

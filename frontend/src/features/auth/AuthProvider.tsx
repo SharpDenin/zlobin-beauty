@@ -20,6 +20,7 @@ import { clearSessionEnded, markSessionEnded } from '@/features/pwa/pwa'
 import { isNetworkError } from '@/shared/lib/app-error'
 import { resetPreferenceSync } from '@/shared/lib/preferences'
 import { clearMediaCache } from '@/shared/lib/mediaCache'
+import { bindWallpaperUser, clearWallpaperSession } from '@/shared/theme/backgrounds'
 
 export type User = {
   id: string
@@ -157,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear()
     clearMediaCache()
     resetPreferenceSync()
+    clearWallpaperSession()
   }
 
   useEffect(() => {
@@ -212,6 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const s = sessionRef.current
         if (mountedRef.current && s.accessToken && s.refreshToken) {
+          bindWallpaperUser(me.id)
           commit({ ...s, user: me }, true)
         }
       } catch (err) {
@@ -276,6 +279,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear() // never show another user's cached data
     clearMediaCache()
     resetPreferenceSync()
+    bindWallpaperUser(res.user.id)
     commit({ accessToken: res.access_token, refreshToken: res.refresh_token, user: res.user }, true)
   }
 

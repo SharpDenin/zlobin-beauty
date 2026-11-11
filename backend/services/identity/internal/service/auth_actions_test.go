@@ -181,18 +181,40 @@ func TestEmailVerifyFlow(t *testing.T) {
 	svc, ml := identityTestService(t)
 	ctx := context.Background()
 	email := "verify.flow." + time.Now().Format("150405.000") + "@example.com"
-	res, err := svc.Register(ctx, RegisterInput{Email: email, Password: "Password123!", DisplayName: "Verify"})
+	res, err := svc.Register(ctx, RegisterInput{Email: email, Password: "Password123!", DisplayName: "Verify", ClientIP: "10.0.0.3"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.User.EmailVerified {
 		t.Fatal("new users start unverified")
 	}
-	// Unverified must still login.
-	if _, err := svc.Login(ctx, email, "Password123!", "10.0.0.3", "test"); err != nil {
+	if !res.EmailVerificationSent {
+		t.Fatal("register must send verification email when mailer is ready")
+	}
+	if len(ml.Sent) < 1 {
+		t.Fatal("expected verification mail on register")
+	}
+	prefs, err := svc.ListPreferences(ctx, res.User.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RequestEmailVerification(ctx, res.User.ID, "10.0.0.3"); err != nil {
+	foundPrompt := false
+	for _, p := range prefs {
+		if p.Key == "ui.email_verify_prompt" {
+			foundPrompt = true
+			if !strings.Contains(string(p.Value), `"status":"pending"`) {
+				t.Fatalf("prompt pref: %s", p.Value)
+			}
+			if !strings.Contains(string(p.Value), `"sent":true`) {
+				t.Fatalf("prompt must record sent=true: %s", p.Value)
+			}
+		}
+	}
+	if !foundPrompt {
+		t.Fatal("ui.email_verify_prompt must be set on register")
+	}
+	// Unverified must still login.
+	if _, err := svc.Login(ctx, email, "Password123!", "10.0.0.3", "test"); err != nil {
 		t.Fatal(err)
 	}
 	tok := tokenFromMail(t, ml)
@@ -208,6 +230,29 @@ func TestEmailVerifyFlow(t *testing.T) {
 	}
 	if !me.EmailVerified {
 		t.Fatal("email_verified must be true")
+	}
+}
+
+func TestRegisterEmailVerifyMailerMissing(t *testing.T) {
+	svc, _ := identityTestService(t)
+	svc.mailer = mailer.NewMock(false)
+	ctx := context.Background()
+	email := "verify.nomail." + time.Now().Format("150405.000") + "@example.com"
+	res, err := svc.Register(ctx, RegisterInput{Email: email, Password: "Password123!", DisplayName: "NoMail", ClientIP: "10.0.0.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.EmailVerificationSent {
+		t.Fatal("must not claim email was sent when mailer is missing")
+	}
+	prefs, err := svc.ListPreferences(ctx, res.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range prefs {
+		if p.Key == "ui.email_verify_prompt" && strings.Contains(string(p.Value), `"sent":true`) {
+			t.Fatalf("sent must be false: %s", p.Value)
+		}
 	}
 }
 
@@ -233,7 +278,7 @@ func TestEmailVerifyExpiredAndMailerMissing(t *testing.T) {
 	svc2, _ := identityTestService(t)
 	svc2.mailer = mailer.NewMock(false)
 	res2, err := svc2.Register(ctx, RegisterInput{
-		Email: "verify.nomail." + time.Now().Format("150405.000") + "@example.com",
+		Email:    "verify.nomail." + time.Now().Format("150405.000") + "@example.com",
 		Password: "Password123!", DisplayName: "NoMail",
 	})
 	if err != nil {

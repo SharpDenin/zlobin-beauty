@@ -526,7 +526,7 @@ export function OwnerStartPage() {
           {!notifications.isLoading && notes.length === 0 && (
             <p className="owner-start-empty">Пока нет уведомлений</p>
           )}
-          <DevicePushCard compact className="owner-start-push-card" />
+          <DevicePushCard compact homePrompt className="owner-start-push-card" />
           <ul className="owner-start-note-list">
             {notes.slice(0, 3).map((n) => (
               <li key={n.id}>

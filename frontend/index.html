@@ -18,18 +18,17 @@
         document.documentElement.style.colorScheme = theme;
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute('content', theme === 'light' ? '#F3F5FA' : '#0B0D12');
-        // Restore last wallpaper accent early to avoid a flash of the default violet.
+        // Restore wallpaper accent only for the last authenticated user scope (no cross-account leak).
         try {
+          var activeUser = localStorage.getItem('zb.wallpaper.active-user');
+          if (!activeUser) return;
           var accentRaw = localStorage.getItem('zb.home-bg-accent');
           if (!accentRaw) return;
           var cache = JSON.parse(accentRaw);
           if (!cache || cache.v !== 1 || !cache.map) return;
-          var accentKey = cache.activeKey;
-          if (!accentKey) {
-            var mediaId = localStorage.getItem('zb.home-bg-media');
-            var systemId = localStorage.getItem('zb.home-bg') || 'forest-water';
-            accentKey = mediaId ? ('custom:' + mediaId) : ('system:' + systemId);
-          }
+          var mediaId = localStorage.getItem('zb.wallpaper.' + activeUser + '.media');
+          var systemId = localStorage.getItem('zb.wallpaper.' + activeUser + '.bg') || 'forest-water';
+          var accentKey = mediaId ? ('custom:' + mediaId) : ('system:' + systemId);
           var hex = cache.map[accentKey];
           if (typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex)) {
             document.documentElement.style.setProperty('--color-primary', hex);

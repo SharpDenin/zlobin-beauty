@@ -18,8 +18,8 @@ func TestSearchMastersSourceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(src)
-	if strings.Contains(body, "mp.published = TRUE") || strings.Contains(body, "mp.published=TRUE") {
-		t.Fatal("SearchMasters must not filter by published")
+	if !strings.Contains(body, "mp.published = TRUE") && !strings.Contains(body, "mp.published=TRUE") {
+		t.Fatal("SearchMasters must filter by published = TRUE")
 	}
 	for _, frag := range []string{
 		"portfolio_items",

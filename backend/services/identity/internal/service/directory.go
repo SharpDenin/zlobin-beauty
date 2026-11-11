@@ -54,7 +54,7 @@ func (s *Service) ResolveDirectory(ctx context.Context, userID *uuid.UUID, email
 	if u == nil {
 		return nil, apperr.NotFound("user not found")
 	}
-	if u.Status == "blocked" {
+	if u.Status != "active" {
 		return nil, apperr.NotFound("user not found")
 	}
 	for _, r := range u.Roles {
@@ -71,7 +71,8 @@ func (s *Service) ResolveDirectory(ctx context.Context, userID *uuid.UUID, email
 func toDirectoryPublic(items []store.DirectoryUser) []DirectoryPublicUser {
 	out := make([]DirectoryPublicUser, 0, len(items))
 	for _, u := range items {
-		if u.Status == "blocked" {
+		// Public directory / batch must never expose blocked or soft-deleted accounts.
+		if u.Status != "active" {
 			continue
 		}
 		if hasRole(u.Roles, domain.RoleSystemAdmin) {

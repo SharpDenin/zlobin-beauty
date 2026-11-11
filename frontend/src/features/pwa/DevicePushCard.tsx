@@ -47,6 +47,10 @@ const STATUS_COPY: Record<DevicePushUiStatus, { title: string; hint: string }> =
     title: 'Уведомления на этом устройстве включены',
     hint: 'Системные push приходят при событиях Salon-X. Можно отключить в любой момент.',
   },
+  error: {
+    title: 'Не удалось проверить Push',
+    hint: 'Проверьте соединение и войдите снова при необходимости, затем нажмите «Включить» или обновите страницу.',
+  },
 }
 
 type Props = {
@@ -71,35 +75,64 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
     queryKey: ['push-config'],
     queryFn: () => fetchPushConfig(accessToken),
     enabled: Boolean(accessToken),
+    retry: false,
   })
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      if (!config.data) {
+      if (!accessToken) {
+        if (!cancelled) setStatus('error')
+        return
+      }
+      // Fail closed before treating an empty payload as still-loading.
+      if (config.isError) {
+        if (!cancelled) {
+          setStatus('error')
+          setError(userError(config.error, 'Не удалось загрузить настройки Push'))
+        }
+        return
+      }
+      if (config.isPending || (config.isFetching && !config.data)) {
         if (!cancelled) setStatus('loading')
         return
       }
-      let serverSynced = false
-      if (config.data.enabled && config.data.public_key && accessToken) {
-        try {
-          serverSynced = await syncDevicePush(accessToken, config.data.public_key)
-        } catch {
-          serverSynced = false
+      if (!config.data) {
+        if (!cancelled) {
+          setStatus('error')
+          setError('Не удалось загрузить настройки Push')
         }
+        return
       }
-      const next = await resolveDevicePushStatus(config.data, { serverSynced })
-      if (!cancelled) setStatus(next)
+      let serverSynced = false
+      try {
+        if (config.data.enabled && config.data.public_key) {
+          try {
+            serverSynced = await syncDevicePush(null, config.data.public_key)
+          } catch {
+            serverSynced = false
+          }
+        }
+        const next = await resolveDevicePushStatus(config.data, { serverSynced })
+        if (!cancelled) {
+          setStatus(next === 'loading' ? 'default' : next)
+          setError(null)
+        }
+      } catch {
+        if (!cancelled) setStatus('error')
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [config.data, accessToken])
+    // Re-run when config payload/status changes — not on every accessToken rotation (avoids PUT storms).
+  }, [accessToken, config.data, config.isPending, config.isFetching, config.isError, config.error])
 
   const enable = useMutation({
     mutationFn: async () => {
       if (!config.data?.public_key) throw new Error('Push на сервере не настроен')
-      await enableDevicePush(accessToken, config.data.public_key)
+      // Pass null so put path always reads a fresh token from the auth bridge after permission UI.
+      await enableDevicePush(null, config.data.public_key)
     },
     onSuccess: async () => {
       setError(null)
@@ -111,12 +144,14 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
     onError: (e) => {
       setOk(null)
       setError(userError(e, 'Не удалось включить уведомления'))
-      void resolveDevicePushStatus(config.data, { serverSynced: false }).then(setStatus)
+      void resolveDevicePushStatus(config.data ?? { enabled: false, public_key: '' }, { serverSynced: false })
+        .then((next) => setStatus(next === 'loading' || next === 'error' ? 'ready' : next))
+        .catch(() => setStatus('ready'))
     },
   })
 
   const disable = useMutation({
-    mutationFn: () => disableDevicePush(accessToken),
+    mutationFn: () => disableDevicePush(null),
     onSuccess: async () => {
       setError(null)
       setOk('Уведомления на устройстве отключены')
@@ -135,11 +170,10 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
   }
 
   const copy = STATUS_COPY[status]
-  const canEnable = status === 'default' || status === 'ready' || status === 'denied'
+  const canEnable = status === 'default' || status === 'ready' || status === 'denied' || status === 'error'
   const canDisable = status === 'subscribed'
   const enableBlocked = status === 'denied'
 
-  // Home: hide after successful subscribe or explicit decline (settings keep the full card).
   if (homePrompt && (status === 'subscribed' || onboarding.declined)) {
     return null
   }
@@ -167,7 +201,7 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
             {enable.isPending ? 'Включаем…' : homePrompt ? 'Включить уведомления' : 'Включить'}
           </button>
         )}
-        {homePrompt && canEnable && (
+        {homePrompt && canEnable && status !== 'error' && (
           <button
             type="button"
             className="btn btn-secondary"

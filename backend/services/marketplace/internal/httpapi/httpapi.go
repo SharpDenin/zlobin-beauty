@@ -379,10 +379,14 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation(httpx.DecodeJSONMessage(err)))
 		return
 	}
-	orgID, err := uuid.Parse(req.OrganizationID)
-	if err != nil {
-		httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
-		return
+	var orgID uuid.UUID
+	if strings.TrimSpace(req.OrganizationID) != "" {
+		parsed, err := uuid.Parse(req.OrganizationID)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid organization_id"))
+			return
+		}
+		orgID = parsed
 	}
 	photoMediaID, err := parseOptionalUUID(req.PhotoMediaID)
 	if err != nil {

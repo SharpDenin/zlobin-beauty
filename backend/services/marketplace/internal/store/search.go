@@ -105,7 +105,8 @@ SELECT
     WHERE ms.master_id = mp.id
   ) AS price_max_minor
 FROM master_profiles mp
-WHERE ($1 = '' OR mp.city ILIKE $1)
+WHERE mp.published = TRUE
+  AND ($1 = '' OR mp.city ILIKE $1)
   AND (
     $2 = ''
     OR mp.display_name ILIKE '%' || $2 || '%'

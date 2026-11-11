@@ -18,7 +18,10 @@ vi.mock('@/shared/lib/preferences', () => ({
 vi.mock('@/features/pwa/push', () => ({
   fetchPushConfig: vi.fn(async () => ({ enabled: true, public_key: 'B'.repeat(80) })),
   syncDevicePush: vi.fn(async () => false),
-  resolveDevicePushStatus: vi.fn(async () => 'default'),
+  resolveDevicePushStatus: vi.fn(async (_config?: unknown, opts?: { serverSynced?: boolean }) => {
+    if (opts?.serverSynced === true) return 'subscribed'
+    return 'default'
+  }),
   enableDevicePush: vi.fn(async () => undefined),
   disableDevicePush: vi.fn(async () => undefined),
 }))

@@ -73,10 +73,10 @@ type UpsertMasterInput struct {
 
 // Canonical master work formats (employment model). Ownership and org membership are separate.
 var canonicalWorkTypes = map[string]struct{}{
-	"private_practice":  {},
-	"percentage_based":  {},
-	"mobile_service":    {},
-	"chair_rental":      {},
+	"private_practice": {},
+	"percentage_based": {},
+	"mobile_service":   {},
+	"chair_rental":     {},
 }
 
 func normalizeWorkType(workType string) string {
@@ -474,10 +474,18 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchResult, er
 		matches = got
 	}
 
+	activeUsers, err := s.activeMasterUserIDs(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+
 	hits := make([]SearchHit, 0, len(rows))
 	ptrs := make([]*domain.MasterProfile, 0, len(rows))
 	for i := range rows {
 		row := rows[i]
+		if _, ok := activeUsers[row.Master.UserID]; !ok {
+			continue
+		}
 		if in.AvailableOn != nil && s.bookingURL != "" && in.DistrictID == nil {
 			ok, err := s.hasAnySlotOn(ctx, row.Master.UserID, *in.AvailableOn)
 			if err != nil {
@@ -511,6 +519,68 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchResult, er
 		return nil, err
 	}
 	return &SearchResult{Items: hits, NextCursor: nextCursor, HasMore: hasMoreSQL}, nil
+}
+
+// activeMasterUserIDs asks identity which owners are still active (excludes blocked/deleted).
+// When identity is not wired, only the SQL published filter applies.
+func (s *Service) activeMasterUserIDs(ctx context.Context, rows []store.SearchMasterRow) (map[uuid.UUID]struct{}, error) {
+	out := make(map[uuid.UUID]struct{}, len(rows))
+	if len(rows) == 0 {
+		return out, nil
+	}
+	if s.identityURL == "" || s.internalToken == "" {
+		for _, row := range rows {
+			out[row.Master.UserID] = struct{}{}
+		}
+		return out, nil
+	}
+	seen := map[uuid.UUID]struct{}{}
+	parts := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id := row.Master.UserID
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		parts = append(parts, id.String())
+	}
+	if len(parts) == 0 {
+		return out, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.identityURL+"/v1/internal/users/batch?ids="+strings.Join(parts, ","), nil)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return nil, apperr.Internal(fmt.Errorf("identity users/batch status %d", resp.StatusCode))
+	}
+	var parsed struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	for _, it := range parsed.Items {
+		id, err := uuid.Parse(it.ID)
+		if err != nil || id == uuid.Nil {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	return out, nil
 }
 
 func (s *Service) fetchOnsiteMatches(ctx context.Context, city string, districtID uuid.UUID, day time.Time) (map[uuid.UUID]OnsiteMatch, error) {
@@ -704,7 +774,11 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 	if in.PriceMinor < 0 {
 		return nil, apperr.Validation("price_minor must be >= 0")
 	}
-	if err := s.requireMembership(ctx, in.OrganizationID, in.ActorUserID, "owner", "admin", "master"); err != nil {
+	orgID, err := s.resolveServiceOrganizationID(ctx, in.ActorUserID, in.OrganizationID, in.AttachToMaster)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireMembership(ctx, orgID, in.ActorUserID, "owner", "admin", "master"); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
@@ -713,7 +787,7 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 		published = *in.Published
 	}
 	item := domain.ServiceItem{
-		ID: ids.New(), OrganizationID: in.OrganizationID, Name: name, Category: category,
+		ID: ids.New(), OrganizationID: orgID, Name: name, Category: category,
 		Description: strings.TrimSpace(in.Description), Notes: strings.TrimSpace(in.Notes), PhotoMediaID: in.PhotoMediaID,
 		DurationMinutes: in.DurationMinutes, PriceMinor: in.PriceMinor, Currency: "RUB", BookingMode: bookingMode,
 		Published: published, CreatedAt: now, UpdatedAt: now,
@@ -730,7 +804,7 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 			return nil, apperr.Validation("create master profile before attaching services")
 		}
 		// Independent masters may attach services from a membership org without binding profile.organization_id.
-		if master.OrganizationID != uuid.Nil && master.OrganizationID != in.OrganizationID {
+		if master.OrganizationID != uuid.Nil && master.OrganizationID != orgID {
 			return nil, apperr.Forbidden("service organization mismatch")
 		}
 		if err := s.store.AttachService(ctx, master.ID, item.ID); err != nil {
@@ -738,6 +812,76 @@ func (s *Service) CreateService(ctx context.Context, in CreateServiceInput) (*do
 		}
 	}
 	return &item, nil
+}
+
+// resolveServiceOrganizationID picks the workspace org for a new service.
+// Solo/independent masters often have NULL master_profiles.organization_id while owning a salon org.
+func (s *Service) resolveServiceOrganizationID(ctx context.Context, actor, requested uuid.UUID, attachToMaster bool) (uuid.UUID, error) {
+	if requested != uuid.Nil {
+		return requested, nil
+	}
+	if !attachToMaster {
+		return uuid.Nil, apperr.Validation("organization_id is required")
+	}
+	master, err := s.store.GetMasterByUser(ctx, actor)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	if master == nil {
+		return uuid.Nil, apperr.Validation("create master profile before attaching services")
+	}
+	if master.OrganizationID != uuid.Nil {
+		return master.OrganizationID, nil
+	}
+	orgID, err := s.firstOwnedSalonOrganization(ctx, actor)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if orgID == uuid.Nil {
+		return uuid.Nil, apperr.Validation("organization_id is required: create or join a salon workspace first")
+	}
+	return orgID, nil
+}
+
+func (s *Service) firstOwnedSalonOrganization(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return uuid.Nil, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.organizationsURL+"/v1/internal/users/"+userID.String()+"/owned-organizations", nil)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return uuid.Nil, apperr.Internal(fmt.Errorf("owned-organizations status %d", resp.StatusCode))
+	}
+	var parsed struct {
+		Items []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	for _, it := range parsed.Items {
+		if strings.EqualFold(strings.TrimSpace(it.Type), "supplier") {
+			continue
+		}
+		id, err := uuid.Parse(it.ID)
+		if err != nil || id == uuid.Nil {
+			continue
+		}
+		return id, nil
+	}
+	return uuid.Nil, nil
 }
 
 type UpdateServiceInput struct {

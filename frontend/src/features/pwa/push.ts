@@ -1,4 +1,4 @@
-import { apiRequest } from '@/shared/api/client'
+import { apiRequest, getFreshAccessToken } from '@/shared/api/client'
 
 export type PushConfig = { enabled: boolean; public_key: string }
 
@@ -10,8 +10,10 @@ export type DevicePushUiStatus =
   | 'default'
   | 'subscribed'
   | 'ready'
+  | 'error'
 
 const VAPID_PUBLIC_STORAGE_KEY = 'zb.push.vapidPublicKey'
+const SW_READY_TIMEOUT_MS = 8_000
 
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -63,37 +65,53 @@ export async function fetchPushConfig(token: string | null): Promise<PushConfig>
   return apiRequest<PushConfig>('/v1/push/config', { token })
 }
 
-export async function getLocalPushSubscription() {
+/** Wait for SW readiness with a hard timeout so UI never hangs on «Проверяем…». */
+export async function getServiceWorkerRegistration(
+  timeoutMs = SW_READY_TIMEOUT_MS,
+): Promise<ServiceWorkerRegistration | null> {
   if (!browserSupportsWebPush()) return null
-  const registration = await navigator.serviceWorker.ready
-  return registration.pushManager.getSubscription()
+  try {
+    return await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<null>((resolve) => {
+        window.setTimeout(() => resolve(null), timeoutMs)
+      }),
+    ])
+  } catch {
+    return null
+  }
+}
+
+export async function getLocalPushSubscription() {
+  const registration = await getServiceWorkerRegistration()
+  if (!registration) return null
+  try {
+    return await registration.pushManager.getSubscription()
+  } catch {
+    return null
+  }
 }
 
 /**
  * Resolve UX status without requesting permission.
  * `serverSynced === true` means the local subscription was successfully PUT to the API.
- * A browser-only subscription must not look like “enabled” — otherwise UI lies while
- * communications has zero rows and push is silently skipped.
  */
 export async function resolveDevicePushStatus(
   config: PushConfig | null | undefined,
   opts?: { serverSynced?: boolean },
 ): Promise<DevicePushUiStatus> {
-  if (!config) return 'loading'
+  if (!config) return 'error'
   if (!browserSupportsWebPush()) return 'unsupported'
   if (!config.enabled || !config.public_key) return 'server_disabled'
-  if (Notification.permission === 'denied') return 'denied'
+  if (typeof Notification !== 'undefined' && Notification.permission === 'denied') return 'denied'
   const sub = await getLocalPushSubscription()
   if (sub) {
-    // Existing browser sub may be bound to a rotated VAPID key — treat as needing re-enable.
     if (vapidPublicKeyChanged(config.public_key)) return 'ready'
     if (opts?.serverSynced === true) return 'subscribed'
-    // Local sub without confirmed server sync → prompt to enable / retry sync.
     if (opts?.serverSynced === false) return 'ready'
-    // Unknown sync state (legacy callers): prefer ready over a false “subscribed”.
     return 'ready'
   }
-  if (Notification.permission === 'granted') return 'ready'
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') return 'ready'
   return 'default'
 }
 
@@ -102,9 +120,11 @@ async function putSubscription(token: string | null, subscription: PushSubscript
   if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
     throw new Error('Не удалось получить ключи подписки')
   }
+  // Prefer live session token after long permission prompts; apiRequest also refreshes on 401.
+  const fresh = (await getFreshAccessToken()) ?? token
   await apiRequest('/v1/push/subscription', {
     method: 'PUT',
-    token,
+    token: fresh,
     body: {
       endpoint: json.endpoint,
       keys: json.keys,
@@ -132,7 +152,7 @@ async function activateWaitingServiceWorker(registration: ServiceWorkerRegistrat
  * Enable push after an explicit user gesture.
  * Re-subscribes when the server VAPID public key changed (key rotation).
  */
-export async function enableDevicePush(token: string | null, publicKey: string) {
+export async function enableDevicePush(_token: string | null, publicKey: string) {
   if (!browserSupportsWebPush()) {
     throw new Error('Браузер не поддерживает push-уведомления')
   }
@@ -145,9 +165,17 @@ export async function enableDevicePush(token: string | null, publicKey: string) 
   if (permission !== 'granted') {
     throw new Error('Разрешение на уведомления не выдано. Включите их в настройках браузера или системы.')
   }
-  let registration = await navigator.serviceWorker.ready
+  // Refresh after the OS permission UI — access JWT may have expired while the tab was hidden.
+  const token = await getFreshAccessToken()
+  if (!token) {
+    throw new Error('Сессия завершилась. Войдите снова, затем включите уведомления.')
+  }
+  let registration = await getServiceWorkerRegistration()
+  if (!registration) {
+    throw new Error('Service Worker ещё не готов. Обновите страницу и попробуйте снова.')
+  }
   await activateWaitingServiceWorker(registration)
-  registration = await navigator.serviceWorker.ready
+  registration = (await getServiceWorkerRegistration()) ?? registration
   let subscription = await registration.pushManager.getSubscription()
   if (subscription && vapidPublicKeyChanged(publicKey)) {
     try {
@@ -192,7 +220,11 @@ export async function syncDevicePush(token: string | null, publicKey?: string) {
 
 export async function disableDevicePush(token: string | null) {
   if (!('serviceWorker' in navigator)) return
-  const registration = await navigator.serviceWorker.ready
+  const registration = await getServiceWorkerRegistration()
+  if (!registration) {
+    clearRememberedVapidPublicKey()
+    return
+  }
   const subscription = await registration.pushManager.getSubscription()
   if (!subscription) {
     clearRememberedVapidPublicKey()
@@ -205,9 +237,10 @@ export async function disableDevicePush(token: string | null) {
     /* still remove on server */
   }
   clearRememberedVapidPublicKey()
+  const fresh = (await getFreshAccessToken()) ?? token
   await apiRequest('/v1/push/subscription', {
     method: 'DELETE',
-    token,
+    token: fresh,
     body: { endpoint },
   })
 }

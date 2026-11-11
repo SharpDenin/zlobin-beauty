@@ -82,4 +82,9 @@ describe('resolveDevicePushStatus server sync gate', () => {
     rememberVapidPublicKey('old-key')
     await expect(resolveDevicePushStatus(config, { serverSynced: true })).resolves.toBe('ready')
   })
+
+  it('leaves loading when config is missing', async () => {
+    await expect(resolveDevicePushStatus(null)).resolves.toBe('error')
+    await expect(resolveDevicePushStatus(undefined)).resolves.toBe('error')
+  })
 })

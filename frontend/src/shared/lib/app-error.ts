@@ -135,6 +135,16 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Нужен профиль мастера',
     hint: 'Создайте профиль мастера, чтобы писать клиентам.',
   },
+  master_profile_required: {
+    kind: 'validation',
+    title: 'Сначала создайте профиль мастера',
+    hint: 'Профиль мастера нужен, чтобы привязать услугу к каталогу.',
+  },
+  service_org_required: {
+    kind: 'validation',
+    title: 'Нужен салон или рабочая организация',
+    hint: 'Создайте салон или вступите в организацию, затем добавьте услугу.',
+  },
   messenger_master_missing: {
     kind: 'not_found',
     title: 'Профиль мастера не найден',
@@ -419,6 +429,9 @@ const LEGACY_MESSAGE_TO_CODE: Array<{ match: string; code: string }> = [
   { match: 'only a published master can message a client', code: 'messenger_master_not_published_actor' },
   { match: 'master profile is required to message a client', code: 'messenger_profile_required' },
   { match: 'master profile not found', code: 'messenger_master_missing' },
+  { match: 'create master profile before attaching services', code: 'master_profile_required' },
+  { match: 'organization_id is required', code: 'service_org_required' },
+  { match: 'create or join a salon workspace', code: 'service_org_required' },
   { match: 'user is not available', code: 'messenger_no_relationship' },
   { match: 'too many new conversations', code: 'rate_limited' },
   { match: 'too many first messages', code: 'rate_limited' },

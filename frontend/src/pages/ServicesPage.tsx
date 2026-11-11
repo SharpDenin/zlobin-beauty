@@ -50,6 +50,11 @@ type Occurrence = {
   title?: string
 }
 
+type OrgMineItem = {
+  organization: { id: string; name: string; type: string }
+  roles: string[]
+}
+
 const schema = z.object({
   name: z.string().min(2, 'Укажите название'),
   category: z.string().min(2, 'Укажите категорию'),
@@ -84,15 +89,28 @@ export function ServicesPage() {
   const master = useQuery({
     queryKey: ['my-master'],
     queryFn: () =>
-      apiRequest<{ master: { id: string; organization_id: string; branch_id?: string | null }; services: Service[] }>(
-        '/v1/me/master',
-        { token: accessToken },
-      ),
+      apiRequest<{
+        master: { id: string; organization_id?: string | null; branch_id?: string | null }
+        services: Service[]
+      }>('/v1/me/master', { token: accessToken }),
     enabled: Boolean(accessToken),
     retry: false,
   })
 
+  const orgs = useQuery({
+    queryKey: ['orgs-mine'],
+    queryFn: () => apiRequest<{ items: OrgMineItem[] }>('/v1/organizations/mine', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
   const services = useMemo(() => master.data?.services ?? [], [master.data])
+  /** Workspace org for services: bound profile org, else first salon membership (solo masters keep profile.organization_id null). */
+  const serviceOrganizationId = useMemo(() => {
+    const fromProfile = master.data?.master.organization_id?.trim()
+    if (fromProfile) return fromProfile
+    const salon = (orgs.data?.items ?? []).find((o) => o.organization.type !== 'supplier')
+    return salon?.organization.id ?? null
+  }, [master.data, orgs.data])
   const branchId = master.data?.master.branch_id ?? undefined
   const branch = useQuery({
     queryKey: ['branch', branchId],
@@ -151,8 +169,9 @@ export function ServicesPage() {
 
   const save = useMutation({
     mutationFn: async (values: FormValues) => {
-      const orgId = master.data?.master.organization_id
-      if (!orgId) throw new ApiError('Сначала создайте профиль мастера', 'validation_error', 400)
+      if (!master.data?.master?.id) {
+        throw new ApiError('Сначала создайте профиль мастера', 'validation_error', 400)
+      }
       const payload = {
         name: values.name,
         category: values.category,
@@ -173,14 +192,16 @@ export function ServicesPage() {
           },
         })
       }
+      // Omit organization_id when unknown — backend resolves from profile or owned salon.
+      const body: Record<string, unknown> = {
+        ...payload,
+        photo_media_id: photoMediaIdForCreate(photoMediaId),
+        attach_to_me: true,
+      }
+      if (serviceOrganizationId) body.organization_id = serviceOrganizationId
       return apiRequest('/v1/services', {
         token: accessToken,
-        body: {
-          organization_id: orgId,
-          ...payload,
-          photo_media_id: photoMediaIdForCreate(photoMediaId),
-          attach_to_me: true,
-        },
+        body,
       })
     },
     onSuccess: async () => {

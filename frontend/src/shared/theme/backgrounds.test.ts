@@ -4,8 +4,11 @@ import {
   HOME_BG_ACCENT_STORAGE_KEY,
   HOME_BG_MEDIA_STORAGE_KEY,
   HOME_BG_STORAGE_KEY,
+  WALLPAPER_ACTIVE_USER_KEY,
   backgroundById,
+  bindWallpaperUser,
   clearCustomHomeBackground,
+  clearWallpaperSession,
   getHomeBackground,
   parseHomeBgPreference,
   preferenceFromStorage,
@@ -23,6 +26,7 @@ describe('home backgrounds', () => {
   beforeEach(() => {
     localStorage.clear()
     document.documentElement.dataset.theme = 'dark'
+    bindWallpaperUser('user-a')
   })
 
   it('falls back to the first system background', () => {
@@ -41,9 +45,11 @@ describe('home backgrounds', () => {
     expect(parseHomeBgPreference(null)).toBeNull()
   })
 
-  it('keeps legacy system id in localStorage when selecting a system wallpaper', () => {
+  it('stores system wallpaper under the active user scope', () => {
     setHomeBackground('pebble-shore')
-    expect(localStorage.getItem(HOME_BG_STORAGE_KEY)).toBe('pebble-shore')
+    expect(localStorage.getItem('zb.wallpaper.user-a.bg')).toBe('pebble-shore')
+    expect(localStorage.getItem('zb.wallpaper.user-a.media')).toBeNull()
+    expect(localStorage.getItem(HOME_BG_STORAGE_KEY)).toBeNull()
     expect(localStorage.getItem(HOME_BG_MEDIA_STORAGE_KEY)).toBeNull()
     expect(preferenceFromStorage()).toEqual({ source: 'system', id: 'pebble-shore' })
   })
@@ -56,10 +62,37 @@ describe('home backgrounds', () => {
   })
 
   it('falls back to default system wallpaper after clearing custom', () => {
-    localStorage.setItem(HOME_BG_MEDIA_STORAGE_KEY, 'media-1')
+    localStorage.setItem('zb.wallpaper.user-a.media', 'media-1')
     clearCustomHomeBackground()
-    expect(localStorage.getItem(HOME_BG_MEDIA_STORAGE_KEY)).toBeNull()
-    expect(localStorage.getItem(HOME_BG_STORAGE_KEY)).toBe(HOME_BACKGROUNDS[0].id)
+    expect(localStorage.getItem('zb.wallpaper.user-a.media')).toBeNull()
+    expect(localStorage.getItem('zb.wallpaper.user-a.bg')).toBe(HOME_BACKGROUNDS[0].id)
+  })
+
+  it('isolates wallpapers between accounts and resets on logout', () => {
+    setHomeBackground('mist-canyon')
+    expect(document.documentElement.dataset.homeBg).toBe('mist-canyon')
+
+    bindWallpaperUser('user-b')
+    expect(getHomeBackground().id).toBe(HOME_BACKGROUNDS[0].id)
+    expect(document.documentElement.dataset.homeBg).toBe(HOME_BACKGROUNDS[0].id)
+    setHomeBackground('pebble-shore')
+
+    bindWallpaperUser('user-a')
+    expect(getHomeBackground().id).toBe('mist-canyon')
+
+    clearWallpaperSession()
+    expect(localStorage.getItem(WALLPAPER_ACTIVE_USER_KEY)).toBeNull()
+    expect(document.documentElement.dataset.homeBg).toBe(HOME_BACKGROUNDS[0].id)
+    // Previous account data remains for re-login, but is not active.
+    expect(localStorage.getItem('zb.wallpaper.user-a.bg')).toBe('mist-canyon')
+    expect(localStorage.getItem('zb.wallpaper.user-b.bg')).toBe('pebble-shore')
+  })
+
+  it('does not apply legacy global zb.home-bg to a new account', () => {
+    localStorage.setItem(HOME_BG_STORAGE_KEY, 'mist-canyon')
+    bindWallpaperUser('user-c')
+    expect(getHomeBackground().id).toBe(HOME_BACKGROUNDS[0].id)
+    expect(localStorage.getItem(HOME_BG_STORAGE_KEY)).toBeNull()
   })
 
   it('persists wallpaper accent cache and restores it on selection', () => {

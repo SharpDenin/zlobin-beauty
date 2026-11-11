@@ -92,7 +92,11 @@ test.describe('Settings hub appearance', () => {
     })
     expect(token).toBeTruthy()
 
-    const mediaId = await page.evaluate(() => localStorage.getItem('zb.home-bg-media'))
+    const mediaId = await page.evaluate(() => {
+      const active = localStorage.getItem('zb.wallpaper.active-user')
+      if (active) return localStorage.getItem(`zb.wallpaper.${active}.media`)
+      return localStorage.getItem('zb.home-bg-media')
+    })
     expect(mediaId).toBeTruthy()
 
     const other = await request.post(`${api}/v1/auth/login`, {

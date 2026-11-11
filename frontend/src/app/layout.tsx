@@ -15,6 +15,7 @@ import { MessengerProvider, useMessengerOptional } from '@/features/messenger/Me
 import { PremiumStatusLink } from '@/features/dashboard/PremiumStatusLink'
 import { releaseOrphanedOverlayLock } from '@/shared/ui/overlayLock'
 import { HomeBackgroundPreferenceSync } from '@/features/settings/HomeBackgroundPreferenceSync'
+import { EmailVerifyPromptModal } from '@/features/auth/EmailVerifyPromptModal'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
@@ -273,6 +274,7 @@ export function AppShell() {
   return (
     <MessengerProvider>
       <HomeBackgroundPreferenceSync />
+      <EmailVerifyPromptModal />
       <AppShellInner />
     </MessengerProvider>
   )

@@ -148,11 +148,12 @@ type userDTO struct {
 }
 
 type authResp struct {
-	AccessToken      string    `json:"access_token"`
-	RefreshToken     string    `json:"refresh_token"`
-	AccessExpiresAt  time.Time `json:"access_expires_at"`
-	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
-	User             userDTO   `json:"user"`
+	AccessToken           string    `json:"access_token"`
+	RefreshToken          string    `json:"refresh_token"`
+	AccessExpiresAt       time.Time `json:"access_expires_at"`
+	RefreshExpiresAt      time.Time `json:"refresh_expires_at"`
+	User                  userDTO   `json:"user"`
+	EmailVerificationSent *bool     `json:"email_verification_sent,omitempty"`
 }
 
 func toUserDTO(u domain.User) userDTO {
@@ -242,14 +243,17 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	res, err := a.svc.Register(r.Context(), service.RegisterInput{
 		Email: req.Email, Phone: req.Phone, Password: req.Password, DisplayName: req.DisplayName,
 		AsMaster: req.AsMaster, AsSupplier: req.AsSupplier, AsSupplierRep: req.AsSupplierRep, AsSalonAdmin: req.AsSalonAdmin,
+		ClientIP: clientIP(r),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
+	sent := res.EmailVerificationSent
 	httpx.JSON(w, http.StatusCreated, authResp{
 		AccessToken: res.AccessToken, RefreshToken: res.RefreshToken,
 		AccessExpiresAt: res.AccessExp, RefreshExpiresAt: res.RefreshExp, User: toUserDTO(res.User),
+		EmailVerificationSent: &sent,
 	})
 }
 

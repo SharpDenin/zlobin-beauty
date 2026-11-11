@@ -174,12 +174,92 @@ describe('MasterCabinetPage PROF-01..05', () => {
     expect(screen.queryByLabelText('Образование')).not.toBeInTheDocument()
   })
 
-  it('does not expose publish-in-search toggle or visibility status', async () => {
+  it('shows publish CTA disabled while readiness is incomplete', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('master-readiness-missing')).toBeInTheDocument())
-    expect(screen.queryByText('Показать профиль в поиске')).not.toBeInTheDocument()
-    expect(screen.queryByText('В поиске')).not.toBeInTheDocument()
-    expect(screen.queryByText('Скрыт')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('master-publish')).toBeInTheDocument())
+    expect(screen.getByTestId('master-publish')).toBeDisabled()
+    expect(screen.getByText(/Закройте пункты выше/)).toBeInTheDocument()
+    expect(screen.queryByTestId('master-unpublish')).not.toBeInTheDocument()
+  })
+
+  it('publishes ready profile into search', async () => {
+    mockedRequest.mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
+      if (path === '/v1/organizations/mine') {
+        return {
+          items: [{
+            organization: { id: 'org1', name: 'Салон', type: 'salon', published: true, description: '' },
+            branches: [{ id: 'b1', name: 'Филиал', city: 'Красноярск', address_line: 'Ленина 1', phone: '+79001112233', published: true }],
+            roles: ['owner'],
+          }],
+        }
+      }
+      if (path.includes('/readiness') && path.includes('/organizations/')) {
+        return { ready: true, missing: [], checks: [] }
+      }
+      if (path.includes('/branches/') && path.includes('/readiness')) {
+        return { ready: true, missing: [], checks: [] }
+      }
+      if (path === '/v1/me/master/readiness') {
+        return {
+          ready: true,
+          missing: [],
+          checks: [
+            { key: 'display_name', label: 'Имя для публикации', ok: true },
+            { key: 'city', label: 'Город', ok: true },
+            { key: 'specializations', label: 'Специализация', ok: true },
+            { key: 'profession_types', label: 'Профессиональный тип', ok: true },
+            { key: 'bio', label: 'Описание (от 10 символов)', ok: true },
+            { key: 'experience', label: 'Опыт (лет)', ok: true },
+            { key: 'service', label: 'Хотя бы одна услуга', ok: true },
+            { key: 'schedule', label: 'Расписание', ok: true },
+          ],
+        }
+      }
+      if (path === '/v1/me/master' && (!init?.method || init.method === 'GET')) {
+        return {
+          master: {
+            id: 'm1',
+            organization_id: 'org1',
+            branch_id: 'b1',
+            published: false,
+            photo_media_id: null,
+            work_type: 'private_practice',
+            work_types: ['private_practice'],
+            display_name: 'Анна',
+            city: 'Красноярск',
+            bio: 'Опытный мастер колористики',
+            specializations: ['колористика'],
+            experience_years: 3,
+            education: 'Academy',
+            profession_types: [{ id: '11111111-1111-1111-1111-111111111111', slug: 'colorist', name: 'Колорист' }],
+          },
+          services: [{ id: 's1' }],
+        }
+      }
+      if (path === '/v1/me/master' && init?.method === 'PUT') {
+        return { id: 'm1', published: (init.body as { published?: boolean })?.published }
+      }
+      if (path === '/v1/me/working-hours') return { items: [] }
+      if (path.includes('/portfolio')) return { items: [] }
+      if (path.includes('/photos')) return { items: [] }
+      throw new Error(`unexpected ${path} ${init?.method}`)
+    })
+
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('master-publish')).toBeEnabled())
+    expect(screen.getByText('Профиль готов к публикации')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('master-publish'))
+    await waitFor(() => {
+      expect(mockedRequest).toHaveBeenCalledWith(
+        '/v1/me/master',
+        expect.objectContaining({
+          method: 'PUT',
+          body: expect.objectContaining({ published: true, display_name: 'Анна' }),
+        }),
+      )
+    })
+    await waitFor(() => expect(screen.getByText('Профиль опубликован в поиске')).toBeInTheDocument())
   })
 
   it('saves phone with success feedback and keeps validation path on error', async () => {

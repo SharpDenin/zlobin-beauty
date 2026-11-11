@@ -333,6 +333,58 @@ export function MasterCabinetPage() {
     onError: (e) => setError(formatUserError(e, 'Не удалось опубликовать филиал')),
   })
 
+  const publishMaster = useMutation({
+    mutationFn: async (published: boolean) => {
+      const existing = master.data?.master
+      if (!existing) throw new Error('Сначала сохраните профиль мастера')
+      if (published && !readiness.data?.ready) {
+        throw new ApiError('Профиль ещё не готов к публикации', 'validation_error', 400)
+      }
+      const types = uniqueCanonicalWorkTypes(
+        existing.work_types?.length ? existing.work_types : [existing.work_type || 'private_practice'],
+      )
+      const org = primaryOrg
+      const boundOrg = Boolean(existing.organization_id)
+      return apiRequest('/v1/me/master', {
+        method: 'PUT',
+        token: accessToken,
+        body: {
+          ...(org || boundOrg
+            ? {
+                organization_id: org?.organization.id ?? existing.organization_id,
+                branch_id: primaryBranch?.id ?? org?.branches[0]?.id ?? existing.branch_id,
+              }
+            : {}),
+          display_name: existing.display_name,
+          city: existing.city,
+          bio: existing.bio ?? '',
+          specializations: uniqueSpecializationTags(existing.specializations),
+          experience_years: existing.experience_years ?? 1,
+          education: existing.education ?? '',
+          work_type: primaryWorkType(types),
+          work_types: types.length ? types : ['private_practice'],
+          profession_type_ids: selectedProfessionIds(existing),
+          published,
+        },
+      })
+    },
+    onSuccess: async (_data, published) => {
+      setOk(published ? 'Профиль опубликован в поиске' : 'Профиль скрыт из поиска')
+      setError(null)
+      toast.success(published ? 'Профиль опубликован в поиске' : 'Профиль скрыт из поиска')
+      masterForm.setValue('published', published)
+      await qc.invalidateQueries({ queryKey: ['my-master'] })
+      await qc.invalidateQueries({ queryKey: ['me-master-cabinet'] })
+      await qc.invalidateQueries({ queryKey: ['master-readiness'] })
+    },
+    onError: (e) => {
+      setOk(null)
+      const msg = formatUserError(e, 'Не удалось изменить публикацию профиля')
+      setError(msg)
+      toast.error(msg)
+    },
+  })
+
   const saveMaster = useMutation({
     mutationFn: (values: z.infer<typeof masterSchema>) => {
       const specs = filterSpecializationsForSlugs(
@@ -368,7 +420,8 @@ export function MasterCabinetPage() {
           work_type: primaryWorkType(types),
           work_types: types,
           profession_type_ids: values.profession_type_ids,
-          published: values.published,
+          // Visibility is controlled by publishMaster; keep current server flag on profile edits.
+          published: Boolean(master.data?.master.published),
         },
       })
     },
@@ -460,7 +513,7 @@ export function MasterCabinetPage() {
           experience_years: masterForm.getValues('experience_years') ?? existing?.experience_years ?? 0,
           // Education stays in API payload for compatibility; field is hidden in UI (PROF-04).
           education: existing?.education ?? masterForm.getValues('education') ?? '',
-          published: masterForm.getValues('published') ?? Boolean(existing?.published),
+          published: Boolean(existing?.published),
           work_type: primaryWorkType(workTypes),
           work_types: workTypes,
           photo_media_id: mediaId,
@@ -567,9 +620,11 @@ export function MasterCabinetPage() {
         {readiness.data && (
           <>
             <p>
-              {readiness.data.ready
-                ? 'Всё готово — можно публиковать профиль в поиске.'
-                : 'Не хватает пунктов ниже. Можно сохранять профиль по частям — обязательные поля отмечены у формы.'}
+              {master.data?.master.published
+                ? 'Профиль опубликован и виден в поиске.'
+                : readiness.data.ready
+                  ? 'Всё готово — можно публиковать профиль в поиске.'
+                  : 'Не хватает пунктов ниже. Можно сохранять профиль по частям — обязательные поля отмечены у формы.'}
             </p>
             <div className="list" data-testid="master-readiness-missing">
               {missingChecks.map((c) => {
@@ -589,10 +644,48 @@ export function MasterCabinetPage() {
                   </div>
                 )
               })}
-              {readiness.data.ready && (
+              {readiness.data.ready && !master.data?.master.published && (
                 <div className="state-box success">Профиль готов к публикации</div>
               )}
+              {master.data?.master.published && (
+                <div className="state-box success" data-testid="master-published-status">
+                  Профиль опубликован и виден в поиске
+                </div>
+              )}
             </div>
+            {master.data && (
+              <div className="row gap wrap" data-testid="master-publish-actions">
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  data-testid="master-publish"
+                  disabled={
+                    publishMaster.isPending
+                    || !readiness.data.ready
+                    || Boolean(master.data.master.published)
+                  }
+                  onClick={() => publishMaster.mutate(true)}
+                >
+                  {publishMaster.isPending && !master.data.master.published
+                    ? 'Публикуем…'
+                    : 'Опубликовать в поиске'}
+                </button>
+                {master.data.master.published && (
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    data-testid="master-unpublish"
+                    disabled={publishMaster.isPending}
+                    onClick={() => publishMaster.mutate(false)}
+                  >
+                    {publishMaster.isPending ? 'Скрываем…' : 'Скрыть из поиска'}
+                  </button>
+                )}
+              </div>
+            )}
+            {master.data && !master.data.master.published && readiness.data.ready === false && (
+              <p className="muted">Закройте пункты выше, чтобы опубликовать профиль в поиске.</p>
+            )}
           </>
         )}
       </section>

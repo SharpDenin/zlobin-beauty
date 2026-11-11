@@ -207,7 +207,12 @@ func (s *Service) loadPlanService(ctx context.Context, serviceID uuid.UUID) (*Pl
 	}
 	cands := make([]PlanCandidate, 0, len(masters))
 	for _, m := range masters {
-		if !m.Published || m.OrganizationID != item.OrganizationID || m.BranchID == uuid.Nil {
+		// Unbound private_practice profiles have nil org/branch but still offer the service
+		// via a workspace organization on the service itself.
+		if !m.Published {
+			continue
+		}
+		if m.OrganizationID != uuid.Nil && m.OrganizationID != item.OrganizationID {
 			continue
 		}
 		cands = append(cands, m)
@@ -331,9 +336,13 @@ func (s *Service) fetchServiceMasters(ctx context.Context, serviceID uuid.UUID) 
 		if err != nil {
 			continue
 		}
-		oid, err := uuid.Parse(it.OrganizationID)
-		if err != nil {
-			continue
+		oid := uuid.Nil
+		if strings.TrimSpace(it.OrganizationID) != "" {
+			parsed, err := uuid.Parse(strings.TrimSpace(it.OrganizationID))
+			if err != nil {
+				continue
+			}
+			oid = parsed
 		}
 		var bid uuid.UUID
 		if it.BranchID != nil && *it.BranchID != "" {
@@ -480,38 +489,19 @@ func (s *Service) composeFlexibleLeg(ctx context.Context, in CreateInput, known 
 	if blocked {
 		return nil, apperr.ForbiddenCode(apperr.CodeClientBlacklisted, "client is blacklisted for this master")
 	}
-	orgID, err := uuid.Parse(payload.Master.OrganizationID)
+	ws, err := resolveBookingWorkspace(payload, in.ServiceID)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return nil, err
 	}
+	orgID := ws.OrgID
+	branchID := ws.BranchID
 	if known != nil && orgID != known.OrganizationID {
 		return nil, apperr.Forbidden("master does not belong to the service salon")
 	}
-	if payload.Master.BranchID == nil {
-		return nil, apperr.Validation("master has no branch")
-	}
-	branchID, err := uuid.Parse(*payload.Master.BranchID)
-	if err != nil {
-		return nil, apperr.Validation("invalid master branch")
-	}
-	var svcName string
-	var duration int
-	var price int64
-	currency := "RUB"
-	found := false
-	for _, svc := range payload.Services {
-		if svc.ID == in.ServiceID.String() {
-			found = true
-			svcName = svc.Name
-			duration = svc.DurationMinutes
-			price = svc.PriceMinor
-			currency = svc.Currency
-			break
-		}
-	}
-	if !found {
-		return nil, apperr.Validation("service is not offered by master")
-	}
+	svcName := ws.ServiceName
+	duration := ws.DurationMinutes
+	price := ws.PriceMinor
+	currency := ws.Currency
 	startsAt := in.StartsAt.UTC()
 	tz := s.timezoneForBranch(ctx, branchID)
 	loc, err := time.LoadLocation(tz)
@@ -530,6 +520,8 @@ func (s *Service) composeFlexibleLeg(ctx context.Context, in CreateInput, known 
 	locName, locCity, locAddr, locTZ := "", "", "", tz
 	if locSnap != nil {
 		locName, locCity, locAddr, locTZ = locSnap.Name, locSnap.City, locSnap.Address, locSnap.Timezone
+	} else if ws.MasterCity != "" {
+		locCity = ws.MasterCity
 	}
 	now := s.now().UTC()
 	status := domain.StatusPendingConfirmation

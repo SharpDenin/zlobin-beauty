@@ -540,10 +540,11 @@ type masterPayload struct {
 	Master struct {
 		ID             string  `json:"id"`
 		UserID         string  `json:"user_id"`
-		OrganizationID string  `json:"organization_id"`
+		OrganizationID *string `json:"organization_id"`
 		BranchID       *string `json:"branch_id"`
 		Published      bool    `json:"published"`
 		DisplayName    string  `json:"display_name"`
+		City           string  `json:"city"`
 	} `json:"master"`
 	Services []struct {
 		ID              string `json:"id"`
@@ -551,7 +552,76 @@ type masterPayload struct {
 		DurationMinutes int    `json:"duration_minutes"`
 		PriceMinor      int64  `json:"price_minor"`
 		Currency        string `json:"currency"`
+		OrganizationID  string `json:"organization_id"`
 	} `json:"services"`
+}
+
+// bookingWorkspace is the salon/workspace context written onto an appointment.
+// Independent (private_practice) masters often have null profile org/branch while
+// their services still belong to a workspace organization — resolve from the service.
+type bookingWorkspace struct {
+	OrgID           uuid.UUID
+	BranchID        uuid.UUID // may be uuid.Nil when the salon has no branch yet
+	ServiceName     string
+	DurationMinutes int
+	PriceMinor      int64
+	Currency        string
+	MasterCity      string
+}
+
+func parseOptionalUUIDString(raw *string) uuid.UUID {
+	if raw == nil {
+		return uuid.Nil
+	}
+	s := strings.TrimSpace(*raw)
+	if s == "" {
+		return uuid.Nil
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
+}
+
+func resolveBookingWorkspace(payload *masterPayload, serviceID uuid.UUID) (*bookingWorkspace, error) {
+	if payload == nil {
+		return nil, apperr.Validation("master payload is required")
+	}
+	ws := &bookingWorkspace{
+		OrgID:      parseOptionalUUIDString(payload.Master.OrganizationID),
+		BranchID:   parseOptionalUUIDString(payload.Master.BranchID),
+		MasterCity: strings.TrimSpace(payload.Master.City),
+		Currency:   "RUB",
+	}
+	found := false
+	var serviceOrg uuid.UUID
+	for _, svc := range payload.Services {
+		if svc.ID != serviceID.String() {
+			continue
+		}
+		found = true
+		ws.ServiceName = svc.Name
+		ws.DurationMinutes = svc.DurationMinutes
+		ws.PriceMinor = svc.PriceMinor
+		if strings.TrimSpace(svc.Currency) != "" {
+			ws.Currency = svc.Currency
+		}
+		if id, err := uuid.Parse(strings.TrimSpace(svc.OrganizationID)); err == nil {
+			serviceOrg = id
+		}
+		break
+	}
+	if !found {
+		return nil, apperr.Validation("service is not offered by master")
+	}
+	if ws.OrgID == uuid.Nil {
+		ws.OrgID = serviceOrg
+	}
+	if ws.OrgID == uuid.Nil {
+		return nil, apperr.Validation("service workspace organization is required")
+	}
+	return ws, nil
 }
 
 type occurrencePayload struct {
@@ -616,37 +686,17 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	if blocked {
 		return nil, apperr.ForbiddenCode(apperr.CodeClientBlacklisted, "client is blacklisted for this master")
 	}
-	orgID, err := uuid.Parse(payload.Master.OrganizationID)
+	ws, err := resolveBookingWorkspace(payload, in.ServiceID)
 	if err != nil {
-		return nil, apperr.Internal(fmt.Errorf("bad org id"))
+		return nil, err
 	}
-	if payload.Master.BranchID == nil {
-		return nil, apperr.Validation("master has no branch")
-	}
-	masterBranchID, err := uuid.Parse(*payload.Master.BranchID)
-	if err != nil {
-		return nil, apperr.Validation("invalid master branch")
-	}
-	var svcName string
-	var duration int
-	var price int64
-	currency := "RUB"
-	found := false
-	for _, svc := range payload.Services {
-		if svc.ID == in.ServiceID.String() {
-			found = true
-			svcName = svc.Name
-			duration = svc.DurationMinutes
-			price = svc.PriceMinor
-			currency = svc.Currency
-			break
-		}
-	}
-	if !found {
-		return nil, apperr.Validation("service is not offered by master")
-	}
+	orgID := ws.OrgID
+	branchID := ws.BranchID
+	svcName := ws.ServiceName
+	duration := ws.DurationMinutes
+	price := ws.PriceMinor
+	currency := ws.Currency
 
-	branchID := masterBranchID
 	bookingMode := domain.BookingModeFlexible
 	startsAt := in.StartsAt.UTC()
 	endsAt := startsAt.Add(time.Duration(duration) * time.Minute)
@@ -721,6 +771,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 	locName, locCity, locAddr, locTZ := "", "", "", defaultTimezone
 	if loc != nil {
 		locName, locCity, locAddr, locTZ = loc.Name, loc.City, loc.Address, loc.Timezone
+	} else if ws.MasterCity != "" {
+		locCity = ws.MasterCity
 	}
 
 	now := s.now().UTC()

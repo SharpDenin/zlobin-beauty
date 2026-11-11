@@ -21,6 +21,10 @@ func TestSearchMastersSourceContract(t *testing.T) {
 	if !strings.Contains(body, "mp.published = TRUE") && !strings.Contains(body, "mp.published=TRUE") {
 		t.Fatal("SearchMasters must filter by published = TRUE")
 	}
+	// Filter is gated by Store.OwnerStatusSearchFilter via ownerStatusSQL("mp").
+	if !strings.Contains(body, `s.ownerStatusSQL("mp")`) {
+		t.Fatal("SearchMasters must gate owner_status via ownerStatusSQL (rollout flag)")
+	}
 	for _, frag := range []string{
 		"portfolio_items",
 		"pi.title",

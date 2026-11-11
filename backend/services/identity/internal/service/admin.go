@@ -1,8 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -72,12 +76,36 @@ func (s *Service) AdminSetUserStatus(ctx context.Context, actor, target uuid.UUI
 	}
 	before := user.Status
 	now := s.now().UTC()
+
+	// Block: hide from marketplace search BEFORE flipping identity status so a later
+	// identity-batch outage cannot resurrect a blocked master in public search.
+	if status == "blocked" {
+		if err := s.syncMarketplaceOwnerStatus(ctx, target, "blocked"); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := s.store.SetUserStatus(ctx, target, status, now); err != nil {
+		// Compensate marketplace if we already flipped owner_status for a new block.
+		if status == "blocked" && before != "blocked" {
+			_ = s.syncMarketplaceOwnerStatus(ctx, target, before)
+		}
 		return nil, apperr.Internal(err)
 	}
 	if status == "blocked" {
 		_ = s.store.RevokeSessionsForUser(ctx, target, now)
 	}
+
+	// Unblock: restore search eligibility only after identity is active again.
+	if status == "active" {
+		if err := s.syncMarketplaceOwnerStatus(ctx, target, "active"); err != nil {
+			// Keep search closed: revert identity to blocked so both sides stay consistent.
+			_ = s.store.SetUserStatus(ctx, target, "blocked", now)
+			_ = s.store.RevokeSessionsForUser(ctx, target, now)
+			return nil, err
+		}
+	}
+
 	action := "user.unblocked"
 	if status == "blocked" {
 		action = "user.blocked"
@@ -91,6 +119,33 @@ func (s *Service) AdminSetUserStatus(ctx context.Context, actor, target uuid.UUI
 	user.Status = status
 	user.UpdatedAt = now
 	return user, nil
+}
+
+// syncMarketplaceOwnerStatus pushes identity eligibility into marketplace master_profiles.owner_status.
+// When marketplace deps are not wired (local/unit), the call is skipped.
+// When wired, failure fails the admin action so status changes are not silently half-applied.
+func (s *Service) syncMarketplaceOwnerStatus(ctx context.Context, userID uuid.UUID, status string) error {
+	if s.marketplaceURL == "" || s.internalToken == "" {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]string{"status": status})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		s.marketplaceURL+"/v1/internal/users/"+userID.String()+"/owner-status", bytes.NewReader(body))
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return apperr.Internal(fmt.Errorf("marketplace owner-status: %w", err))
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return apperr.Internal(fmt.Errorf("marketplace owner-status status %d", resp.StatusCode))
+	}
+	return nil
 }
 
 func (s *Service) AdminUserStats(ctx context.Context) (store.UserStats, error) {

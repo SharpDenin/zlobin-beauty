@@ -48,7 +48,18 @@ func (s *Service) AdminGetMaster(ctx context.Context, id uuid.UUID) (*domain.Mas
 
 // UnpublishMasterByUserID hides a master profile during account deletion. Idempotent when absent/already unpublished.
 func (s *Service) UnpublishMasterByUserID(ctx context.Context, userID uuid.UUID) (bool, error) {
-	changed, err := s.store.UnpublishMasterByUser(ctx, userID, s.now().UTC())
+	return s.SetOwnerStatusByUserID(ctx, userID, domain.OwnerStatusDeleted)
+}
+
+// SetOwnerStatusByUserID mirrors identity active/blocked/deleted onto master_profiles for search.
+// Required so public search can hide blocked/deleted owners when identity batch is unavailable.
+func (s *Service) SetOwnerStatusByUserID(ctx context.Context, userID uuid.UUID, status string) (bool, error) {
+	switch status {
+	case domain.OwnerStatusActive, domain.OwnerStatusBlocked, domain.OwnerStatusDeleted:
+	default:
+		return false, apperr.Validation("owner_status must be active, blocked, or deleted")
+	}
+	changed, err := s.store.SetOwnerStatusByUser(ctx, userID, status, s.now().UTC())
 	if err != nil {
 		return false, apperr.Internal(err)
 	}

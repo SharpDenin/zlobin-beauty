@@ -129,6 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hydratedRef = useRef(false)
 
   function commit(next: SessionRef, persist: boolean) {
+    // Never resurrect credentials while a deliberate logout is in progress (late refresh race).
+    if (loggingOutRef.current && (next.accessToken || next.refreshToken)) return
     sessionRef.current = next
     setUser(next.user)
     setAccessToken(next.accessToken)
@@ -149,12 +151,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (reason === 'expired' && (!had || loggingOutRef.current)) return
     if (reason === 'expired') markSessionEnded()
     else clearSessionEnded()
+    // Abort + bump auth epoch BEFORE clearing storage so in-flight refresh cannot rewrite tokens.
+    abortInFlightRequests()
     sessionRef.current = { accessToken: null, refreshToken: null, user: null }
     setUser(null)
     setAccessToken(null)
     setRefreshToken(null)
     clearStoredSession()
-    abortInFlightRequests()
     queryClient.clear()
     clearMediaCache()
     resetPreferenceSync()
@@ -171,11 +174,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     bindAuthBridge({
       getSession: () => {
+        if (loggingOutRef.current) return null
         const s = sessionRef.current
         if (!s.accessToken || !s.refreshToken) return null
         return { accessToken: s.accessToken, refreshToken: s.refreshToken }
       },
       setSession: (next, persist = true) => {
+        if (loggingOutRef.current) return
         const u = (next.user as User | undefined) ?? sessionRef.current.user
         commit({ accessToken: next.accessToken, refreshToken: next.refreshToken, user: u }, persist)
       },
@@ -306,18 +311,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return res.user
       },
       async logout() {
-        // From here on, stray 401s from requests that were already in flight are not "expiry".
+        // Idempotent: rapid double-clicks must not re-enter after the first clear.
+        if (loggingOutRef.current) return
+        // Block refresh/setSession immediately, then clear locally BEFORE awaiting the server.
+        // Awaiting first allowed in-flight refresh to write tokens back — logout needed many clicks.
         loggingOutRef.current = true
         const rt = sessionRef.current.refreshToken
-        if (rt) {
-          try {
-            await apiRequest('/v1/auth/logout', { body: { refresh_token: rt }, skipAuthRefresh: true })
-          } catch {
-            // the local session is cleared below regardless of the server answer
+        try {
+          endSession('logout')
+          if (rt) {
+            try {
+              // Bound wait: local session is already gone; never block account switch on a hung revoke.
+              await Promise.race([
+                apiRequest('/v1/auth/logout', { body: { refresh_token: rt }, skipAuthRefresh: true }),
+                new Promise<void>((resolve) => {
+                  window.setTimeout(resolve, 4_000)
+                }),
+              ])
+            } catch {
+              // Local session is already cleared; server revoke is best-effort.
+            }
           }
+        } finally {
+          loggingOutRef.current = false
         }
-        endSession('logout')
-        loggingOutRef.current = false
       },
       updateUser(next) {
         const s = sessionRef.current

@@ -14,6 +14,7 @@ import (
 func (a *API) registerDirectoryRoutes(mux *http.ServeMux, internal func(http.Handler) http.Handler) {
 	mux.Handle("GET /v1/internal/users/search", internal(http.HandlerFunc(a.internalUsersSearch)))
 	mux.Handle("GET /v1/internal/users/batch", internal(http.HandlerFunc(a.internalUsersBatch)))
+	mux.Handle("GET /v1/internal/users/statuses", internal(http.HandlerFunc(a.internalUsersStatuses)))
 	mux.Handle("GET /v1/internal/users/resolve", internal(http.HandlerFunc(a.internalUsersResolve)))
 }
 
@@ -54,6 +55,35 @@ func (a *API) internalUsersBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": directoryDTOs(items)})
+}
+
+func (a *API) internalUsersStatuses(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.URL.Query().Get("ids"))
+	var ids []uuid.UUID
+	if raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, err := uuid.Parse(part)
+			if err != nil {
+				httpx.WriteError(w, r, a.log, apperr.Validation("invalid ids"))
+				return
+			}
+			ids = append(ids, id)
+		}
+	}
+	items, err := a.svc.BatchUserStatuses(r.Context(), ids)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{"id": it.ID.String(), "status": it.Status})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) internalUsersResolve(w http.ResponseWriter, r *http.Request) {

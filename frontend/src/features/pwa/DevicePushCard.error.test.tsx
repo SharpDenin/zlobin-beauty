@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DevicePushCard } from './DevicePushCard'
 
 vi.mock('@/features/auth/AuthProvider', () => ({
-  useAuth: () => ({ accessToken: 'tok', user: { id: 'u1' } }),
+  useAuth: () => ({ accessToken: 'tok', user: { id: 'u1', display_name: 'A' } }),
 }))
 
 vi.mock('@/shared/lib/preferences', () => ({

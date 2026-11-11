@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +20,18 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/httpx"
 	"github.com/zlobin/zlobin-beauty/backend/shared/logging"
 )
+
+func envBool(key string) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return v == "1" || v == "yes" || v == "on"
+	}
+	return b
+}
 
 func main() {
 	cfg := config.MustBase("marketplace")
@@ -43,7 +57,8 @@ func main() {
 		log.Error("migrate", "error", err)
 		os.Exit(1)
 	}
-	st := store.New(pool)
+	ownerFilter := envBool("OWNER_STATUS_SEARCH_FILTER")
+	st := store.New(pool).WithOwnerStatusSearchFilter(ownerFilter)
 	svc := service.New(st).WithOrganizations(os.Getenv("ORGANIZATIONS_URL"), os.Getenv("INTERNAL_TOKEN")).WithBooking(os.Getenv("BOOKING_URL")).WithCommerce(os.Getenv("COMMERCE_URL")).WithClients(os.Getenv("CLIENTS_URL")).WithCommunications(os.Getenv("COMMUNICATIONS_URL")).WithIdentity(os.Getenv("IDENTITY_URL")).WithMedia(os.Getenv("MEDIA_URL"))
 	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN")).
 		WithAccessGate(accesscheck.NewHTTPGate(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")))
@@ -58,7 +73,7 @@ func main() {
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	go func() {
-		log.Info("listening", "addr", cfg.HTTPAddr)
+		log.Info("listening", "addr", cfg.HTTPAddr, "owner_status_search_filter", ownerFilter)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("serve", "error", err)
 			os.Exit(1)

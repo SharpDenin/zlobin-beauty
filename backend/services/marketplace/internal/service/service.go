@@ -522,17 +522,23 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchResult, er
 }
 
 // activeMasterUserIDs asks identity which owners are still active (excludes blocked/deleted).
-// When identity is not wired, only the SQL published filter applies.
+// When identity is not wired OR the batch call fails, fall open to the SQL published filter
+// so a transient identity outage cannot empty public search for valid masters.
 func (s *Service) activeMasterUserIDs(ctx context.Context, rows []store.SearchMasterRow) (map[uuid.UUID]struct{}, error) {
 	out := make(map[uuid.UUID]struct{}, len(rows))
+	allowAll := func() map[uuid.UUID]struct{} {
+		for _, row := range rows {
+			if row.Master.UserID != uuid.Nil {
+				out[row.Master.UserID] = struct{}{}
+			}
+		}
+		return out
+	}
 	if len(rows) == 0 {
 		return out, nil
 	}
 	if s.identityURL == "" || s.internalToken == "" {
-		for _, row := range rows {
-			out[row.Master.UserID] = struct{}{}
-		}
-		return out, nil
+		return allowAll(), nil
 	}
 	seen := map[uuid.UUID]struct{}{}
 	parts := make([]string, 0, len(rows))
@@ -553,17 +559,17 @@ func (s *Service) activeMasterUserIDs(ctx context.Context, rows []store.SearchMa
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		s.identityURL+"/v1/internal/users/batch?ids="+strings.Join(parts, ","), nil)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return allowAll(), nil
 	}
 	req.Header.Set("X-Internal-Token", s.internalToken)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return allowAll(), nil
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return nil, apperr.Internal(fmt.Errorf("identity users/batch status %d", resp.StatusCode))
+		return allowAll(), nil
 	}
 	var parsed struct {
 		Items []struct {
@@ -571,7 +577,7 @@ func (s *Service) activeMasterUserIDs(ctx context.Context, rows []store.SearchMa
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, apperr.Internal(err)
+		return allowAll(), nil
 	}
 	for _, it := range parsed.Items {
 		id, err := uuid.Parse(it.ID)

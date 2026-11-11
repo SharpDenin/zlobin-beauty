@@ -76,15 +76,27 @@ let authBridge: AuthBridge | null = null
 let refreshInFlight: Promise<string | null> | null = null
 /** Aborted when the session ends so zombie requests cannot trigger refresh/redirect storms. */
 let sessionAbort = new AbortController()
+/**
+ * Bumped on every local session end. In-flight refresh must not call setSession after the
+ * epoch changes — that race is what made logout require many clicks.
+ */
+let authEpoch = 0
 
 export function bindAuthBridge(bridge: AuthBridge) {
   authBridge = bridge
 }
 
+export function getAuthEpoch() {
+  return authEpoch
+}
+
 /** Cancels every in-flight request made through this client (called on logout / session end). */
 export function abortInFlightRequests() {
+  authEpoch += 1
   sessionAbort.abort()
   sessionAbort = new AbortController()
+  // Drop the single-flight handle so a late refresh completion cannot be awaited as "current".
+  refreshInFlight = null
 }
 
 const PUBLIC_AUTH_PATHS = ['/v1/auth/login', '/v1/auth/register', '/v1/auth/refresh', '/v1/auth/logout']
@@ -112,8 +124,11 @@ export function refreshAccessToken(rejectedToken?: string): Promise<string | nul
   if (!authBridge) return Promise.resolve(null)
   if (refreshInFlight) return refreshInFlight
   const bridge = authBridge
+  const epochAtStart = authEpoch
 
   const run = async (): Promise<string | null> => {
+    if (epochAtStart !== authEpoch || !bridge.getSession()) return null
+
     const mem = bridge.getSession()
     const stored = readStoredSession()
     // `rejectedToken`: the server refused this token even though it looks unexpired (revoked,
@@ -122,6 +137,7 @@ export function refreshAccessToken(rejectedToken?: string): Promise<string | nul
 
     // A sibling tab (or the previous lock holder) may already have renewed the pair.
     if (stored && usable(stored.accessToken) && stored.accessToken !== mem?.accessToken) {
+      if (epochAtStart !== authEpoch || !bridge.getSession()) return null
       bridge.setSession({ accessToken: stored.accessToken, refreshToken: stored.refreshToken }, false)
       return stored.accessToken
     }
@@ -136,29 +152,34 @@ export function refreshAccessToken(rejectedToken?: string): Promise<string | nul
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refreshToken }),
+        signal: sessionAbort.signal,
       })
     } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') return null
       throw networkApiError(cause)
     }
+    if (epochAtStart !== authEpoch || !bridge.getSession()) return null
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       if (res.status === 401 || res.status === 403) {
         // Lost a race with another tab that rotated the token a moment ago? Adopt its pair.
         const latest = readStoredSession()
         if (latest && latest.refreshToken !== refreshToken) {
+          if (epochAtStart !== authEpoch || !bridge.getSession()) return null
           bridge.setSession({ accessToken: latest.accessToken, refreshToken: latest.refreshToken }, false)
           return latest.accessToken
         }
-        bridge.clearSession('expired')
+        if (epochAtStart === authEpoch) bridge.clearSession('expired')
       }
       return null
     }
+    if (epochAtStart !== authEpoch || !bridge.getSession()) return null
     bridge.setSession({ accessToken: data.access_token, refreshToken: data.refresh_token, user: data.user })
     return data.access_token as string
   }
 
   refreshInFlight = withRefreshLock(run).finally(() => {
-    refreshInFlight = null
+    if (refreshInFlight) refreshInFlight = null
   })
   return refreshInFlight
 }

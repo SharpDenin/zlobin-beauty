@@ -111,12 +111,22 @@ func (s *Store) SetMasterPublished(ctx context.Context, id uuid.UUID, published 
 	return err
 }
 
-// UnpublishMasterByUser sets published=false for the user's master profile (account deletion cleanup).
+// UnpublishMasterByUser marks the owner's master profile deleted for search and unpublishes it.
+// Idempotent: applies even when already unpublished so owner_status is always durable.
 // Returns false when no profile exists.
 func (s *Store) UnpublishMasterByUser(ctx context.Context, userID uuid.UUID, at time.Time) (bool, error) {
+	return s.SetOwnerStatusByUser(ctx, userID, "deleted", at)
+}
+
+// SetOwnerStatusByUser stores the identity-facing owner eligibility used by public search.
+// status: active | blocked | deleted. deleted always forces published=false.
+func (s *Store) SetOwnerStatusByUser(ctx context.Context, userID uuid.UUID, status string, at time.Time) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE master_profiles SET published=FALSE, updated_at=$2
-WHERE user_id=$1 AND published=TRUE`, userID, at)
+UPDATE master_profiles
+SET owner_status = $2,
+    published = CASE WHEN $2 = 'deleted' THEN FALSE ELSE published END,
+    updated_at = $3
+WHERE user_id = $1`, userID, status, at)
 	if err != nil {
 		return false, err
 	}

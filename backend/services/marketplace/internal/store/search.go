@@ -106,6 +106,7 @@ SELECT
   ) AS price_max_minor
 FROM master_profiles mp
 WHERE mp.published = TRUE
+` + s.ownerStatusSQL("mp") + `
   AND ($1 = '' OR mp.city ILIKE $1)
   AND (
     $2 = ''

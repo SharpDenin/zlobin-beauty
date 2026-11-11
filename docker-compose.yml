@@ -135,6 +135,8 @@ services:
       IDENTITY_URL: http://identity:8080
       MEDIA_URL: http://media:8080
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      # false until owner_status backfill+reconcile; then true (see docs/OWNER_STATUS_ROLLOUT.md)
+      OWNER_STATUS_SEARCH_FILTER: ${OWNER_STATUS_SEARCH_FILTER:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info
     volumes:

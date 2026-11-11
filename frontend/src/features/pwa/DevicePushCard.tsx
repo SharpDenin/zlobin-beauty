@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { userError } from '@/shared/lib/app-error'
 import { usePreference } from '@/shared/lib/preferences'
@@ -20,6 +20,9 @@ export type PushOnboardingPref = {
 }
 
 const DEFAULT_PUSH_ONBOARDING: PushOnboardingPref = { declined: false }
+
+/** Hard ceiling for config + SW + optional sync so UI never sticks on «Проверяем…». */
+const PUSH_CHECK_TIMEOUT_MS = 12_000
 
 const STATUS_COPY: Record<DevicePushUiStatus, { title: string; hint: string }> = {
   loading: { title: 'Проверяем…', hint: '' },
@@ -61,7 +64,8 @@ type Props = {
 }
 
 export function DevicePushCard({ compact = false, className = '', homePrompt = false }: Props) {
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
+  const userId = user?.id ?? null
   const qc = useQueryClient()
   const [status, setStatus] = useState<DevicePushUiStatus>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -70,35 +74,49 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
     PUSH_ONBOARDING_PREF_KEY,
     DEFAULT_PUSH_ONBOARDING,
   )
+  const checkGenRef = useRef(0)
 
   const config = useQuery({
-    queryKey: ['push-config'],
-    queryFn: () => fetchPushConfig(accessToken),
-    enabled: Boolean(accessToken),
+    queryKey: ['push-config', userId],
+    queryFn: ({ signal }) => fetchPushConfig(accessToken, signal),
+    enabled: Boolean(accessToken && userId),
     retry: false,
   })
 
   useEffect(() => {
+    // Account switch / logout: drop prior user status immediately.
+    if (!userId || !accessToken) {
+      setStatus('error')
+      setError(null)
+      setOk(null)
+      return
+    }
+    setStatus('loading')
+    setError(null)
+    setOk(null)
+
+    const gen = ++checkGenRef.current
     let cancelled = false
+    const wallClock = window.setTimeout(() => {
+      if (cancelled || checkGenRef.current !== gen) return
+      setStatus('error')
+      setError('Проверка Push заняла слишком много времени. Попробуйте ещё раз.')
+    }, PUSH_CHECK_TIMEOUT_MS)
+
     ;(async () => {
-      if (!accessToken) {
-        if (!cancelled) setStatus('error')
-        return
-      }
-      // Fail closed before treating an empty payload as still-loading.
       if (config.isError) {
-        if (!cancelled) {
+        if (!cancelled && checkGenRef.current === gen) {
           setStatus('error')
           setError(userError(config.error, 'Не удалось загрузить настройки Push'))
         }
         return
       }
       if (config.isPending || (config.isFetching && !config.data)) {
-        if (!cancelled) setStatus('loading')
+        if (!cancelled && checkGenRef.current === gen) setStatus('loading')
         return
       }
       if (!config.data) {
-        if (!cancelled) {
+        if (!cancelled && checkGenRef.current === gen) {
           setStatus('error')
           setError('Не удалось загрузить настройки Push')
         }
@@ -113,20 +131,23 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
             serverSynced = false
           }
         }
+        if (cancelled || checkGenRef.current !== gen) return
         const next = await resolveDevicePushStatus(config.data, { serverSynced })
-        if (!cancelled) {
-          setStatus(next === 'loading' ? 'default' : next)
-          setError(null)
-        }
+        if (cancelled || checkGenRef.current !== gen) return
+        setStatus(next === 'loading' ? 'default' : next)
+        setError(null)
       } catch {
-        if (!cancelled) setStatus('error')
+        if (!cancelled && checkGenRef.current === gen) setStatus('error')
       }
     })()
+
     return () => {
       cancelled = true
+      window.clearTimeout(wallClock)
     }
-    // Re-run when config payload/status changes — not on every accessToken rotation (avoids PUT storms).
-  }, [accessToken, config.data, config.isPending, config.isFetching, config.isError, config.error])
+    // Depend on userId (account) + config status — not accessToken rotation (avoids PUT storms).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- accessToken only gates presence via userId/query enabled
+  }, [userId, config.data, config.isPending, config.isFetching, config.isError, config.error])
 
   const enable = useMutation({
     mutationFn: async () => {
@@ -139,7 +160,7 @@ export function DevicePushCard({ compact = false, className = '', homePrompt = f
       setOk('Уведомления на устройстве включены')
       setOnboarding({ declined: false })
       setStatus(await resolveDevicePushStatus(config.data, { serverSynced: true }))
-      void qc.invalidateQueries({ queryKey: ['push-config'] })
+      void qc.invalidateQueries({ queryKey: ['push-config', userId] })
     },
     onError: (e) => {
       setOk(null)

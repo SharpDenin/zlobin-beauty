@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,6 +44,7 @@ func (a *API) registerPhase4Routes(mux *http.ServeMux, auth func(http.Handler) h
 
 	mux.Handle("GET /v1/internal/masters/by-user/{userID}", internal(http.HandlerFunc(a.internalMasterByUser)))
 	mux.Handle("POST /v1/internal/users/{userID}/unpublish-master", internal(http.HandlerFunc(a.internalUnpublishMaster)))
+	mux.Handle("PUT /v1/internal/users/{userID}/owner-status", internal(http.HandlerFunc(a.internalSetOwnerStatus)))
 	mux.Handle("GET /v1/internal/masterclasses/{id}/access", internal(http.HandlerFunc(a.internalMasterclassAccess)))
 	mux.Handle("GET /v1/internal/model-requests/{id}/access", internal(http.HandlerFunc(a.internalModelAccess)))
 }
@@ -460,6 +462,27 @@ func (a *API) internalUnpublishMaster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"unpublished": changed})
+}
+
+func (a *API) internalSetOwnerStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user id"))
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	changed, err := a.svc.SetOwnerStatusByUserID(r.Context(), id, strings.TrimSpace(req.Status))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"updated": changed, "status": strings.TrimSpace(req.Status)})
 }
 
 func (a *API) internalMasterclassAccess(w http.ResponseWriter, r *http.Request) {

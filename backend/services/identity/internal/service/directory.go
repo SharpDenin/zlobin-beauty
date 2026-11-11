@@ -46,6 +46,33 @@ func (s *Service) BatchDirectory(ctx context.Context, ids []uuid.UUID) ([]Direct
 	return toDirectoryPublic(items), nil
 }
 
+// UserStatusRow is an internal-only projection for backfill / reconciliation.
+// Unlike directory batch, it includes blocked and deleted accounts.
+type UserStatusRow struct {
+	ID     uuid.UUID
+	Status string
+}
+
+// BatchUserStatuses returns identity status for the given ids (active|blocked|deleted).
+// Missing ids are omitted (caller must treat omission as an error for backfill).
+func (s *Service) BatchUserStatuses(ctx context.Context, ids []uuid.UUID) ([]UserStatusRow, error) {
+	if len(ids) == 0 {
+		return []UserStatusRow{}, nil
+	}
+	if len(ids) > 100 {
+		ids = ids[:100]
+	}
+	items, err := s.store.BatchDirectoryUsers(ctx, ids)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	out := make([]UserStatusRow, 0, len(items))
+	for _, u := range items {
+		out = append(out, UserStatusRow{ID: u.ID, Status: u.Status})
+	}
+	return out, nil
+}
+
 func (s *Service) ResolveDirectory(ctx context.Context, userID *uuid.UUID, email, phone string) (*DirectoryPublicUser, error) {
 	u, err := s.store.ResolveDirectoryUser(ctx, userID, email, phone)
 	if err != nil {

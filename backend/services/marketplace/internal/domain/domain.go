@@ -43,10 +43,18 @@ type MasterProfile struct {
 	RatingAvg       float64
 	RatingCount     int
 	Published       bool
+	// OwnerStatus mirrors identity user status for search eligibility (active|blocked|deleted).
+	OwnerStatus     string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	ProfessionTypes []ProfessionType
 }
+
+const (
+	OwnerStatusActive  = "active"
+	OwnerStatusBlocked = "blocked"
+	OwnerStatusDeleted = "deleted"
+)
 
 type ServiceCategory struct {
 	ID        uuid.UUID

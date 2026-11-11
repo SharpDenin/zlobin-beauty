@@ -96,3 +96,5 @@ curl -fsS http://127.0.0.1:8090/healthz     # с хоста
 - [ ] Smoke: health, login, запись
 
 Подробный чеклист релиза: [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+
+Rollout `owner_status` / search / backfill: [OWNER_STATUS_ROLLOUT.md](OWNER_STATUS_ROLLOUT.md).

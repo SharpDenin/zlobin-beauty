@@ -11,9 +11,26 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 )
 
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool *pgxpool.Pool
+	// OwnerStatusSearchFilter gates mp.owner_status = 'active' in public listing SQL.
+	// Keep false until owner-status backfill + reconcile complete (see docs/OWNER_STATUS_ROLLOUT.md).
+	OwnerStatusSearchFilter bool
+}
 
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+func (s *Store) WithOwnerStatusSearchFilter(enabled bool) *Store {
+	s.OwnerStatusSearchFilter = enabled
+	return s
+}
+
+func (s *Store) ownerStatusSQL(alias string) string {
+	if !s.OwnerStatusSearchFilter {
+		return ""
+	}
+	return " AND " + alias + ".owner_status = 'active'"
+}
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
@@ -170,7 +187,7 @@ SELECT s.id, s.organization_id, s.name, s.category, s.description, s.notes, s.du
        mp.branch_id
 FROM services s
 JOIN master_services ms ON ms.service_id = s.id
-JOIN master_profiles mp ON mp.id = ms.master_id AND mp.published = TRUE
+JOIN master_profiles mp ON mp.id = ms.master_id AND mp.published = TRUE` + s.ownerStatusSQL("mp") + `
 WHERE s.published = TRUE AND s.archived_at IS NULL
 ORDER BY s.created_at DESC
 LIMIT $1`, limit*3)
@@ -249,7 +266,7 @@ func (s *Store) ListMastersOfferingService(ctx context.Context, serviceID uuid.U
 SELECT `+masterCols+`
 FROM master_profiles mp
 JOIN master_services ms ON ms.master_id = mp.id
-WHERE ms.service_id=$1 AND mp.published=TRUE
+WHERE ms.service_id=$1 AND mp.published=TRUE` + s.ownerStatusSQL("mp") + `
 ORDER BY mp.display_name`, serviceID)
 	if err != nil {
 		return nil, err

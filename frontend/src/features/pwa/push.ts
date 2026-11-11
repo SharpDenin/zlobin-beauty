@@ -14,6 +14,23 @@ export type DevicePushUiStatus =
 
 const VAPID_PUBLIC_STORAGE_KEY = 'zb.push.vapidPublicKey'
 const SW_READY_TIMEOUT_MS = 8_000
+const PUSH_NETWORK_TIMEOUT_MS = 10_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(label)), ms)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        window.clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
 
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -61,8 +78,8 @@ export function vapidPublicKeyChanged(serverPublicKey: string): boolean {
   return Boolean(prev && serverPublicKey && prev !== serverPublicKey)
 }
 
-export async function fetchPushConfig(token: string | null): Promise<PushConfig> {
-  return apiRequest<PushConfig>('/v1/push/config', { token })
+export async function fetchPushConfig(token: string | null, signal?: AbortSignal): Promise<PushConfig> {
+  return apiRequest<PushConfig>('/v1/push/config', { token, signal })
 }
 
 /** Wait for SW readiness with a hard timeout so UI never hangs on «Проверяем…». */
@@ -122,14 +139,18 @@ async function putSubscription(token: string | null, subscription: PushSubscript
   }
   // Prefer live session token after long permission prompts; apiRequest also refreshes on 401.
   const fresh = (await getFreshAccessToken()) ?? token
-  await apiRequest('/v1/push/subscription', {
-    method: 'PUT',
-    token: fresh,
-    body: {
-      endpoint: json.endpoint,
-      keys: json.keys,
-    },
-  })
+  await withTimeout(
+    apiRequest('/v1/push/subscription', {
+      method: 'PUT',
+      token: fresh,
+      body: {
+        endpoint: json.endpoint,
+        keys: json.keys,
+      },
+    }),
+    PUSH_NETWORK_TIMEOUT_MS,
+    'Таймаут синхронизации Push-подписки',
+  )
 }
 
 /** Activate a waiting service worker so push handlers (sw-push.js) are current. */

@@ -8,6 +8,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { useBuyerOrg, type SupplierOrder } from '@/shared/lib/commerce'
 import { statusBadgeClass, supplierOrderLabel } from '@/shared/lib/status'
 import { formatQty, movementContext, movementDelta, movementTitle, remainingToAccept, acceptanceStateLabel, canCommitReceipt, discrepancyQty, receiptTotals, type InventoryItem, type InventoryMovement, type ReceiptOrder } from '@/pages/inventory-helpers'
+import { ManualDyeStockForm } from '@/pages/ManualDyeStockForm'
 
 type InventoryResponse = {
   location: { id: string; kind: string; owner_user_id?: string | null }
@@ -31,6 +32,7 @@ function MasterStockList() {
   const { buyerOrgId, orgs } = useBuyerOrg()
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
+  const [dyeOpen, setDyeOpen] = useState(false)
 
   const inventory = useQuery({
     queryKey: ['me-inventory', buyerOrgId],
@@ -78,10 +80,23 @@ function MasterStockList() {
           <p className="muted">Личные остатки. Не склад салона и не склад поставщика.</p>
         </div>
         <div className="row">
+          <button className="btn btn-primary btn-compact" type="button" data-testid="manual-dye-open" onClick={() => setDyeOpen(true)}>
+            Внести красители
+          </button>
           <Link className="btn btn-secondary btn-compact" to="/inventory/receipts">На приёмке</Link>
           <Link className="btn btn-secondary btn-compact" to="/knowledge" data-testid="inventory-knowledge">База знаний</Link>
         </div>
       </div>
+
+      {buyerOrgId && (
+        <ManualDyeStockForm
+          open={dyeOpen}
+          onClose={() => setDyeOpen(false)}
+          token={accessToken}
+          organizationId={buyerOrgId}
+          mode="master"
+        />
+      )}
 
       {inventory.isError && <ErrorBanner error={inventory.error} fallbackTitle="Не удалось загрузить склад" />}
 
@@ -112,8 +127,11 @@ function MasterStockList() {
       {empty && pendingCount === 0 && (
         <div className="empty-state" data-testid="stock-empty">
           <h2>На складе пока ничего нет</h2>
-          <p>Остаток появится после приёмки поставки.</p>
-          <Link className="btn btn-primary" to="/cosmetics">Заказать косметику</Link>
+          <p>Примите поставку или внесите красители вручную по бренду и количеству.</p>
+          <div className="row">
+            <button className="btn btn-primary" type="button" onClick={() => setDyeOpen(true)}>Внести красители</button>
+            <Link className="btn btn-secondary" to="/cosmetics">Заказать косметику</Link>
+          </div>
         </div>
       )}
 

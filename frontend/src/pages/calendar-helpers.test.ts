@@ -15,6 +15,8 @@ import {
   isTerminalStatus,
   longPressMoved,
   LONG_PRESS_SLOP_PX,
+  formatCalendarNowLabel,
+  minutesFromMidnight,
   minutesToTime,
   normalizeCalendarColor,
   rangeToDayInterval,
@@ -59,6 +61,17 @@ describe('calendar helpers', () => {
     expect(appointmentToneClass('confirmed')).toContain('is-busy')
     expect(appointmentToneClass('pending_confirmation')).toContain('is-pending')
     expect(visitCompanionTitle('Стрижка', ['Стрижка', 'Окрашивание'])).toBe('Окрашивание')
+  })
+
+  it('formats now marker with device clock and service-scale hint when zones differ', () => {
+    // 10:30Z = 17:30 Krasnoyarsk = 13:30 Moscow
+    const now = new Date('2026-06-15T10:30:00.000Z')
+    expect(formatCalendarNowLabel(now, 'Europe/Moscow', 'Asia/Krasnoyarsk')).toBe(
+      'Сейчас 17:30 · на шкале 13:30',
+    )
+    expect(formatCalendarNowLabel(now, 'Asia/Krasnoyarsk', 'Asia/Krasnoyarsk')).toBe('Сейчас 17:30')
+    expect(minutesFromMidnight(now, 'Europe/Moscow')).toBe(13 * 60 + 30)
+    expect(minutesFromMidnight(now, 'Asia/Krasnoyarsk')).toBe(17 * 60 + 30)
   })
 
   it('builds a day strip around the anchor in a named timezone', () => {

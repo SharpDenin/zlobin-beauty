@@ -26,6 +26,8 @@ import { workTypesLabel } from '@/shared/lib/work-types'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
+import { formatLocalInTimezone } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { toast } from '@/shared/ui/Toast'
@@ -62,6 +64,8 @@ type Appointment = {
   client_display_name?: string
   master_display_name?: string
   branch_id?: string
+  location_timezone?: string
+  location_city?: string
 }
 
 type Notification = {
@@ -509,8 +513,8 @@ export function DashboardPage() {
                       <div className="row between"><h2>Важное</h2><Link to="/notifications">Все уведомления</Link></div>
                       {unread.length === 0 && pending.length === 0 && cancellations.length === 0 && <div className="dashboard-calm-state">Всё спокойно — срочных действий нет</div>}
                       <div className="important-grid">
-                        {pending.map((a) => <Link key={a.id} to={`/appointments/${a.id}`} className="important-item warning"><span>Требует ответа</span><strong>{a.service_name}</strong><small>{new Date(a.starts_at).toLocaleString('ru-RU')}</small></Link>)}
-                        {cancellations.map((a) => <Link key={a.id} to={`/appointments/${a.id}`} className="important-item danger"><span>Отмена</span><strong>{a.service_name}</strong><small>{new Date(a.starts_at).toLocaleString('ru-RU')}</small></Link>)}
+                        {pending.map((a) => <Link key={a.id} to={`/appointments/${a.id}`} className="important-item warning"><span>Требует ответа</span><strong>{a.service_name}</strong><small>{formatLocalInTimezone(a.starts_at, resolveServiceTimezone(a.location_timezone, a.location_city), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</small></Link>)}
+                        {cancellations.map((a) => <Link key={a.id} to={`/appointments/${a.id}`} className="important-item danger"><span>Отмена</span><strong>{a.service_name}</strong><small>{formatLocalInTimezone(a.starts_at, resolveServiceTimezone(a.location_timezone, a.location_city), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</small></Link>)}
                         {unread.map((n) => (
                           <Link key={n.id} to={notificationHref(n)} className="important-item">
                             <span>Сообщение</span>
@@ -550,6 +554,8 @@ export function DashboardPage() {
                           subtitle={a.master_display_name}
                           status={a.status}
                           startsAt={a.starts_at}
+                          locationTimezone={a.location_timezone}
+                          locationCity={a.location_city}
                           priceMinor={a.price_minor}
                         />
                       ))}

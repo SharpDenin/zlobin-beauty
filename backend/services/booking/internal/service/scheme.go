@@ -326,7 +326,7 @@ func (s *Service) CreatePlannerBlock(ctx context.Context, actor uuid.UUID, title
 		return nil, apperr.Validation("ends_at must be after starts_at")
 	}
 	if timezone == "" {
-		timezone = "Europe/Moscow"
+		timezone = defaultTimezone
 	}
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return nil, apperr.Validation("invalid timezone")

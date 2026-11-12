@@ -4,6 +4,7 @@ import { apiRequest } from '@/shared/api/client'
 import { normalizeError } from '@/shared/lib/app-error'
 import { formatMoney } from '@/shared/lib/money'
 import { formatLocalInTimezone } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Modal } from '@/shared/ui/Modal'
@@ -108,7 +109,7 @@ export function MultiServiceBookingDialog({
     retry: false,
   })
 
-  const tz = plans.data?.timezone || 'Europe/Moscow'
+  const tz = resolveServiceTimezone(plans.data?.timezone)
   const selected = plans.data?.items.find((plan) => visitPlanKey(plan) === selectedKey) ?? null
   const currentOrder = requestOrder ?? plans.data?.recommended_order ?? serviceIds
 

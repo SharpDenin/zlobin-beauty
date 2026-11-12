@@ -23,6 +23,8 @@ import { AppointmentMaterialsForm } from '@/pages/MasterInventoryPage'
 import { CalendarAvailability } from '@/pages/CalendarAvailability'
 import { RescheduleDialog } from '@/pages/RescheduleDialog'
 import { canRescheduleAppointment } from '@/pages/reschedule-helpers'
+import { formatDualTime, formatLocalInTimezone } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 
 type Appointment = {
   id: string
@@ -252,12 +254,17 @@ export function AppointmentDetailPage() {
             </strong>
             <p>{a.service_name}</p>
             <p>
-              {new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-              –
-              {new Date(a.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-              {' · '}
-              {new Date(a.starts_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+              {(() => {
+                const tz = resolveServiceTimezone(a.location_timezone, a.location_city)
+                const start = formatLocalInTimezone(a.starts_at, tz, { hour: '2-digit', minute: '2-digit' })
+                const end = formatLocalInTimezone(a.ends_at, tz, { hour: '2-digit', minute: '2-digit' })
+                const day = formatLocalInTimezone(a.starts_at, tz, { day: 'numeric', month: 'short' })
+                return `${start}–${end} · ${day}`
+              })()}
             </p>
+            {a.location_timezone || a.location_city ? (
+              <p className="muted caption">{formatDualTime(a.starts_at, resolveServiceTimezone(a.location_timezone, a.location_city))}</p>
+            ) : null}
           </div>
         </div>
         <p><span className={`badge ${statusBadgeClass(a.status)}`}>{appointmentStatusLabel(a.status)}</span></p>
@@ -272,7 +279,18 @@ export function AppointmentDetailPage() {
             {visitGroup.data!.items.map((leg) => (
               <Link key={leg.id} className="list-item" to={`/appointments/${leg.id}`}>
                 <strong>{leg.service_name}</strong>
-                <p className="muted">{new Date(leg.starts_at).toLocaleString('ru-RU')} · {formatMoney(leg.price_minor)}</p>
+                <p className="muted">
+                  {formatLocalInTimezone(
+                    leg.starts_at,
+                    resolveServiceTimezone(
+                      (leg as { location_timezone?: string }).location_timezone ?? a.location_timezone,
+                      (leg as { location_city?: string }).location_city ?? a.location_city,
+                    ),
+                    { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' },
+                  )}
+                  {' · '}
+                  {formatMoney(leg.price_minor)}
+                </p>
               </Link>
             ))}
           </div>

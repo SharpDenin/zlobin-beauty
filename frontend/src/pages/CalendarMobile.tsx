@@ -10,6 +10,7 @@ import {
   eventCoversSlot,
   eventOverlapsDay,
   eventSlotSpan,
+  formatCalendarNowLabel,
   LONG_PRESS_MS,
   longPressMoved,
   minutesFromMidnight,
@@ -97,7 +98,8 @@ export function CalendarMobile({
   const longPressFired = useRef(false)
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
   const scrolledOnce = useRef(false)
-  const [nowLabel, setNowLabel] = useState(() => formatLocalInTimezone(new Date().toISOString(), timezone))
+  // Label = device clock (+ scale hint when zones differ). Position = service TZ.
+  const [nowLabel, setNowLabel] = useState(() => formatCalendarNowLabel(new Date(), timezone))
   const ymd = zonedYmd(selectedDate, timezone)
   const todayYmd = zonedYmd(new Date(), timezone)
   const strip = useMemo(() => buildDayStrip(selectedDate, timezone, 14), [selectedDate, timezone])
@@ -114,6 +116,7 @@ export function CalendarMobile({
     [ymd, selectedDate, timezone, hours, exceptions],
   )
   const isToday = ymd === todayYmd
+  // Marker position follows the service-location timeline so it aligns with slots.
   const nowMin = isToday ? minutesFromMidnight(new Date(), timezone) : -1
   const periodLabel = new Intl.DateTimeFormat('ru-RU', {
     timeZone: timezone,
@@ -143,9 +146,9 @@ export function CalendarMobile({
 
   useEffect(() => {
     if (!isToday) return
-    const id = window.setInterval(() => {
-      setNowLabel(formatLocalInTimezone(new Date().toISOString(), timezone))
-    }, 60_000)
+    const tick = () => setNowLabel(formatCalendarNowLabel(new Date(), timezone))
+    tick()
+    const id = window.setInterval(tick, 60_000)
     return () => window.clearInterval(id)
   }, [isToday, timezone])
 
@@ -442,7 +445,7 @@ export function CalendarMobile({
                   style={{ scrollMarginTop: 96 }}
                 >
                   <span className="cal-now-marker-line" aria-hidden />
-                  <span className="cal-now-marker-label">Сейчас {nowLabel}</span>
+                  <span className="cal-now-marker-label">{nowLabel}</span>
                 </li>,
               )
             }
@@ -512,7 +515,10 @@ export function CalendarMobile({
                     >
                       <strong>{e.title}</strong>
                       <span className="muted">
-                        {formatLocalInTimezone(start, timezone)}–{formatLocalInTimezone(end, timezone)}
+                        {(() => {
+                          const eventTz = String((e.extendedProps as { timezone?: string } | undefined)?.timezone || timezone)
+                          return `${formatLocalInTimezone(start, eventTz)}–${formatLocalInTimezone(end, eventTz)}`
+                        })()}
                         {client ? ` · ${client}` : ''}
                         {status ? ` · ${status}` : ''}
                       </span>

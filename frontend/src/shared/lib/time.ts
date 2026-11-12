@@ -1,3 +1,5 @@
+import { deviceTimeZone } from '@/shared/lib/service-timezone'
+
 const timeOpts: Intl.DateTimeFormatOptions = {
   hour: '2-digit',
   minute: '2-digit',
@@ -22,6 +24,20 @@ export function formatLocalInTimezone(
   const tz = iana.trim() || undefined
   try {
     return new Intl.DateTimeFormat('ru-RU', { ...options, timeZone: tz }).format(date)
+  } catch {
+    return new Intl.DateTimeFormat('ru-RU', options).format(date)
+  }
+}
+
+/** Format an ISO instant (or "now") in the device/browser timezone. */
+export function formatDeviceLocal(
+  iso: string | Date = new Date(),
+  options: Intl.DateTimeFormatOptions = timeOpts,
+): string {
+  const date = typeof iso === 'string' ? new Date(iso) : iso
+  if (Number.isNaN(date.getTime())) return '—'
+  try {
+    return new Intl.DateTimeFormat('ru-RU', { ...options, timeZone: deviceTimeZone() }).format(date)
   } catch {
     return new Intl.DateTimeFormat('ru-RU', options).format(date)
   }
@@ -59,9 +75,9 @@ export function formatDualTime(
 
   if (!includeClient) return result
 
-  const clientTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const clientTz = deviceTimeZone()
   if (clientTz && salonTz && clientTz !== salonTz) {
-    const client = new Date(iso).toLocaleString('ru-RU', fmt)
+    const client = formatDeviceLocal(iso, fmt)
     result += ` · у вас ${client}`
   }
   return result

@@ -1,6 +1,6 @@
 import { mediaKindOf } from '@/shared/lib/mediaUpload'
 
-/** Pixel crop rectangle from react-easy-crop (natural image coordinates). */
+/** Pixel crop rectangle in natural image coordinates (from Cropper.js getData). */
 export type CropPixelArea = {
   x: number
   y: number
@@ -14,7 +14,7 @@ export const CROP_ZOOM_STEP = 0.01
 
 /**
  * Aspect hints aligned with how photos are framed in the UI (object-fit cover).
- * `null` = keep the source image aspect (zoom/pan only; no forced ratio).
+ * `null` = free crop rectangle (resize by corners/edges independently).
  */
 export function cropAspectForPurpose(purpose: string): number | null {
   switch (purpose) {

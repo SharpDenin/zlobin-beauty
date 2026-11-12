@@ -103,6 +103,50 @@ func AcceptMovementIdempotencyKey(base, kind string, productID uuid.UUID) string
 	return base + ":" + kind + ":" + productID.String()
 }
 
+// ScopeStockIdempotencyKey namespaces a client-supplied Idempotency-Key by actor and
+// stock location so the same client UUID cannot collide across users or warehouses.
+// Empty / incomplete inputs yield "" (no idempotency).
+func ScopeStockIdempotencyKey(actorID, locationID uuid.UUID, clientKey string) string {
+	clientKey = strings.TrimSpace(clientKey)
+	if clientKey == "" || actorID == uuid.Nil || locationID == uuid.Nil {
+		return ""
+	}
+	return "u:" + actorID.String() + ":loc:" + locationID.String() + ":k:" + clientKey
+}
+
+const stockIdempotencyQtyEpsilon = 1e-9
+
+// StockMovementMatchesIdempotentReplay reports whether an existing movement is a safe
+// replay of the intended operation (same warehouse context + payload).
+func StockMovementMatchesIdempotentReplay(
+	existing *StockMovement,
+	locationID, productID uuid.UUID,
+	kind string,
+	qty float64,
+	reason string,
+) bool {
+	if existing == nil {
+		return false
+	}
+	if existing.LocationID != locationID || existing.ProductID != productID {
+		return false
+	}
+	if existing.Kind != kind {
+		return false
+	}
+	if absFloat(existing.Qty-qty) > stockIdempotencyQtyEpsilon {
+		return false
+	}
+	return strings.TrimSpace(existing.Reason) == strings.TrimSpace(reason)
+}
+
+func absFloat(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // Stock balance status buckets.
 const (
 	StockSufficient = "sufficient"

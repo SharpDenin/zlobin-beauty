@@ -24,6 +24,8 @@ type Appointment = {
   client_display_name?: string
   master_display_name?: string
   visit_group_id?: string | null
+  location_timezone?: string
+  location_city?: string
 }
 
 export function AppointmentsPage() {
@@ -128,6 +130,8 @@ export function AppointmentsPage() {
             subtitle={group.combined ? 'Визит из двух услуг' : undefined}
             status={a.status}
             startsAt={a.starts_at}
+            locationTimezone={a.location_timezone}
+            locationCity={a.location_city}
             priceMinor={visitGroupPrice(group)}
             actions={role === 'master' && a.status === 'pending_confirmation' ? (
               <>

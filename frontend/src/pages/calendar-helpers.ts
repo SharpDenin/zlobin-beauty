@@ -268,6 +268,49 @@ export function visitCompanionTitle(serviceName: string, groupNames: string[]) {
   return rest.join(' затем ')
 }
 
+/**
+ * Now-marker caption: device-local clock, plus service-scale time when zones differ.
+ * Example (Krasnoyarsk device, Moscow grid): "Сейчас 17:30 · на шкале 13:30"
+ */
+export function formatCalendarNowLabel(
+  now: Date,
+  serviceTimezone: string,
+  deviceTimezone?: string,
+): string {
+  const deviceTz =
+    (deviceTimezone ?? '').trim() ||
+    (() => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+      } catch {
+        return ''
+      }
+    })()
+  const deviceLabel = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: deviceTz || undefined,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(now)
+  const scaleTz = (serviceTimezone ?? '').trim()
+  if (!scaleTz || !deviceTz || scaleTz === deviceTz) {
+    return `Сейчас ${deviceLabel}`
+  }
+  let scaleLabel: string
+  try {
+    scaleLabel = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: scaleTz,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(now)
+  } catch {
+    return `Сейчас ${deviceLabel}`
+  }
+  if (scaleLabel === deviceLabel) {
+    return `Сейчас ${deviceLabel}`
+  }
+  return `Сейчас ${deviceLabel} · на шкале ${scaleLabel}`
+}
+
 export function minutesFromMidnight(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone,

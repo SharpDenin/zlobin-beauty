@@ -449,7 +449,11 @@ func (a *API) slots(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": slots, "busy": busy})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"items":    slots,
+		"busy":     busy,
+		"timezone": tz, // IANA zone of the service location (not the client device)
+	})
 }
 
 func parseInt(dst *int, s string) (int, error) {

@@ -10,6 +10,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { productStateLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { fetchBranch } from '@/shared/lib/commerce'
 import { MediaDropzone } from '@/shared/ui/MediaDropzone'
 import { ServiceCardMedia } from '@/shared/ui/ServiceCardMedia'
@@ -117,7 +118,7 @@ export function ServicesPage() {
     queryFn: () => fetchBranch(accessToken, branchId!),
     enabled: Boolean(accessToken && branchId),
   })
-  const salonTz = branch.data?.timezone || 'Europe/Moscow'
+  const salonTz = resolveServiceTimezone(branch.data?.timezone, branch.data?.city)
   const editing = useMemo(
     () => (id ? services.find((s) => s.id === id) : undefined),
     [id, services],

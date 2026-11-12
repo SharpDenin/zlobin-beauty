@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { formatMoney } from '@/shared/lib/money'
 import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
+import { formatLocalInTimezone } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 
 export type AppointmentTone = 'waiting' | 'live' | 'upcoming' | 'done' | 'cancelled'
 
@@ -13,11 +15,11 @@ export function appointmentTone(status: string): AppointmentTone {
   return 'upcoming'
 }
 
-function formatWhen(iso: string) {
-  const at = new Date(iso)
+function formatWhen(iso: string, locationTimezone?: string, locationCity?: string) {
+  const tz = resolveServiceTimezone(locationTimezone, locationCity)
   return {
-    time: at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-    date: at.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }),
+    time: formatLocalInTimezone(iso, tz, { hour: '2-digit', minute: '2-digit' }),
+    date: formatLocalInTimezone(iso, tz, { weekday: 'short', day: 'numeric', month: 'short' }),
   }
 }
 
@@ -31,6 +33,8 @@ export function AppointmentCard({
   personName,
   personInitials,
   actions,
+  locationTimezone,
+  locationCity,
 }: {
   to?: string
   serviceName: string
@@ -41,9 +45,11 @@ export function AppointmentCard({
   personName?: string
   personInitials?: string
   actions?: ReactNode
+  locationTimezone?: string
+  locationCity?: string
 }) {
   const tone = appointmentTone(status)
-  const when = formatWhen(startsAt)
+  const when = formatWhen(startsAt, locationTimezone, locationCity)
   const title = personName?.trim() || serviceName
   const sub = personName?.trim()
     ? [serviceName, subtitle].filter(Boolean).join(' · ')

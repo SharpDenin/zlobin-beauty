@@ -56,6 +56,8 @@ export type ListedAppointment = {
   client_user_id?: string
   client_display_name?: string
   master_display_name?: string
+  location_timezone?: string
+  location_city?: string
 }
 
 export type VisitGroup = {

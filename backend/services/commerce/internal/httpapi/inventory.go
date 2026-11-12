@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zlobin/zlobin-beauty/backend/services/commerce/internal/domain"
@@ -308,6 +309,7 @@ func (a *API) myInventoryAdjust(w http.ResponseWriter, r *http.Request) {
 		ProductID      string  `json:"product_id"`
 		Qty            float64 `json:"qty"`
 		Reason         string  `json:"reason"`
+		IdempotencyKey string  `json:"idempotency_key"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -323,8 +325,12 @@ func (a *API) myInventoryAdjust(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid product_id"))
 		return
 	}
+	idem := strings.TrimSpace(req.IdempotencyKey)
+	if idem == "" {
+		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
 	m, err := a.svc.AdjustMyStock(r.Context(), claims.UserID, service.AdjustStockInput{
-		OrganizationID: orgID, ProductID: productID, Qty: req.Qty, Reason: req.Reason,
+		OrganizationID: orgID, ProductID: productID, Qty: req.Qty, Reason: req.Reason, IdempotencyKey: idem,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)

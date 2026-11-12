@@ -464,11 +464,12 @@ func resolveMovementDelta(kind string, qty float64) (float64, error) {
 }
 
 type MovementInput struct {
-	LocationID uuid.UUID
-	ProductID  uuid.UUID
-	Kind       string
-	Qty        float64
-	Reason     string
+	LocationID     uuid.UUID
+	ProductID      uuid.UUID
+	Kind           string
+	Qty            float64
+	Reason         string
+	IdempotencyKey string
 }
 
 func (s *Service) CreateMovement(ctx context.Context, actor uuid.UUID, in MovementInput) (*domain.StockMovement, error) {
@@ -486,16 +487,33 @@ func (s *Service) CreateMovement(ctx context.Context, actor uuid.UUID, in Moveme
 	if err != nil {
 		return nil, err
 	}
-	if in.Kind == domain.MovementAdjust && strings.TrimSpace(in.Reason) == "" {
+	reason := strings.TrimSpace(in.Reason)
+	if in.Kind == domain.MovementAdjust && reason == "" {
 		return nil, apperr.Validation("reason is required")
+	}
+	key := domain.ScopeStockIdempotencyKey(actor, in.LocationID, in.IdempotencyKey)
+	if key != "" {
+		existing, err := s.store.GetMovementByIdempotencyKey(ctx, key)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if existing != nil {
+			if !domain.StockMovementMatchesIdempotentReplay(existing, in.LocationID, in.ProductID, in.Kind, delta, reason) {
+				return nil, apperr.Conflict("idempotency_key already used")
+			}
+			return existing, nil
+		}
 	}
 	m := domain.StockMovement{
 		ID: ids.New(), LocationID: in.LocationID, ProductID: in.ProductID, Kind: in.Kind, Qty: delta,
-		Reason: strings.TrimSpace(in.Reason), ActorUserID: actor, CreatedAt: s.now().UTC(),
+		Reason: reason, ActorUserID: actor, IdempotencyKey: key, CreatedAt: s.now().UTC(),
 	}
 	out, err := s.store.CreateMovement(ctx, m)
 	if err != nil {
 		return nil, typedOrInternal(err)
+	}
+	if key != "" && !domain.StockMovementMatchesIdempotentReplay(out, in.LocationID, in.ProductID, in.Kind, delta, reason) {
+		return nil, apperr.Conflict("idempotency_key already used")
 	}
 	return out, nil
 }

@@ -6,7 +6,8 @@ import { userError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
-import { formatDualTime, formatRangeInTimezone } from '@/shared/lib/time'
+import { formatDualTime, formatLocalInTimezone, formatRangeInTimezone } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
@@ -64,7 +65,7 @@ type MasterDetails = {
 
 type Slot = { starts_at: string; ends_at: string }
 type BusyBlock = { starts_at: string; ends_at: string; kind?: string }
-type SlotsResponse = { items: Slot[]; busy?: BusyBlock[] }
+type SlotsResponse = { items: Slot[]; busy?: BusyBlock[]; timezone?: string }
 
 type Occurrence = {
   id: string
@@ -357,11 +358,12 @@ export function MasterPage() {
   const summaryEndsAt = summaryStartsAt && selectedService
     ? new Date(new Date(summaryStartsAt).getTime() + selectedService.duration_minutes * 60_000).toISOString()
     : null
-  const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || ''
+  const summaryTz = selectedOccurrence?.timezone || booked?.location_timezone || slotsQuery.data?.timezone || resolveServiceTimezone(undefined, master.city)
   const summaryAddress = booked?.location_address
   const confirmStep = isFixed ? 2 : 3
   const canConfirm = !isSelf && (isFixed ? Boolean(occurrenceId && selectedOccurrence) : Boolean(slot))
   const busyBlocks = slotsQuery.data?.busy ?? []
+  const slotsTz = resolveServiceTimezone(slotsQuery.data?.timezone, master.city)
 
   function scrollToBooking() {
     if (isSelf) return
@@ -399,9 +401,7 @@ export function MasterPage() {
             <p>
               {selectedService.name}
               {' · '}
-              {summaryTz
-                ? formatDualTime(summaryStartsAt, summaryTz, { withDate: true })
-                : new Date(summaryStartsAt).toLocaleString('ru-RU')}
+              {formatDualTime(summaryStartsAt, summaryTz, { withDate: true })}
             </p>
           )}
           {(summaryAddress || booked?.location_city) && (
@@ -818,8 +818,8 @@ export function MasterPage() {
                 <p className="muted caption">Занято (без деталей чужих записей)</p>
                 <ul className="mp-day-busy-list">
                   {busyBlocks.map((b) => {
-                    const from = new Date(b.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-                    const to = new Date(b.ends_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+                    const from = formatLocalInTimezone(b.starts_at, slotsTz)
+                    const to = formatLocalInTimezone(b.ends_at, slotsTz)
                     return (
                       <li key={`${b.starts_at}-${b.ends_at}`} className="mp-day-busy-item" data-testid="mp-busy-block">
                         <span>{from}–{to}</span>
@@ -832,7 +832,7 @@ export function MasterPage() {
             )}
             <div className="slot-grid mp-slot-grid" data-testid="mp-slot-grid">
               {slotsQuery.data?.items.map((s) => {
-                const label = new Date(s.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+                const label = formatLocalInTimezone(s.starts_at, slotsTz)
                 return (
                   <button
                     key={s.starts_at}
@@ -925,19 +925,9 @@ export function MasterPage() {
                 <div>
                   <dt>Время</dt>
                   <dd>
-                    {summaryTz && summaryEndsAt
+                    {summaryEndsAt
                       ? formatRangeInTimezone(summaryStartsAt, summaryEndsAt, summaryTz)
-                      : summaryEndsAt
-                        ? `${new Date(summaryStartsAt).toLocaleString('ru-RU', {
-                            weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-                          })} – ${new Date(summaryEndsAt).toLocaleTimeString('ru-RU', {
-                            hour: '2-digit', minute: '2-digit',
-                          })}`
-                        : summaryTz
-                          ? formatDualTime(summaryStartsAt, summaryTz, { withDate: true })
-                          : new Date(summaryStartsAt).toLocaleString('ru-RU', {
-                              weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-                            })}
+                      : formatDualTime(summaryStartsAt, summaryTz, { withDate: true })}
                   </dd>
                 </div>
                 <div>

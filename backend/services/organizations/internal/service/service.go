@@ -13,6 +13,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 	"github.com/zlobin/zlobin-beauty/backend/shared/moderation"
+	"github.com/zlobin/zlobin-beauty/backend/shared/tz"
 )
 
 type Service struct {
@@ -113,9 +114,20 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	if orgType != "salon" && orgType != "supplier" && orgType != "network" {
 		return nil, apperr.Validation("invalid organization type")
 	}
-	tz := strings.TrimSpace(in.Timezone)
-	if tz == "" {
-		tz = "Europe/Moscow"
+	cityForTZ := branchCity
+	if cityForTZ == "" {
+		cityForTZ = city
+	}
+	var branchTZ string
+	if branchName != "" {
+		resolved, err := tz.ResolveForBranch(in.Timezone, cityForTZ)
+		if err != nil {
+			if errors.Is(err, tz.ErrTimezoneRequired) {
+				return nil, apperr.Validation("timezone is required when city has no known IANA mapping")
+			}
+			return nil, apperr.Validation(err.Error())
+		}
+		branchTZ = resolved
 	}
 	now := s.now().UTC()
 	org := domain.Organization{
@@ -127,7 +139,7 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	if branchName != "" {
 		branch = &domain.Branch{
 			ID: ids.New(), OrganizationID: org.ID, Name: branchName, City: branchCity, AddressLine: branchAddress,
-			Timezone: tz, CancelWindowHours: 12, AutoConfirm: false, PickupEnabled: true, CreatedAt: now, UpdatedAt: now,
+			Timezone: branchTZ, CancelWindowHours: 12, AutoConfirm: false, PickupEnabled: true, CreatedAt: now, UpdatedAt: now,
 		}
 	}
 	membership := domain.Membership{
@@ -164,14 +176,17 @@ func (s *Service) AddBranch(ctx context.Context, actor, orgID uuid.UUID, in AddB
 	}); err != nil {
 		return nil, err
 	}
-	tz := strings.TrimSpace(in.Timezone)
-	if tz == "" {
-		tz = "Europe/Moscow"
+	branchTZ, err := tz.ResolveForBranch(in.Timezone, city)
+	if err != nil {
+		if errors.Is(err, tz.ErrTimezoneRequired) {
+			return nil, apperr.Validation("timezone is required when city has no known IANA mapping")
+		}
+		return nil, apperr.Validation(err.Error())
 	}
 	now := s.now().UTC()
 	b := domain.Branch{
 		ID: ids.New(), OrganizationID: orgID, Name: name, City: city, AddressLine: addr,
-		Phone: strings.TrimSpace(in.Phone), Timezone: tz, CancelWindowHours: 12,
+		Phone: strings.TrimSpace(in.Phone), Timezone: branchTZ, CancelWindowHours: 12,
 		PickupEnabled: true, Published: true, Latitude: in.Latitude, Longitude: in.Longitude,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -501,11 +516,14 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 		b.Phone = strings.TrimSpace(*in.Phone)
 	}
 	if in.Timezone != nil {
-		tz := strings.TrimSpace(*in.Timezone)
-		if tz == "" {
+		next := strings.TrimSpace(*in.Timezone)
+		if next == "" {
 			return nil, apperr.Validation("timezone cannot be empty")
 		}
-		b.Timezone = tz
+		if !tz.Valid(next) {
+			return nil, apperr.Validation("invalid timezone")
+		}
+		b.Timezone = next
 	}
 	if in.Published != nil {
 		if *in.Published {
@@ -560,7 +578,7 @@ func evaluateBranchReadiness(b domain.Branch) *domain.Readiness {
 		{Key: "branch_city", Label: "Город", OK: nonEmpty(b.City)},
 		{Key: "branch_address", Label: "Адрес", OK: nonEmpty(b.AddressLine)},
 		{Key: "branch_phone", Label: "Телефон", OK: nonEmpty(b.Phone)},
-		{Key: "branch_timezone", Label: "Часовой пояс", OK: nonEmpty(b.Timezone)},
+		{Key: "branch_timezone", Label: "Часовой пояс", OK: nonEmpty(b.Timezone) && tz.Valid(b.Timezone)},
 	}
 	return finalizeReadiness(checks)
 }

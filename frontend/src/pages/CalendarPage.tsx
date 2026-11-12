@@ -16,6 +16,7 @@ import { useCabinet } from '@/shared/lib/cabinet'
 import { branchLabel } from '@/shared/lib/branch-label'
 import { appointmentStatusLabel, statusBadgeClass } from '@/shared/lib/status'
 import { datetimeLocalToIso, formatRangeInTimezone, isoToDatetimeLocal, wallTimeInTimezoneToUtcIso } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { formatMoney } from '@/shared/lib/money'
 import { formatUserError } from '@/shared/lib/app-error'
 import { moderationError } from '@/shared/lib/moderation'
@@ -263,7 +264,13 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [selected, setSelected] = useState<CalendarSelection | null>(null)
   const [rescheduleOpen, setRescheduleOpen] = useState(false)
-  const [pendingApptDrop, setPendingApptDrop] = useState<{ id: string; start: Date; end: Date; revert: () => void } | null>(null)
+  const [pendingApptDrop, setPendingApptDrop] = useState<{
+    id: string
+    start: Date
+    end: Date
+    timezone?: string
+    revert: () => void
+  } | null>(null)
   const [pendingInterval, setPendingInterval] = useState<{ start: Date; end: Date } | null>(null)
   const [pendingDayOff, setPendingDayOff] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -283,7 +290,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const scrolledOnce = useRef(false)
 
   const selectedBranch = salonBranches.find((b) => b.id === branchFilter) ?? salonBranches[0]
-  const salonTimezone = selectedBranch?.timezone || 'Europe/Moscow'
+  const salonTimezone = resolveServiceTimezone(selectedBranch?.timezone, selectedBranch?.city)
 
   const effectiveRange = useMemo(() => {
     const validated = validateDisplayRange(displayRangePref.from, displayRangePref.to)
@@ -1008,6 +1015,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         id: info.event.id,
         start: info.event.start,
         end: info.event.end,
+        timezone: String(info.event.extendedProps.timezone || salonTimezone),
         revert: () => info.revert(),
       })
       return
@@ -2133,7 +2141,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               Новое время: {formatRangeInTimezone(
                 pendingApptDrop.start.toISOString(),
                 pendingApptDrop.end.toISOString(),
-                salonTimezone,
+                pendingApptDrop.timezone || salonTimezone,
               )}. Подтвердите, если слот свободен.
             </p>
             <div className="row gap">

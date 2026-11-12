@@ -11,6 +11,8 @@ import { uploadMedia } from '@/shared/lib/mediaUpload'
 import { cropAspectForPurpose, shouldOpenImageCrop } from '@/shared/lib/imageCrop'
 import { ImageCropEditor } from '@/shared/ui/ImageCropEditor'
 import { MediaImage } from '@/shared/ui/MediaImage'
+import { Overlay } from '@/shared/ui/Overlay'
+import { AvatarMenu } from '@/features/owner-home/AvatarMenu'
 import { AppIcon, type AppIconName } from '@/shared/ui/AppIcon'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { toast } from '@/shared/ui/Toast'
@@ -128,6 +130,7 @@ export function OwnerStartPage() {
   const [selectedDay, setSelectedDay] = useState(() => new Date())
   const [photoBusy, setPhotoBusy] = useState(false)
   const [cropFile, setCropFile] = useState<File | null>(null)
+  const [photoLightbox, setPhotoLightbox] = useState(false)
   const days = useMemo(() => weekDays(new Date()), [])
   const audience = homeAudience(cabinet.kind)
   const showSchedule = homeShowsSchedule(cabinet.kind)
@@ -311,31 +314,46 @@ export function OwnerStartPage() {
                 <path d="m8 15 2.5-3 2 2.2L15 11l3 4" strokeLinejoin="round" />
               </svg>
             </Link>
-            <div className="owner-start-avatar-wrap">
-              <Link className="owner-start-avatar" to="/profile" aria-label="Открыть профиль">
-                {photo ? (
-                  <MediaImage mediaId={photo} token={accessToken} alt={displayName} fallback={initials(displayName)} />
-                ) : (
-                  <span aria-hidden="true">{initials(displayName)}</span>
-                )}
-              </Link>
-              {canEditPhoto && (
-                <label className="owner-start-avatar-edit">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(e) => {
-                      onPhoto(e.target.files?.[0])
-                      e.target.value = ''
-                    }}
-                  />
-                  {photoBusy ? 'Сохраняем…' : 'Изменить фото'}
-                </label>
+            <AvatarMenu
+              photo={Boolean(photo)}
+              busy={photoBusy}
+              canUpload={canEditPhoto}
+              onView={() => setPhotoLightbox(true)}
+              onUpload={() => fileRef.current?.click()}
+            >
+              {photo ? (
+                <MediaImage mediaId={photo} token={accessToken} alt={displayName} fallback={initials(displayName)} />
+              ) : (
+                <span aria-hidden="true">{initials(displayName)}</span>
               )}
-            </div>
+            </AvatarMenu>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              aria-hidden
+              tabIndex={-1}
+              data-testid="home-avatar-file"
+              onChange={(e) => {
+                onPhoto(e.target.files?.[0])
+                e.target.value = ''
+              }}
+            />
           </div>
         </header>
+
+        {photo && (
+          <Overlay
+            open={photoLightbox}
+            onClose={() => setPhotoLightbox(false)}
+            closeOnAnyClick
+            className="kb-lightbox overlay-scrim"
+            label="Фото профиля"
+          >
+            <MediaImage mediaId={photo} token={accessToken} alt={displayName} />
+          </Overlay>
+        )}
 
         <ImageCropEditor
           open={Boolean(cropFile)}

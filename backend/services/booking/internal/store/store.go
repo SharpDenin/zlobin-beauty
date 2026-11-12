@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/domain"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
+	"github.com/zlobin/zlobin-beauty/backend/shared/tz"
 )
 
 type Store struct{ pool *pgxpool.Pool }
@@ -204,10 +205,7 @@ func insertAppointment(ctx context.Context, exec appointmentExec, a domain.Appoi
 	if mode == "" {
 		mode = domain.BookingModeFlexible
 	}
-	tz := a.LocationTimezone
-	if tz == "" {
-		tz = "Europe/Moscow"
-	}
+	zone := tz.Resolve(a.LocationTimezone, a.LocationCity)
 	_, err := exec.Exec(ctx, `
 INSERT INTO appointments(
   id, organization_id, branch_id, master_user_id, client_user_id, service_id, service_name,
@@ -217,7 +215,7 @@ INSERT INTO appointments(
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
 		a.ID, a.OrganizationID, a.BranchID, a.MasterUserID, a.ClientUserID, a.ServiceID, a.ServiceName,
 		a.DurationMinutes, a.PriceMinor, a.Currency, a.Status, a.StartsAt, a.EndsAt, a.CreatedAt, a.UpdatedAt,
-		a.OccurrenceID, mode, a.LocationName, a.LocationCity, a.LocationAddress, tz,
+		a.OccurrenceID, mode, a.LocationName, a.LocationCity, a.LocationAddress, zone,
 		nullIfEmpty(a.WorkMode), a.WorkModeIntervalID, a.ChairID, a.OnsiteCityID, a.OnsiteDistrictID, a.VisitGroupID)
 	if err != nil {
 		return mapAppointmentConflict(err)

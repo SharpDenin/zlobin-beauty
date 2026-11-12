@@ -13,6 +13,7 @@ import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Hint } from '@/shared/ui/Hint'
 import { toast } from '@/shared/ui/Toast'
+import { ManualDyeStockForm } from '@/pages/ManualDyeStockForm'
 
 type OrgItem = {
   organization: { id: string; name: string }
@@ -102,6 +103,7 @@ export function WarehousePage() {
   const [locationId, setLocationId] = useState('')
   const [stockQ, setStockQ] = useState('')
   const [stockStatus, setStockStatus] = useState('')
+  const [dyeOpen, setDyeOpen] = useState(false)
 
   const orgs = useQuery({
     queryKey: ['orgs-mine'],
@@ -118,7 +120,7 @@ export function WarehousePage() {
 
   const products = useQuery({
     queryKey: ['commerce-products', orgId],
-    queryFn: () => apiRequest<{ items: Array<{ id: string; name: string; brand: string; parent_id: string | null; volume_label: string; unit: string }> }>(`/v1/commerce/products?organization_id=${orgId}`, { token: accessToken }),
+    queryFn: () => apiRequest<{ items: Array<{ id: string; name: string; brand: string; parent_id: string | null; volume_label: string; unit: string; category_id?: string | null }> }>(`/v1/commerce/products?organization_id=${orgId}`, { token: accessToken }),
     enabled: Boolean(accessToken && orgId),
   })
 
@@ -483,7 +485,12 @@ export function WarehousePage() {
 
       {activeLoc && !repMode && (
         <section className="card stack">
-          <h2>Приёмка (начальный / пополнение)</h2>
+          <div className="row between">
+            <h2>Приёмка (начальный / пополнение)</h2>
+            <button className="btn btn-secondary btn-compact" type="button" data-testid="warehouse-dye-open" onClick={() => setDyeOpen(true)}>
+              Красители по бренду
+            </button>
+          </div>
           <form className="stack" onSubmit={receiptForm.handleSubmit((v) => {
             setLocationId(activeLoc)
             receipt.mutate(v)
@@ -501,6 +508,17 @@ export function WarehousePage() {
             <div className="field"><label>Причина</label><input {...receiptForm.register('reason')} placeholder="Начальная приёмка" /></div>
             <button className="btn btn-primary btn-block" type="submit" disabled={receipt.isPending || !activeLoc}>Принять на склад</button>
           </form>
+          {orgId && (
+            <ManualDyeStockForm
+              open={dyeOpen}
+              onClose={() => setDyeOpen(false)}
+              token={accessToken}
+              organizationId={orgId}
+              mode="warehouse"
+              locationId={activeLoc}
+              products={products.data?.items}
+            />
+          )}
         </section>
       )}
 

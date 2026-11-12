@@ -17,6 +17,7 @@ import {
   type RescheduleOptionsResponse,
   type RescheduleSlot,
 } from '@/pages/reschedule-helpers'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 
 const INITIAL_LIMIT = 6
 
@@ -82,7 +83,10 @@ export function RescheduleDialog({ open, onClose, appointment, token, canOpenCal
     retry: false,
   })
 
-  const tz = options.data?.timezone || appointment.location_timezone || 'Europe/Moscow'
+  const tz = resolveServiceTimezone(
+    options.data?.timezone || appointment.location_timezone,
+    appointment.location_city,
+  )
   const groups = useMemo(
     () => groupSlotsByDate(options.data?.items ?? [], tz),
     [options.data?.items, tz],

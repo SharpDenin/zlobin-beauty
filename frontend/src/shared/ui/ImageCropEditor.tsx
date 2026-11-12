@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import Cropper, { type Area, type MediaSize } from 'react-easy-crop'
+import Cropper from 'cropperjs'
+import 'cropperjs/dist/cropper.css'
 import { Overlay } from '@/shared/ui/Overlay'
 import {
   CROP_MAX_ZOOM,
@@ -12,7 +13,7 @@ import {
 type Props = {
   open: boolean
   file: File | null
-  /** Fixed aspect; omit/`null` keeps the source image ratio once media loads. */
+  /** Fixed aspect; omit/`null` = free resize on both axes (corners + edges). */
   aspect?: number | null
   title?: string
   confirmLabel?: string
@@ -20,8 +21,6 @@ type Props = {
   onCancel: () => void
   onPickAnother?: () => void
 }
-
-const DEFAULT_CROP = { x: 0, y: 0 }
 
 export function ImageCropEditor({
   open,
@@ -34,14 +33,17 @@ export function ImageCropEditor({
   onPickAnother,
 }: Props) {
   const titleId = useId()
+  const imgRef = useRef<HTMLImageElement>(null)
+  const cropperRef = useRef<Cropper | null>(null)
+  const baseRatioRef = useRef(1)
   const [imageSrc, setImageSrc] = useState<string | null>(null)
-  const [crop, setCrop] = useState(DEFAULT_CROP)
   const [zoom, setZoom] = useState(CROP_MIN_ZOOM)
-  const [resolvedAspect, setResolvedAspect] = useState(aspect ?? 1)
-  const [pixels, setPixels] = useState<CropPixelArea | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
   const objectUrlRef = useRef<string | null>(null)
+  const previewUrlRef = useRef<string | null>(null)
 
   const revokeSrc = useCallback(() => {
     if (objectUrlRef.current) {
@@ -50,61 +52,162 @@ export function ImageCropEditor({
     }
   }, [])
 
+  const revokePreview = useCallback(() => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+      previewUrlRef.current = null
+    }
+    setPreviewUrl(null)
+  }, [])
+
   useEffect(() => {
     if (!open || !file) {
+      cropperRef.current?.destroy()
+      cropperRef.current = null
       revokeSrc()
+      revokePreview()
       setImageSrc(null)
-      setPixels(null)
       setError(null)
       setBusy(false)
+      setReady(false)
       setZoom(CROP_MIN_ZOOM)
-      setCrop(DEFAULT_CROP)
       return
     }
     revokeSrc()
+    revokePreview()
     const url = URL.createObjectURL(file)
     objectUrlRef.current = url
     setImageSrc(url)
     setZoom(CROP_MIN_ZOOM)
-    setCrop(DEFAULT_CROP)
-    setPixels(null)
     setError(null)
     setBusy(false)
-    if (aspect != null && aspect > 0) setResolvedAspect(aspect)
-    else setResolvedAspect(1)
-    return () => revokeSrc()
-  }, [open, file, aspect, revokeSrc])
+    setReady(false)
+    return () => {
+      cropperRef.current?.destroy()
+      cropperRef.current = null
+      revokeSrc()
+      revokePreview()
+    }
+  }, [open, file, aspect, revokeSrc, revokePreview])
 
-  const onMediaLoaded = useCallback(
-    (mediaSize: MediaSize) => {
-      if (aspect != null && aspect > 0) {
-        setResolvedAspect(aspect)
-        return
+  useEffect(() => {
+    if (!open || !imageSrc || !imgRef.current) return
+    const img = imgRef.current
+    cropperRef.current?.destroy()
+    cropperRef.current = null
+    setReady(false)
+
+    const freeAspect = aspect == null || !(aspect > 0)
+    let disposed = false
+
+    const refreshPreview = (cropper: Cropper) => {
+      try {
+        const canvas = cropper.getCroppedCanvas({
+          maxWidth: 280,
+          maxHeight: 280,
+          imageSmoothingEnabled: true,
+          imageSmoothingQuality: 'medium',
+        })
+        if (!canvas || disposed) return
+        canvas.toBlob((blob) => {
+          if (!blob || disposed) return
+          if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current)
+          const next = URL.createObjectURL(blob)
+          previewUrlRef.current = next
+          setPreviewUrl(next)
+        }, 'image/jpeg', 0.8)
+      } catch {
+        /* preview is best-effort */
       }
-      const w = mediaSize.naturalWidth || mediaSize.width
-      const h = mediaSize.naturalHeight || mediaSize.height
-      if (w > 0 && h > 0) setResolvedAspect(w / h)
-    },
-    [aspect],
-  )
+    }
 
-  const onCropComplete = useCallback((_area: Area, areaPixels: Area) => {
-    setPixels({
-      x: areaPixels.x,
-      y: areaPixels.y,
-      width: areaPixels.width,
-      height: areaPixels.height,
+    const cropper = new Cropper(img, {
+      viewMode: 1,
+      dragMode: 'move',
+      aspectRatio: freeAspect ? NaN : aspect,
+      autoCropArea: 0.85,
+      responsive: true,
+      background: false,
+      guides: true,
+      center: true,
+      highlight: false,
+      cropBoxMovable: true,
+      cropBoxResizable: true,
+      toggleDragModeOnDblclick: false,
+      zoomable: true,
+      zoomOnWheel: true,
+      zoomOnTouch: true,
+      scalable: false,
+      rotatable: false,
+      ready() {
+        if (disposed) return
+        const canvas = cropper.getCanvasData()
+        const natural = cropper.getImageData().naturalWidth || 1
+        baseRatioRef.current = canvas.width / natural
+        setReady(true)
+        setZoom(CROP_MIN_ZOOM)
+        refreshPreview(cropper)
+      },
+      crop() {
+        if (!disposed) refreshPreview(cropper)
+      },
+      zoom() {
+        if (disposed) return
+        const canvas = cropper.getCanvasData()
+        const natural = cropper.getImageData().naturalWidth || 1
+        const relative = canvas.width / natural / (baseRatioRef.current || 1)
+        const clamped = Math.min(CROP_MAX_ZOOM, Math.max(CROP_MIN_ZOOM, relative))
+        setZoom(Number(clamped.toFixed(2)))
+      },
     })
-  }, [])
+    cropperRef.current = cropper
+
+    return () => {
+      disposed = true
+      cropper.destroy()
+      if (cropperRef.current === cropper) cropperRef.current = null
+    }
+  }, [open, imageSrc, aspect])
 
   function resetView() {
+    const cropper = cropperRef.current
+    if (!cropper) return
+    cropper.reset()
+    const canvas = cropper.getCanvasData()
+    const natural = cropper.getImageData().naturalWidth || 1
+    baseRatioRef.current = canvas.width / natural
     setZoom(CROP_MIN_ZOOM)
-    setCrop(DEFAULT_CROP)
     setError(null)
   }
 
+  function onZoomSlider(value: number) {
+    const cropper = cropperRef.current
+    if (!cropper) return
+    const next = Math.min(CROP_MAX_ZOOM, Math.max(CROP_MIN_ZOOM, value))
+    cropper.zoomTo((baseRatioRef.current || 1) * next)
+    setZoom(next)
+  }
+
+  function readPixelCrop(): CropPixelArea | null {
+    const cropper = cropperRef.current
+    if (!cropper) return null
+    const data = cropper.getData(true)
+    if (!data.width || !data.height) return null
+    return {
+      x: data.x,
+      y: data.y,
+      width: data.width,
+      height: data.height,
+    }
+  }
+
   async function confirm() {
-    if (!imageSrc || !pixels || busy) return
+    if (!imageSrc || busy) return
+    const pixels = readPixelCrop()
+    if (!pixels) {
+      setError('Выделите область обрезки')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -146,45 +249,43 @@ export function ImageCropEditor({
 
         <div className="image-crop-stage" data-testid="image-crop-stage">
           {imageSrc && (
-            <Cropper
-              image={imageSrc}
-              crop={crop}
-              zoom={zoom}
-              aspect={resolvedAspect}
-              minZoom={CROP_MIN_ZOOM}
-              maxZoom={CROP_MAX_ZOOM}
-              zoomWithScroll
-              showGrid
-              restrictPosition
-              objectFit="contain"
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={onCropComplete}
-              onMediaLoaded={onMediaLoaded}
-              classes={{
-                containerClassName: 'image-crop-container',
-                mediaClassName: 'image-crop-media',
-                cropAreaClassName: 'image-crop-area',
-              }}
+            <img
+              ref={imgRef}
+              src={imageSrc}
+              alt=""
+              className="image-crop-media"
+              data-testid="image-crop-source"
             />
           )}
         </div>
 
         <footer className="image-crop-footer">
-          <label className="image-crop-zoom">
-            <span className="muted">Масштаб</span>
-            <input
-              type="range"
-              min={CROP_MIN_ZOOM}
-              max={CROP_MAX_ZOOM}
-              step={CROP_ZOOM_STEP}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-              disabled={busy}
-              aria-label="Масштаб изображения"
-              data-testid="image-crop-zoom"
-            />
-          </label>
+          <div className="image-crop-preview-row">
+            <label className="image-crop-zoom">
+              <span className="muted">Масштаб</span>
+              <input
+                type="range"
+                min={CROP_MIN_ZOOM}
+                max={CROP_MAX_ZOOM}
+                step={CROP_ZOOM_STEP}
+                value={zoom}
+                onChange={(e) => onZoomSlider(Number(e.target.value))}
+                disabled={busy || !ready}
+                aria-label="Масштаб изображения"
+                data-testid="image-crop-zoom"
+              />
+            </label>
+            {previewUrl && (
+              <div className="image-crop-preview" data-testid="image-crop-preview">
+                <span className="muted caption">Результат</span>
+                <img src={previewUrl} alt="Предпросмотр обрезки" />
+              </div>
+            )}
+          </div>
+
+          <p className="muted caption image-crop-hint">
+            Тяните рамку за углы и стороны. Перетаскивайте фото. Pinch и колёсико — масштаб.
+          </p>
 
           {error && (
             <p className="image-crop-error" role="alert">
@@ -197,7 +298,7 @@ export function ImageCropEditor({
               type="button"
               className="btn btn-secondary btn-compact"
               onClick={resetView}
-              disabled={busy}
+              disabled={busy || !ready}
               data-testid="image-crop-reset"
             >
               Сбросить
@@ -217,7 +318,7 @@ export function ImageCropEditor({
               type="button"
               className="btn btn-primary"
               onClick={() => void confirm()}
-              disabled={busy || !pixels}
+              disabled={busy || !ready}
               data-testid="image-crop-confirm"
             >
               {busy ? 'Обработка…' : confirmLabel}

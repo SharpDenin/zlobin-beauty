@@ -17,6 +17,7 @@ import (
 	"github.com/zlobin/zlobin-beauty/backend/services/booking/internal/store"
 	"github.com/zlobin/zlobin-beauty/backend/shared/apperr"
 	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
+	"github.com/zlobin/zlobin-beauty/backend/shared/tz"
 )
 
 type Service struct {
@@ -111,7 +112,7 @@ func (s *Service) FreeSlots(ctx context.Context, masterUserID uuid.UUID, day tim
 		return nil, apperr.Validation("duration_minutes must be positive")
 	}
 	if timezone == "" {
-		timezone = "Europe/Moscow"
+		timezone = tz.Default
 	}
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -201,35 +202,60 @@ func (s *Service) DayBusy(ctx context.Context, masterUserID uuid.UUID, day time.
 	return out, nil
 }
 
-const defaultTimezone = "Europe/Moscow"
+const defaultTimezone = tz.Default
 
-// ResolveTimezone determines which IANA timezone to use for a master's
-// working-hours calculations. Explicit tzParam wins; otherwise we look up
-// the master's branch via marketplace and its timezone via organizations;
-// falling back to Europe/Moscow when nothing else is available.
+// ResolveTimezone returns the IANA timezone of the place where the master
+// provides services (branch → city map → default). Client/device timezone must
+// NOT override this — booking wall clocks are always service-location local.
+// tzParam is accepted for backwards compatibility but ignored when non-empty
+// only after validation: invalid values error; valid values are discarded so
+// a Krasnoyarsk client cannot shift a Moscow salon schedule.
 func (s *Service) ResolveTimezone(ctx context.Context, masterUserID uuid.UUID, tzParam string) (string, error) {
-	tz := strings.TrimSpace(tzParam)
-	if tz != "" {
-		if _, err := time.LoadLocation(tz); err != nil {
-			return "", apperr.Validation("invalid timezone")
-		}
-		return tz, nil
+	if raw := strings.TrimSpace(tzParam); raw != "" && !tz.Valid(raw) {
+		return "", apperr.Validation("invalid timezone")
 	}
 	if s.marketplaceURL != "" && s.organizationsURL != "" {
 		if branchID, ok := s.fetchMasterBranchID(ctx, masterUserID); ok {
-			if loc := s.fetchBranchLocation(ctx, branchID); loc != nil && loc.Timezone != "" {
-				return loc.Timezone, nil
+			if loc := s.fetchBranchLocation(ctx, branchID); loc != nil {
+				return tz.Resolve(loc.Timezone, loc.City), nil
 			}
 		}
+	}
+	if city := s.fetchMasterCity(ctx, masterUserID); city != "" {
+		return tz.Resolve("", city), nil
 	}
 	return defaultTimezone, nil
 }
 
 func (s *Service) timezoneForBranch(ctx context.Context, branchID uuid.UUID) string {
-	if loc := s.fetchBranchLocation(ctx, branchID); loc != nil && loc.Timezone != "" {
-		return loc.Timezone
+	if loc := s.fetchBranchLocation(ctx, branchID); loc != nil {
+		return tz.Resolve(loc.Timezone, loc.City)
 	}
 	return defaultTimezone
+}
+
+func (s *Service) fetchMasterCity(ctx context.Context, masterUserID uuid.UUID) string {
+	if s.marketplaceURL == "" {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.marketplaceURL+"/v1/masters/"+masterUserID.String(), nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var payload masterPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Master.City)
 }
 
 type branchLocation struct {
@@ -302,14 +328,11 @@ func (s *Service) fetchBranchLocation(ctx context.Context, branchID uuid.UUID) *
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil
 	}
-	tz := payload.Timezone
-	if tz == "" {
-		tz = defaultTimezone
-	} else if _, err := time.LoadLocation(tz); err != nil {
-		tz = defaultTimezone
-	}
 	return &branchLocation{
-		Name: payload.Name, City: payload.City, Address: payload.AddressLine, Timezone: tz,
+		Name:     payload.Name,
+		City:     payload.City,
+		Address:  payload.AddressLine,
+		Timezone: tz.Resolve(payload.Timezone, payload.City),
 	}
 }
 
@@ -371,11 +394,8 @@ func (s *Service) rejectHoursIfAppointmentsOutside(ctx context.Context, masterUs
 		byWeekday[in.Weekday] = in
 	}
 	for _, a := range items {
-		tz := a.LocationTimezone
-		if tz == "" {
-			tz = "Europe/Moscow"
-		}
-		loc, err := time.LoadLocation(tz)
+		zone := tz.Resolve(a.LocationTimezone, a.LocationCity)
+		loc, err := time.LoadLocation(zone)
 		if err != nil {
 			loc = time.UTC
 		}
@@ -773,6 +793,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		locName, locCity, locAddr, locTZ = loc.Name, loc.City, loc.Address, loc.Timezone
 	} else if ws.MasterCity != "" {
 		locCity = ws.MasterCity
+		locTZ = tz.Resolve("", ws.MasterCity)
 	}
 
 	now := s.now().UTC()

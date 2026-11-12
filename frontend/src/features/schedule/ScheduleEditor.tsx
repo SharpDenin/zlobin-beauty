@@ -7,6 +7,7 @@ import { toast } from '@/shared/ui/Toast'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { datetimeLocalToIso, isoToDatetimeLocal } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { minutesToHHMM, parseHHMM, rangeToDayInterval } from '@/pages/calendar-helpers'
 import {
   workModeLabel,
@@ -53,7 +54,7 @@ export function ScheduleEditor({
   const qc = useQueryClient()
   const orgId = cabinet.selectedOrg?.organization.id
   const branch = cabinet.selectedBranch
-  const salonTz = branch?.timezone || 'Asia/Krasnoyarsk'
+  const salonTz = resolveServiceTimezone(branch?.timezone, branch?.city)
   const [mode, setMode] = useState<'chair' | 'onsite' | 'percentage'>('chair')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')

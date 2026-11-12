@@ -2,6 +2,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
+import { timezoneForCity } from '@/shared/lib/service-timezone'
 
 const schema = z.object({
   name: z.string().min(2, 'Минимум 2 символа'),
@@ -11,6 +12,8 @@ const schema = z.object({
   branch_name: z.string().optional().or(z.literal('')),
   branch_address_line: z.string().optional().or(z.literal('')),
   phone: z.string().optional().or(z.literal('')),
+  /** Required when city is not in the known IANA map and a branch is created. */
+  timezone: z.string().optional().or(z.literal('')),
 }).superRefine((data, ctx) => {
   if (!data.with_branch) return
   if (!data.branch_name || data.branch_name.trim().length < 2) {
@@ -19,6 +22,14 @@ const schema = z.object({
   const addr = (data.branch_address_line || data.address_line || '').trim()
   if (addr.length < 3) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Укажите адрес филиала', path: ['branch_address_line'] })
+  }
+  const city = data.city.trim()
+  if (!timezoneForCity(city) && !(data.timezone ?? '').trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Для этого города укажите IANA-зону (например Asia/Yekaterinburg)',
+      path: ['timezone'],
+    })
   }
 })
 
@@ -29,6 +40,7 @@ export type CreateSalonPayload = {
   city: string
   address_line: string
   type: 'salon'
+  timezone?: string
   branch_name?: string
   branch_city?: string
   branch_address_line?: string
@@ -36,12 +48,18 @@ export type CreateSalonPayload = {
 }
 
 export function buildCreateSalonBody(values: CreateSalonValues): CreateSalonPayload {
+  const city = values.city.trim()
+  const mapped = timezoneForCity(city)
+  const explicit = (values.timezone ?? '').trim()
   const body: CreateSalonPayload = {
     name: values.name.trim(),
-    city: values.city.trim(),
+    city,
     address_line: (values.address_line ?? '').trim(),
     type: 'salon',
   }
+  // Never silently send Europe/Moscow for unknown cities.
+  if (mapped) body.timezone = mapped
+  else if (explicit) body.timezone = explicit
   if (values.with_branch) {
     body.branch_name = (values.branch_name ?? '').trim()
     body.branch_city = body.city
@@ -75,9 +93,12 @@ export function CreateSalonForm({
       branch_name: '',
       branch_address_line: '',
       phone: '',
+      timezone: '',
     },
   })
   const busy = pending || localPending || form.formState.isSubmitting
+  const cityWatch = form.watch('city')
+  const cityNeedsTimezone = withBranch && !timezoneForCity(cityWatch)
 
   return (
     <form
@@ -145,6 +166,20 @@ export function CreateSalonForm({
               <span className="error">{form.formState.errors.branch_address_line.message}</span>
             )}
           </div>
+          {cityNeedsTimezone && (
+            <div className="field">
+              <label htmlFor="branch-timezone">Часовой пояс (IANA)</label>
+              <input
+                id="branch-timezone"
+                aria-invalid={Boolean(form.formState.errors.timezone)}
+                {...form.register('timezone')}
+                placeholder="Asia/Yekaterinburg"
+                data-testid="create-salon-timezone"
+              />
+              <p className="hint">Город не в справочнике — укажите зону явно, без автоподстановки Москвы.</p>
+              {form.formState.errors.timezone && <span className="error">{form.formState.errors.timezone.message}</span>}
+            </div>
+          )}
           <div className="field">
             <label htmlFor="branch-phone">Телефон филиала <span className="muted">(необязательно)</span></label>
             <input id="branch-phone" {...form.register('phone')} placeholder="+7 999 000-00-00" inputMode="tel" />

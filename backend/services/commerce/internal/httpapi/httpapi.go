@@ -423,11 +423,12 @@ func productDTO(p domain.Product) map[string]any {
 func (a *API) createMovement(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var req struct {
-		LocationID string  `json:"location_id"`
-		ProductID  string  `json:"product_id"`
-		Kind       string  `json:"kind"`
-		Qty        float64 `json:"qty"`
-		Reason     string  `json:"reason"`
+		LocationID     string  `json:"location_id"`
+		ProductID      string  `json:"product_id"`
+		Kind           string  `json:"kind"`
+		Qty            float64 `json:"qty"`
+		Reason         string  `json:"reason"`
+		IdempotencyKey string  `json:"idempotency_key"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -439,8 +440,12 @@ func (a *API) createMovement(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid location_id or product_id"))
 		return
 	}
+	idem := strings.TrimSpace(req.IdempotencyKey)
+	if idem == "" {
+		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
 	m, err := a.svc.CreateMovement(r.Context(), claims.UserID, service.MovementInput{
-		LocationID: locID, ProductID: prodID, Kind: req.Kind, Qty: req.Qty, Reason: req.Reason,
+		LocationID: locID, ProductID: prodID, Kind: req.Kind, Qty: req.Qty, Reason: req.Reason, IdempotencyKey: idem,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)

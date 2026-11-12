@@ -306,6 +306,7 @@ type AdjustStockInput struct {
 	ProductID      uuid.UUID
 	Qty            float64
 	Reason         string
+	IdempotencyKey string
 }
 
 func (s *Service) AdjustMyStock(ctx context.Context, actor uuid.UUID, in AdjustStockInput) (*domain.StockMovement, error) {
@@ -326,14 +327,31 @@ func (s *Service) AdjustMyStock(ctx context.Context, actor uuid.UUID, in AdjustS
 	if _, err := s.getProductOrErr(ctx, in.ProductID); err != nil {
 		return nil, err
 	}
+	key := domain.ScopeStockIdempotencyKey(actor, loc.ID, in.IdempotencyKey)
+	if key != "" {
+		existing, err := s.store.GetMovementByIdempotencyKey(ctx, key)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if existing != nil {
+			if !domain.StockMovementMatchesIdempotentReplay(existing, loc.ID, in.ProductID, domain.MovementAdjust, in.Qty, reason) {
+				return nil, apperr.Conflict("idempotency_key already used")
+			}
+			return existing, nil
+		}
+	}
 	m := domain.StockMovement{
 		ID: ids.New(), LocationID: loc.ID, ProductID: in.ProductID,
 		Kind: domain.MovementAdjust, Qty: in.Qty, Reason: reason,
-		ActorUserID: actor, CreatedAt: s.now().UTC(),
+		ActorUserID: actor, IdempotencyKey: key, CreatedAt: s.now().UTC(),
 	}
 	out, err := s.store.CreateMovement(ctx, m)
 	if err != nil {
 		return nil, typedOrInternal(err)
+	}
+	if key != "" && !domain.StockMovementMatchesIdempotentReplay(out, loc.ID, in.ProductID, domain.MovementAdjust, in.Qty, reason) {
+		// Concurrent insert won with a different payload under the same scoped key.
+		return nil, apperr.Conflict("idempotency_key already used")
 	}
 	return out, nil
 }

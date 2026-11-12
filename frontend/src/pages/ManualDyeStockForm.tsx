@@ -1,10 +1,17 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/shared/api/client'
 import { formatUserError } from '@/shared/lib/app-error'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { toast } from '@/shared/ui/Toast'
 import { Modal } from '@/shared/ui/Modal'
+import {
+  clearDyeStockIdemSession,
+  dropAppliedDyeIdemLines,
+  ensureDyeLineIdemKeys,
+  loadDyeStockIdemSession,
+  type DyeStockIdemSession,
+} from '@/pages/dyeStockIdempotency'
 
 type CatalogProduct = {
   id: string
@@ -61,6 +68,27 @@ export function ManualDyeStockForm({
   const [formError, setFormError] = useState<string | null>(null)
   /** Sync lock: button `disabled={isPending}` alone does not stop same-tick double clicks. */
   const submitLock = useRef(false)
+  const idemSessionRef = useRef<DyeStockIdemSession | null>(null)
+  const restoredRef = useRef(false)
+
+  useEffect(() => {
+    if (!open) {
+      restoredRef.current = false
+      return
+    }
+    if (restoredRef.current) return
+    restoredRef.current = true
+    const stored = loadDyeStockIdemSession(mode, organizationId, locationId || '')
+    idemSessionRef.current = stored
+    if (!stored) return
+    if (stored.brand) setBrand(stored.brand)
+    if (stored.reason) setReason(stored.reason)
+    const restoredQtys: Record<string, string> = {}
+    for (const [productId, line] of Object.entries(stored.lines || {})) {
+      restoredQtys[productId] = String(line.qty)
+    }
+    if (Object.keys(restoredQtys).length > 0) setQtys(restoredQtys)
+  }, [open, mode, organizationId, locationId])
 
   const categories = useQuery({
     queryKey: ['product-categories-dye'],
@@ -139,27 +167,42 @@ export function ManualDyeStockForm({
         }
         if (lines.length === 0) throw new Error('Укажите количество хотя бы для одного оттенка')
 
+        const { session, keysByProduct } = ensureDyeLineIdemKeys(idemSessionRef.current, {
+          mode,
+          organizationId,
+          locationId: locationId || '',
+          brand,
+          reason: reasonTrim,
+          lines: lines.map((l) => ({ productId: l.product.id, qty: l.qty })),
+        })
+        idemSessionRef.current = session
+
         for (const line of lines) {
+          const idempotencyKey = keysByProduct[line.product.id]
           if (mode === 'warehouse') {
             if (!locationId) throw new Error('Не выбран склад')
             await apiRequest('/v1/commerce/stock/movements', {
               token,
+              idempotencyKey,
               body: {
                 location_id: locationId,
                 product_id: line.product.id,
                 kind: 'receipt',
                 qty: line.qty,
                 reason: reasonTrim,
+                idempotency_key: idempotencyKey,
               },
             })
           } else {
             await apiRequest('/v1/me/inventory/adjust', {
               token,
+              idempotencyKey,
               body: {
                 organization_id: organizationId,
                 product_id: line.product.id,
                 qty: line.qty,
                 reason: reasonTrim,
+                idempotency_key: idempotencyKey,
               },
             })
           }
@@ -174,6 +217,7 @@ export function ManualDyeStockForm({
             for (const id of applied) delete next[id]
             return next
           })
+          idemSessionRef.current = dropAppliedDyeIdemLines(idemSessionRef.current, applied)
           await qc.invalidateQueries({ queryKey: ['me-inventory'] })
           await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
           await qc.invalidateQueries({ queryKey: ['commerce-movements'] })
@@ -196,6 +240,8 @@ export function ManualDyeStockForm({
       await qc.invalidateQueries({ queryKey: ['me-inventory'] })
       await qc.invalidateQueries({ queryKey: ['commerce-stock'] })
       await qc.invalidateQueries({ queryKey: ['commerce-movements'] })
+      clearDyeStockIdemSession(mode, organizationId, locationId || '')
+      idemSessionRef.current = null
       setQtys({})
       onClose()
     },
@@ -236,6 +282,8 @@ export function ManualDyeStockForm({
                 onClick={() => {
                   setBrand(b)
                   setQtys({})
+                  clearDyeStockIdemSession(mode, organizationId, locationId || '')
+                  idemSessionRef.current = null
                 }}
               >
                 {b}

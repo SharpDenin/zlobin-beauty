@@ -32,6 +32,7 @@ function renderForm() {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   mockedRequest.mockImplementation(async (path: string) => {
     if (path.includes('/product-categories')) {
@@ -57,6 +58,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   resetOverlayLockForTests()
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
@@ -86,9 +88,52 @@ describe('ManualDyeStockForm', () => {
       const adjusts = mockedRequest.mock.calls.filter(([path]) => String(path).includes('/me/inventory/adjust'))
       expect(adjusts).toHaveLength(1)
       expect(adjusts[0][1]).toMatchObject({
-        body: expect.objectContaining({ product_id: 'p3', qty: 2 }),
+        idempotencyKey: expect.any(String),
+        body: expect.objectContaining({
+          product_id: 'p3',
+          qty: 2,
+          idempotency_key: expect.any(String),
+        }),
       })
+      expect((adjusts[0][1] as { idempotencyKey: string }).idempotencyKey).toBe(
+        (adjusts[0][1] as { body: { idempotency_key: string } }).body.idempotency_key,
+      )
     })
+  })
+
+  it('reuses the same idempotency key for a failed line retry', async () => {
+    let adjustCalls = 0
+    mockedRequest.mockImplementation(async (path: string) => {
+      if (path.includes('/product-categories')) {
+        return { items: [{ id: 'cat-kraska', name: 'Краска', slug: 'kraska' }] }
+      }
+      if (path.includes('/shop/products')) {
+        return {
+          items: [{ id: 'p3', brand: 'Wella', name: 'Koleston 7/1', unit: 'pcs', category_id: 'cat-kraska' }],
+        }
+      }
+      if (path.includes('/me/inventory/adjust')) {
+        adjustCalls += 1
+        if (adjustCalls === 1) throw Object.assign(new Error('network'), { status: 0 })
+        return { id: 'mov-2' }
+      }
+      return { items: [] }
+    })
+
+    renderForm()
+    await waitFor(() => expect(screen.getByTestId('dye-brand-Wella')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('dye-brand-Wella'))
+    fireEvent.change(screen.getByTestId('dye-qty-p3'), { target: { value: '2' } })
+    fireEvent.click(screen.getByTestId('dye-submit'))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('dye-submit'))
+    await waitFor(() => expect(adjustCalls).toBe(2))
+    const adjusts = mockedRequest.mock.calls.filter(([path]) => String(path).includes('/me/inventory/adjust'))
+    const key1 = (adjusts[0][1] as { idempotencyKey: string }).idempotencyKey
+    const key2 = (adjusts[1][1] as { idempotencyKey: string }).idempotencyKey
+    expect(key1).toBeTruthy()
+    expect(key2).toBe(key1)
   })
 
   it('clears applied lines after partial multi-shade failure', async () => {
@@ -194,7 +239,14 @@ describe('ManualDyeStockForm', () => {
       const calls = mockedRequest.mock.calls.filter(([path]) => String(path).includes('/stock/movements'))
       expect(calls).toHaveLength(1)
       expect(calls[0][1]).toMatchObject({
-        body: expect.objectContaining({ kind: 'receipt', qty: 4, product_id: 'p1', location_id: 'loc-1' }),
+        idempotencyKey: expect.any(String),
+        body: expect.objectContaining({
+          kind: 'receipt',
+          qty: 4,
+          product_id: 'p1',
+          location_id: 'loc-1',
+          idempotency_key: expect.any(String),
+        }),
       })
     })
   })

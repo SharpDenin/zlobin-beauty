@@ -374,7 +374,9 @@ func (s *Service) ListPlannerBlocks(ctx context.Context, actor uuid.UUID, from, 
 		if err := s.requireMembership(ctx, *orgID, actor, "owner", "admin"); err != nil {
 			return nil, err
 		}
-		items, err = s.store.ListPlannerBlocksForOrg(ctx, *orgID, actor, from, to)
+		owners := s.orgCalendarOwnerIDs(ctx, *orgID)
+		owners = append(owners, actor)
+		items, err = s.store.ListPlannerBlocksForOrgOwners(ctx, *orgID, owners, from, to)
 	} else {
 		items, err = s.store.ListPlannerBlocks(ctx, actor, from, to)
 	}
@@ -385,6 +387,59 @@ func (s *Service) ListPlannerBlocks(ctx context.Context, actor uuid.UUID, from, 
 		items = []store.PlannerBlock{}
 	}
 	return items, nil
+}
+
+// orgCalendarOwnerIDs returns active master user IDs for salon calendar aggregation.
+// Owner membership alone is not treated as a master profile — only role=master is listed.
+func (s *Service) orgCalendarOwnerIDs(ctx context.Context, orgID uuid.UUID) []uuid.UUID {
+	if s.organizationsURL == "" || s.internalToken == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/internal/organizations/"+orgID.String()+"/members", nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil
+	}
+	var payload struct {
+		Items []struct {
+			UserID string `json:"user_id"`
+			Role   string `json:"role"`
+			Status string `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return nil
+	}
+	out := make([]uuid.UUID, 0, len(payload.Items))
+	seen := map[uuid.UUID]struct{}{}
+	for _, m := range payload.Items {
+		if m.Status != "" && m.Status != "active" {
+			continue
+		}
+		// Masters' personal blocks belong on the salon day board.
+		// Do not include role=owner solely by membership — owners without master role stay off the board.
+		if m.Role != "master" {
+			continue
+		}
+		id, err := uuid.Parse(m.UserID)
+		if err != nil || id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *Service) canEditPlannerBlock(ctx context.Context, actor uuid.UUID, b *store.PlannerBlock) error {

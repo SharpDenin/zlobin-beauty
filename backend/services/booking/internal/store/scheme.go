@@ -130,12 +130,20 @@ ORDER BY starts_at`, owner, from, to)
 }
 
 func (s *Store) ListPlannerBlocksForOrg(ctx context.Context, orgID, viewer uuid.UUID, from, to time.Time) ([]PlannerBlock, error) {
+	return s.ListPlannerBlocksForOrgOwners(ctx, orgID, []uuid.UUID{viewer}, from, to)
+}
+
+// ListPlannerBlocksForOrgOwners returns org-tagged blocks plus blocks owned by any of the given staff user IDs.
+func (s *Store) ListPlannerBlocksForOrgOwners(ctx context.Context, orgID uuid.UUID, owners []uuid.UUID, from, to time.Time) ([]PlannerBlock, error) {
+	if len(owners) == 0 {
+		owners = []uuid.UUID{}
+	}
 	rows, err := s.pool.Query(ctx, `
 SELECT id, owner_user_id, organization_id, title, category, starts_at, ends_at, timezone, color, created_at, updated_at
 FROM planner_blocks
 WHERE starts_at < $3 AND ends_at > $2
-  AND (organization_id=$1 OR owner_user_id=$4)
-ORDER BY starts_at`, orgID, from, to, viewer)
+  AND (organization_id=$1 OR owner_user_id = ANY($4::uuid[]))
+ORDER BY starts_at`, orgID, from, to, owners)
 	if err != nil {
 		return nil, err
 	}

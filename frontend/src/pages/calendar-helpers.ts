@@ -336,6 +336,14 @@ export function swipeStep(view: CalendarViewId, compact: boolean): 'day' | 'peri
   return 'period'
 }
 
+/** Legacy preference `timeGridThreeDay` → day (3-day mode removed). */
+export function normalizeCalendarViewId(v: string | null | undefined, fallback: CalendarViewId): CalendarViewId {
+  if (!v) return fallback
+  if (v === 'timeGridThreeDay') return 'timeGridDay'
+  if (isCalendarViewId(v)) return v
+  return fallback
+}
+
 export function detectHorizontalSwipe(
   dx: number,
   dy: number,
@@ -355,16 +363,29 @@ export function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-export type CalendarViewId = 'timeGridDay' | 'timeGridWeek' | 'timeGridThreeDay' | 'dayGridMonth' | 'listWeek'
+export type CalendarViewId = 'timeGridDay' | 'timeGridWeek' | 'dayGridMonth' | 'listWeek'
+
+export const CALENDAR_VIEW_OPTIONS: ReadonlyArray<{ id: CalendarViewId; label: string }> = [
+  { id: 'timeGridDay', label: 'День' },
+  { id: 'timeGridWeek', label: 'Неделя' },
+  { id: 'dayGridMonth', label: 'Месяц' },
+  { id: 'listWeek', label: 'Список' },
+]
 
 export function isCalendarViewId(v: string): v is CalendarViewId {
   return (
     v === 'timeGridDay' ||
     v === 'timeGridWeek' ||
-    v === 'timeGridThreeDay' ||
     v === 'dayGridMonth' ||
     v === 'listWeek'
   )
+}
+
+/** Universal planner service key when no catalog service applies. */
+export const CALENDAR_SERVICE_OTHER = 'other'
+
+export function isOtherServiceKey(id: string | undefined | null) {
+  return !id || id === CALENDAR_SERVICE_OTHER || id === 'personal' || id === 'task'
 }
 
 /** Map a date range to a single-day schedule-exception interval (end at midnight → 1440). */

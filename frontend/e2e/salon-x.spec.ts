@@ -1302,10 +1302,12 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     test.skip(info.project.name !== 'phone-390', 'once')
     await loginUI(page, 'chain1@demo.local')
     await page.goto('/calendar')
+    await page.getByTestId('calendar-open-settings').click()
+    await expect(page.getByTestId('calendar-settings')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('calendar-branch-switcher')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('calendar-branch-switcher').getByRole('option', { name: 'Новосибирск' }).first()).toBeAttached()
     await page.getByTestId('calendar-branch-switcher').selectOption({ label: 'Новосибирск' })
-    await expect(page.getByText(/Asia\/Novosibirsk/)).toBeVisible()
+    await expect(page.getByTestId('calendar-branch-timezone')).toContainText(/Asia\/Novosibirsk/)
   })
 
   test('phase2 supplier dashboard analytics team and assign task', async ({ page }, info) => {
@@ -1877,6 +1879,8 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.goto('/staff')
     await expect(page.getByText(/Сеть Salon-X \(demo\) · Новосибирск/)).toBeVisible({ timeout: 15_000 })
     await page.goto('/calendar')
+    await page.getByTestId('calendar-open-settings').click()
+    await expect(page.getByTestId('calendar-settings')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('calendar-branch-switcher')).toHaveValue(/.+/)
   })
 

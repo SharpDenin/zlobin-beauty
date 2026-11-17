@@ -7,7 +7,9 @@ import {
   buildDayStrip,
   buildHalfHourSlots,
   calendarColorClass,
+  canDragAppointment,
   eventCoversSlot,
+  eventDurationMinutes,
   eventOverlapsDay,
   eventSlotSpan,
   formatCalendarNowLabel,
@@ -20,6 +22,14 @@ import {
   zonedYmd,
   type DisplayRange,
 } from '@/pages/calendar-helpers'
+import {
+  applyResizeDelta,
+  resizeDraftValid,
+  type ResizeDraft,
+  type ResizeEdge,
+} from '@/pages/calendar-event-resize'
+
+const MOBILE_SLOT_PX = 52
 
 type HoursItem = { weekday: number; start_minute: number; end_minute: number }
 type ExceptionItem = { id: string; day: string; is_day_off: boolean; start_minute?: number | null; end_minute?: number | null }
@@ -51,10 +61,30 @@ type Props = {
   onIntervalSlotTap?: (slotMin: number) => void
   onSaveInterval?: () => void
   onCancelInterval?: () => void
+  onEventResize?: (id: string, startMin: number, endMin: number) => void | Promise<void>
+  canResizeEvent?: (event: EventInput) => boolean
 }
 
 function padTime(minutes: number) {
   return minutesToHHMM(minutes)
+}
+
+function defaultCanResize(e: EventInput) {
+  const p = e.extendedProps as { readonly?: boolean; kind?: string; status?: string; bookingMode?: string } | undefined
+  if (p?.readonly) return false
+  if (e.display === 'background' || p?.kind === 'work-mode') return false
+  if (p?.kind === 'appointment') {
+    return canDragAppointment(String(p.status ?? ''), String(p.bookingMode ?? ''))
+  }
+  return true
+}
+
+function eventDayMinutes(e: EventInput, timezone: string) {
+  const startIso = String(e.start)
+  const endIso = e.end ? String(e.end) : undefined
+  const startMin = minutesFromMidnight(new Date(startIso), timezone)
+  const endMin = startMin + eventDurationMinutes(startIso, endIso, timezone)
+  return { startMin, endMin }
 }
 
 function wallDateAt(selectedDate: Date, ymd: string, startMin: number) {
@@ -90,14 +120,20 @@ export function CalendarMobile({
   onIntervalSlotTap,
   onSaveInterval,
   onCancelInterval,
+  onEventResize,
+  canResizeEvent,
 }: Props) {
   const stripRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLElement | null>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
   const longPressTimer = useRef<number | null>(null)
   const longPressFired = useRef(false)
+  const resizeJustFinished = useRef(false)
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
+  const resizeOriginY = useRef(0)
+  const resizeBase = useRef<{ id: string; edge: ResizeEdge; startMin: number; endMin: number } | null>(null)
   const scrolledOnce = useRef(false)
+  const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null)
   // Label = device clock (+ scale hint when zones differ). Position = service TZ.
   const [nowLabel, setNowLabel] = useState(() => formatCalendarNowLabel(new Date(), timezone))
   const ymd = zonedYmd(selectedDate, timezone)
@@ -153,6 +189,13 @@ export function CalendarMobile({
   }, [isToday, timezone])
 
   useEffect(() => {
+    return () => {
+      document.body.classList.remove('is-cal-resizing')
+      document.body.style.touchAction = ''
+    }
+  }, [])
+
+  useEffect(() => {
     if (loading || monthMode || scrolledOnce.current || slots.length === 0) return
     scrolledOnce.current = true
     requestAnimationFrame(() => {
@@ -185,11 +228,79 @@ export function CalendarMobile({
   }
 
   function suppressClickIfLongPress(e: { preventDefault: () => void; stopPropagation: () => void }) {
+    if (resizeJustFinished.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      resizeJustFinished.current = false
+      return true
+    }
     if (!longPressFired.current) return false
     e.preventDefault()
     e.stopPropagation()
     longPressFired.current = false
     return true
+  }
+
+  function beginCalResize() {
+    document.body.style.touchAction = 'none'
+    document.body.classList.add('is-cal-resizing')
+  }
+
+  function endCalResize() {
+    document.body.style.touchAction = ''
+    document.body.classList.remove('is-cal-resizing')
+    resizeBase.current = null
+    setResizeDraft(null)
+  }
+
+  function onResizeHandleDown(
+    e: ReactPointerEvent<HTMLSpanElement>,
+    edge: ResizeEdge,
+    eid: string,
+    startMin: number,
+    endMin: number,
+  ) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    clearLongPress()
+    resizeOriginY.current = e.clientY
+    resizeBase.current = { id: eid, edge, startMin, endMin }
+    setResizeDraft({ id: eid, edge, startMin, endMin })
+    beginCalResize()
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  function onResizeHandleMove(e: ReactPointerEvent<HTMLSpanElement>) {
+    const base = resizeBase.current
+    if (!base) return
+    e.preventDefault()
+    const deltaY = e.clientY - resizeOriginY.current
+    const next = applyResizeDelta(base.edge, base.startMin, base.endMin, deltaY, MOBILE_SLOT_PX)
+    setResizeDraft({ id: base.id, edge: base.edge, ...next })
+  }
+
+  function onResizeHandleEnd(e: ReactPointerEvent<HTMLSpanElement>) {
+    const base = resizeBase.current
+    if (!base) return
+    e.preventDefault()
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }
+    } catch {
+      /* ignore */
+    }
+    const deltaY = e.clientY - resizeOriginY.current
+    const next = applyResizeDelta(base.edge, base.startMin, base.endMin, deltaY, MOBILE_SLOT_PX)
+    const draft: ResizeDraft = { id: base.id, edge: base.edge, ...next }
+    endCalResize()
+    if (!resizeDraftValid(draft)) return
+    const changed = draft.startMin !== base.startMin || draft.endMin !== base.endMin
+    if (changed && onEventResize) {
+      resizeJustFinished.current = true
+      void onEventResize(draft.id, draft.startMin, draft.endMin)
+    }
   }
 
   function onPressMove(e: ReactPointerEvent) {
@@ -315,7 +426,11 @@ export function CalendarMobile({
     : `Свободное время · ${dayContextLabel}`
 
   return (
-    <div className="cal-mobile cal-mobile--day" data-testid="calendar-mobile" data-day-list="true">
+    <div
+      className={`cal-mobile cal-mobile--day${resizeDraft ? ' is-cal-resizing' : ''}`}
+      data-testid="calendar-mobile"
+      data-day-list="true"
+    >
       <div className="cal-mobile-chrome">
         <header className="cal-mobile-head cal-mobile-head--day">
           <h2 className="cal-mobile-title">{heading}</h2>
@@ -470,11 +585,25 @@ export function CalendarMobile({
               for (const e of startingHere) {
                 const start = String(e.start)
                 const end = e.end ? String(e.end) : start
-                const span = eventSlotSpan(start, end, timezone)
+                const eid = String(e.id)
+                const dayMins = eventDayMinutes(e, timezone)
+                const isResizing = resizeDraft?.id === eid
+                const liveStart = isResizing ? resizeDraft!.startMin : dayMins.startMin
+                const liveEnd = isResizing ? resizeDraft!.endMin : dayMins.endMin
+                const span = isResizing
+                  ? Math.max(1, Math.ceil((liveEnd - liveStart) / 30))
+                  : eventSlotSpan(start, end, timezone)
+                const showResizeHandles = !monthMode && !intervalSelecting && (canResizeEvent?.(e) ?? defaultCanResize(e))
                 const classes = Array.isArray(e.classNames) ? e.classNames.join(' ') : String(e.classNames ?? '')
                 const colorClass = calendarColorClass(String(e.extendedProps?.color ?? ''), String(e.extendedProps?.category ?? 'task'))
                 const client = String(e.extendedProps?.clientName ?? '')
                 const status = String(e.extendedProps?.statusLabel ?? '')
+                const timeLabel = isResizing
+                  ? `${minutesToHHMM(liveStart)}–${minutesToHHMM(liveEnd)}`
+                  : (() => {
+                      const eventTz = String((e.extendedProps as { timezone?: string } | undefined)?.timezone || timezone)
+                      return `${formatLocalInTimezone(start, eventTz)}–${formatLocalInTimezone(end, eventTz)}`
+                    })()
                 const accentStyle =
                   colorClass === 'cal-color-hex'
                     ? ({
@@ -491,17 +620,19 @@ export function CalendarMobile({
                     style={accentStyle}
                   >
                     <time className="cal-slot-time is-busy" dateTime={start}>
-                      {padTime(slotMin)}
+                      {padTime(isResizing ? liveStart : slotMin)}
                     </time>
                     <button
                       type="button"
-                      className={`cal-slot-event ${classes} ${colorClass}`}
+                      className={`cal-slot-event ${classes} ${colorClass}${isResizing ? ' is-resizing' : ''}`}
                       style={accentStyle}
                       onClick={(ev) => {
                         if (suppressClickIfLongPress(ev)) return
+                        if (resizeDraft) return
                         if (e.id) onEventClick(String(e.id))
                       }}
                       onPointerDown={(ev) => {
+                        if (resizeDraft) return
                         pressOrigin.current = { x: ev.clientX, y: ev.clientY }
                         if (e.id && onEventLongPress) {
                           armLongPress(() => onEventLongPress(String(e.id)))
@@ -513,15 +644,34 @@ export function CalendarMobile({
                       onPointerLeave={clearLongPress}
                       disabled={moving}
                     >
+                      {showResizeHandles ? (
+                        <span
+                          className="cal-resize-handle is-start"
+                          role="separator"
+                          aria-label="Изменить начало"
+                          onPointerDown={(ev) => onResizeHandleDown(ev, 'start', eid, dayMins.startMin, dayMins.endMin)}
+                          onPointerMove={onResizeHandleMove}
+                          onPointerUp={onResizeHandleEnd}
+                          onPointerCancel={onResizeHandleEnd}
+                        />
+                      ) : null}
                       <strong>{e.title}</strong>
                       <span className="muted">
-                        {(() => {
-                          const eventTz = String((e.extendedProps as { timezone?: string } | undefined)?.timezone || timezone)
-                          return `${formatLocalInTimezone(start, eventTz)}–${formatLocalInTimezone(end, eventTz)}`
-                        })()}
+                        {timeLabel}
                         {client ? ` · ${client}` : ''}
                         {status ? ` · ${status}` : ''}
                       </span>
+                      {showResizeHandles ? (
+                        <span
+                          className="cal-resize-handle is-end"
+                          role="separator"
+                          aria-label="Изменить конец"
+                          onPointerDown={(ev) => onResizeHandleDown(ev, 'end', eid, dayMins.startMin, dayMins.endMin)}
+                          onPointerMove={onResizeHandleMove}
+                          onPointerUp={onResizeHandleEnd}
+                          onPointerCancel={onResizeHandleEnd}
+                        />
+                      ) : null}
                     </button>
                   </li>,
                 )

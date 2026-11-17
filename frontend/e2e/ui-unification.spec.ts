@@ -67,12 +67,18 @@ test.describe('UI unification adaptive smoke', () => {
       await assertSearchField(page, { label: 'Имя, специализация или работа' })
       await assertNoHorizontalOverflow(page)
 
-      // Navigation icons — bottomnav on phone, sidenav on wider layouts
-      const navIcon = width < 768
-        ? page.locator('.bottomnav .nav-icon').first()
-        : page.locator('.sidenav .nav-icon, nav .nav-icon').first()
-      await expect(navIcon).toBeVisible({ timeout: 15_000 })
-      await expect(navIcon.locator('path, circle, rect').first()).toBeVisible()
+      // Navigation icons — menu drawer on phone (bottom nav removed), sidenav on wider layouts
+      if (width < 768) {
+        await page.getByRole('button', { name: 'Открыть меню' }).click()
+        const navIcon = page.locator('.more-menu-panel .nav-icon, [data-overlay="true"] .nav-icon').first()
+        await expect(navIcon).toBeVisible({ timeout: 15_000 })
+        await expect(navIcon.locator('path, circle, rect').first()).toBeVisible()
+        await page.keyboard.press('Escape')
+      } else {
+        const navIcon = page.locator('.sidenav .nav-icon, nav .nav-icon').first()
+        await expect(navIcon).toBeVisible({ timeout: 15_000 })
+        await expect(navIcon.locator('path, circle, rect').first()).toBeVisible()
+      }
 
       // Shop
       await page.goto('/shop')

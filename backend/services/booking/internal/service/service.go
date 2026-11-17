@@ -1034,7 +1034,8 @@ func (s *Service) ClientBlacklistStatus(ctx context.Context, masterID, clientID 
 	return blocked, noShows, nil
 }
 
-func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uuid.UUID, startsAt time.Time) (*domain.Appointment, error) {
+// Reschedule moves an appointment. Optional durationMinutes (>0) updates length; nil keeps current duration.
+func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uuid.UUID, startsAt time.Time, durationMinutes *int) (*domain.Appointment, error) {
 	if startsAt.Before(s.now().UTC()) {
 		return nil, apperr.Validation("starts_at must be in the future")
 	}
@@ -1051,7 +1052,22 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	if err := rescheduleEligibility(a); err != nil {
 		return nil, err
 	}
-	ends := startsAt.UTC().Add(time.Duration(a.DurationMinutes) * time.Minute)
+	duration := a.DurationMinutes
+	if durationMinutes != nil {
+		if *durationMinutes < 15 {
+			return nil, apperr.Validation("duration_minutes must be at least 15")
+		}
+		if *durationMinutes > 12*60 {
+			return nil, apperr.Validation("duration_minutes is too large")
+		}
+		// Snap to 15-minute grid used by the calendar.
+		snapped := (*durationMinutes / 15) * 15
+		if snapped < 15 {
+			snapped = 15
+		}
+		duration = snapped
+	}
+	ends := startsAt.UTC().Add(time.Duration(duration) * time.Minute)
 	tz := a.LocationTimezone
 	if tz == "" {
 		tz = s.timezoneForBranch(ctx, a.BranchID)
@@ -1062,7 +1078,7 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	}
 	// FreeSlots treats Year/Month/Day of `day` as the salon calendar date in `tz`.
 	localStart := startsAt.In(loc)
-	slots, err := s.FreeSlots(ctx, a.MasterUserID, localStart, a.DurationMinutes, tz, a.ID)
+	slots, err := s.FreeSlots(ctx, a.MasterUserID, localStart, duration, tz, a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1078,6 +1094,7 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	}
 	a.StartsAt = startsAt.UTC()
 	a.EndsAt = ends
+	a.DurationMinutes = duration
 	a.UpdatedAt = now
 	s.notify(ctx, a.ClientUserID, "appointment.rescheduled", "Запись перенесена", a.ServiceName, a.ID)
 	if a.MasterUserID != actorUserID {

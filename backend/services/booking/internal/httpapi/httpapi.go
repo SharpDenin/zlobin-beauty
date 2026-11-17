@@ -60,6 +60,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
 	mux.Handle("GET /v1/appointments/{id}/reschedule-options", auth(http.HandlerFunc(a.rescheduleOptions)))
+	mux.Handle("POST /v1/appointments/{id}/copy", auth(http.HandlerFunc(a.copyAppointment)))
 	mux.Handle("POST /v1/appointments/{id}/start", auth(http.HandlerFunc(a.start)))
 	mux.Handle("POST /v1/appointments/{id}/complete", auth(http.HandlerFunc(a.complete)))
 	mux.Handle("GET /v1/appointments/{id}/scheme", auth(http.HandlerFunc(a.getScheme)))
@@ -832,18 +833,59 @@ func (a *API) reschedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		StartsAt time.Time `json:"starts_at"`
+		StartsAt        time.Time `json:"starts_at"`
+		DurationMinutes *int      `json:"duration_minutes"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
 		return
 	}
-	item, err := a.svc.Reschedule(r.Context(), id, claims.UserID, req.StartsAt)
+	item, err := a.svc.Reschedule(r.Context(), id, claims.UserID, req.StartsAt, req.DurationMinutes)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) copyAppointment(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	var req struct {
+		Targets  []service.CopyTarget `json:"targets"`
+		StartsAt *time.Time           `json:"starts_at"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	targets := req.Targets
+	if len(targets) == 0 && req.StartsAt != nil {
+		targets = []service.CopyTarget{{StartsAt: *req.StartsAt}}
+	}
+	out, err := a.svc.CopyAppointment(r.Context(), id, claims.UserID, targets)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	errItems := make([]map[string]any, 0, len(out.Errors))
+	for _, e := range out.Errors {
+		item := map[string]any{"starts_at": e.StartsAt}
+		if ae, ok := apperr.As(e.Err); ok {
+			item["error"] = map[string]any{"code": string(ae.Code), "message": ae.Message}
+		} else {
+			item["error"] = map[string]any{"code": string(apperr.CodeInternal), "message": "internal error"}
+		}
+		errItems = append(errItems, item)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"items":  a.appointmentDTOs(r, out.Items),
+		"errors": errItems,
+	})
 }
 
 func (a *API) rescheduleOptions(w http.ResponseWriter, r *http.Request) {

@@ -36,8 +36,11 @@ test.describe('production calendar', () => {
     await page.goto('/calendar')
     await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
     await expect(page.getByRole('button', { name: 'День', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '3 дня', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Неделя', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Месяц', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Список', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '3 дня', exact: true })).toHaveCount(0)
+    await expect(page.locator('.bottomnav')).toHaveCount(0)
     await assertNoPageOverflow(page)
 
     if (info.project.name === 'phone-390') {
@@ -96,12 +99,12 @@ test.describe('production calendar', () => {
       }
     }
 
-    // Category filters live in settings — not permanently in the main calendar chrome.
+    // Category filters removed — settings hold grid range / nav; chrome stays clean.
     await expect(page.locator('.calendar-shell > .calendar-category-row')).toHaveCount(0)
     await page.getByTestId('calendar-open-settings').click()
     await expect(page.getByTestId('calendar-settings')).toBeVisible()
-    await expect(page.getByRole('group', { name: 'Фильтры категорий' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Клиент/ }).first()).toBeVisible()
+    await expect(page.getByRole('group', { name: 'Фильтры категорий' })).toHaveCount(0)
+    await expect(page.getByTestId('calendar-nav-mode')).toBeVisible()
     const settingsScroll = await page.getByTestId('calendar-settings').evaluate((el) => {
       const panel = el.closest('[data-overlay-scroll]') as HTMLElement | null
       if (!panel) return { ok: false, reason: 'no-scroll-panel' }

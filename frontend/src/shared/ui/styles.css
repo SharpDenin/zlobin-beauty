@@ -76,7 +76,7 @@
   --text-3xl: 2rem;
   --text-display: 2.5rem;
   --control-h: 44px;
-  --nav-h: 64px;
+  --nav-h: 0px;
   --content-max: 1120px;
   --bottom-nav-cols: 3;
   --bp-phone: 390px;
@@ -605,9 +605,9 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   overflow: hidden;
 }
 .topbar--compact {
-  padding: var(--space-2) var(--space-4);
-  padding-top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
-  min-height: 52px;
+  padding: var(--space-1) var(--space-3);
+  padding-top: calc(var(--space-1) + env(safe-area-inset-top, 0px));
+  min-height: 44px;
 }
 .topbar--compact .brand {
   padding: 0;
@@ -945,7 +945,7 @@ h4 { font-size: var(--text-lg); font-weight: 600; color: var(--color-text-primar
 .page {
   width: min(100% - 2 * var(--space-4), var(--content-max));
   margin: 0 auto;
-  padding: var(--space-5) 0 calc(var(--nav-h) + var(--space-5) + env(safe-area-inset-bottom, 0px));
+  padding: var(--space-5) 0 calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
   min-width: 0;
 }
 .page-header {
@@ -964,7 +964,7 @@ h4 { font-size: var(--text-lg); font-weight: 600; color: var(--color-text-primar
   left: 0; right: 0; bottom: 0;
   min-height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  display: grid;
+  display: none;
   grid-template-columns: repeat(var(--bottom-nav-cols), minmax(0, 1fr));
   background: var(--glass-chrome-fill);
   -webkit-backdrop-filter: none;
@@ -1715,7 +1715,7 @@ button.list-item:hover {
 
 .cart-bar {
   position: sticky;
-  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   display: flex;
   gap: var(--space-3);
   align-items: center;
@@ -2388,7 +2388,7 @@ button.list-item:hover {
 .toast-viewport {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   transform: translateX(-50%);
   z-index: var(--z-toast);
   display: grid;
@@ -4236,7 +4236,7 @@ html[data-theme="light"] .auth-lead {
   flex-direction: column;
   overflow: hidden;
   padding-top: var(--space-3);
-  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
 }
 .messenger-page .messenger-app--page {
   flex: 1;

@@ -221,7 +221,7 @@ function MoreDrawer({
 
       {editing ? (
         <section className="stack-sm nav-order" data-testid="menu-order-editor">
-          <p className="muted">Перетащите за ручку. Порядок сохранится и для нижних вкладок.</p>
+          <p className="muted">Перетащите за ручку. Порядок сохранится в меню навигации.</p>
           {ordered.map((l, i) => (
             <div
               key={l.to}
@@ -305,7 +305,6 @@ function AppShellInner() {
     releaseOrphanedOverlayLock()
   }, [location.pathname])
 
-  const primary = cabinet.primary
   const secondary = cabinet.secondary
   const sideLinks = cabinet.side
 
@@ -323,7 +322,6 @@ function AppShellInner() {
   return (
     <div
       className={`app-shell${fillShell ? ' app-shell--fill' : ''}${homeRoute ? ' app-shell--home' : ''}`}
-      style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}
     >
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
@@ -427,38 +425,7 @@ function AppShellInner() {
         </header>
         <Outlet />
       </div>
-      {homeRoute ? null : (
-      <nav className="bottomnav" aria-label="Основная навигация">
-        {primary.map((l) => {
-          if (l.to === '/more') {
-            return (
-              <button
-                key={l.to}
-                type="button"
-                className={`nav-tab ${moreOpen ? 'active' : ''}`}
-                aria-expanded={moreOpen}
-                aria-haspopup="dialog"
-                onClick={() => setMoreOpen(true)}
-              >
-                <NavIcon to="/more" />
-                <span>{l.label}</span>
-              </button>
-            )
-          }
-          return (
-            <Link
-              key={l.to}
-              to={l.to}
-              className={linkActive(location.pathname, l.to, l.end) ? 'active' : ''}
-              aria-current={linkActive(location.pathname, l.to, l.end) ? 'page' : undefined}
-            >
-              <NavIcon to={l.to} />
-              <span>{l.label}</span>
-            </Link>
-          )
-        })}
-      </nav>
-      )}
+      {/* Bottom tab bar removed: navigation stays in Меню / sidenav so calendar and other fill routes reclaim vertical space. */}
       {!desktopNav && (
         <MoreDrawer
           open={moreOpen}

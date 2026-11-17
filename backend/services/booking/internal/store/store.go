@@ -324,14 +324,18 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)`, idsNew(), id, from, to, actor, reason, at); err 
 }
 
 func (s *Store) Reschedule(ctx context.Context, id uuid.UUID, fromStatus string, starts, ends time.Time, actor uuid.UUID, at time.Time) error {
+	duration := int(ends.Sub(starts).Minutes())
+	if duration < 1 {
+		duration = 1
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `
-UPDATE appointments SET starts_at=$3, ends_at=$4, updated_at=$5
-WHERE id=$1 AND status=$2`, id, fromStatus, starts, ends, at)
+UPDATE appointments SET starts_at=$3, ends_at=$4, duration_minutes=$5, updated_at=$6
+WHERE id=$1 AND status=$2`, id, fromStatus, starts, ends, duration, at)
 	if err != nil {
 		return mapAppointmentConflict(err)
 	}

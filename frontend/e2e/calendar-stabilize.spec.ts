@@ -76,7 +76,7 @@ test.describe('calendar stabilization', () => {
       await page.goto('/calendar')
       await expect(page.getByRole('heading', { name: /календарь|расписание/i }).first()).toBeVisible({ timeout: 20_000 })
 
-      const views = ['День', '3 дня', 'Неделя', 'Месяц', 'Список'] as const
+      const views = ['День', 'Неделя', 'Месяц', 'Список'] as const
       for (const label of views) {
         await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
       }

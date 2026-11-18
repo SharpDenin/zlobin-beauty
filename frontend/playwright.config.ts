@@ -1,6 +1,19 @@
-import { defineConfig } from '@playwright/test'
+import { defineConfig, type PlaywrightTestConfig } from '@playwright/test'
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173'
+const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === '1' || process.env.PLAYWRIGHT_SKIP_WEBSERVER === 'true'
+
+const webServer: PlaywrightTestConfig['webServer'] = skipWebServer
+  ? undefined
+  : {
+      command: 'npm run dev -- --host 127.0.0.1 --port 5173',
+      url: baseURL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? 'http://localhost:8090',
+      },
+    }
 
 export default defineConfig({
   testDir: './e2e',
@@ -10,20 +23,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  outputDir: 'test-results',
   use: {
     baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
-  webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 5173',
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    env: {
-      VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? 'http://localhost:8090',
-    },
-  },
+  webServer,
   projects: [
     { name: 'phone-360', use: { viewport: { width: 360, height: 800 } } },
     { name: 'phone-390', use: { viewport: { width: 390, height: 844 } } },

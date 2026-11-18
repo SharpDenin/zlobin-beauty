@@ -16,12 +16,18 @@ import { addContact, listContacts } from '@/features/contacts/api'
 import {
   bookingMasterUserId,
   canSendMessage,
+  CONVERSATION_LIST_POLL_HIDDEN_MS,
+  CONVERSATION_LIST_POLL_VISIBLE_MS,
   conversationTypeLabel,
   emptyMessengerAction,
   formatMessageTime,
   isNearBottom,
   lastMessagePreview,
   MAX_MESSAGE_CHARS,
+  mergeConversationMessages,
+  MESSAGE_POLL_HIDDEN_MS,
+  MESSAGE_POLL_VISIBLE_MS,
+  messengerPollInterval,
   peerInitials,
 } from '@/features/messenger/helpers'
 import { MESSAGE_PAGE_SIZE, type ChatMessage, type Conversation, type MessageListResponse } from '@/features/messenger/types'
@@ -77,14 +83,16 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       return apiRequest<{ items: Conversation[] }>(`/v1/conversations?${params}`, { token: accessToken })
     },
     enabled: Boolean(accessToken),
-    refetchInterval: 8000,
+    refetchInterval: () => messengerPollInterval(CONVERSATION_LIST_POLL_VISIBLE_MS, CONVERSATION_LIST_POLL_HIDDEN_MS),
+    refetchOnWindowFocus: true,
   })
 
   const conversation = useQuery({
     queryKey: ['conversation', id],
     queryFn: () => apiRequest<Conversation>(`/v1/conversations/${id}`, { token: accessToken }),
     enabled: Boolean(accessToken && id),
-    refetchInterval: 5000,
+    refetchInterval: () => messengerPollInterval(MESSAGE_POLL_VISIBLE_MS * 2, MESSAGE_POLL_HIDDEN_MS),
+    refetchOnWindowFocus: true,
   })
 
   const messages = useQuery({
@@ -92,8 +100,24 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
     queryFn: () =>
       apiRequest<MessageListResponse>(`/v1/conversations/${id}/messages?limit=${MESSAGE_PAGE_SIZE}`, { token: accessToken }),
     enabled: Boolean(accessToken && id),
-    refetchInterval: 4000,
+    refetchInterval: () => messengerPollInterval(MESSAGE_POLL_VISIBLE_MS, MESSAGE_POLL_HIDDEN_MS),
+    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: false,
   })
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (id) void qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
+      void qc.invalidateQueries({ queryKey: ['conversations'] })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onVisible)
+    }
+  }, [id, qc])
 
   useEffect(() => {
     setOlder([])
@@ -106,13 +130,6 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   }, [id])
 
   useEffect(() => {
-    if (!accessToken || !id) return
-    void apiRequest(`/v1/conversations/${id}/read`, { method: 'POST', token: accessToken })
-      .then(() => qc.invalidateQueries({ queryKey: ['conversations'] }))
-      .catch(() => undefined)
-  }, [accessToken, id, messages.data?.items.length, qc])
-
-  useEffect(() => {
     if (!file) {
       setFilePreview(null)
       return
@@ -123,25 +140,21 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   }, [file])
 
   const serverItems = messages.data?.items ?? []
-  const merged = useMemo(() => {
-    const seen = new Set<string>()
-    const out: LocalMessage[] = []
-    for (const m of older) {
-      if (seen.has(m.id)) continue
-      seen.add(m.id)
-      out.push(m)
-    }
-    for (const m of serverItems) {
-      if (seen.has(m.id)) continue
-      seen.add(m.id)
-      out.push({ ...m, status: 'sent' })
-    }
-    for (const m of local) {
-      if (m.id && seen.has(m.id)) continue
-      out.push(m)
-    }
-    return out
-  }, [older, serverItems, local])
+  const lastServerMessageId = serverItems.length ? serverItems[serverItems.length - 1]?.id : null
+  useEffect(() => {
+    if (!accessToken || !id) return
+    const timer = window.setTimeout(() => {
+      void apiRequest(`/v1/conversations/${id}/read`, { method: 'POST', token: accessToken })
+        .then(() => qc.invalidateQueries({ queryKey: ['conversations'] }))
+        .catch(() => undefined)
+    }, 450)
+    return () => window.clearTimeout(timer)
+  }, [accessToken, id, lastServerMessageId, qc])
+
+  const merged = useMemo(
+    () => mergeConversationMessages<LocalMessage>(older, serverItems, local),
+    [older, serverItems, local],
+  )
 
   useEffect(() => {
     const el = historyRef.current
@@ -192,11 +205,16 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
     const prevHeight = el?.scrollHeight ?? 0
     setLoadingOlder(true)
     try {
+      const params = new URLSearchParams({
+        limit: String(MESSAGE_PAGE_SIZE),
+        before: oldest.created_at,
+        before_id: oldest.id,
+      })
       const res = await apiRequest<MessageListResponse>(
-        `/v1/conversations/${id}/messages?limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(oldest.created_at)}`,
+        `/v1/conversations/${id}/messages?${params}`,
         { token: accessToken },
       )
-      setOlder((cur) => [...(res.items ?? []), ...cur])
+      setOlder((cur) => mergeConversationMessages(res.items ?? [], cur, []))
       setHasMore(Boolean(res.has_more))
       requestAnimationFrame(() => {
         if (!el) return
@@ -267,9 +285,17 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       const saved = await apiRequest<ChatMessage>(`/v1/conversations/${id}/messages`, {
         method: 'POST',
         token: accessToken,
-        body: { body: text.trim(), media_id: mediaId },
+        body: { body: text.trim(), media_id: mediaId, client_id: clientId },
       })
-      setLocal((cur) => cur.filter((m) => m.client_id !== clientId && m.id !== saved.id))
+      const confirmed: ChatMessage = { ...saved, client_id: saved.client_id || clientId }
+      qc.setQueryData<MessageListResponse>(['conversation-messages', id], (prev) => {
+        const items = prev?.items ?? []
+        if (items.some((m) => m.id === confirmed.id || (confirmed.client_id && m.client_id === confirmed.client_id))) {
+          return prev ?? { items, has_more: false }
+        }
+        return { ...(prev ?? { has_more: false }), items: [...items, confirmed] }
+      })
+      setLocal((cur) => cur.filter((m) => m.client_id !== clientId && m.id !== confirmed.id))
       await qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
       await qc.invalidateQueries({ queryKey: ['conversations'] })
     } catch (e) {
@@ -458,37 +484,45 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
         {messages.isLoading && <div className="state-box">Загрузка сообщений…</div>}
         {messages.isError && <ErrorBanner error={messages.error} fallbackTitle="Не удалось загрузить сообщения" />}
         {!messages.isLoading && merged.length === 0 && <p className="muted">Напишите первое сообщение.</p>}
-        {merged.map((m) => {
+        {merged.map((m, index) => {
           const own = m.sender_user_id === user?.id
+          const dayLabel = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(new Date(m.created_at))
+          const prev = index > 0 ? merged[index - 1] : null
+          const prevDay = prev
+            ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(new Date(prev.created_at))
+            : null
+          const showDay = dayLabel !== prevDay
           return (
-            <article
-              key={m.client_id || m.id}
-              className={`chat-bubble ${own ? 'is-own' : 'is-in'} ${m.status === 'failed' ? 'is-failed' : ''}`}
-            >
-              {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
-              {m.media_id && m.status !== 'sending' && (
-                <ChatMedia
-                  mediaId={m.media_id}
-                  token={accessToken}
-                  kind={m.kind}
-                  alt={m.kind === 'video' ? 'Видео' : 'Фото'}
-                  onOpenImage={() => setLightbox(m.media_id!)}
-                />
-              )}
-              {m.file && !m.media_id && (
-                <PendingAttach file={m.file} />
-              )}
-              <span className="chat-bubble-meta">
-                {formatMessageTime(m.created_at)}
-                {own && m.status === 'sending' ? ' · Отправка' : ''}
-                {own && m.status === 'failed' ? ' · Не отправлено' : ''}
-              </span>
-              {m.status === 'failed' && (
-                <button className="btn btn-ghost btn-compact" type="button" onClick={() => void sendNow(m)}>
-                  Повторить
-                </button>
-              )}
-            </article>
+            <div key={m.client_id || m.id} className="chat-row">
+              {showDay ? <div className="chat-day-sep">{dayLabel}</div> : null}
+              <article
+                className={`chat-bubble ${own ? 'is-own' : 'is-in'} ${m.status === 'failed' ? 'is-failed' : ''}`}
+              >
+                {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
+                {m.media_id && m.status !== 'sending' && (
+                  <ChatMedia
+                    mediaId={m.media_id}
+                    token={accessToken}
+                    kind={m.kind}
+                    alt={m.kind === 'video' ? 'Видео' : 'Фото'}
+                    onOpenImage={() => setLightbox(m.media_id!)}
+                  />
+                )}
+                {m.file && !m.media_id && (
+                  <PendingAttach file={m.file} />
+                )}
+                <span className="chat-bubble-meta">
+                  {formatMessageTime(m.created_at)}
+                  {own && m.status === 'sending' ? ' · Отправка' : ''}
+                  {own && m.status === 'failed' ? ' · Не отправлено' : ''}
+                </span>
+                {m.status === 'failed' && (
+                  <button className="btn btn-ghost btn-compact" type="button" onClick={() => void sendNow(m)}>
+                    Повторить
+                  </button>
+                )}
+              </article>
+            </div>
           )
         })}
       </div>

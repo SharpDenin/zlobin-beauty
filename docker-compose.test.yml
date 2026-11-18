@@ -1,0 +1,105 @@
+# Test-only services. Application stack comes from docker-compose.yml + docker-compose.dev.yml.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.test.yml --profile test run --rm test-go
+#
+# Does not alter production compose or production Dockerfiles.
+
+services:
+  test-go:
+    profiles: ["test"]
+    image: golang:1.26-bookworm
+    working_dir: /src
+    volumes:
+      - ./backend:/src:ro
+      - zb-go-mod-cache:/go/pkg/mod
+      - zb-go-build-cache:/root/.cache/go-build
+      - ./test-results/go:/out
+    environment:
+      GOPROXY: https://proxy.golang.org,direct
+      CGO_ENABLED: "0"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        export PATH="/usr/local/go/bin:$$PATH"
+        mkdir -p /out
+        set +e
+        go test ./services/communications/internal/service/ -count=1 -timeout 120s 2>&1 | tee /out/communications.log
+        code=$${PIPESTATUS[0]}
+        set -e
+        echo "exit:$$code" | tee /out/exitcode.txt
+        exit $$code
+
+  test-vitest:
+    profiles: ["test"]
+    image: node:22-bookworm
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - zb-frontend-node-modules:/app/node_modules
+      - ./test-results/vitest:/out
+    environment:
+      CI: "true"
+      VITEST: "true"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        mkdir -p /out
+        npm ci --no-audit --no-fund
+        set +e
+        npx vitest run \
+          src/shared/lib/time.test.ts \
+          src/features/owner-home/owner-home-helpers.test.ts \
+          src/features/messenger/helpers.test.ts \
+          src/features/messenger/MessengerApp.test.tsx \
+          --reporter=verbose 2>&1 | tee /out/vitest.log
+        code=$${PIPESTATUS[0]}
+        set -e
+        echo "exit:$$code" | tee /out/exitcode.txt
+        exit $$code
+
+  test-playwright:
+    profiles: ["test"]
+    image: mcr.microsoft.com/playwright:v1.62.1-jammy
+    working_dir: /work
+    ipc: host
+    volumes:
+      - ./frontend:/work
+      - zb-playwright-node-modules:/work/node_modules
+      - ./test-results/playwright:/work/test-results
+      - ./test-results/playwright-report:/work/playwright-report
+      - ./test-results/playwright-meta:/out
+    environment:
+      CI: "true"
+      PLAYWRIGHT_SKIP_WEBSERVER: "1"
+      # Reach SPA + API on the compose network (not Windows localhost).
+      PLAYWRIGHT_BASE_URL: http://frontend:80
+      VITE_API_BASE_URL: http://gateway:8080
+      MESSENGER_LATENCY_ROUNDS: ${MESSENGER_LATENCY_ROUNDS:-5}
+    depends_on:
+      gateway:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        mkdir -p /out /work/test-results /work/playwright-report
+        npm ci --no-audit --no-fund
+        set +e
+        npx playwright test e2e/messenger.spec.ts -g "two users" \
+          --project=phone-390 --project=desktop-1280 \
+          --reporter=list 2>&1 | tee /out/playwright.log
+        code=$${PIPESTATUS[0]}
+        set -e
+        echo "exit:$$code" | tee /out/exitcode.txt
+        grep -E '\[messenger-e2e-latency\]' /out/playwright.log > /out/latency.jsonl || true
+        exit $$code
+
+volumes:
+  zb-go-mod-cache:
+  zb-go-build-cache:
+  zb-frontend-node-modules:
+  zb-playwright-node-modules:

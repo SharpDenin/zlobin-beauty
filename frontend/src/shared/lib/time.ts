@@ -187,3 +187,53 @@ function getTzParts(date: Date, tz: string) {
     second: Number(map.second),
   }
 }
+
+/** Calendar YMD of an absolute instant in an IANA zone (never browser-local by accident). */
+export function ymdInTimezone(isoOrDate: string | Date, iana: string): string {
+  const date = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate
+  if (Number.isNaN(date.getTime())) return ''
+  const tz = (iana ?? '').trim() || 'UTC'
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date)
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date)
+  }
+}
+
+/** Civil YMD from local Date getters — for UI date pickers that are not absolute instants. */
+export function ymdFromLocalDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** Add N civil days to a YYYY-MM-DD string (UTC-noon arithmetic; safe for calendar dates). */
+export function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  if (!y || !m || !d) return ymd
+  const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0))
+  return dt.toISOString().slice(0, 10)
+}
+
+/** True when the instant falls on the given civil YMD in `iana`. */
+export function instantOnYmd(iso: string, ymd: string, iana: string): boolean {
+  return ymdInTimezone(iso, iana) === ymd
+}
+
+/** Inclusive start / exclusive end UTC ISO bounds for a civil day in `iana`. */
+export function zonedDayBoundsUtc(ymd: string, iana: string): { startIso: string; endIso: string } {
+  const [y, m, d] = ymd.split('-').map(Number)
+  const startIso = wallTimeInTimezoneToUtcIso(y, m, d, 0, 0, 0, iana)
+  const next = addDaysYmd(ymd, 1)
+  const [ny, nm, nd] = next.split('-').map(Number)
+  const endIso = wallTimeInTimezoneToUtcIso(ny, nm, nd, 0, 0, 0, iana)
+  return { startIso, endIso }
+}

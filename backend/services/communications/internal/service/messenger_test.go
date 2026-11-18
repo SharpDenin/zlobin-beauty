@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,23 @@ func TestValidateMessageContent(t *testing.T) {
 	ae, ok := apperr.As(err)
 	if !ok || ae.HTTPStatus != 400 {
 		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
+func TestMessageOrderTieBreak(t *testing.T) {
+	t1 := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+	a := domain.Message{ID: uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), CreatedAt: t1}
+	b := domain.Message{ID: uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), CreatedAt: t1}
+	c := domain.Message{ID: uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc"), CreatedAt: t1.Add(time.Second)}
+	items := []domain.Message{c, b, a}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID.String() < items[j].ID.String()
+		}
+		return items[i].CreatedAt.Before(items[j].CreatedAt)
+	})
+	if items[0].ID != a.ID || items[1].ID != b.ID || items[2].ID != c.ID {
+		t.Fatalf("unexpected order: %v %v %v", items[0].ID, items[1].ID, items[2].ID)
 	}
 }
 

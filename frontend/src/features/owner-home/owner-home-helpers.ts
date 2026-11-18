@@ -1,4 +1,5 @@
 import type { CabinetFeature, CabinetKind } from '@/shared/lib/cabinet'
+import { addDaysYmd, wallTimeInTimezoneToUtcIso, ymdFromLocalDate, ymdInTimezone } from '@/shared/lib/time'
 
 export function isOwnerStartKind(kind: CabinetKind | string): boolean {
   return kind === 'salon_owner' || kind === 'chain_owner' || kind === 'salon_admin'
@@ -17,16 +18,55 @@ export function weekDays(anchor = new Date()): Date[] {
   })
 }
 
-export function dayKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+/** Monday-first civil week as YMD strings in an IANA zone (salon/branch wall calendar). */
+export function weekYmds(timeZone: string, anchor = new Date()): string[] {
+  const todayYmd = ymdInTimezone(anchor, timeZone)
+  const [y, m, d] = todayYmd.split('-').map(Number)
+  let weekday = 0
+  try {
+    const name = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'short',
+    }).format(new Date(wallTimeInTimezoneToUtcIso(y, m, d, 12, 0, 0, timeZone)))
+    weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name)
+    if (weekday < 0) weekday = 0
+  } catch {
+    weekday = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()
+  }
+  const mondayOffset = (weekday + 6) % 7
+  const mondayYmd = addDaysYmd(todayYmd, -mondayOffset)
+  return Array.from({ length: 7 }, (_, i) => addDaysYmd(mondayYmd, i))
 }
 
-export function sameCalendarDay(iso: string, day: Date): boolean {
+export function dayKey(d: Date): string {
+  return ymdFromLocalDate(d)
+}
+
+export function sameCalendarDay(iso: string, day: Date, timeZone?: string): boolean {
+  if (timeZone) {
+    return ymdInTimezone(iso, timeZone) === ymdInTimezone(day, timeZone)
+  }
   const at = new Date(iso)
   return at.getFullYear() === day.getFullYear() && at.getMonth() === day.getMonth() && at.getDate() === day.getDate()
+}
+
+export function appointmentOnYmd(iso: string, ymd: string, timeZone: string): boolean {
+  return ymdInTimezone(iso, timeZone) === ymd
+}
+
+export function weekdayLabelForYmd(ymd: string, timeZone: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  try {
+    const instant = new Date(wallTimeInTimezoneToUtcIso(y, m, d, 12, 0, 0, timeZone))
+    return new Intl.DateTimeFormat('ru-RU', { timeZone, weekday: 'short' }).format(instant).replace('.', '')
+  } catch {
+    return new Intl.DateTimeFormat('ru-RU', { weekday: 'short' }).format(new Date(Date.UTC(y, m - 1, d, 12))).replace('.', '')
+  }
+}
+
+export function dayNumberForYmd(ymd: string): number {
+  const day = Number(ymd.slice(8, 10))
+  return Number.isFinite(day) ? day : 0
 }
 
 export function shortPersonName(name?: string | null): string {
@@ -138,4 +178,17 @@ export function scheduleHeading(selected: Date, today = new Date()): string {
   if (same) return 'Записи на сегодня'
   const rest = selected.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
   return `Записи · ${rest}`
+}
+
+export function scheduleHeadingYmd(selectedYmd: string, timeZone: string, todayYmd?: string): string {
+  const today = todayYmd ?? ymdInTimezone(new Date(), timeZone)
+  if (selectedYmd === today) return 'Записи на сегодня'
+  const [y, m, d] = selectedYmd.split('-').map(Number)
+  try {
+    const instant = new Date(wallTimeInTimezoneToUtcIso(y, m, d, 12, 0, 0, timeZone))
+    const rest = new Intl.DateTimeFormat('ru-RU', { timeZone, day: 'numeric', month: 'long' }).format(instant)
+    return `Записи · ${rest}`
+  } catch {
+    return `Записи · ${selectedYmd}`
+  }
 }

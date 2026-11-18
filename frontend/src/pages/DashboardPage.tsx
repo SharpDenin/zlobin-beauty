@@ -26,7 +26,7 @@ import { workTypesLabel } from '@/shared/lib/work-types'
 import { masterProfessionLabel } from '@/shared/lib/profession-types'
 import { CHART } from '@/shared/ui/chart-theme'
 import { AppointmentCard } from '@/shared/ui/AppointmentCard'
-import { formatLocalInTimezone } from '@/shared/lib/time'
+import { formatLocalInTimezone, ymdInTimezone, zonedDayBoundsUtc } from '@/shared/lib/time'
 import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { MediaImage } from '@/shared/ui/MediaImage'
@@ -195,6 +195,10 @@ export function DashboardPage() {
 
   const ownerMode = ['salon_owner', 'chain_owner', 'salon_admin'].includes(cabinet.kind)
   const orgID = cabinet.selectedOrg?.organization.id
+  const salonTimezone = resolveServiceTimezone(
+    cabinet.selectedBranch?.timezone,
+    cabinet.selectedBranch?.city || cabinet.selectedOrg?.organization.city,
+  )
   const rangeFrom = new Date()
   rangeFrom.setDate(rangeFrom.getDate() - 30)
   const rangeTo = new Date()
@@ -244,45 +248,53 @@ export function DashboardPage() {
     if (cabinet.kind !== 'chain_owner' || !cabinet.selectedBranch?.id) return true
     return !a.branch_id || a.branch_id === cabinet.selectedBranch.id
   })
-  const startOfToday = new Date()
-  startOfToday.setHours(0, 0, 0, 0)
-  const endOfToday = new Date(startOfToday)
-  endOfToday.setDate(endOfToday.getDate() + 1)
+  const todayYmd = ymdInTimezone(new Date(), salonTimezone)
+  const { startIso: startOfTodayIso, endIso: endOfTodayIso } = zonedDayBoundsUtc(todayYmd, salonTimezone)
+  const startOfTodayMs = new Date(startOfTodayIso).getTime()
+  const endOfTodayMs = new Date(endOfTodayIso).getTime()
+  const apptTz = (a: Appointment) => resolveServiceTimezone(a.location_timezone, a.location_city) || salonTimezone
   const today = items.filter((a) => {
-    const at = new Date(a.starts_at)
-    return at >= startOfToday && at < endOfToday
+    const at = new Date(a.starts_at).getTime()
+    return at >= startOfTodayMs && at < endOfTodayMs
   })
   const pending = items.filter((a) => a.status === 'pending_confirmation')
   const cancellations = items.filter((a) => a.status.startsWith('cancelled_')).slice(0, 3)
   const upcoming = [...items]
-    .filter((a) => ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status) && new Date(a.starts_at) >= startOfToday)
+    .filter((a) => ['pending_confirmation', 'confirmed', 'in_progress'].includes(a.status) && new Date(a.starts_at).getTime() >= startOfTodayMs)
     .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
     .slice(0, 5)
   const unread = (notes.data?.items ?? []).filter((n) => !n.read_at).slice(0, 5)
 
-  const periodStart = new Date(startOfToday)
-  if (period === 'week') periodStart.setDate(periodStart.getDate() - 6)
-  if (period === 'month') periodStart.setDate(periodStart.getDate() - 29)
-  const periodItems = items.filter((a) => new Date(a.starts_at) >= periodStart && new Date(a.starts_at) < endOfToday)
+  const periodDays = period === 'today' ? 1 : period === 'week' ? 7 : 30
+  const periodStartYmd = (() => {
+    const [y, m, d] = todayYmd.split('-').map(Number)
+    const base = new Date(Date.UTC(y, m - 1, d - (periodDays - 1), 12))
+    return base.toISOString().slice(0, 10)
+  })()
+  const periodStartMs = new Date(zonedDayBoundsUtc(periodStartYmd, salonTimezone).startIso).getTime()
+  const periodItems = items.filter((a) => {
+    const at = new Date(a.starts_at).getTime()
+    return at >= periodStartMs && at < endOfTodayMs
+  })
   const completed = periodItems.filter((a) => a.status === 'completed')
   const uniqueClients = new Set(periodItems.map((a) => a.client_user_id).filter(Boolean)).size
   const bookedMinutes = periodItems.reduce((sum, a) => {
     if (!a.ends_at) return sum
     return sum + Math.max(0, (new Date(a.ends_at).getTime() - new Date(a.starts_at).getTime()) / 60000)
   }, 0)
-  const periodDays = period === 'today' ? 1 : period === 'week' ? 7 : 30
   const load = Math.min(100, Math.round(bookedMinutes / (periodDays * 9 * 60) * 100))
   const serviceCounts = Object.entries(periodItems.reduce<Record<string, number>>((acc, a) => {
     acc[a.service_name] = (acc[a.service_name] ?? 0) + 1
     return acc
   }, {})).sort((a, b) => b[1] - a[1]).slice(0, 3)
   const chartData = Array.from({ length: periodDays }, (_, offset) => {
-    const date = new Date(periodStart)
-    date.setDate(date.getDate() + offset)
-    const key = date.toISOString().slice(0, 10)
+    const [y, m, d] = periodStartYmd.split('-').map(Number)
+    const key = new Date(Date.UTC(y, m - 1, d + offset, 12)).toISOString().slice(0, 10)
+    const [ky, km, kd] = key.split('-').map(Number)
+    const labelInstant = new Date(Date.UTC(ky, km - 1, kd, 12))
     return {
-      day: date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' }),
-      visits: periodItems.filter((a) => a.starts_at.slice(0, 10) === key).length,
+      day: new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: 'short' }).format(labelInstant),
+      visits: periodItems.filter((a) => ymdInTimezone(a.starts_at, apptTz(a)) === key).length,
     }
   })
 
@@ -588,7 +600,7 @@ export function DashboardPage() {
                       {(tasks.data?.items ?? []).filter((b) => b.category === 'task').length === 0 && <EmptyWidget title="Задачи" text="Просроченных задач нет" />}
                       {(tasks.data?.items ?? []).filter((b) => b.category === 'task').slice(0, 5).map((b) => (
                         <Link key={b.id} to="/calendar" className="appointment-row">
-                          <time>{new Date(b.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>
+                          <time>{formatLocalInTimezone(b.starts_at, salonTimezone)}</time>
                           <div><strong>{b.title}</strong></div>
                         </Link>
                       ))}

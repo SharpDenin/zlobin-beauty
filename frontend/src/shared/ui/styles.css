@@ -4366,6 +4366,7 @@ html[data-theme="light"] .auth-lead {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  justify-content: flex-start;
   gap: 8px;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -4388,7 +4389,7 @@ html[data-theme="light"] .auth-lead {
   align-items: flex-start;
   justify-content: flex-start;
   gap: 4px;
-  overflow: hidden;
+  overflow: visible;
 }
 .chat-bubble.is-own {
   align-self: flex-end;
@@ -4401,12 +4402,14 @@ html[data-theme="light"] .auth-lead {
   margin: 0;
   padding: 0;
   width: 100%;
+  max-width: 100%;
   flex: 0 0 auto;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: pre-wrap;
   line-height: 1.4;
   color: var(--color-text-primary);
+  hyphens: auto;
 }
 .chat-bubble-meta {
   display: block;
@@ -4415,6 +4418,28 @@ html[data-theme="light"] .auth-lead {
   width: 100%;
   flex: 0 0 auto;
   text-align: right;
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  color: var(--color-text-muted);
+}
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  flex: 0 0 auto;
+}
+.chat-row > .chat-bubble.is-own {
+  align-self: flex-end;
+}
+.chat-row > .chat-bubble.is-in {
+  align-self: flex-start;
+}
+.chat-day-sep {
+  display: block;
+  width: 100%;
+  text-align: center;
   font-size: var(--text-xs);
   line-height: 1.2;
   color: var(--color-text-muted);

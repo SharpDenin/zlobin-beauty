@@ -37,7 +37,7 @@ function roleLabel(role: string) {
 }
 
 export function ProfilePage() {
-  const { user, accessToken, updateUser, logout } = useAuth()
+  const { user, accessToken, updateUser } = useAuth()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -193,7 +193,7 @@ export function ProfilePage() {
           <Link className="btn btn-secondary" to="/messages">Сообщения</Link>
           <Link className="btn btn-secondary" to="/notifications">Уведомления</Link>
           <Link className="btn btn-secondary" to="/settings">Настройки</Link>
-          <button className="btn btn-danger" type="button" onClick={() => void logout()}>Выйти</button>
+          <Link className="btn btn-secondary" to="/settings/account">Выйти из аккаунта</Link>
         </div>
       </section>
     </main>

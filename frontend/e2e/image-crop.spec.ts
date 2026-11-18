@@ -78,7 +78,20 @@ test.describe('image zoom + crop editor', () => {
     await page.getByTestId('settings-bg-upload').setInputFiles(landscape)
     await expect(editor).toBeVisible({ timeout: 10_000 })
 
-    // Drag pan inside crop stage
+    // Free-form crop: Cropper must not lock aspect (NaN / 0 / undefined).
+    const aspectState = await page.evaluate(() => {
+      const img = document.querySelector('[data-testid="image-crop-source"]') as HTMLImageElement & {
+        cropper?: { options?: { aspectRatio?: number }; getData?: (rounded?: boolean) => { width: number; height: number } }
+      }
+      const cropper = img?.cropper
+      const ratio = cropper?.options?.aspectRatio
+      const free = ratio == null || Number.isNaN(ratio) || ratio === 0
+      const before = cropper?.getData?.(true)
+      return { free, beforeW: before?.width ?? 0, beforeH: before?.height ?? 0 }
+    })
+    expect(aspectState.free).toBe(true)
+
+    // Drag pan inside crop stage (mouse ≈ finger drag on Chromium mobile project)
     const stage = page.getByTestId('image-crop-stage')
     const box = await stage.boundingBox()
     expect(box).toBeTruthy()
@@ -89,7 +102,52 @@ test.describe('image zoom + crop editor', () => {
       await page.mouse.up()
     }
 
-    // Approximate pinch via CDP touch (best-effort on Chromium)
+    // Resize crop box independently on width vs height via SE corner handle (pointer).
+    const resizeOk = await page.evaluate(() => {
+      const point = document.querySelector('.cropper-point.point-se') as HTMLElement | null
+      const img = document.querySelector('[data-testid="image-crop-source"]') as HTMLImageElement & {
+        cropper?: { getData?: (rounded?: boolean) => { width: number; height: number } }
+      }
+      if (!point || !img?.cropper?.getData) return { ok: false, reason: 'missing-handle' }
+      const before = img.cropper.getData(true)
+      const r = point.getBoundingClientRect()
+      const x0 = r.left + r.width / 2
+      const y0 = r.top + r.height / 2
+      const fire = (type: string, x: number, y: number, buttons: number) => {
+        point.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            pointerId: 1,
+            pointerType: 'touch',
+            isPrimary: true,
+            clientX: x,
+            clientY: y,
+            buttons,
+          }),
+        )
+      }
+      fire('pointerdown', x0, y0, 1)
+      fire('pointermove', x0 + 36, y0 + 12, 1)
+      fire('pointerup', x0 + 36, y0 + 12, 0)
+      const after = img.cropper.getData(true)
+      const changed = Math.abs(after.width - before.width) > 2 || Math.abs(after.height - before.height) > 2
+      const ratioBefore = before.width / Math.max(1, before.height)
+      const ratioAfter = after.width / Math.max(1, after.height)
+      // Free crop: aspect may change when dragging a corner unevenly.
+      return {
+        ok: changed,
+        ratioDelta: Math.abs(ratioAfter - ratioBefore),
+        beforeW: before.width,
+        beforeH: before.height,
+        afterW: after.width,
+        afterH: after.height,
+      }
+    })
+    expect(resizeOk.ok).toBe(true)
+
+    // Approximate pinch via synthetic TouchEvent (not a full OS multi-touch path).
     await page.evaluate(() => {
       const el = document.querySelector('[data-testid="image-crop-stage"]')
       if (!el) return

@@ -17,7 +17,7 @@ export function SettingsLayout() {
     <main className="page stack settings-page" data-testid="settings-page">
       <header className="stack-sm">
         <h1>Настройки</h1>
-        <p className="muted">Оформление, push-уведомления, салоны и удаление аккаунта. Профиль мастера — в разделе «Профиль».</p>
+        <p className="muted">Оформление, уведомления, салоны, выход и удаление аккаунта. Профиль мастера — в разделе «Профиль».</p>
       </header>
       <nav className="settings-nav row wrap gap" aria-label="Разделы настроек">
         {SECTIONS.map((s) => (

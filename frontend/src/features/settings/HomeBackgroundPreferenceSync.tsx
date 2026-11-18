@@ -8,7 +8,9 @@ import {
   applyHomeBgPreference,
   applyStoredBackground,
   bindWallpaperUser,
+  hydrateCustomBackground,
   parseHomeBgPreference,
+  preloadWallpaperSrc,
   setHomeBackground,
 } from '@/shared/theme/backgrounds'
 
@@ -24,6 +26,10 @@ export function HomeBackgroundPreferenceSync() {
   useEffect(() => {
     if (!user?.id) return
     bindWallpaperUser(user.id)
+    // Warm curated system arts so auth → home does not flash empty canvas.
+    for (const bg of HOME_BACKGROUNDS) {
+      void preloadWallpaperSrc(bg.src)
+    }
   }, [user?.id])
 
   const prefs = useQuery({
@@ -42,6 +48,7 @@ export function HomeBackgroundPreferenceSync() {
       if (applied.current === signature) return
       applied.current = signature
       applyStoredBackground()
+      void hydrateCustomBackground()
       return
     }
     const parsed = parseHomeBgPreference(raw)

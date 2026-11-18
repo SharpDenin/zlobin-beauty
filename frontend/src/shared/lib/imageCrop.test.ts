@@ -6,20 +6,21 @@ import {
 } from '@/shared/lib/imageCrop'
 
 describe('cropAspectForPurpose', () => {
-  it('keeps display-aligned ratios for framed surfaces', () => {
-    expect(cropAspectForPurpose('profile')).toBe(1)
-    expect(cropAspectForPurpose('service')).toBeCloseTo(16 / 9)
-    expect(cropAspectForPurpose('salon')).toBeCloseTo(16 / 9)
-    expect(cropAspectForPurpose('article')).toBeCloseTo(16 / 9)
-    expect(cropAspectForPurpose('product')).toBeCloseTo(4 / 5)
-    expect(cropAspectForPurpose('wallpaper')).toBeCloseTo(16 / 10)
-  })
-
-  it('does not force a ratio for free-form purposes', () => {
-    expect(cropAspectForPurpose('portfolio')).toBeNull()
-    expect(cropAspectForPurpose('message')).toBeNull()
-    expect(cropAspectForPurpose('hair_consultation')).toBeNull()
-    expect(cropAspectForPurpose('before_after')).toBeNull()
+  it('allows a free rectangle for every upload purpose', () => {
+    for (const purpose of [
+      'profile',
+      'service',
+      'salon',
+      'article',
+      'product',
+      'wallpaper',
+      'portfolio',
+      'message',
+      'hair_consultation',
+      'before_after',
+    ]) {
+      expect(cropAspectForPurpose(purpose)).toBeNull()
+    }
   })
 })
 

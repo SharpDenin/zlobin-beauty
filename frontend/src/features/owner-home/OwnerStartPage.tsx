@@ -19,9 +19,6 @@ import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
-import { notificationHref } from '@/features/notifications/notificationHref'
-import { isAppointmentNotification } from '@/features/notifications/groupBubbleNotifications'
-import { DevicePushCard } from '@/features/pwa/DevicePushCard'
 import {
   dayKey,
   formatOwnerDate,
@@ -64,16 +61,6 @@ type MasterHero = {
   work_types?: string[]
   published?: boolean
   profession_types?: { id: string }[]
-}
-
-type NotificationItem = {
-  id: string
-  title: string
-  body: string
-  read_at: string | null
-  created_at: string
-  entity_type?: string
-  entity_id?: string | null
 }
 
 const TILE_ICONS: Record<string, AppIconName> = {
@@ -178,11 +165,6 @@ export function OwnerStartPage() {
     retry: false,
   })
 
-  const notifications = useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => apiRequest<{ items: NotificationItem[] }>('/v1/notifications', { token: accessToken }),
-    enabled: Boolean(accessToken),
-  })
   const items = (appointments.data?.items ?? []).filter((a) => {
     if (cabinet.kind !== 'chain_owner' || !cabinet.selectedBranch?.id) return true
     return !a.branch_id || a.branch_id === cabinet.selectedBranch.id
@@ -214,9 +196,6 @@ export function OwnerStartPage() {
   const photo = master?.photo_media_id
   const canEditPhoto = Boolean(master?.id || master?.display_name)
   const demo = isDemoAccount(user?.email)
-  // Right column: appointment notifications only — chat messages live in bubbles / messenger.
-  const notes = (notifications.data?.items ?? []).filter(isAppointmentNotification)
-  const unread = notes.filter((n) => !n.read_at)
   const branches = cabinet.selectedOrg?.branches ?? []
   const busyDays = useMemo(() => {
     const set = new Set<string>()
@@ -531,31 +510,6 @@ export function OwnerStartPage() {
             </Link>
           </section>
         )}
-
-        <section className="owner-start-notes" aria-label="Уведомления">
-          <div className="owner-start-day-head">
-            <h2>
-              Уведомления
-              {unread.length > 0 && <span className="owner-start-unread">{unread.length}</span>}
-            </h2>
-            <Link to="/notifications">Все ›</Link>
-          </div>
-          {notifications.isLoading && <div className="skeleton skeleton-card" />}
-          {!notifications.isLoading && notes.length === 0 && (
-            <p className="owner-start-empty">Пока нет уведомлений</p>
-          )}
-          <DevicePushCard compact homePrompt className="owner-start-push-card" />
-          <ul className="owner-start-note-list">
-            {notes.slice(0, 3).map((n) => (
-              <li key={n.id}>
-                <Link className={`owner-start-note${!n.read_at ? ' is-unread' : ''}`} to={notificationHref(n)}>
-                  <strong>{n.title}</strong>
-                  <span>{n.body}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
 
         {audience === 'client' && <ClientMasters city={user?.city} />}
 

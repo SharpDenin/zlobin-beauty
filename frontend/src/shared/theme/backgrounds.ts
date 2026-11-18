@@ -71,6 +71,9 @@ let activeUserId: string | null = null
 let accentExtractGeneration = 0
 /** Wallpaper keys currently being analyzed (dedupe concurrent extract). */
 const accentExtractInFlight = new Set<string>()
+/** Browser-decoded wallpaper URLs (avoid re-fetch / flash on navigation). */
+const wallpaperPreloadCache = new Set<string>()
+const wallpaperPreloadInflight = new Map<string, Promise<void>>()
 
 function wallpaperScopeKey(suffix: 'bg' | 'media'): string | null {
   if (!activeUserId) return null
@@ -118,6 +121,10 @@ export function bindWallpaperUser(userId: string | null) {
   if (changed) customSrcOverride = null
   applyStoredBackground()
   notify()
+  // Custom wallpaper blob may already be in mediaCache from a prior visit — hydrate without waiting for prefs.
+  if (activeUserId && readStoredCustomMediaId()) {
+    void hydrateCustomBackground()
+  }
 }
 
 /** Logout / session end: drop scope and show the default wallpaper immediately. */
@@ -269,6 +276,35 @@ export const APP_BG_IMAGE_VAR = '--app-bg-image'
 /** @deprecated Prefer `--app-bg-image`; kept for owner-home and legacy CSS. */
 export const OWNER_BG_IMAGE_VAR = '--owner-bg-image'
 
+/**
+ * Warm the browser image cache without blocking UI. Safe to call repeatedly for the same src.
+ * System `/backgrounds/*` and blob: URLs both benefit (auth transition + route changes).
+ */
+export function preloadWallpaperSrc(src: string | null | undefined): Promise<void> {
+  const url = typeof src === 'string' ? src.trim() : ''
+  if (!url || typeof Image === 'undefined') return Promise.resolve()
+  if (wallpaperPreloadCache.has(url)) return Promise.resolve()
+  const pending = wallpaperPreloadInflight.get(url)
+  if (pending) return pending
+  const task = new Promise<void>((resolve) => {
+    const img = new Image()
+    const done = () => {
+      wallpaperPreloadCache.add(url)
+      wallpaperPreloadInflight.delete(url)
+      resolve()
+    }
+    img.onload = done
+    img.onerror = done
+    img.decoding = 'async'
+    img.src = url
+    if (typeof img.decode === 'function') {
+      void img.decode().then(done).catch(done)
+    }
+  })
+  wallpaperPreloadInflight.set(url, task)
+  return task
+}
+
 function resolveAccentForBackground(bg: HomeBackground): string {
   const key = wallpaperAccentKey(bg)
   const cached = readCachedAccent(key)
@@ -322,6 +358,8 @@ function applyVisual(bg: HomeBackground, srcOverride?: string | null, opts?: { e
   const key = wallpaperAccentKey(bg)
   markActiveAccentKey(key)
   applyAccent(accent, readDocumentTheme())
+  // Decode in parallel — do not wait before painting (fallback canvas color already shows).
+  void preloadWallpaperSrc(src)
   if (typeof document !== 'undefined') {
     const value = `url('${src}')`
     const root = document.documentElement

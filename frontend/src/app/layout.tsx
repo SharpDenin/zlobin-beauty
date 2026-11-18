@@ -139,7 +139,7 @@ function MoreDrawer({
   links: NavLink[]
   pathname: string
 }) {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const cabinet = useCabinet()
   const [navOrder, setNavOrder] = usePreference<string[]>('nav.order', [])
   const [editing, setEditing] = useState(false)
@@ -255,16 +255,13 @@ function MoreDrawer({
       )}
 
       <div className="stack-sm more-footer">
-        <button
+        <Link
           className="btn btn-secondary btn-block"
-          type="button"
-          onClick={() => {
-            onClose()
-            void logout()
-          }}
+          to="/settings/account"
+          onClick={onClose}
         >
-          Выйти
-        </button>
+          Аккаунт и выход
+        </Link>
       </div>
     </Drawer>
   )
@@ -281,7 +278,7 @@ export function AppShell() {
 }
 
 function AppShellInner() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)
   const [desktopNav, setDesktopNav] = useState(() =>
@@ -375,7 +372,7 @@ function AppShellInner() {
         </nav>
         <div style={{ marginTop: 'auto' }} className="stack-sm">
           <div className="muted">{user?.display_name}</div>
-          <button className="btn btn-secondary" type="button" onClick={() => void logout()}>Выйти</button>
+          <Link className="btn btn-secondary" to="/settings/account">Аккаунт</Link>
         </div>
       </aside>
       <div className="shell-main">
@@ -407,20 +404,11 @@ function AppShellInner() {
             >
               Меню
             </button>
-            {/* Desktop-only chrome kept for wide layouts where topbar is hidden anyway;
-                sidenav holds Premium / logout. Compact mobile keeps header short. */}
+            {/* Desktop-only chrome: topbar is hidden on ≥768px; sidenav holds Premium / account. */}
             <span className="topbar-desktop-only">
               <PremiumStatusLink compact />
               <span className="muted topbar-name">{user?.display_name}</span>
             </span>
-            <button
-              className="btn btn-secondary btn-compact topbar-logout"
-              type="button"
-              onClick={() => void logout()}
-              aria-label="Выйти"
-            >
-              Выйти
-            </button>
           </div>
         </header>
         <Outlet />

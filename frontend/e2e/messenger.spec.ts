@@ -178,12 +178,21 @@ test.describe('production messenger', () => {
     const stamp = Date.now()
     const steadyRounds = Number(process.env.MESSENGER_LATENCY_ROUNDS ?? '5')
 
+    async function sendFrom(page: import('@playwright/test').Page, body: string) {
+      await dismissOverlays(page)
+      const composer = page.getByTestId('message-composer')
+      const send = page.getByTestId('send-message')
+      // Empty draft keeps send disabled — fill first, then wait for enable (not pending).
+      await composer.fill(body)
+      await expect(send).toBeEnabled({ timeout: 15_000 })
+      await send.click()
+      await expect(composer).toHaveValue('', { timeout: 10_000 })
+    }
+
     async function measureDelivery(label: string): Promise<number> {
       const body = `${label} ${stamp} ${Date.now()}`
-      await dismissOverlays(clientPage)
       const t0 = Date.now()
-      await clientPage.getByTestId('message-composer').fill(body)
-      await clientPage.getByTestId('send-message').click({ force: true })
+      await sendFrom(clientPage, body)
       await expect(masterPage.getByTestId('message-history').getByText(body, { exact: true })).toBeVisible({
         timeout: 20_000,
       })
@@ -215,8 +224,7 @@ test.describe('production messenger', () => {
       `ping-c ${stamp} ${'оченьдлинноесловобезпробелов'.repeat(4)}`,
     ]
     for (const body of msgs) {
-      await clientPage.getByTestId('message-composer').fill(body)
-      await clientPage.getByTestId('send-message').click({ force: true })
+      await sendFrom(clientPage, body)
       await expect(clientPage.getByTestId('message-history').getByText(body, { exact: true })).toBeVisible({ timeout: 10_000 })
     }
     for (const body of msgs) {
@@ -224,8 +232,7 @@ test.describe('production messenger', () => {
     }
 
     const reply = `ack ${stamp}`
-    await masterPage.getByTestId('message-composer').fill(reply)
-    await masterPage.getByTestId('send-message').click({ force: true })
+    await sendFrom(masterPage, reply)
     await expect(clientPage.getByTestId('message-history').getByText(reply, { exact: true })).toBeVisible({ timeout: 12_000 })
 
     const masterTexts = await masterPage.getByTestId('message-history').locator('.chat-bubble-text').allTextContents()
@@ -237,8 +244,7 @@ test.describe('production messenger', () => {
     await clientPage.goto('/appointments')
     await dismissOverlays(clientPage)
     const offline = `while-away ${stamp}`
-    await masterPage.getByTestId('message-composer').fill(offline)
-    await masterPage.getByTestId('send-message').click({ force: true })
+    await sendFrom(masterPage, offline)
     await expect(masterPage.getByTestId('message-history').getByText(offline, { exact: true })).toBeVisible({ timeout: 10_000 })
     await clientPage.goto(threadUrl)
     await dismissOverlays(clientPage)

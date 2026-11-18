@@ -9,6 +9,10 @@ frontend/dist/
 # Local runtime
 .logs/
 bin/
+# Local MinIO image archives (never commit / never bake into images)
+minio.tar
+minio-image.tar
+*.minio.tar
 epica-export/
 epica-mapping.local.json
 epica-mapping.passthrough.json

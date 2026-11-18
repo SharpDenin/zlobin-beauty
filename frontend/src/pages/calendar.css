@@ -1228,7 +1228,8 @@
   z-index: 4;
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: var(--cal-masters-gutter-w) repeat(var(--cal-masters-cols, 1), minmax(var(--cal-masters-col-min), 1fr));
+  /* Fixed column tracks match .cal-masters-col flex basis so names never bleed across columns. */
+  grid-template-columns: var(--cal-masters-gutter-w) repeat(var(--cal-masters-cols, 1), var(--cal-masters-col-min));
   background: var(--glass-chrome-fill);
   border-bottom: 1px solid var(--glass-border);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--glass-border) 60%, transparent);
@@ -1249,6 +1250,9 @@
   gap: 4px;
   padding: var(--space-2) var(--space-1);
   min-width: var(--cal-masters-col-min);
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
   scroll-snap-align: start;
   border-left: 1px solid color-mix(in srgb, var(--glass-border) 55%, transparent);
   text-align: center;
@@ -1519,4 +1523,20 @@ body.is-cal-resizing {
 .cal-masters-day.is-cal-resizing .cal-masters-scroll {
   overflow: hidden;
   overscroll-behavior: contain;
+}
+
+@media (max-width: 430px) {
+  .cal-masters-day {
+    --cal-masters-col-min: 124px;
+    --cal-masters-gutter-w: 44px;
+  }
+
+  .cal-masters-name {
+    font-size: 0.75rem;
+  }
+
+  .cal-masters-avatar {
+    width: 32px;
+    height: 32px;
+  }
 }

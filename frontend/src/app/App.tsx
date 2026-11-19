@@ -10,6 +10,8 @@ import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { VerifyEmailPage } from '@/pages/VerifyEmailPage'
 import { InvitePage } from '@/pages/InvitePage'
+import { InviteClientAcceptPage } from '@/pages/InviteClientAcceptPage'
+import { InviteClientPage } from '@/pages/InviteClientPage'
 import { HomePage } from '@/pages/HomePage'
 import { SearchPage } from '@/pages/SearchPage'
 import { MasterPage } from '@/pages/MasterPage'
@@ -125,6 +127,7 @@ export function App() {
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/invite/client/:token" element={<InviteClientAcceptPage />} />
             <Route path="/invite/:token" element={<InvitePage />} />
             <Route element={<RequireAuth />}>
               <Route element={<AppShell />}>
@@ -207,6 +210,7 @@ export function App() {
                   <Route path="/schedule" element={<Navigate to="/calendar?panel=schedule" replace />} />
                   <Route path="/chairs" element={<ChairMarketplacePage />} />
                   <Route path="/clients" element={<ClientsPage />} />
+                  <Route path="/clients/invite" element={<InviteClientPage />} />
                   <Route path="/services" element={<ServicesPage />} />
                   <Route path="/services/:id" element={<ServicesPage />} />
                   <Route path="/cosmetics" element={<CosmeticsPage />} />

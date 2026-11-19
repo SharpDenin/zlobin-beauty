@@ -33,16 +33,17 @@ type MasterProfile struct {
 	BranchID        *uuid.UUID
 	DisplayName     string
 	Bio             string
-	Specializations []string
-	City            string
-	ExperienceYears int
-	Education       string
-	PhotoMediaID    *uuid.UUID
-	WorkType        string
-	WorkTypes       []string
-	RatingAvg       float64
-	RatingCount     int
-	Published       bool
+	Specializations    []string
+	CuttingTechniques  []string
+	City               string
+	ExperienceYears    int
+	Education          string
+	PhotoMediaID       *uuid.UUID
+	WorkType           string
+	WorkTypes          []string
+	RatingAvg          float64
+	RatingCount        int
+	Published          bool
 	// OwnerStatus mirrors identity user status for search eligibility (active|blocked|deleted).
 	OwnerStatus     string
 	CreatedAt       time.Time

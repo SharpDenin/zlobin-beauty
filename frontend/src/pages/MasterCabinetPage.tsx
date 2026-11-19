@@ -11,6 +11,8 @@ import { WorkFormatPicker } from '@/shared/ui/WorkFormatPicker'
 import { hasLegacyEmployeeFormat, primaryWorkType, uniqueCanonicalWorkTypes, workTypesLabel } from '@/shared/lib/work-types'
 import { ProfessionTypePicker, useProfessionTypes } from '@/shared/ui/ProfessionTypePicker'
 import { SpecializationPicker } from '@/shared/ui/SpecializationPicker'
+import { CuttingTechniquePicker } from '@/shared/ui/CuttingTechniquePicker'
+import { normalizeCuttingTechniques } from '@/shared/lib/cutting-techniques'
 import type { ProfessionType } from '@/shared/lib/profession-types'
 import { selectedProfessionIds } from '@/shared/lib/profession-types'
 import {
@@ -45,6 +47,7 @@ const masterSchema = z.object({
   city: z.string().min(2, 'Укажите город'),
   bio: z.string().optional(),
   specializations: z.array(z.string()).min(1, 'Выберите хотя бы одну специализацию'),
+  cutting_techniques: z.array(z.string()),
   experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
   education: z.string().optional(),
   work_types: z.array(z.string()).min(1, 'Выберите формат работы'),
@@ -126,6 +129,7 @@ export function MasterCabinetPage() {
           city?: string
           bio?: string
           specializations?: string[]
+          cutting_techniques?: string[]
           experience_years?: number
           education?: string
           profession_types?: ProfessionType[]
@@ -179,6 +183,7 @@ export function MasterCabinetPage() {
       experience_years: 1,
       education: '',
       specializations: [],
+      cutting_techniques: [],
       work_types: ['private_practice'],
       profession_type_ids: [],
     },
@@ -187,6 +192,7 @@ export function MasterCabinetPage() {
   const watchedWorkTypes = masterForm.watch('work_types')
   const watchedProfessionIds = masterForm.watch('profession_type_ids')
   const watchedSpecializations = masterForm.watch('specializations')
+  const watchedCuttingTechniques = masterForm.watch('cutting_techniques')
   const professionCatalog = useProfessionTypes()
   const professionSlugs = useMemo(
     () => slugsForProfessionIds(watchedProfessionIds ?? [], professionCatalog.data?.items ?? []),
@@ -231,6 +237,7 @@ export function MasterCabinetPage() {
       city: m.city || 'Красноярск',
       bio: m.bio ?? '',
       specializations: uniqueSpecializationTags(m.specializations),
+      cutting_techniques: normalizeCuttingTechniques(m.cutting_techniques),
       experience_years: m.experience_years ?? 1,
       education: m.education ?? '',
       work_types: types.length ? types : ['private_practice'],
@@ -359,6 +366,7 @@ export function MasterCabinetPage() {
           city: existing.city,
           bio: existing.bio ?? '',
           specializations: uniqueSpecializationTags(existing.specializations),
+          cutting_techniques: normalizeCuttingTechniques(existing.cutting_techniques),
           experience_years: existing.experience_years ?? 1,
           education: existing.education ?? '',
           work_type: primaryWorkType(types),
@@ -415,6 +423,7 @@ export function MasterCabinetPage() {
           city: values.city,
           bio: values.bio ?? '',
           specializations: specs,
+          cutting_techniques: normalizeCuttingTechniques(values.cutting_techniques),
           experience_years: values.experience_years,
           education: values.education ?? '',
           work_type: primaryWorkType(types),
@@ -887,6 +896,17 @@ export function MasterCabinetPage() {
             {!masterForm.formState.errors.specializations && fieldHint('specializations') && (
               <span className="hint field-need" role="status">{fieldHint('specializations')}</span>
             )}
+          </div>
+          <div id="master-cutting-techniques">
+            <CuttingTechniquePicker
+              value={watchedCuttingTechniques ?? []}
+              onChange={(tags) =>
+                masterForm.setValue('cutting_techniques', normalizeCuttingTechniques(tags), {
+                  shouldValidate: true,
+                  shouldDirty: true,
+                })
+              }
+            />
           </div>
           <div className="field">
             <label htmlFor="master-experience">Опыт, лет</label>

@@ -1,13 +1,13 @@
 # Handoff: fully containerized testing (updated 2026-11-19, machine B)
 
-Branch: `prod-ready-19-11` @ `417c9ed` (+ **uncommitted Stage 4 working tree**)  
+Branch: `prod-ready-19-11` @ `50f34f6` (+ **uncommitted Stage 5 working tree**; Stage 4 landed in `50f34f6`)  
 Goal: app + infra + Go / Vitest / Playwright all in Docker (no hybrid Windows runners).
 
 ## Machine B snapshot (this PC)
 
 | Item | Value |
 | --- | --- |
-| Git | `prod-ready-19-11` ahead 1 of origin (`417c9ed` messenger handoff). Stage 4 changes **not committed**. Local JPG refs stay untracked. |
+| Git | `prod-ready-19-11` @ `50f34f6 salon own`. Stage 5 changes **not committed**. Local JPG refs stay untracked. |
 | App stack | **Production compose** `docker-compose.yml` + Alpine `backend/Dockerfile` (same path as server). **Not** `docker-compose.dev.yml`. |
 | MinIO | Loaded from local `minio-image.tar` → `minio/minio:latest` (Hub pull denied earlier) |
 | Caddy | **Stopped on purpose** after first `up` — local Caddyfile started ACME for `salon-x.ru` / real prod IP. Use `:5173` UI + `:8090` API only. |
@@ -204,11 +204,94 @@ If `employee1` lacks Волкова membership (historical seed 405 on staff), r
 
 Open Q #2 above (auto-revoke leftover identity) remains a product decision; not required for ACL after this pass.
 
+## Stage 5 — navigation grouping, cutting techniques, client QR invite (Machine B, 2026-11-19)
+
+Status: **implemented + closing audit PASS; not committed; not product-signed-off.**
+
+### Menu regrouping (≤10 top-level)
+
+More / sidenav now use **groups with one-level children**. Settings/Profile stay in the More account header (not duplicated as rows).
+
+| Old item | New group / section |
+| --- | --- |
+| Главная / Обзор / Сегодня | top-level |
+| Календарь / Расписание, График | Расписание (children) |
+| Записи | top-level |
+| Сообщения, Контакты | Общение |
+| Клиенты, Консультации, Пригласить клиента | Клиенты |
+| Портфолио, Услуги, Модели, Мастер-классы | Практика |
+| Косметика, Мой склад, На приёмке, Выдача | Склад |
+| Команда, QR мастера, Настройки салона, Мои салоны, Кресла, Профиль мастера, Рабочий стол | Салон |
+| База знаний | top-level |
+| Аналитика | top-level |
+| Настройки, Профиль | Аккаунт header (More) |
+| Магазин / Корзина / Мои заказы (client) | Магазин children |
+| Admin masters/suppliers/products/services/catalogs | Каталог |
+| Admin appointments/orders/disputes | Операции |
+
+**Exact top-level counts (side, excl. «Ещё») — closing audit:**
+
+| Combo | Count |
+| --- | --- |
+| Client | **7** |
+| Private master | **9** |
+| Owner without master profile | **9** |
+| Master + owner membership | **10** |
+| Client mode of dual user (`interactionMode=client`) | **7** |
+
+Deep links unchanged. Guards unchanged (`RequireMaster` / `RequireCabinetFeature`). No new duplicate destinations. Mobile More (phone-390): Settings/Profile in account header; top-level ≤10 asserted in Playwright.
+
+### Cutting techniques (req 9)
+
+- Migration `marketplace/022_cutting_techniques.sql` → `master_profiles.cutting_techniques TEXT[]`.
+- Catalog (14): Тупой срез, Градуировка, Слои, Пойнт-кат, Слайд-кат, Слайс, Филировка, Текстурирование, Бритвенная техника, Ножницы над расчёской, Машинка над расчёской, Фейд, Коннектинг, Фрихэнд.
+- Optional; omitted field preserves; empty array clears; **not** in publish readiness.
+- UI: `CuttingTechniquePicker` on master profile.
+
+### Client QR invite (req 8)
+
+Reuses salon-invite security pattern (hashed token, TTL, max_uses, revoke) in **clients** service — not org membership.
+
+Flow: master `POST /v1/clients/invites` → QR/URL `/invite/client/{token}` → client login/register → **explicit** accept → mutual contacts via `POST /v1/internal/contacts/link` + optional CRM card when `organization_id` set. No auto-bind without accept. Client cannot create invites (403).
+
+**Security (closing audit):**
+
+- Edge gateway returns **404** for `/v1/internal/*` (not proxied); `POST /v1/internal/contacts/link` is S2S-only on communications with `X-Internal-Token` (`InternalAuth`) → 401 without/wrong token.
+- Accept binds `master_id` from invite row + `client_id` from JWT; callers cannot choose IDs on the public accept path. Link body IDs are set only by clients service after consume.
+- No link without a valid active invite (consume is atomic; exhausted/revoked/expired → invite errors). Re-accept does not duplicate contacts (`AddContact` idempotent on owner pair).
+- Tests: `contacts_link_auth_test.go`, `contacts_link_test.go`, `invite_accept_test.go`, `edge_internal_test.go`.
+
+### Compose (closing audit)
+
+- Base `docker-compose.yml` **unchanged vs HEAD** for clients: no `PUBLIC_APP_URL` on `clients` (production-compatible; URL from Origin / Host / deploy env).
+- Local default `PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://127.0.0.1:5173}` lives only under **`clients`** (and pre-existing identity) in `docker-compose.dev.yml`.
+- Pre-existing identity `PUBLIC_APP_URL` default in base compose was already on HEAD (not Stage 5); left untouched.
+- Dockerfile / production deploy configs not modified for this audit.
+
+### Docker verification (incl. closing audit)
+
+| Check | Result |
+| --- | --- |
+| Rebuild marketplace/clients/communications/frontend | PASS (healthy) |
+| Vitest `cabinet-nav` exact counts | **20 PASS** (client 7 / master 9 / owner-only 9 / master+owner 10 / dual client-mode 7) |
+| Go communications link auth + clients invite + gateway edge | **PASS** |
+| API smoke techniques / invite create-peek-accept | PASS (prior Stage 5) |
+| Playwright `e2e/client-invite-qr.spec.ts` phone-390 | **PASS** (QR, copy stub, share stub, accept, contacts=1, re-open idempotent) |
+| Physical camera scan | Not required |
+
+### Known limits
+
+- Invite URL prefers `PUBLIC_APP_URL` when set; otherwise Origin → X-Forwarded-Host → Host. Local SPA default only via `docker-compose.dev.yml`.
+- Contact link is best-effort after card create (accept still succeeds if communications briefly unavailable).
+- Owner-only (no master role) still cannot open `/clients/invite` (behind `RequireMaster`) — same as `/clients` pre-Stage 5.
+- Clipboard API may be unavailable on plain `http://frontend`; E2E stubs `navigator.clipboard` / `navigator.share` for the contract.
+- No Stage 6 work.
+
 ## What was NOT done / still open
 
 | Item | Status |
 | --- | --- |
-| Stage 4 product sign-off / commit | **Pending explicit approval** — working tree dirty |
+| Stage 4/5 product sign-off / commit | **Pending explicit approval** — working tree dirty |
 | Public salon catalog | Not built — needs product decision |
 | Push to origin | Not done |
 | Caddy locally | Keep stopped unless using a local-only Caddyfile |
@@ -222,8 +305,8 @@ Open Q #2 above (auto-revoke leftover identity) remains a product decision; not 
 - Do not return to hybrid Windows Go/Vitest/Playwright.
 - Do not replace real two-user E2E with smoke stubs.
 - Do not auto-switch messenger to WebSocket before bottleneck is proven.
-- Do not start Stage 5 without agreement.
-- Do not commit/push Stage 4 without explicit request.
+- Do not start Stage 6 without agreement.
+- Do not commit/push without explicit request.
 
 ## Commands to resume (Machine C)
 

@@ -148,6 +148,24 @@ func (s *Service) ListContacts(ctx context.Context, actor uuid.UUID, q, role str
 	return &ContactListResult{Items: views, Total: totalAll, Limit: limit, Offset: offset}, nil
 }
 
+// LinkMutualContacts creates address-book entries both ways (idempotent).
+func (s *Service) LinkMutualContacts(ctx context.Context, userA, userB uuid.UUID, note string) error {
+	if userA == uuid.Nil || userB == uuid.Nil {
+		return apperr.Validation("user_a and user_b are required")
+	}
+	if userA == userB {
+		return apperr.Unprocessable(apperr.CodeContactSelf, "cannot link a user to themselves")
+	}
+	note = strings.TrimSpace(note)
+	if _, _, err := s.AddContact(ctx, AddContactInput{ActorID: userA, UserID: &userB, Note: note}); err != nil {
+		return err
+	}
+	if _, _, err := s.AddContact(ctx, AddContactInput{ActorID: userB, UserID: &userA, Note: note}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) AddContact(ctx context.Context, in AddContactInput) (*domain.ContactView, bool, error) {
 	note, err := NormalizeContactNote(in.Note)
 	if err != nil {

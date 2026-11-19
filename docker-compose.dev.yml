@@ -75,6 +75,8 @@ services:
         SERVICE_PATH: services/clients/cmd/clients
     environment:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      # Local SPA origin for client QR invite links (production sets PUBLIC_APP_URL in deploy env).
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://127.0.0.1:5173}
 
   commerce:
     build:

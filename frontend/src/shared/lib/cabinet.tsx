@@ -26,7 +26,32 @@ export type CabinetKind =
   | 'supplier_rep'
   | 'platform_admin'
 
-export type NavLink = { to: string; label: string; end?: boolean }
+export type NavLink = {
+  to: string
+  label: string
+  end?: boolean
+  /** Nested destinations under a group. Top-level count excludes children. */
+  children?: NavLink[]
+}
+
+/** Flat list of destinations (group roots + children) for route/guard audits. */
+export function flattenNavLinks(links: NavLink[]): NavLink[] {
+  const out: NavLink[] = []
+  for (const l of links) {
+    out.push({ to: l.to, label: l.label, end: l.end })
+    if (l.children?.length) out.push(...flattenNavLinks(l.children))
+  }
+  return out
+}
+
+export function navHasPath(links: NavLink[], to: string): boolean {
+  return flattenNavLinks(links).some((l) => l.to === to)
+}
+
+/** Top-level items only (groups count as one). */
+export function topLevelNavCount(links: NavLink[]): number {
+  return links.filter((l) => l.to !== '/more').length
+}
 
 export type MasterProfile = {
   id?: string
@@ -353,18 +378,28 @@ export function navForCabinet(
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
-      { to: '/admin/masters', label: 'Мастера' },
-      { to: '/admin/suppliers', label: 'Поставщики' },
-      { to: '/admin/products', label: 'Товары' },
-      { to: '/admin/services', label: 'Услуги' },
+      {
+        to: '/admin/masters',
+        label: 'Каталог',
+        children: [
+          { to: '/admin/masters', label: 'Мастера' },
+          { to: '/admin/suppliers', label: 'Поставщики' },
+          { to: '/admin/products', label: 'Товары' },
+          { to: '/admin/services', label: 'Услуги' },
+          { to: '/admin/catalogs', label: 'Справочники' },
+        ],
+      },
+      {
+        to: '/admin/appointments',
+        label: 'Операции',
+        children: [
+          { to: '/admin/appointments', label: 'Записи' },
+          { to: '/admin/orders', label: 'Заказы' },
+          { to: '/admin/disputes', label: 'Споры' },
+        ],
+      },
       { to: '/admin/knowledge', label: 'База знаний' },
-      { to: '/admin/appointments', label: 'Записи' },
-      { to: '/admin/orders', label: 'Заказы' },
-      { to: '/admin/disputes', label: 'Споры' },
       { to: '/admin/audit', label: 'Журнал' },
-      { to: '/admin/catalogs', label: 'Справочники' },
-      { to: '/settings', label: 'Настройки' },
-      { to: '/profile', label: 'Профиль' },
     ]
     return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
@@ -376,17 +411,33 @@ export function navForCabinet(
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
-      { to: '/supplier', label: 'Компания' },
-      { to: '/supplier/orders', label: 'Заказы' },
-      { to: '/supplier/client-orders', label: 'Заказы клиентов' },
+      {
+        to: '/supplier',
+        label: 'Компания',
+        children: [
+          { to: '/supplier', label: 'Профиль компании' },
+          { to: '/supplier/team', label: 'Команда' },
+          { to: '/supplier/recurring', label: 'Регулярные' },
+        ],
+      },
+      {
+        to: '/supplier/orders',
+        label: 'Заказы',
+        children: [
+          { to: '/supplier/orders', label: 'Заказы B2B' },
+          { to: '/supplier/client-orders', label: 'Заказы клиентов' },
+        ],
+      },
       { to: '/supplier/analytics', label: 'Аналитика' },
-      { to: '/supplier/team', label: 'Команда' },
-      { to: '/supplier/recurring', label: 'Регулярные' },
-      { to: '/messages', label: 'Сообщения' },
-      { to: '/contacts', label: 'Контакты' },
+      {
+        to: '/messages',
+        label: 'Общение',
+        children: [
+          { to: '/messages', label: 'Сообщения' },
+          { to: '/contacts', label: 'Контакты' },
+        ],
+      },
       { to: '/knowledge', label: 'База знаний' },
-      { to: '/settings', label: 'Настройки' },
-      { to: '/profile', label: 'Профиль' },
     ]
     return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
@@ -399,12 +450,16 @@ export function navForCabinet(
     const secondary: NavLink[] = [
       { to: '/rep/finance', label: 'Деньги' },
       { to: '/calendar', label: 'Календарь' },
-      { to: '/messages', label: 'Сообщения' },
-      { to: '/contacts', label: 'Контакты' },
+      {
+        to: '/messages',
+        label: 'Общение',
+        children: [
+          { to: '/messages', label: 'Сообщения' },
+          { to: '/contacts', label: 'Контакты' },
+        ],
+      },
       { to: '/rep/analytics', label: 'Аналитика' },
       { to: '/warehouse', label: 'Склад' },
-      { to: '/settings', label: 'Настройки' },
-      { to: '/profile', label: 'Профиль' },
     ]
     return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
@@ -412,19 +467,29 @@ export function navForCabinet(
     const primary: NavLink[] = [
       { to: '/', label: 'Главная', end: true },
       { to: '/search', label: 'Поиск мастера' },
-      { to: '/shop', label: 'Магазин' },
+      {
+        to: '/shop',
+        label: 'Магазин',
+        children: [
+          { to: '/shop', label: 'Каталог' },
+          { to: '/shop/cart', label: 'Корзина' },
+          { to: '/orders', label: 'Мои заказы' },
+        ],
+      },
       { to: '/appointments', label: 'Записи' },
       { to: '/more', label: 'Ещё' },
     ]
     const secondary: NavLink[] = [
-      { to: '/messages', label: 'Сообщения' },
-      { to: '/contacts', label: 'Контакты' },
-      { to: '/settings', label: 'Настройки' },
-      { to: '/profile', label: 'Профиль' },
+      {
+        to: '/messages',
+        label: 'Общение',
+        children: [
+          { to: '/messages', label: 'Сообщения' },
+          { to: '/contacts', label: 'Контакты' },
+        ],
+      },
       { to: '/models', label: 'Модели' },
       { to: '/consultations', label: 'Консультации' },
-      { to: '/orders', label: 'Мои заказы' },
-      { to: '/shop/cart', label: 'Корзина' },
     ]
     return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
   }
@@ -432,46 +497,89 @@ export function navForCabinet(
   const ownerHome = kind === 'salon_owner' || kind === 'chain_owner' || kind === 'salon_admin'
   const primary: NavLink[] = [
     { to: '/', label: ownerHome ? 'Обзор' : 'Сегодня', end: true },
-    { to: '/calendar', label: ownerHome ? 'Расписание' : 'Календарь' },
+    {
+      to: '/calendar',
+      label: ownerHome ? 'Расписание' : 'Календарь',
+      children: [
+        { to: '/calendar', label: ownerHome ? 'Расписание' : 'Календарь' },
+        { to: '/calendar?panel=schedule', label: 'График' },
+      ],
+    },
     { to: '/appointments', label: 'Записи' },
     { to: '/more', label: 'Ещё' },
   ]
-  const secondary: NavLink[] = []
-  secondary.push({ to: '/messages', label: 'Сообщения' })
-  secondary.push({ to: '/contacts', label: 'Контакты' })
-  secondary.push({ to: '/portfolio', label: 'Портфолио' })
-  secondary.push({ to: '/masterclasses', label: 'Мастер-классы' })
-  secondary.push({ to: '/models', label: 'Модели' })
-  secondary.push({ to: '/consultations', label: 'Консультации' })
-  if (check('clients')) secondary.push({ to: '/clients', label: 'Клиенты' })
-  if (check('services')) secondary.push({ to: '/services', label: 'Услуги' })
-  if (check('cosmetics')) secondary.push({ to: '/cosmetics', label: 'Косметика' })
-  if (check('cosmetics')) {
-    secondary.push({ to: '/inventory', label: 'Мой склад' })
-    secondary.push({ to: '/inventory/receipts', label: 'На приёмке' })
+
+  const secondary: NavLink[] = [
+    {
+      to: '/messages',
+      label: 'Общение',
+      children: [
+        { to: '/messages', label: 'Сообщения' },
+        { to: '/contacts', label: 'Контакты' },
+      ],
+    },
+  ]
+
+  const clientChildren: NavLink[] = []
+  if (check('clients')) clientChildren.push({ to: '/clients', label: 'Список' })
+  clientChildren.push({ to: '/consultations', label: 'Консультации' })
+  if (check('clients')) clientChildren.push({ to: '/clients/invite', label: 'Пригласить клиента' })
+  if (clientChildren.length) {
+    secondary.push({
+      to: clientChildren[0].to,
+      label: 'Клиенты',
+      children: clientChildren,
+    })
   }
+
+  const practiceChildren: NavLink[] = [
+    { to: '/portfolio', label: 'Портфолио' },
+    { to: '/masterclasses', label: 'Мастер-классы' },
+    { to: '/models', label: 'Модели' },
+  ]
+  if (check('services')) practiceChildren.splice(1, 0, { to: '/services', label: 'Услуги' })
+  secondary.push({ to: '/portfolio', label: 'Практика', children: practiceChildren })
+
+  if (check('cosmetics') || check('pickup_orders')) {
+    const stockChildren: NavLink[] = []
+    if (check('cosmetics')) {
+      stockChildren.push({ to: '/cosmetics', label: 'Косметика' })
+      stockChildren.push({ to: '/inventory', label: 'Мой склад' })
+      stockChildren.push({ to: '/inventory/receipts', label: 'На приёмке' })
+    }
+    if (check('pickup_orders')) stockChildren.push({ to: '/pickup-orders', label: 'Выдача заказов' })
+    secondary.push({ to: stockChildren[0].to, label: 'Склад', children: stockChildren })
+  }
+
   if (check('knowledge')) secondary.push({ to: '/knowledge', label: 'База знаний' })
-  if (check('staff')) secondary.push({ to: '/staff', label: 'Команда' })
-  if (check('staff')) secondary.push({ to: '/staff/invite', label: 'Пригласить мастера' })
-  if (check('pickup_orders')) secondary.push({ to: '/pickup-orders', label: 'Выдача заказов' })
-  if (check('reports')) secondary.push({ to: '/reports', label: 'Аналитика' })
-  if (check('salon_settings')) secondary.push({ to: '/salon/settings', label: 'Настройки салона' })
-  secondary.push({ to: '/calendar?panel=schedule', label: 'График' })
-  secondary.push({ to: '/chairs', label: 'Аренда кресел' })
+
+  const salonChildren: NavLink[] = []
+  if (check('staff')) {
+    salonChildren.push({ to: '/staff', label: 'Команда' })
+    salonChildren.push({ to: '/staff/invite', label: 'Пригласить мастера' })
+  }
+  if (check('salon_settings')) salonChildren.push({ to: '/salon/settings', label: 'Настройки салона' })
+  salonChildren.push({ to: '/chairs', label: 'Аренда кресел' })
   if (kind === 'chain_owner' || kind === 'salon_owner') {
-    // Owner membership manages org/branch publish without requiring a master profile.
-    secondary.push({ to: '/settings/salons', label: 'Мои салоны' })
-    secondary.push({ to: '/master', label: 'Профиль мастера' })
+    salonChildren.push({ to: '/settings/salons', label: 'Мои салоны' })
+    salonChildren.push({ to: '/master', label: 'Профиль мастера' })
   } else if (kind === 'chair_master' || kind === 'mobile_master') {
-    secondary.push({ to: '/master', label: 'Салон' })
+    salonChildren.push({ to: '/master', label: 'Салон' })
   } else {
-    secondary.push({ to: '/master', label: 'Профиль мастера' })
+    salonChildren.push({ to: '/master', label: 'Профиль мастера' })
   }
-  secondary.push({ to: '/settings', label: 'Настройки' })
-  secondary.push({ to: '/profile', label: 'Профиль' })
   if (kind === 'private_master' || kind === 'chair_master' || kind === 'mobile_master' || kind === 'salon_employee') {
-    secondary.push({ to: '/dashboard', label: 'Рабочий стол' })
+    salonChildren.push({ to: '/dashboard', label: 'Рабочий стол' })
   }
+  secondary.push({
+    to: salonChildren[0]?.to ?? '/master',
+    label: 'Салон',
+    children: salonChildren,
+  })
+
+  if (check('reports')) secondary.push({ to: '/reports', label: 'Аналитика' })
+
+  // Settings / Profile live in the More account header — not duplicated as nav rows.
   return { primary, secondary, side: [...primary.filter((l) => l.to !== '/more'), ...secondary] }
 }
 

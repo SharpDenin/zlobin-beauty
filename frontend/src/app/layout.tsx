@@ -77,6 +77,94 @@ function linkActive(pathname: string, to: string, end?: boolean) {
   return pathname === to || pathname.startsWith(`${to}/`)
 }
 
+function NavLeaf({
+  link,
+  pathname,
+  onNavigate,
+  className,
+  nested,
+}: {
+  link: NavLink
+  pathname: string
+  onNavigate?: () => void
+  className?: string
+  nested?: boolean
+}) {
+  const messenger = useMessengerOptional()
+  const messagesActive = link.to === '/messages' && Boolean(messenger?.overlayOpen)
+  return (
+    <Link
+      to={link.to === '/more' ? '#' : link.to}
+      className={`${className ?? ''} ${nested ? 'nav-link-nested' : ''} ${linkActive(pathname, link.to, link.end) || messagesActive ? 'active' : ''}`.trim()}
+      aria-current={linkActive(pathname, link.to, link.end) ? 'page' : undefined}
+      onClick={(e) => {
+        if (link.to === '/more') {
+          e.preventDefault()
+          onNavigate?.()
+          return
+        }
+        if (link.to === '/messages' && messenger?.isDesktop) {
+          e.preventDefault()
+          messenger.openList()
+          onNavigate?.()
+          return
+        }
+        onNavigate?.()
+      }}
+    >
+      <NavIcon to={link.to} />
+      <span>{link.label}</span>
+      {link.to === '/messages' && (messenger?.unreadTotal ?? 0) > 0 && (
+        <span className="nav-unread" aria-label={`${messenger!.unreadTotal} непрочитанных`}>
+          {messenger!.unreadTotal > 99 ? '99+' : messenger!.unreadTotal}
+        </span>
+      )}
+    </Link>
+  )
+}
+
+function NavGroup({
+  link,
+  pathname,
+  onNavigate,
+  className,
+}: {
+  link: NavLink
+  pathname: string
+  onNavigate?: () => void
+  className?: string
+}) {
+  const children = link.children ?? []
+  const childActive = children.some((c) => linkActive(pathname, c.to, c.end))
+  const [open, setOpen] = useState(childActive)
+
+  useEffect(() => {
+    if (childActive) setOpen(true)
+  }, [childActive])
+
+  return (
+    <div className={`nav-group${open ? ' is-open' : ''}${childActive ? ' has-active' : ''}`} data-testid={`nav-group-${link.label}`}>
+      <button
+        type="button"
+        className={`${className ?? ''} nav-group-toggle${childActive ? ' active' : ''}`.trim()}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <NavIcon to={link.to} />
+        <span>{link.label}</span>
+        <span className="nav-group-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="nav-group-children stack-sm">
+          {children.map((c) => (
+            <NavLeaf key={`${link.label}-${c.to}-${c.label}`} link={c} pathname={pathname} onNavigate={onNavigate} className={className} nested />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NavLinks({
   links,
   pathname,
@@ -88,40 +176,22 @@ function NavLinks({
   onNavigate?: () => void
   className?: string
 }) {
-  const messenger = useMessengerOptional()
   return (
     <>
       {links.map((l) => {
-        const messagesActive = l.to === '/messages' && Boolean(messenger?.overlayOpen)
+        if (l.children?.length) {
+          return (
+            <NavGroup
+              key={`group-${l.label}-${l.to}`}
+              link={l}
+              pathname={pathname}
+              onNavigate={onNavigate}
+              className={className}
+            />
+          )
+        }
         return (
-        <Link
-          key={l.to}
-          to={l.to === '/more' ? '#' : l.to}
-          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) || messagesActive ? 'active' : ''}`.trim()}
-          aria-current={linkActive(pathname, l.to, l.end) ? 'page' : undefined}
-          onClick={(e) => {
-            if (l.to === '/more') {
-              e.preventDefault()
-              onNavigate?.()
-              return
-            }
-            if (l.to === '/messages' && messenger?.isDesktop) {
-              e.preventDefault()
-              messenger.openList()
-              onNavigate?.()
-              return
-            }
-            onNavigate?.()
-          }}
-        >
-          <NavIcon to={l.to} />
-          <span>{l.label}</span>
-          {l.to === '/messages' && (messenger?.unreadTotal ?? 0) > 0 && (
-            <span className="nav-unread" aria-label={`${messenger!.unreadTotal} непрочитанных`}>
-              {messenger!.unreadTotal > 99 ? '99+' : messenger!.unreadTotal}
-            </span>
-          )}
-        </Link>
+          <NavLeaf key={`${l.to}-${l.label}`} link={l} pathname={pathname} onNavigate={onNavigate} className={className} />
         )
       })}
     </>

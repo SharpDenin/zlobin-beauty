@@ -61,7 +61,12 @@ export function ClientsPage() {
 
   return (
     <main className="page stack">
-      <h1>Клиенты</h1>
+      <div className="row between wrap gap">
+        <h1>Клиенты</h1>
+        <Link className="btn btn-secondary btn-compact" to="/clients/invite" data-testid="clients-invite-link">
+          Пригласить клиента
+        </Link>
+      </div>
       <p className="muted">
         Сегменты по визитам: новые (первый визит ≤ 30 дн.), активные (последний ≤ 90 дн.), давно не были (&gt; 90 дн.).
       </p>

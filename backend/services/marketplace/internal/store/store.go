@@ -34,13 +34,13 @@ func (s *Store) ownerStatusSQL(alias string) string {
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-const masterCols = `id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
+const masterCols = `id, user_id, organization_id, branch_id, display_name, bio, specializations, coalesce(cutting_techniques, '{}'), city,
     experience_years, education, photo_media_id, work_type, coalesce(work_types, '{}'), rating_avg, rating_count, published, created_at, updated_at`
 
 func scanMaster(row interface{ Scan(dest ...any) error }) (*domain.MasterProfile, error) {
 	var m domain.MasterProfile
 	var orgID *uuid.UUID
-	if err := row.Scan(&m.ID, &m.UserID, &orgID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.City,
+	if err := row.Scan(&m.ID, &m.UserID, &orgID, &m.BranchID, &m.DisplayName, &m.Bio, &m.Specializations, &m.CuttingTechniques, &m.City,
 		&m.ExperienceYears, &m.Education, &m.PhotoMediaID, &m.WorkType, &m.WorkTypes, &m.RatingAvg, &m.RatingCount, &m.Published, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -49,6 +49,9 @@ func scanMaster(row interface{ Scan(dest ...any) error }) (*domain.MasterProfile
 	}
 	if orgID != nil {
 		m.OrganizationID = *orgID
+	}
+	if m.CuttingTechniques == nil {
+		m.CuttingTechniques = []string{}
 	}
 	if len(m.WorkTypes) == 0 && m.WorkType != "" {
 		m.WorkTypes = []string{m.WorkType}
@@ -65,16 +68,21 @@ func (s *Store) UpsertMaster(ctx context.Context, m domain.MasterProfile) error 
 	if len(workTypes) == 0 && m.WorkType != "" {
 		workTypes = []string{m.WorkType}
 	}
+	techniques := m.CuttingTechniques
+	if techniques == nil {
+		techniques = []string{}
+	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, city,
+INSERT INTO master_profiles(id, user_id, organization_id, branch_id, display_name, bio, specializations, cutting_techniques, city,
   experience_years, education, photo_media_id, work_type, work_types, rating_avg, rating_count, published, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 ON CONFLICT (user_id) DO UPDATE SET
   organization_id=EXCLUDED.organization_id,
   branch_id=EXCLUDED.branch_id,
   display_name=EXCLUDED.display_name,
   bio=EXCLUDED.bio,
   specializations=EXCLUDED.specializations,
+  cutting_techniques=EXCLUDED.cutting_techniques,
   city=EXCLUDED.city,
   experience_years=EXCLUDED.experience_years,
   education=EXCLUDED.education,
@@ -83,7 +91,7 @@ ON CONFLICT (user_id) DO UPDATE SET
   work_types=EXCLUDED.work_types,
   published=EXCLUDED.published,
   updated_at=EXCLUDED.updated_at`,
-		m.ID, m.UserID, org, m.BranchID, m.DisplayName, m.Bio, m.Specializations, m.City,
+		m.ID, m.UserID, org, m.BranchID, m.DisplayName, m.Bio, m.Specializations, techniques, m.City,
 		m.ExperienceYears, m.Education, m.PhotoMediaID, m.WorkType, workTypes, m.RatingAvg, m.RatingCount, m.Published, m.CreatedAt, m.UpdatedAt)
 	return err
 }

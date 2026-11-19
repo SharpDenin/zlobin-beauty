@@ -634,6 +634,42 @@ h1, h2, h3, p, strong { overflow-wrap: anywhere; }
   gap: var(--space-3);
   min-height: 48px;
 }
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-group-toggle.active {
+  color: var(--color-primary);
+}
+.nav-group-chevron {
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: var(--text-sm);
+}
+.nav-group-children {
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--glass-border);
+  margin-left: calc(var(--space-3) + 6px);
+}
+.nav-link-nested {
+  min-height: 40px;
+  font-size: var(--text-sm);
+}
 .more-footer {
   margin-top: var(--space-4);
   padding-top: var(--space-3);

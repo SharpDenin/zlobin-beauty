@@ -50,6 +50,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PATCH /v1/me/model-preferences", auth(http.HandlerFunc(a.patchModelPrefs)))
 	a.registerConsultationRoutes(mux, auth)
 	a.registerAdminRoutes(mux, auth)
+	a.registerInviteRoutes(mux, auth)
 	mux.HandleFunc("GET /v1/internal/model-preferences/matches", a.matchModelPrefs)
 	mux.HandleFunc("GET /v1/internal/model-preferences/{userID}", a.getModelPrefsInternal)
 	// Aliases under /v1/client-cards for the same handlers.

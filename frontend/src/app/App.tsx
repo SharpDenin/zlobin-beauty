@@ -219,16 +219,17 @@ export function App() {
                   <Route path="/inventory/:productId" element={<MasterInventoryPage />} />
                   <Route path="/inventory" element={<MasterInventoryPage />} />
                   <Route path="/pickup-orders" element={<SalonPickupPage />} />
-                  <Route element={<RequireCabinetFeature feature="staff" />}>
-                    <Route path="/staff" element={<StaffPage />} />
-                    <Route path="/staff/invite" element={<InviteMasterPage />} />
-                  </Route>
-                  <Route element={<RequireCabinetFeature feature="reports" />}>
-                    <Route path="/reports" element={<SalonReportsPage />} />
-                  </Route>
-                  <Route element={<RequireCabinetFeature feature="salon_settings" />}>
-                    <Route path="/salon/settings" element={<SalonSettingsPage />} />
-                  </Route>
+                </Route>
+                {/* Owner/admin org tools: membership via RequireCabinetFeature — no identity salon_owner required. */}
+                <Route element={<RequireCabinetFeature feature="staff" />}>
+                  <Route path="/staff" element={<StaffPage />} />
+                  <Route path="/staff/invite" element={<InviteMasterPage />} />
+                </Route>
+                <Route element={<RequireCabinetFeature feature="reports" />}>
+                  <Route path="/reports" element={<SalonReportsPage />} />
+                </Route>
+                <Route element={<RequireCabinetFeature feature="salon_settings" />}>
+                  <Route path="/salon/settings" element={<SalonSettingsPage />} />
                 </Route>
                 <Route element={<RequireSupplier />}>
                   <Route path="/supplier" element={<SupplierHomePage />} />

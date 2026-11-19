@@ -2205,7 +2205,9 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     })
     expect(chairRes.status, await chairRes.clone().text()).toBe(201)
     const chair = await chairRes.json() as { id: string }
-    const dayAt = (offset: number) => new Date(Date.now() + (110 + offset) * 86400000).toISOString().slice(0, 10)
+    // Unique far-future window so re-runs never collide with prior smoke/E2E intervals.
+    const dayBase = 500 + (Date.now() % 400)
+    const dayAt = (offset: number) => new Date(Date.now() + (dayBase + offset) * 86400000).toISOString().slice(0, 10)
     const steal = await fetch(`${api}/v1/me/work-mode-intervals`, {
       method: 'POST', headers: renterH,
       body: JSON.stringify({ mode: 'chair', chair_id: chair.id, starts_at: `${dayAt(0)}T10:00:00+07:00`, ends_at: `${dayAt(0)}T18:00:00+07:00`, timezone: 'Asia/Krasnoyarsk' }),

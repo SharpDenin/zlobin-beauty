@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { apiRequest } from '@/shared/api/client'
 import { OwnerStartPage } from '@/features/owner-home/OwnerStartPage'
+import { wallTimeInTimezoneToUtcIso, ymdInTimezone } from '@/shared/lib/time'
 
 vi.mock('@/shared/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/shared/api/client')>()
@@ -42,8 +43,11 @@ vi.mock('@/shared/lib/cabinet', () => ({
     setInteractionMode: () => undefined,
     canUseMasterMode: true,
     orgs: [],
-    selectedOrg: { organization: { id: 'org1', name: 'Аура' }, branches: [] },
-    selectedBranch: null,
+    selectedOrg: {
+      organization: { id: 'org1', name: 'Аура', city: 'Красноярск' },
+      branches: [{ id: 'b1', name: 'Центр', city: 'Красноярск', timezone: 'Asia/Krasnoyarsk' }],
+    },
+    selectedBranch: { id: 'b1', name: 'Центр', city: 'Красноярск', timezone: 'Asia/Krasnoyarsk' },
     setSelectedOrgId: () => undefined,
     setSelectedBranchId: () => undefined,
     ready: true,
@@ -112,28 +116,36 @@ beforeEach(() => {
       return { items: [] }
     }
     if (path.startsWith('/v1/calendar/appointments')) {
-      const start = new Date()
-      start.setHours(10, 0, 0, 0)
+      const tz = 'Asia/Krasnoyarsk'
+      const today = ymdInTimezone(new Date(), tz)
+      const [y, m, d] = today.split('-').map(Number)
+      const startsAt = wallTimeInTimezoneToUtcIso(y, m, d, 10, 0, 0, tz)
+      const endsAt = wallTimeInTimezoneToUtcIso(y, m, d, 11, 0, 0, tz)
+      const pendingAt = wallTimeInTimezoneToUtcIso(y, m, d, 11, 30, 0, tz)
       return {
         items: [
           {
             id: 'a1',
             service_name: 'Стрижка',
             status: 'confirmed',
-            starts_at: start.toISOString(),
-            ends_at: new Date(start.getTime() + 3600000).toISOString(),
+            starts_at: startsAt,
+            ends_at: endsAt,
             price_minor: 200000,
             client_display_name: 'Мария Козлова',
             master_display_name: 'Анна Смирнова',
+            location_timezone: tz,
+            location_city: 'Красноярск',
           },
           {
             id: 'a2',
             service_name: 'Окрашивание',
             status: 'pending_confirmation',
-            starts_at: new Date(start.getTime() + 5400000).toISOString(),
+            starts_at: pendingAt,
             price_minor: 400000,
             client_display_name: 'Елена Соколова',
             master_display_name: 'Ирина',
+            location_timezone: tz,
+            location_city: 'Красноярск',
           },
         ],
       }
@@ -182,12 +194,13 @@ describe('OwnerStartPage', () => {
     expect(other).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('right notes block lists appointment notifications only', async () => {
+  it('notification bubbles expose appointment alert (compact rail)', async () => {
+    // Baseline after notifications redesign: rail is <aside>, not a text "notes" region.
+    // Appointment alert must remain reachable; chat may also appear as a separate bubble.
     renderPage()
     await waitFor(() => {
-      expect(screen.getByRole('region', { name: 'Уведомления' })).toHaveTextContent('Запись подтверждена')
+      expect(screen.getByTestId('notification-bubbles')).toBeInTheDocument()
     })
-    const notes = screen.getByRole('region', { name: 'Уведомления' })
-    expect(notes).not.toHaveTextContent('Новое сообщение от Анна')
+    expect(screen.getByTestId('notif-dot-n-appt')).toHaveAccessibleName(/Запись подтверждена/)
   })
 })

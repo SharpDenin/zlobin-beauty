@@ -909,35 +909,47 @@ export function HairConsultationDetailPage() {
           </div>
         )}
 
-        {clientEditable && (
-          <details className="stack-sm">
-            <summary>Дополнительная анкета</summary>
-            <label className="check"><input type="checkbox" checked={q.salon_coloring} onChange={(e) => setQ({ ...q, salon_coloring: e.target.checked })} /> Салонное окрашивание</label>
-            <label className="check"><input type="checkbox" checked={q.home_coloring} onChange={(e) => setQ({ ...q, home_coloring: e.target.checked })} /> Домашнее окрашивание</label>
-            <label className="check"><input type="checkbox" checked={q.bleaching} onChange={(e) => setQ({ ...q, bleaching: e.target.checked })} /> Осветление</label>
-            <label className="field"><span>Аллергии</span><textarea value={q.allergies} onChange={(e) => setQ({ ...q, allergies: e.target.value })} rows={2} /></label>
-            <label className="field"><span>Бюджет</span><input value={q.budget} onChange={(e) => setQ({ ...q, budget: e.target.value })} /></label>
+        {(clientEditable || PHOTO_SLOTS.some((s) => s.slot !== 'strand_a4' && slotMedia(s.slot))) && (
+          <details className="stack-sm" open={!clientEditable}>
+            <summary>{clientEditable ? 'Дополнительная анкета' : 'Фото анкеты'}</summary>
+            {clientEditable && (
+              <>
+                <label className="check"><input type="checkbox" checked={q.salon_coloring} onChange={(e) => setQ({ ...q, salon_coloring: e.target.checked })} /> Салонное окрашивание</label>
+                <label className="check"><input type="checkbox" checked={q.home_coloring} onChange={(e) => setQ({ ...q, home_coloring: e.target.checked })} /> Домашнее окрашивание</label>
+                <label className="check"><input type="checkbox" checked={q.bleaching} onChange={(e) => setQ({ ...q, bleaching: e.target.checked })} /> Осветление</label>
+                <label className="field"><span>Аллергии</span><textarea value={q.allergies} onChange={(e) => setQ({ ...q, allergies: e.target.value })} rows={2} /></label>
+                <label className="field"><span>Бюджет</span><input value={q.budget} onChange={(e) => setQ({ ...q, budget: e.target.value })} /></label>
+              </>
+            )}
             <div className="consult-photo-grid">
               {PHOTO_SLOTS.filter((s) => s.slot !== 'strand_a4').map((s) => {
                 const mid = slotMedia(s.slot)
+                if (!clientEditable && !mid) return null
                 return (
                   <div key={s.slot} className="stack-gap-sm" data-testid={`photo-slot-${s.slot}`}>
                     <strong>{s.label}</strong>
                     <span className="muted">{s.hint}</span>
-                    <MediaDropzone
-                      purpose="hair_consultation"
-                      value={mid}
-                      allowGif={false}
-                      accept="image/jpeg,image/png,image/webp"
-                      label={`Загрузить: ${s.label}`}
-                      onChange={(mediaId) => {
-                        if (!mediaId) {
-                          if (mid) detach.mutate(mid)
-                          return
-                        }
-                        attach.mutate({ mediaId, slot: s.slot })
-                      }}
-                    />
+                    {mid && (
+                      <div className="media-frame media-frame--landscape">
+                        <MediaImage mediaId={mid} alt={s.label} />
+                      </div>
+                    )}
+                    {clientEditable && (
+                      <MediaDropzone
+                        purpose="hair_consultation"
+                        value={mid}
+                        allowGif={false}
+                        accept="image/jpeg,image/png,image/webp"
+                        label={`Загрузить: ${s.label}`}
+                        onChange={(mediaId) => {
+                          if (!mediaId) {
+                            if (mid) detach.mutate(mid)
+                            return
+                          }
+                          attach.mutate({ mediaId, slot: s.slot })
+                        }}
+                      />
+                    )}
                   </div>
                 )
               })}

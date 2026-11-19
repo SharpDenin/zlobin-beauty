@@ -40,6 +40,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/organizations/{orgID}/branches", auth(http.HandlerFunc(a.createBranch)))
 	mux.Handle("POST /v1/organizations/{orgID}/masters", auth(http.HandlerFunc(a.addMaster)))
 	mux.Handle("GET /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.listStaff)))
+	mux.Handle("POST /v1/organizations/{orgID}/staff", auth(http.HandlerFunc(a.inviteStaff)))
 	mux.Handle("POST /v1/organizations/{orgID}/invites", auth(http.HandlerFunc(a.createInvite)))
 	mux.Handle("GET /v1/organizations/{orgID}/invites", auth(http.HandlerFunc(a.listInvites)))
 	mux.Handle("POST /v1/organizations/{orgID}/invites/{id}/revoke", auth(http.HandlerFunc(a.revokeInvite)))

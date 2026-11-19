@@ -39,3 +39,12 @@ func TestTokenPair(t *testing.T) {
 		t.Fatal("refresh hash mismatch")
 	}
 }
+
+func TestHasProfessionalRoleIgnoresLegacySalonOwner(t *testing.T) {
+	if auth.HasProfessionalRole(&auth.Claims{Roles: []string{"client", "salon_owner"}}) {
+		t.Fatal("legacy identity salon_owner must not count as professional access")
+	}
+	if !auth.HasProfessionalRole(&auth.Claims{Roles: []string{"client", "master"}}) {
+		t.Fatal("master must remain professional")
+	}
+}

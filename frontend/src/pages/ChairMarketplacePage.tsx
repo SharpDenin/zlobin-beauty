@@ -49,15 +49,28 @@ export function ChairMarketplacePage() {
     onError: (e) => setError(formatUserError(e, 'Не удалось отправить запрос')),
   })
 
+  const cancelLease = useMutation({
+    mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/cancel`, { method: 'POST', token: accessToken }),
+    onSuccess: () => {
+      setError(null)
+      toast.success('Аренда отменена')
+      void qc.invalidateQueries({ queryKey: ['my-chair-leases'] })
+      void qc.invalidateQueries({ queryKey: ['usable-chairs'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось отменить аренду')),
+  })
+
   return (
     <main className="page stack">
       <h1>Аренда кресел</h1>
-      <p className="muted">Доступные кресла салонов. После одобрения владельцем кресло появится в вашем графике.</p>
+      <p className="muted">
+        Доступные кресла других салонов. После одобрения добавьте интервал режима «кресло» в расписании — доступ появится в окне аренды.
+      </p>
       {error && <ErrorBanner error={error} />}
       {!chairs.isLoading && listed.length === 0 && (
         <EmptyState
           title="Нет доступных кресел"
-          text="Сотрудник салона не может арендовать кресло в этом салоне. Предложения других салонов появятся здесь."
+          text="Сейчас в витрине нет чужих предложений. Кресла своего салона здесь не показываются — их публикует владелец в настройках салона."
         />
       )}
       {listed.map((c) => (
@@ -79,7 +92,13 @@ export function ChairMarketplacePage() {
             <label htmlFor="lease-end">Конец</label>
             <input id="lease-end" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} />
           </div>
-          <button className="btn btn-primary" type="button" data-testid="submit-lease" disabled={request.isPending} onClick={() => request.mutate()}>
+          <button
+            className="btn btn-primary"
+            type="button"
+            data-testid="submit-lease"
+            disabled={request.isPending || !start || !end}
+            onClick={() => request.mutate()}
+          >
             Отправить запрос
           </button>
         </section>
@@ -90,6 +109,17 @@ export function ChairMarketplacePage() {
           <strong>{l.chair?.name || 'Кресло'}</strong>
           <p>{LEASE_LABELS[l.status] || l.status}</p>
           <p className="muted">{new Date(l.starts_at).toLocaleString('ru-RU')} — {new Date(l.ends_at).toLocaleString('ru-RU')}</p>
+          {(l.status === 'requested' || l.status === 'active') && (
+            <button
+              className="btn"
+              type="button"
+              data-testid="cancel-lease"
+              disabled={cancelLease.isPending}
+              onClick={() => cancelLease.mutate(l.id)}
+            >
+              Отменить
+            </button>
+          )}
         </article>
       ))}
     </main>

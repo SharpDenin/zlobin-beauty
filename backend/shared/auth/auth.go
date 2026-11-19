@@ -136,7 +136,7 @@ func HasProfessionalRole(claims *Claims) bool {
 	}
 	for _, role := range claims.Roles {
 		switch role {
-		case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
+		case "master", "supplier", "supplier_rep", "salon_admin", "system_admin":
 			return true
 		}
 	}

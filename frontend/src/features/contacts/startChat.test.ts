@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { conversationStartBody } from '@/features/contacts/startChat'
 
 describe('conversationStartBody', () => {
-  it('opens a master chat for professional roles', () => {
+  it('opens a master chat for master/admin roles only', () => {
     expect(conversationStartBody(['master'], 'u1')).toEqual({ type: 'client_master', master_user_id: 'u1' })
-    expect(conversationStartBody(['salon_owner'], 'u2')).toEqual({ type: 'client_master', master_user_id: 'u2' })
+    // Legacy identity salon_owner is not treated as master.
+    expect(conversationStartBody(['salon_owner'], 'u2')).toEqual({ type: 'client_master', client_user_id: 'u2' })
   })
 
   it('opens a client chat for clients', () => {

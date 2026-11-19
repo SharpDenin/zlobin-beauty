@@ -112,7 +112,7 @@ func shopProductDTO(p domain.ShopProduct) map[string]any {
 func hasProfessionalRole(roles []string) bool {
 	for _, role := range roles {
 		switch role {
-		case "master", "supplier", "supplier_rep", "salon_owner", "salon_admin", "system_admin":
+		case "master", "supplier", "supplier_rep", "salon_admin", "system_admin":
 			return true
 		}
 	}

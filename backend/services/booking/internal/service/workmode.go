@@ -369,7 +369,8 @@ func (s *Service) ListUsableChairs(ctx context.Context, actor, orgID uuid.UUID) 
 	now := s.now().UTC()
 	var chairIDs []uuid.UUID
 	for _, l := range leases {
-		if l.Status == domain.LeaseActive && l.EndsAt.After(now) {
+		// Only chairs whose lease window already started (and not yet ended).
+		if l.Status == domain.LeaseActive && !l.StartsAt.After(now) && l.EndsAt.After(now) {
 			if _, ok := seen[l.ChairID]; !ok {
 				chairIDs = append(chairIDs, l.ChairID)
 			}

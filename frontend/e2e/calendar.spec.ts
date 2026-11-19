@@ -296,11 +296,15 @@ test.describe('production calendar', () => {
       }
       // Measure the actual inputs — wrappers can look fine while native time chrome overlaps.
       const overlaps: Array<{ a: string; b: string; gap: number }> = []
+      let stacked = false
       for (const pair of document.querySelectorAll('.schedule-time-pair')) {
         const inputs = [...pair.querySelectorAll('input')].map((n) => ({
           id: (n as HTMLInputElement).id || 'time',
           r: (n as HTMLElement).getBoundingClientRect(),
         }))
+        if (inputs.length >= 2) {
+          stacked = inputs[1].r.top >= inputs[0].r.bottom - 1
+        }
         for (let i = 0; i < inputs.length; i++) {
           for (let j = i + 1; j < inputs.length; j++) {
             const a = inputs[i].r
@@ -310,14 +314,17 @@ test.describe('production calendar', () => {
           }
         }
       }
-      const row = document.querySelector('.schedule-hours-row')
-      const rowStyle = row ? getComputedStyle(row).gridTemplateColumns : null
-      return { issues, overlaps, rowStyle }
+      const pairCols = document.querySelector('.schedule-time-pair')
+        ? getComputedStyle(document.querySelector('.schedule-time-pair')!).gridTemplateColumns
+        : null
+      return { issues, overlaps, stacked, pairCols }
     })
     // eslint-disable-next-line no-console
     console.log('[schedule-time-layout]', info.project.name, JSON.stringify(layout))
     expect(layout.issues, JSON.stringify(layout.issues)).toEqual([])
     expect(layout.overlaps, JSON.stringify(layout.overlaps)).toEqual([])
+    // Phones must stack С/До — side-by-side native time inputs clip on iOS.
+    expect(layout.stacked, JSON.stringify(layout)).toBe(true)
     await assertNoPageOverflow(page)
   })
 

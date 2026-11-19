@@ -286,25 +286,38 @@ test.describe('production calendar', () => {
           const b = el.getBoundingClientRect()
           const overflow = Math.round(b.right - box.right)
           if (overflow > 1) issues.push({ id: el.id || el.getAttribute('type') || 'ctrl', overflow })
+          if (Math.round(box.left - b.left) > 1) {
+            issues.push({ id: `${el.id || 'ctrl'}-left`, overflow: Math.round(box.left - b.left) })
+          }
         }
         if (root.scrollWidth > root.clientWidth + 2) {
           issues.push({ id: `${root.getAttribute('data-testid')}-scroll`, overflow: root.scrollWidth - root.clientWidth })
         }
       }
-      const pair = document.querySelector('.schedule-time-pair')
-      let pairOverlap = false
-      if (pair) {
-        const fields = [...pair.querySelectorAll('.field')].map((n) => (n as HTMLElement).getBoundingClientRect())
-        if (fields.length >= 2) {
-          const a = fields[0]
-          const b = fields[1]
-          pairOverlap = !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+      // Measure the actual inputs — wrappers can look fine while native time chrome overlaps.
+      const overlaps: Array<{ a: string; b: string; gap: number }> = []
+      for (const pair of document.querySelectorAll('.schedule-time-pair')) {
+        const inputs = [...pair.querySelectorAll('input')].map((n) => ({
+          id: (n as HTMLInputElement).id || 'time',
+          r: (n as HTMLElement).getBoundingClientRect(),
+        }))
+        for (let i = 0; i < inputs.length; i++) {
+          for (let j = i + 1; j < inputs.length; j++) {
+            const a = inputs[i].r
+            const b = inputs[j].r
+            const hit = !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+            if (hit) overlaps.push({ a: inputs[i].id, b: inputs[j].id, gap: Math.round(Math.min(a.right, b.right) - Math.max(a.left, b.left)) })
+          }
         }
       }
-      return { issues, pairOverlap }
+      const row = document.querySelector('.schedule-hours-row')
+      const rowStyle = row ? getComputedStyle(row).gridTemplateColumns : null
+      return { issues, overlaps, rowStyle }
     })
+    // eslint-disable-next-line no-console
+    console.log('[schedule-time-layout]', info.project.name, JSON.stringify(layout))
     expect(layout.issues, JSON.stringify(layout.issues)).toEqual([])
-    expect(layout.pairOverlap).toBe(false)
+    expect(layout.overlaps, JSON.stringify(layout.overlaps)).toEqual([])
     await assertNoPageOverflow(page)
   })
 

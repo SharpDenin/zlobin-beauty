@@ -2713,7 +2713,9 @@ button.list-item:hover {
   max-height: min(92vh, 100dvh);
 }
 
-/* Schedule editor: keep time/select controls inside the card on narrow drawers. */
+/* Schedule editor: keep time/select controls inside the card on narrow drawers.
+ * iOS Safari time inputs have a large intrinsic width — they must not share a
+ * squeezed track with the weekday checkbox or they paint over each other. */
 .schedule-editor,
 .schedule-editor-drawer {
   min-width: 0;
@@ -2726,6 +2728,11 @@ button.list-item:hover {
   max-width: 100%;
   overflow-x: clip;
 }
+.schedule-editor .card.stack > *,
+.schedule-editor-drawer .card.stack > * {
+  min-width: 0;
+  max-width: 100%;
+}
 .schedule-editor .field,
 .schedule-editor-drawer .field {
   min-width: 0;
@@ -2735,9 +2742,11 @@ button.list-item:hover {
 .schedule-editor .field select,
 .schedule-editor-drawer .field input,
 .schedule-editor-drawer .field select {
+  display: block;
   min-width: 0;
   max-width: 100%;
   width: 100%;
+  box-sizing: border-box;
 }
 .schedule-hours-row {
   display: grid;
@@ -2746,9 +2755,11 @@ button.list-item:hover {
   align-items: end;
   min-width: 0;
   width: 100%;
+  max-width: 100%;
 }
 .schedule-hours-day {
   padding-bottom: 10px;
+  white-space: nowrap;
 }
 .schedule-time-pair {
   display: grid;
@@ -2760,6 +2771,29 @@ button.list-item:hover {
 }
 .schedule-time-pair .field {
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.schedule-time-pair input[type='time'] {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Tighter padding so native WebKit time chrome fits the track. */
+  padding-inline: var(--space-2);
+  font-size: var(--text-sm);
+}
+@media (max-width: 480px) {
+  /* Day on its own row → time pair gets the full card width. */
+  .schedule-hours-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-2);
+  }
+  .schedule-hours-day {
+    padding-bottom: 0;
+  }
 }
 .visit-plan-dialog { min-width: 0; }
 .visit-plan-current { display: grid; gap: var(--space-1); min-width: 0; }

@@ -17,7 +17,8 @@ import {
   zonedYmd,
 } from '@/pages/calendar-helpers'
 import {
-  applyResizeDelta,
+  attachResizePointerSession,
+  isShortResizeShell,
   resizeDraftValid,
   type ResizeDraft,
   type ResizeEdge,
@@ -107,8 +108,8 @@ export function CalendarMastersDay({
   const longPressFired = useRef(false)
   const resizeJustFinished = useRef(false)
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
-  const resizeOriginY = useRef(0)
   const resizeBase = useRef<{ id: string; edge: ResizeEdge; startMin: number; endMin: number } | null>(null)
+  const resizeCleanup = useRef<(() => void) | null>(null)
   const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null)
   const [nowLabel, setNowLabel] = useState(() => formatCalendarNowLabel(new Date(), timezone))
 
@@ -152,6 +153,8 @@ export function CalendarMastersDay({
 
   useEffect(() => {
     return () => {
+      resizeCleanup.current?.()
+      resizeCleanup.current = null
       document.body.classList.remove('is-cal-resizing')
       document.body.style.touchAction = ''
     }
@@ -196,6 +199,8 @@ export function CalendarMastersDay({
   }
 
   function endCalResize() {
+    resizeCleanup.current?.()
+    resizeCleanup.current = null
     document.body.style.touchAction = ''
     document.body.classList.remove('is-cal-resizing')
     resizeBase.current = null
@@ -213,43 +218,45 @@ export function CalendarMastersDay({
     e.preventDefault()
     e.stopPropagation()
     clearLongPress()
-    resizeOriginY.current = e.clientY
+    resizeCleanup.current?.()
     resizeBase.current = { id: eid, edge, startMin, endMin }
     setResizeDraft({ id: eid, edge, startMin, endMin })
     beginCalResize()
-    e.currentTarget.setPointerCapture(e.pointerId)
-  }
-
-  function onResizeHandleMove(e: ReactPointerEvent<HTMLSpanElement>) {
-    const base = resizeBase.current
-    if (!base) return
-    e.preventDefault()
-    const deltaY = e.clientY - resizeOriginY.current
-    const next = applyResizeDelta(base.edge, base.startMin, base.endMin, deltaY, SLOT_PX)
-    setResizeDraft({ id: base.id, edge: base.edge, ...next })
-  }
-
-  function onResizeHandleEnd(e: ReactPointerEvent<HTMLSpanElement>) {
-    const base = resizeBase.current
-    if (!base) return
-    e.preventDefault()
+    const captureEl = e.currentTarget
     try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId)
-      }
+      captureEl.setPointerCapture(e.pointerId)
     } catch {
-      /* ignore */
+      /* window listeners remain the source of truth */
     }
-    const deltaY = e.clientY - resizeOriginY.current
-    const next = applyResizeDelta(base.edge, base.startMin, base.endMin, deltaY, SLOT_PX)
-    const draft: ResizeDraft = { id: base.id, edge: base.edge, ...next }
-    endCalResize()
-    if (!resizeDraftValid(draft)) return
-    const changed = draft.startMin !== base.startMin || draft.endMin !== base.endMin
-    if (changed && onEventResize) {
-      resizeJustFinished.current = true
-      void onEventResize(draft.id, draft.startMin, draft.endMin)
-    }
+    resizeCleanup.current = attachResizePointerSession(
+      {
+        pointerId: e.pointerId,
+        edge,
+        id: eid,
+        startMin,
+        endMin,
+        originY: e.clientY,
+        slotPx: SLOT_PX,
+        captureTarget: captureEl,
+      },
+      {
+        onMove: (next) => setResizeDraft({ id: eid, edge, ...next }),
+        onEnd: (next) => {
+          const base = resizeBase.current
+          const draft: ResizeDraft = { id: eid, edge, ...next }
+          endCalResize()
+          if (!base || !resizeDraftValid(draft)) return
+          const changed = draft.startMin !== base.startMin || draft.endMin !== base.endMin
+          if (changed && onEventResize) {
+            resizeJustFinished.current = true
+            void onEventResize(draft.id, draft.startMin, draft.endMin)
+          }
+        },
+        onCancel: () => {
+          endCalResize()
+        },
+      },
+    )
   }
 
   function onPressMove(e: ReactPointerEvent) {
@@ -389,65 +396,65 @@ export function CalendarMastersDay({
                           } as CSSProperties)
                         : undefined
                     return (
-                      <button
+                      <div
                         key={String(e.id)}
-                        type="button"
-                        className={`cal-masters-event ${classes} ${colorClass}${isResizing ? ' is-resizing' : ''}`}
+                        className={`cal-masters-event-shell${isResizing ? ' is-resizing' : ''}${
+                          isShortResizeShell(geom.height) ? ' is-short' : ''
+                        }`}
                         style={{
                           top: geom.top,
                           height: geom.height,
                           ...hexStyle,
                         }}
-                        onClick={(ev) => {
-                          if (suppressClickIfLongPress(ev)) return
-                          if (resizeDraft) return
-                          onEventClick(String(e.id))
-                        }}
-                        onPointerDown={(ev) => {
-                          if (resizeDraft) return
-                          if (ev.pointerType === 'mouse' && ev.button !== 0) return
-                          pressOrigin.current = { x: ev.clientX, y: ev.clientY }
-                          if (onEventLongPress) {
-                            armLongPress(() => onEventLongPress(String(e.id)))
-                          }
-                        }}
-                        onPointerMove={onPressMove}
-                        onPointerUp={clearLongPress}
-                        onPointerCancel={clearLongPress}
-                        onPointerLeave={clearLongPress}
                       >
                         {showResizeHandles ? (
                           <span
                             className="cal-resize-handle is-start"
                             role="separator"
-                            aria-label="Изменить начало"
+                            aria-label="Растянуть начало события"
                             onPointerDown={(ev) =>
                               onResizeHandleDown(ev, 'start', eid, resizeBaseMins.startMin, resizeBaseMins.endMin)
                             }
-                            onPointerMove={onResizeHandleMove}
-                            onPointerUp={onResizeHandleEnd}
-                            onPointerCancel={onResizeHandleEnd}
                           />
                         ) : null}
-                        <strong>{e.title}</strong>
-                        <span className="muted">
-                          {timeLabel}
-                          {e.extendedProps?.clientName ? ` · ${String(e.extendedProps.clientName)}` : ''}
-                        </span>
+                        <button
+                          type="button"
+                          className={`cal-masters-event ${classes} ${colorClass}${isResizing ? ' is-resizing' : ''}`}
+                          onClick={(ev) => {
+                            if (suppressClickIfLongPress(ev)) return
+                            if (resizeDraft) return
+                            onEventClick(String(e.id))
+                          }}
+                          onPointerDown={(ev) => {
+                            if (resizeDraft) return
+                            if (ev.pointerType === 'mouse' && ev.button !== 0) return
+                            pressOrigin.current = { x: ev.clientX, y: ev.clientY }
+                            if (onEventLongPress) {
+                              armLongPress(() => onEventLongPress(String(e.id)))
+                            }
+                          }}
+                          onPointerMove={onPressMove}
+                          onPointerUp={clearLongPress}
+                          onPointerCancel={clearLongPress}
+                          onPointerLeave={clearLongPress}
+                        >
+                          <strong>{e.title}</strong>
+                          <span className="muted">
+                            {timeLabel}
+                            {e.extendedProps?.clientName ? ` · ${String(e.extendedProps.clientName)}` : ''}
+                          </span>
+                        </button>
                         {showResizeHandles ? (
                           <span
                             className="cal-resize-handle is-end"
                             role="separator"
-                            aria-label="Изменить конец"
+                            aria-label="Растянуть окончание события"
                             onPointerDown={(ev) =>
                               onResizeHandleDown(ev, 'end', eid, resizeBaseMins.startMin, resizeBaseMins.endMin)
                             }
-                            onPointerMove={onResizeHandleMove}
-                            onPointerUp={onResizeHandleEnd}
-                            onPointerCancel={onResizeHandleEnd}
                           />
                         ) : null}
-                      </button>
+                      </div>
                     )
                   })}
                 </div>

@@ -282,6 +282,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [range, setRange] = useState(initialRange)
   const [currentView, setCurrentView] = useState<CalendarViewId>(() => normalizeCalendarViewId(savedView, defaultView))
   const [selectedDate, setSelectedDate] = useState(() => new Date())
+  const selectedDateRef = useRef(selectedDate)
+  selectedDateRef.current = selectedDate
   const [error, setError] = useState<unknown>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1223,6 +1225,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       setCurrentView(viewType)
       setSavedView(viewType)
     }
+    selectedDateRef.current = info.view.currentStart
     setSelectedDate(info.view.currentStart)
     const next = { from: info.start.toISOString(), to: info.end.toISOString() }
     setRange((current) => current.from === next.from && current.to === next.to ? current : next)
@@ -1291,6 +1294,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function goToDate(date: Date) {
+    selectedDateRef.current = date
     setSelectedDate(date)
     ensureRangeCovers(date)
     calendarRef.current?.getApi().gotoDate(date)
@@ -1307,9 +1311,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (api) {
       if (delta > 0) api.next()
       else api.prev()
+      selectedDateRef.current = api.getDate()
       setSelectedDate(api.getDate())
     } else {
-      const next = new Date(selectedDate)
+      const next = new Date(selectedDateRef.current)
       if (currentView === 'dayGridMonth') next.setMonth(next.getMonth() + delta)
       else if (currentView === 'timeGridWeek' || currentView === 'listWeek') next.setDate(next.getDate() + delta * 7)
       else next.setDate(next.getDate() + delta)
@@ -1319,7 +1324,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function shiftDay(delta: number) {
-    const next = new Date(selectedDate)
+    // Prefer FC's current date when mounted; ref avoids lost clicks under rapid taps.
+    const base = calendarRef.current?.getApi()?.getDate() ?? selectedDateRef.current
+    const next = new Date(base)
     next.setDate(next.getDate() + delta)
     goToDate(next)
     flashSwipe()
@@ -1383,6 +1390,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (
       target?.closest('.fc-event') ||
       target?.closest('.fc-event-resizer') ||
+      target?.closest('.cal-resize-handle') ||
+      target?.closest('.cal-slot-event-shell') ||
+      target?.closest('.cal-masters-event-shell') ||
       target?.closest('button') ||
       target?.closest('a') ||
       target?.closest('input') ||
@@ -1851,7 +1861,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         {!embedded && (
           <div className="calendar-page-head">
             {showMobileDayList || compact ? (
-              <h1 className={showMobileDayList ? 'visually-hidden' : 'calendar-page-title'}>
+              <h1 className="calendar-page-title">
                 {ownerMode ? 'Календарь салона' : 'Мой календарь'}
               </h1>
             ) : (
@@ -1864,7 +1874,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 </p>
               </div>
             )}
-            <div className={`row calendar-page-head-actions ${showMobileDayList ? 'is-compact-day' : ''}`}>
+            <div className={`row calendar-page-head-actions ${showMobileDayList || showMastersDay ? 'is-compact-day' : ''}`}>
               {!readOnlyOverlay ? (
                 <button
                   className="btn btn-secondary btn-compact"
@@ -1906,6 +1916,30 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             Настройки
           </button>
         </div>
+
+        {compact && (showMastersDay || showMobileFc) ? (
+          <div className="cal-mobile-day-nav cal-chrome-day-nav" role="group" aria-label="Навигация по дате">
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact cal-touch"
+              onClick={() => (showMobileFc ? shiftPeriod(-1) : shiftDay(-1))}
+              aria-label="Назад"
+            >
+              Назад
+            </button>
+            <button type="button" className="btn btn-secondary btn-compact cal-touch" onClick={() => goToDate(new Date())}>
+              Сегодня
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact cal-touch"
+              onClick={() => (showMobileFc ? shiftPeriod(1) : shiftDay(1))}
+              aria-label="Вперёд"
+            >
+              Вперёд
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {!editorOpen && !selected ? <ErrorBanner error={error} fallbackTitle="Не удалось изменить расписание" /> : null}
@@ -2014,7 +2048,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin, luxonPlugin]}
           initialView={currentView}
-          headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
+          // Mobile chrome already owns Назад/Сегодня/Вперёд — keep FC title only.
+          headerToolbar={
+            compact
+              ? { left: '', center: 'title', right: '' }
+              : { left: 'prev,next today', center: 'title', right: '' }
+          }
           buttonIcons={false}
           locale={ruLocale}
           timeZone={salonTimezone}

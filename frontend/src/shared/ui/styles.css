@@ -1645,20 +1645,27 @@ button.list-item:hover {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   overflow-x: auto;
   padding-bottom: 2px;
+  min-width: 0;
 }
 .tabs a,
 .tabs button {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: min(100%, 7rem);
+  max-width: 100%;
   min-height: 40px;
-  padding: 0 14px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--glass-control-fill);
   font-weight: 650;
   color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tabs a.active,
 .tabs button.active {
@@ -2023,6 +2030,37 @@ button.list-item:hover {
   min-width: 0;
   animation: modal-in var(--motion-emphasized) var(--ease-out);
 }
+.modal-sheet > .row.between,
+.drawer-panel > .row.between {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+.modal-sheet > .row.between > :first-child,
+.drawer-panel > .row.between > :first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.modal-sheet > .row.between > .btn,
+.drawer-panel > .row.between > .btn {
+  flex: 0 0 auto;
+}
+.modal-sheet .row,
+.drawer-panel .row,
+.more-panel .row {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.modal-sheet .row > .btn,
+.drawer-panel .row > .btn,
+.more-panel .row > .btn {
+  /* Grow evenly when space allows; shrink/wrap on narrow sheets instead of overlapping. */
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+}
 .modal-sheet.overlay-panel--sm { width: min(100%, 400px); }
 .modal-sheet.overlay-panel--md { width: min(100%, 560px); }
 .modal-sheet.overlay-panel--lg { width: min(100%, 720px); }
@@ -2076,10 +2114,19 @@ button.list-item:hover {
 .client-card-hero-meta { min-width: 0; }
 .client-card-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 2px;
+  min-width: 0;
+}
+.client-card-tabs .btn,
+.client-card-tabs .chip,
+.client-card-tabs a {
+  flex: 1 1 auto;
+  min-width: min(100%, 7rem);
+  max-width: 100%;
 }
 .client-skin-thumbs {
   display: flex;
@@ -3436,11 +3483,34 @@ button.list-item:hover {
 
 @media (max-width: 767px) {
   .calendar-shell { overflow-x: clip; }
-  .calendar-page-head { display: grid; gap: var(--space-3); }
-  .calendar-page-head > .row { width: 100%; }
-  .calendar-page-head > .row .btn { flex: 1; min-height: 44px; }
-  .calendar-view-tabs .chip { min-height: 44px; }
-  .calendar-category-chip { min-height: 44px; }
+  .calendar-page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    min-width: 0;
+  }
+  .calendar-page-head > h1,
+  .calendar-page-head > .calendar-page-title {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+  .calendar-page-head > .row {
+    width: auto;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 100%;
+  }
+  .calendar-page-head > .row .btn {
+    flex: 0 0 auto;
+    min-height: 40px;
+    min-width: 0;
+    max-width: 100%;
+    padding-inline: 10px;
+  }
+  .calendar-view-tabs .chip { min-height: 40px; }
+  .calendar-category-chip { min-height: 40px; }
   .calendar-resource-bar { flex-direction: column; align-items: stretch; }
   .calendar-resource-bar .field { min-width: 0; width: 100%; }
   .calendar-detail-list { grid-template-columns: 1fr; gap: 2px; }
@@ -3583,10 +3653,26 @@ button.list-item:hover {
 }
 
 @media (max-width: 600px) {
-  .calendar-page-head,
   .dashboard-head { display: grid; }
-  .calendar-page-head > .row { width: 100%; }
-  .calendar-page-head > .row .btn { flex: 1 1 auto; min-width: 0; }
+  .calendar-page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    min-width: 0;
+  }
+  .calendar-page-head > .row {
+    width: auto;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .calendar-page-head > .row .btn {
+    flex: 0 0 auto;
+    min-width: 0;
+    min-height: 40px;
+    padding-inline: 10px;
+  }
   .calendar-controls { align-items: stretch; }
   /* Five view modes: horizontal scroll rail — never a clipped 4-col grid. */
   .calendar-view-tabs {
@@ -3625,8 +3711,17 @@ button.list-item:hover {
 .shop-page { gap: var(--space-5); min-width: 0; }
 .shop-head { align-items: flex-start; gap: var(--space-3); min-width: 0; }
 .shop-head h1 { min-width: 0; overflow-wrap: anywhere; }
-.shop-tabs { flex-wrap: wrap; }
-.shop-tabs .btn { flex: 1 1 auto; }
+.shop-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.shop-tabs .btn {
+  flex: 1 1 auto;
+  min-width: min(100%, 7.5rem);
+  max-width: 100%;
+}
 .shop-search {
   display: flex;
   flex-wrap: wrap;
@@ -3954,14 +4049,16 @@ html[data-theme="light"] .auth-lead {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
+  min-width: 0;
 }
-.segmented--2 { grid-template-columns: 1fr 1fr; }
+.segmented--2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .segmented label {
   position: relative;
   display: grid;
   place-items: center;
+  min-width: 0;
   min-height: var(--control-h);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-1);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   background: var(--glass-control-fill);
@@ -3969,6 +4066,9 @@ html[data-theme="light"] .auth-lead {
   color: var(--color-text-secondary);
   cursor: pointer;
   text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .segmented label.is-active {

@@ -18,7 +18,8 @@
 
 @media (max-width: 599px) {
   .page.calendar-page-root:has(.is-mobile-day),
-  .page.calendar-page-root:has(.is-mobile-fc) {
+  .page.calendar-page-root:has(.is-mobile-fc),
+  .page.calendar-page-root:has(.is-masters-day) {
     width: 100%;
     max-width: none;
     padding-left: var(--space-4);
@@ -31,7 +32,8 @@
     overflow: hidden;
   }
   .calendar-shell.is-mobile-day,
-  .calendar-shell.is-mobile-fc {
+  .calendar-shell.is-mobile-fc,
+  .calendar-shell.is-masters-day {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -39,8 +41,13 @@
     overflow: hidden;
   }
   .calendar-shell.is-mobile-day .calendar-chrome,
-  .calendar-shell.is-mobile-fc .calendar-chrome {
+  .calendar-shell.is-mobile-fc .calendar-chrome,
+  .calendar-shell.is-masters-day .calendar-chrome {
     flex-shrink: 0;
+  }
+  .calendar-shell.is-masters-day .cal-masters-day {
+    flex: 1 1 auto;
+    min-height: 0;
   }
   .calendar-shell.is-mobile-day .cal-mobile {
     flex: 1 1 auto;
@@ -60,8 +67,14 @@
     -webkit-overflow-scrolling: touch;
     padding-bottom: calc(var(--space-4) + var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px));
   }
+  .calendar-shell.is-mobile-day .cal-mobile.is-cal-resizing .cal-mobile-body {
+    overflow: hidden;
+    touch-action: none;
+  }
   .calendar-shell.is-mobile-fc .calendar-chrome.calendar-toolbar-sticky,
-  .calendar-shell.is-mobile-day .calendar-chrome.calendar-toolbar-sticky {
+  .calendar-shell.is-mobile-day .calendar-chrome.calendar-toolbar-sticky,
+  .calendar-shell.is-masters-day .calendar-chrome.calendar-toolbar-sticky {
+    /* Keep chrome in normal flow so sticky master heads cannot slide under date nav. */
     position: static;
   }
   .calendar-shell.is-mobile-fc .calendar-category-row {
@@ -88,17 +101,31 @@
     z-index: 1;
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar {
+    display: flex;
     flex-wrap: nowrap;
-    gap: var(--space-2);
+    align-items: center;
+    gap: 6px;
     margin-bottom: 0 !important;
   }
+  .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar-chunk {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-toolbar-title {
-    font-size: 1.05rem;
-    overflow-wrap: anywhere;
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 42vw;
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-button {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: 40px;
+    min-width: 40px;
+    padding: 0 10px !important;
+    font-size: 12px !important;
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-timegrid-slot {
     min-height: var(--cal-slot-min-height) !important;
@@ -109,24 +136,34 @@
   }
   .calendar-page-head-actions {
     flex-wrap: wrap;
-    gap: var(--space-2);
+    gap: 6px;
+    flex: 0 1 auto;
+    max-width: 100%;
+  }
+  .calendar-page-head-actions .btn {
+    flex: 0 0 auto;
+    min-width: 0;
+    padding-inline: 10px;
+    white-space: nowrap;
   }
   .calendar-shell.is-mobile-day .cal-mobile-head,
   .calendar-shell.is-mobile-day .cal-day-strip {
     position: static;
   }
   .calendar-shell.is-mobile-day .calendar-page-head-actions.is-compact-day {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    width: auto;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
   }
   .calendar-shell.is-mobile-day .cal-mobile-period {
-    flex: 1 1 100%;
+    flex: 1 1 auto;
+    min-width: 0;
   }
-  .calendar-shell.is-mobile-day .cal-mobile-nav {
+  .calendar-shell.is-mobile-day .cal-mobile-nav,
+  .calendar-shell.is-mobile-day .cal-mobile-day-nav {
     width: 100%;
     margin-left: 0;
-    justify-content: flex-start;
+    justify-content: stretch;
   }
   .calendar-shell.is-mobile-day .cal-mobile-month {
     font-size: 1.05rem;
@@ -217,9 +254,15 @@
   font-size: 1.05rem;
   font-weight: 650;
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cal-chrome-day-nav {
+  width: 100%;
+  margin-top: 2px;
 }
 .calendar-chrome .calendar-controls {
   display: flex;
@@ -533,8 +576,45 @@
 
 .cal-mobile-head--day {
   flex-wrap: nowrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding-top: 2px;
+}
+
+.cal-mobile-day-nav {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.cal-mobile-day-nav .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 8px;
+  white-space: nowrap;
+}
+
+.cal-mobile-day-nav .btn-icon {
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+}
+
+.cal-mobile-day-label {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cal-mobile-title {
@@ -729,6 +809,11 @@
   margin-top: 6px;
 }
 
+.cal-slot-row.is-event-span .cal-slot-event-shell {
+  height: 100%;
+  min-height: calc(var(--cal-event-span, 1) * var(--cal-slot-row-h) - 8px);
+  overflow: visible;
+}
 .cal-slot-row.is-event-span .cal-slot-event {
   height: 100%;
   min-height: calc(var(--cal-event-span, 1) * var(--cal-slot-row-h) - 8px);
@@ -863,6 +948,17 @@
   opacity: 0.45;
 }
 
+.cal-slot-event-shell {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  isolation: isolate;
+}
+
+.cal-slot-event-shell.is-resizing {
+  z-index: 5;
+}
+
 .cal-slot-event {
   position: relative;
   display: grid;
@@ -870,7 +966,7 @@
   min-width: 0;
   width: 100%;
   text-align: left;
-  padding: 8px 10px;
+  padding: 10px 10px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--cal-event-accent, var(--color-primary)) 40%, var(--glass-border));
   border-left: 3px solid var(--cal-event-accent, var(--color-primary));
@@ -1055,18 +1151,27 @@
     gap: 8px;
     min-width: 0;
   }
-  .calendar-page-head h1 {
+  .calendar-page-head h1,
+  .calendar-chrome .calendar-page-title {
     font-size: 1.05rem;
     margin: 0;
     min-width: 0;
+    flex: 1 1 10rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .calendar-page-head-actions {
     flex-wrap: wrap;
     gap: 6px;
     justify-content: flex-end;
+    flex: 0 1 auto;
+    max-width: 100%;
   }
   .calendar-page-head-actions .btn {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+    min-width: 0;
+    padding-inline: 10px;
   }
   .calendar-shell.is-mobile-fc .calendar-resource-bar,
   .calendar-shell.is-mobile-day .calendar-resource-bar {
@@ -1106,7 +1211,8 @@
   min-height: 0 !important;
 }
 
-/* Phone and desktop share one scroll owner: FullCalendar's time-grid scroller. */
+/* Phone and desktop share one scroll owner: FullCalendar's time-grid scroller.
+   Do NOT force overflow:auto on every .fc-scroller — that breaks header/body scroll sync. */
 .app-shell.app-shell--fill .calendar-shell.is-mobile-fc .calendar-wrap {
   overflow: hidden;
 }
@@ -1118,9 +1224,14 @@
 }
 
 .app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-scroller {
-  overflow: auto !important;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Only the liquid body scroller is the interactive scrollport; header stays FC-synced. */
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-scroller-liquid,
+.app-shell.app-shell--fill .page.calendar-page-root .calendar-wrap .fc .fc-scroller-liquid-absolute {
+  overflow: auto;
 }
 
 .calendar-shell > .calendar-chrome,
@@ -1174,6 +1285,10 @@
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
+.app-shell.app-shell--fill .calendar-shell.is-mobile-day .cal-mobile.is-cal-resizing .cal-mobile-body {
+  overflow: hidden;
+  touch-action: none;
+}
 
 /* Narrow week grid: scroll columns horizontally, page stays without overflow-x */
 @media (max-width: 599px) {
@@ -1224,7 +1339,8 @@
 
 .cal-masters-head {
   position: sticky;
-  top: var(--cal-sticky-top, 0);
+  /* Sticky inside .cal-masters-scroll — offset must be 0 relative to that scrollport. */
+  top: 0;
   z-index: 4;
   grid-column: 1 / -1;
   display: grid;
@@ -1329,6 +1445,7 @@
   border-left: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
   scroll-snap-align: start;
   background: var(--glass-fill-subtle);
+  overflow: visible;
 }
 
 .cal-masters-grid-lines {
@@ -1357,16 +1474,29 @@
   outline-offset: -2px;
 }
 
-.cal-masters-event {
+.cal-masters-event-shell {
   position: absolute;
   left: 4px;
   right: 4px;
   z-index: 2;
+  isolation: isolate;
+  overflow: visible;
+}
+
+.cal-masters-event-shell.is-resizing {
+  z-index: 6;
+}
+
+.cal-masters-event {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   display: grid;
   gap: 2px;
   align-content: start;
-  padding: 6px 8px;
+  padding: 8px 8px 10px;
   margin: 0;
+  width: 100%;
   text-align: left;
   border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--cal-event-accent, var(--color-primary)) 38%, var(--glass-border));
@@ -1476,39 +1606,73 @@
   }
 }
 
+/*
+ * Resize grips: interactive strip stays inside the shell (no neighbor invasion).
+ * Visual bar (::after) is painted just outside the card edge.
+ * Short shells shrink the strip so top/bottom never cross on one event.
+ */
+.cal-slot-event-shell,
+.cal-masters-event-shell {
+  --cal-handle-h: 16px;
+  --cal-handle-inset: 18%;
+  --cal-handle-visual-gap: 3px;
+  overflow: visible;
+}
+
+.cal-slot-event-shell.is-short,
+.cal-masters-event-shell.is-short {
+  --cal-handle-h: 10px;
+  --cal-handle-inset: 24%;
+  --cal-handle-visual-gap: 2px;
+}
+
 .cal-resize-handle {
   position: absolute;
-  left: 0;
-  right: 0;
-  height: 18px;
-  z-index: 3;
+  left: var(--cal-handle-inset);
+  right: var(--cal-handle-inset);
+  height: var(--cal-handle-h);
+  z-index: 4;
   touch-action: none;
   cursor: ns-resize;
+  pointer-events: auto;
 }
 
 .cal-resize-handle.is-start {
   top: 0;
+  bottom: auto;
 }
 
 .cal-resize-handle.is-end {
   bottom: 0;
+  top: auto;
 }
 
 .cal-resize-handle::after {
   content: '';
   position: absolute;
   left: 50%;
-  top: 50%;
-  width: 28px;
-  height: 4px;
-  transform: translate(-50%, -50%);
+  width: min(40px, 100%);
+  height: 5px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-text-primary) 52%, transparent);
-  opacity: 0.75;
+  background: color-mix(in srgb, var(--color-text-primary) 62%, transparent);
+  opacity: 0.85;
   pointer-events: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--glass-border) 70%, transparent);
 }
 
-.cal-slot-event.is-resizing {
+.cal-resize-handle.is-start::after {
+  top: 0;
+  transform: translate(-50%, calc(-100% - var(--cal-handle-visual-gap)));
+}
+
+.cal-resize-handle.is-end::after {
+  bottom: 0;
+  top: auto;
+  transform: translate(-50%, calc(100% + var(--cal-handle-visual-gap)));
+}
+
+.cal-slot-event.is-resizing,
+.cal-masters-event.is-resizing {
   opacity: 0.95;
   outline: 1px solid var(--color-primary);
   z-index: 4;
@@ -1520,9 +1684,11 @@ body.is-cal-resizing {
 }
 
 .cal-mobile.is-cal-resizing .cal-slot-grid,
+.cal-mobile.is-cal-resizing .cal-mobile-body,
 .cal-masters-day.is-cal-resizing .cal-masters-scroll {
-  overflow: hidden;
-  overscroll-behavior: contain;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: none;
 }
 
 @media (max-width: 430px) {

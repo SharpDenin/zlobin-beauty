@@ -2713,11 +2713,8 @@ button.list-item:hover {
   max-height: min(92vh, 100dvh);
 }
 
-/* Schedule editor — mobile-first.
- * iOS Safari `input[type=time]` has a large intrinsic min-width and will not
- * shrink in a 2-column track; side-by-side + overflow:clip just clips the chrome.
- * Default: day row, then С/До stacked full-width. Side-by-side only from tablet up.
- */
+/* Schedule editor: С/До always one row.
+ * Native `input[type=time]` refuses to shrink on iOS — use `.schedule-time-select`. */
 .schedule-editor,
 .schedule-editor-drawer {
   min-width: 0;
@@ -2750,20 +2747,20 @@ button.list-item:hover {
 }
 .schedule-hours-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: end;
   min-width: 0;
   width: 100%;
   max-width: 100%;
 }
 .schedule-hours-day {
-  padding-bottom: 0;
+  padding-bottom: 10px;
   white-space: nowrap;
 }
 .schedule-time-pair {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-2);
   min-width: 0;
   width: 100%;
@@ -2773,26 +2770,10 @@ button.list-item:hover {
   min-width: 0;
   max-width: 100%;
 }
-.schedule-time-pair input[type='time'] {
-  display: block;
+.schedule-time-pair .schedule-time-select {
   min-width: 0;
   width: 100%;
   max-width: 100%;
-  box-sizing: border-box;
-  padding-inline: var(--space-3);
-}
-@media (min-width: 640px) {
-  .schedule-hours-row {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--space-2) var(--space-3);
-    align-items: end;
-  }
-  .schedule-hours-day {
-    padding-bottom: 10px;
-  }
-  .schedule-time-pair {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
 }
 .visit-plan-dialog { min-width: 0; }
 .visit-plan-current { display: grid; gap: var(--space-1); min-width: 0; }

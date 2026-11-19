@@ -27,6 +27,42 @@ const WEEKDAYS = [
   { value: 0, label: 'Вс' },
 ]
 
+/** Half-hour options including 24:00 — `<select>` shrinks on iOS; `input[type=time]` does not. */
+const SCHEDULE_TIME_OPTIONS = Array.from({ length: 49 }, (_, i) => minutesToHHMM(i * 30))
+
+function scheduleTimeOptions(current: string) {
+  if (!current || SCHEDULE_TIME_OPTIONS.includes(current)) return SCHEDULE_TIME_OPTIONS
+  return [...SCHEDULE_TIME_OPTIONS, current].sort((a, b) => (parseHHMM(a) ?? 0) - (parseHHMM(b) ?? 0))
+}
+
+function ScheduleTimeSelect({
+  id,
+  value,
+  onChange,
+  'aria-required': ariaRequired,
+}: {
+  id: string
+  value: string
+  onChange: (next: string) => void
+  'aria-required'?: boolean
+}) {
+  return (
+    <select
+      id={id}
+      className="schedule-time-select"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-required={ariaRequired}
+    >
+      {scheduleTimeOptions(value).map((opt) => (
+        <option key={opt} value={opt}>
+          {opt}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 type HoursItem = { weekday: number; start_minute: number; end_minute: number }
 
 export type ScheduleEditorTab = 'hours' | 'exception' | 'modes'
@@ -318,30 +354,26 @@ export function ScheduleEditor({
                 <div className="schedule-time-pair">
                   <div className="field">
                     <label htmlFor={`wh-start-${d.value}`}>С</label>
-                    <input
+                    <ScheduleTimeSelect
                       id={`wh-start-${d.value}`}
-                      type="time"
-                      step={1800}
                       value={minutesToHHMM(row.start_minute)}
-                      onChange={(e) => {
-                        const m = parseHHMM(e.target.value)
+                      onChange={(next) => {
+                        const m = parseHHMM(next)
                         if (m != null) updateHour(d.value, { start_minute: m })
                       }}
-                      aria-required="true"
+                      aria-required
                     />
                   </div>
                   <div className="field">
                     <label htmlFor={`wh-end-${d.value}`}>До</label>
-                    <input
+                    <ScheduleTimeSelect
                       id={`wh-end-${d.value}`}
-                      type="time"
-                      step={1800}
                       value={minutesToHHMM(row.end_minute)}
-                      onChange={(e) => {
-                        const m = parseHHMM(e.target.value)
+                      onChange={(next) => {
+                        const m = parseHHMM(next)
                         if (m != null) updateHour(d.value, { end_minute: m })
                       }}
-                      aria-required="true"
+                      aria-required
                     />
                   </div>
                 </div>
@@ -371,11 +403,11 @@ export function ScheduleEditor({
           <div className="schedule-time-pair">
             <div className="field">
               <label htmlFor="ex-start">С</label>
-              <input id="ex-start" type="time" step={1800} value={exceptionStart} onChange={(e) => setExceptionStart(e.target.value)} aria-required="true" />
+              <ScheduleTimeSelect id="ex-start" value={exceptionStart} onChange={setExceptionStart} aria-required />
             </div>
             <div className="field">
               <label htmlFor="ex-end">До</label>
-              <input id="ex-end" type="time" step={1800} value={exceptionEnd} onChange={(e) => setExceptionEnd(e.target.value)} aria-required="true" />
+              <ScheduleTimeSelect id="ex-end" value={exceptionEnd} onChange={setExceptionEnd} aria-required />
             </div>
           </div>
         ) : null}

@@ -294,37 +294,35 @@ test.describe('production calendar', () => {
           issues.push({ id: `${root.getAttribute('data-testid')}-scroll`, overflow: root.scrollWidth - root.clientWidth })
         }
       }
-      // Measure the actual inputs — wrappers can look fine while native time chrome overlaps.
+      // Measure the actual controls (selects) — must sit side-by-side without overlap/clip.
       const overlaps: Array<{ a: string; b: string; gap: number }> = []
-      let stacked = false
+      let sideBySide = false
       for (const pair of document.querySelectorAll('.schedule-time-pair')) {
-        const inputs = [...pair.querySelectorAll('input')].map((n) => ({
-          id: (n as HTMLInputElement).id || 'time',
+        const controls = [...pair.querySelectorAll('select, input')].map((n) => ({
+          id: (n as HTMLInputElement | HTMLSelectElement).id || 'time',
           r: (n as HTMLElement).getBoundingClientRect(),
         }))
-        if (inputs.length >= 2) {
-          stacked = inputs[1].r.top >= inputs[0].r.bottom - 1
+        if (controls.length >= 2) {
+          sideBySide = Math.abs(controls[0].r.top - controls[1].r.top) < 8
         }
-        for (let i = 0; i < inputs.length; i++) {
-          for (let j = i + 1; j < inputs.length; j++) {
-            const a = inputs[i].r
-            const b = inputs[j].r
+        for (let i = 0; i < controls.length; i++) {
+          for (let j = i + 1; j < controls.length; j++) {
+            const a = controls[i].r
+            const b = controls[j].r
             const hit = !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
-            if (hit) overlaps.push({ a: inputs[i].id, b: inputs[j].id, gap: Math.round(Math.min(a.right, b.right) - Math.max(a.left, b.left)) })
+            if (hit) overlaps.push({ a: controls[i].id, b: controls[j].id, gap: Math.round(Math.min(a.right, b.right) - Math.max(a.left, b.left)) })
           }
         }
       }
-      const pairCols = document.querySelector('.schedule-time-pair')
-        ? getComputedStyle(document.querySelector('.schedule-time-pair')!).gridTemplateColumns
-        : null
-      return { issues, overlaps, stacked, pairCols }
+      const usesSelect = Boolean(document.querySelector('.schedule-time-pair .schedule-time-select'))
+      return { issues, overlaps, sideBySide, usesSelect }
     })
     // eslint-disable-next-line no-console
     console.log('[schedule-time-layout]', info.project.name, JSON.stringify(layout))
+    expect(layout.usesSelect).toBe(true)
     expect(layout.issues, JSON.stringify(layout.issues)).toEqual([])
     expect(layout.overlaps, JSON.stringify(layout.overlaps)).toEqual([])
-    // Phones must stack С/До — side-by-side native time inputs clip on iOS.
-    expect(layout.stacked, JSON.stringify(layout)).toBe(true)
+    expect(layout.sideBySide, JSON.stringify(layout)).toBe(true)
     await assertNoPageOverflow(page)
   })
 

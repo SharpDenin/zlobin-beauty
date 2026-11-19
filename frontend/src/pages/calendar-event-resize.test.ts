@@ -3,6 +3,7 @@ import {
   applyResizeDelta,
   attachResizePointerSession,
   isShortResizeShell,
+  lockCalendarGesture,
   resizeDraftValid,
 } from './calendar-event-resize'
 
@@ -57,11 +58,61 @@ describe('resizeDraftValid', () => {
 })
 
 describe('isShortResizeShell', () => {
-  it('flags shells that cannot fit two in-shell 16px hit strips with a content gap', () => {
+  it('flags shells that cannot fit two external gutters plus a card body', () => {
     expect(isShortResizeShell(28)).toBe(true)
-    expect(isShortResizeShell(44)).toBe(false)
-    expect(isShortResizeShell(40, 16)).toBe(true)
-    expect(isShortResizeShell(44, 16)).toBe(false)
+    expect(isShortResizeShell(48)).toBe(false)
+    expect(isShortResizeShell(40, 14)).toBe(true)
+    expect(isShortResizeShell(48, 14)).toBe(false)
+  })
+})
+
+describe('lockCalendarGesture', () => {
+  afterEach(() => {
+    document.body.classList.remove('is-cal-resizing')
+    document.body.style.touchAction = ''
+    document.body.style.overflow = ''
+  })
+
+  it('locks body and scroll roots, freezes offsets, and restores on release', () => {
+    const scroller = document.createElement('div')
+    scroller.style.overflow = 'auto'
+    scroller.style.touchAction = 'pan-y'
+    let top = 24
+    let left = 8
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v
+      },
+    })
+    Object.defineProperty(scroller, 'scrollLeft', {
+      configurable: true,
+      get: () => left,
+      set: (v: number) => {
+        left = v
+      },
+    })
+    document.body.appendChild(scroller)
+
+    const unlock = lockCalendarGesture([scroller, scroller])
+    expect(document.body.classList.contains('is-cal-resizing')).toBe(true)
+    expect(document.body.style.touchAction).toBe('none')
+    expect(scroller.style.overflow).toBe('hidden')
+    expect(scroller.classList.contains('is-cal-scroll-locked')).toBe(true)
+
+    top = 99
+    scroller.dispatchEvent(new Event('scroll'))
+    expect(top).toBe(24)
+
+    unlock()
+    unlock()
+    expect(document.body.classList.contains('is-cal-resizing')).toBe(false)
+    expect(scroller.style.overflow).toBe('auto')
+    expect(scroller.style.touchAction).toBe('pan-y')
+    expect(scroller.classList.contains('is-cal-scroll-locked')).toBe(false)
+    expect(top).toBe(24)
+    scroller.remove()
   })
 })
 

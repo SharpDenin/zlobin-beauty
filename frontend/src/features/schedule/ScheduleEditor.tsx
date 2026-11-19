@@ -268,7 +268,7 @@ export function ScheduleEditor({
   }
 
   const body = (
-    <div className="stack" data-testid="schedule-editor">
+    <div className="stack schedule-editor" data-testid="schedule-editor">
       {!embedded ? (
         <>
           <h1>Установка графика</h1>
@@ -305,8 +305,8 @@ export function ScheduleEditor({
         {WEEKDAYS.map((d) => {
           const row = hoursDraft.find((h) => h.weekday === d.value)
           return (
-            <div key={d.value} className="row gap wrap" style={{ alignItems: 'end' }}>
-              <label className="field-check">
+            <div key={d.value} className="schedule-hours-row">
+              <label className="field-check schedule-hours-day">
                 <input
                   type="checkbox"
                   checked={Boolean(row)}
@@ -315,7 +315,7 @@ export function ScheduleEditor({
                 <span>{d.label}</span>
               </label>
               {row ? (
-                <>
+                <div className="schedule-time-pair">
                   <div className="field">
                     <label htmlFor={`wh-start-${d.value}`}>С</label>
                     <input
@@ -344,7 +344,7 @@ export function ScheduleEditor({
                       aria-required="true"
                     />
                   </div>
-                </>
+                </div>
               ) : (
                 <span className="muted">выходной</span>
               )}
@@ -368,7 +368,7 @@ export function ScheduleEditor({
           <span>Выходной</span>
         </label>
         {!exceptionOff ? (
-          <div className="row gap wrap">
+          <div className="schedule-time-pair">
             <div className="field">
               <label htmlFor="ex-start">С</label>
               <input id="ex-start" type="time" step={1800} value={exceptionStart} onChange={(e) => setExceptionStart(e.target.value)} aria-required="true" />

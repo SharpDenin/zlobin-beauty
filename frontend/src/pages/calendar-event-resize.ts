@@ -38,11 +38,105 @@ export function resizeDraftValid(d: ResizeDraft) {
 }
 
 /**
- * True when an event shell is too short for two full in-shell hit strips
- * (default 16px each) plus a small content gap.
+ * True when a shell cannot fit two external-handle gutters (default 14px)
+ * plus a readable card body.
  */
-export function isShortResizeShell(heightPx: number, handleHPx = 16) {
-  return heightPx < handleHPx * 2 + 12
+export function isShortResizeShell(heightPx: number, handleOutPx = 14) {
+  return heightPx < handleOutPx * 2 + 20
+}
+
+type LockedScrollRoot = {
+  el: HTMLElement
+  overflow: string
+  overflowX: string
+  overflowY: string
+  touchAction: string
+  scrollTop: number
+  scrollLeft: number
+}
+
+/**
+ * Temporarily freeze page + calendar scrollports for an active drag/resize gesture.
+ * Idempotent release; restores overflow/touch-action and prior scroll offsets.
+ */
+export function lockCalendarGesture(scrollRoots: Array<HTMLElement | null | undefined> = []): () => void {
+  const body = document.body
+  const prevTouch = body.style.touchAction
+  const prevOverflow = body.style.overflow
+  body.classList.add('is-cal-resizing')
+  body.style.touchAction = 'none'
+  body.style.overflow = 'hidden'
+
+  const locked: LockedScrollRoot[] = []
+  for (const el of scrollRoots) {
+    if (!el || locked.some((item) => item.el === el)) continue
+    locked.push({
+      el,
+      overflow: el.style.overflow,
+      overflowX: el.style.overflowX,
+      overflowY: el.style.overflowY,
+      touchAction: el.style.touchAction,
+      scrollTop: el.scrollTop,
+      scrollLeft: el.scrollLeft,
+    })
+    el.style.overflow = 'hidden'
+    el.style.overflowX = 'hidden'
+    el.style.overflowY = 'hidden'
+    el.style.touchAction = 'none'
+    el.classList.add('is-cal-scroll-locked')
+  }
+
+  const freezeScroll = () => {
+    for (const item of locked) {
+      if (item.el.scrollTop !== item.scrollTop) item.el.scrollTop = item.scrollTop
+      if (item.el.scrollLeft !== item.scrollLeft) item.el.scrollLeft = item.scrollLeft
+    }
+  }
+  const onTouchMove = (e: TouchEvent) => {
+    freezeScroll()
+    if (e.cancelable) e.preventDefault()
+  }
+  const onWheel = (e: WheelEvent) => {
+    freezeScroll()
+    e.preventDefault()
+  }
+  document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
+  document.addEventListener('wheel', onWheel, { passive: false, capture: true })
+  const scrollListenerOpts = { passive: true, capture: true } as const
+  for (const item of locked) {
+    item.el.addEventListener('scroll', freezeScroll, scrollListenerOpts)
+  }
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    document.removeEventListener('touchmove', onTouchMove, true)
+    document.removeEventListener('wheel', onWheel, true)
+    for (const item of locked) {
+      item.el.removeEventListener('scroll', freezeScroll, true)
+      item.el.style.overflow = item.overflow
+      item.el.style.overflowX = item.overflowX
+      item.el.style.overflowY = item.overflowY
+      item.el.style.touchAction = item.touchAction
+      item.el.classList.remove('is-cal-scroll-locked')
+      item.el.scrollTop = item.scrollTop
+      item.el.scrollLeft = item.scrollLeft
+    }
+    body.classList.remove('is-cal-resizing')
+    body.style.touchAction = prevTouch
+    body.style.overflow = prevOverflow
+  }
+}
+
+/** Collect FullCalendar / custom calendar scrollports under a root. */
+export function findCalendarScrollRoots(root: ParentNode | null | undefined): HTMLElement[] {
+  if (!root || !('querySelectorAll' in root)) return []
+  return [
+    ...root.querySelectorAll<HTMLElement>(
+      '.fc-scroller, .fc-scroller-liquid, .fc-scroller-liquid-absolute, .cal-masters-scroll, .cal-mobile-body, .cal-slot-grid',
+    ),
+  ]
 }
 
 type ResizePointerSession = {

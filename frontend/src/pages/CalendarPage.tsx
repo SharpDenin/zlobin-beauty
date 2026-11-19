@@ -71,6 +71,7 @@ import { CalendarMobile } from '@/pages/CalendarMobile'
 import { CalendarMoveCopyDialog } from '@/pages/CalendarMoveCopyDialog'
 import { RescheduleDialog } from '@/pages/RescheduleDialog'
 import { ScheduleEditor, type ScheduleEditorTab } from '@/features/schedule/ScheduleEditor'
+import { findCalendarScrollRoots, lockCalendarGesture } from '@/pages/calendar-event-resize'
 import '@/pages/calendar.css'
 
 function parseScheduleTab(raw: string | null): ScheduleEditorTab {
@@ -249,6 +250,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const scrollPreserve = useRef<number | null>(null)
   const swipeStart = useRef<{ x: number; y: number; id: number; t: number; blocked: boolean } | null>(null)
   const interacting = useRef(false)
+  const fcGestureUnlock = useRef<(() => void) | null>(null)
   const suppressSelect = useRef(false)
   const suppressEventClick = useRef(false)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
@@ -316,6 +318,65 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [intervalStartMin, setIntervalStartMin] = useState<number | null>(null)
   const [intervalEndMin, setIntervalEndMin] = useState<number | null>(null)
   const scrolledOnce = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      fcGestureUnlock.current?.()
+      fcGestureUnlock.current = null
+    }
+  }, [])
+
+  /**
+   * FullCalendar fires eventDragStart only after touch long-press (500ms) or mouse
+   * minDistance (16px). Scroll during that wait is intentional (cancels the gesture).
+   * Resize handles are an explicit intent — lock immediately on pointerdown so the
+   * first move cannot scroll the grid before eventResizeStart.
+   */
+  useEffect(() => {
+    const root = wrapRef.current
+    if (!root || embedded || readOnlyOverlay) return
+
+    let armedPointerId: number | null = null
+
+    const unlockIfArmedOnly = () => {
+      // If FC never promoted to resize/drag start, drop the early lock.
+      if (armedPointerId == null) return
+      if (interacting.current) {
+        armedPointerId = null
+        return
+      }
+      fcGestureUnlock.current?.()
+      fcGestureUnlock.current = null
+      armedPointerId = null
+    }
+
+    const onDown = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      const target = event.target as HTMLElement | null
+      if (!target?.closest('.fc-event-resizer')) return
+      armedPointerId = event.pointerId
+      fcGestureUnlock.current?.()
+      fcGestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(wrapRef.current))
+      document.body.dataset.calGestureLockSource = 'fc-resizer-pointerdown'
+    }
+
+    const onUp = (event: PointerEvent) => {
+      if (armedPointerId != null && event.pointerId === armedPointerId) {
+        // Defer one frame so eventResizeStart can flip interacting.current first.
+        window.requestAnimationFrame(unlockIfArmedOnly)
+      }
+    }
+
+    root.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onUp, true)
+    return () => {
+      root.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onUp, true)
+      unlockIfArmedOnly()
+    }
+  }, [embedded, readOnlyOverlay, compact, currentView])
 
   const selectedBranch = salonBranches.find((b) => b.id === branchFilter) ?? salonBranches[0]
   const salonTimezone = resolveServiceTimezone(selectedBranch?.timezone, selectedBranch?.city)
@@ -2068,6 +2129,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           slotDuration="00:30:00"
           eventDragMinDistance={16}
           selectMinDistance={16}
+          dragScroll={false}
           longPressDelay={500}
           eventLongPressDelay={500}
           selectLongPressDelay={500}
@@ -2103,10 +2165,31 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               arg.el.style.setProperty('--cal-hex', css)
             }
           }}
-          eventDragStart={() => { interacting.current = true }}
-          eventDragStop={() => { interacting.current = false }}
-          eventResizeStart={() => { interacting.current = true }}
-          eventResizeStop={() => { interacting.current = false }}
+          eventDragStart={() => {
+            interacting.current = true
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(wrapRef.current))
+            document.body.dataset.calGestureLockSource = 'fc-eventDragStart'
+          }}
+          eventDragStop={() => {
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = null
+            interacting.current = false
+            delete document.body.dataset.calGestureLockSource
+          }}
+          eventResizeStart={() => {
+            interacting.current = true
+            // May already be locked from resizer pointerdown; refresh freeze snapshot.
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(wrapRef.current))
+            document.body.dataset.calGestureLockSource = 'fc-eventResizeStart'
+          }}
+          eventResizeStop={() => {
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = null
+            interacting.current = false
+            delete document.body.dataset.calGestureLockSource
+          }}
           selectAllow={() => {
             interacting.current = true
             return true

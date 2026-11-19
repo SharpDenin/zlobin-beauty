@@ -18,7 +18,9 @@ import {
 } from '@/pages/calendar-helpers'
 import {
   attachResizePointerSession,
+  findCalendarScrollRoots,
   isShortResizeShell,
+  lockCalendarGesture,
   resizeDraftValid,
   type ResizeDraft,
   type ResizeEdge,
@@ -110,6 +112,8 @@ export function CalendarMastersDay({
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
   const resizeBase = useRef<{ id: string; edge: ResizeEdge; startMin: number; endMin: number } | null>(null)
   const resizeCleanup = useRef<(() => void) | null>(null)
+  const gestureUnlock = useRef<(() => void) | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null)
   const [nowLabel, setNowLabel] = useState(() => formatCalendarNowLabel(new Date(), timezone))
 
@@ -155,8 +159,8 @@ export function CalendarMastersDay({
     return () => {
       resizeCleanup.current?.()
       resizeCleanup.current = null
-      document.body.classList.remove('is-cal-resizing')
-      document.body.style.touchAction = ''
+      gestureUnlock.current?.()
+      gestureUnlock.current = null
     }
   }, [])
 
@@ -194,15 +198,17 @@ export function CalendarMastersDay({
   }
 
   function beginCalResize() {
-    document.body.style.touchAction = 'none'
-    document.body.classList.add('is-cal-resizing')
+    gestureUnlock.current?.()
+    gestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(rootRef.current))
+    document.body.dataset.calGestureLockSource = 'custom-resize-pointerdown'
   }
 
   function endCalResize() {
     resizeCleanup.current?.()
     resizeCleanup.current = null
-    document.body.style.touchAction = ''
-    document.body.classList.remove('is-cal-resizing')
+    gestureUnlock.current?.()
+    gestureUnlock.current = null
+    delete document.body.dataset.calGestureLockSource
     resizeBase.current = null
     setResizeDraft(null)
   }
@@ -301,6 +307,7 @@ export function CalendarMastersDay({
 
   return (
     <div
+      ref={rootRef}
       className={`cal-masters-day${resizeDraft ? ' is-cal-resizing' : ''}`}
       data-testid="calendar-masters-day"
       style={{ ['--cal-masters-slot-h' as string]: `${SLOT_PX}px`, ['--cal-masters-board-h' as string]: `${boardHeight}px` } as CSSProperties}

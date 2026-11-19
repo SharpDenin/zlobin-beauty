@@ -2712,6 +2712,55 @@ button.list-item:hover {
 .reschedule-drawer-panel {
   max-height: min(92vh, 100dvh);
 }
+
+/* Schedule editor: keep time/select controls inside the card on narrow drawers. */
+.schedule-editor,
+.schedule-editor-drawer {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+.schedule-editor .card,
+.schedule-editor-drawer .card {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+.schedule-editor .field,
+.schedule-editor-drawer .field {
+  min-width: 0;
+  max-width: 100%;
+}
+.schedule-editor .field input,
+.schedule-editor .field select,
+.schedule-editor-drawer .field input,
+.schedule-editor-drawer .field select {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.schedule-hours-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: end;
+  min-width: 0;
+  width: 100%;
+}
+.schedule-hours-day {
+  padding-bottom: 10px;
+}
+.schedule-time-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.schedule-time-pair .field {
+  min-width: 0;
+}
 .visit-plan-dialog { min-width: 0; }
 .visit-plan-current { display: grid; gap: var(--space-1); min-width: 0; }
 .visit-plan-card { gap: var(--space-3); }

@@ -1290,15 +1290,17 @@
   touch-action: none;
 }
 
-/* Narrow week grid: scroll columns horizontally, page stays without overflow-x */
+/* Narrow week grid: one shared min-width for header + body sync tables. */
 @media (max-width: 599px) {
-  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-timegrid-body,
-  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-scrollgrid-sync-table {
-    min-width: 0;
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc {
+    --cal-week-col-min: 72px;
   }
-  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-daygrid-body,
-  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc-timegrid-cols > table {
-    min-width: calc(7 * 72px);
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-scrollgrid-sync-table,
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-col-header,
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-timegrid-body,
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-timegrid-cols > table,
+  .calendar-shell.is-mobile-fc.is-fc-week .calendar-wrap .fc .fc-daygrid-body {
+    min-width: calc(var(--cal-time-axis-width, 44px) + 7 * var(--cal-week-col-min));
   }
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-col-header-cell-cushion,
   .calendar-shell.is-mobile-fc .calendar-wrap .fc .fc-timegrid-axis-cushion {
@@ -1607,23 +1609,42 @@
 }
 
 /*
- * Resize grips: interactive strip stays inside the shell (no neighbor invasion).
- * Visual bar (::after) is painted just outside the card edge.
- * Short shells shrink the strip so top/bottom never cross on one event.
+ * External resize grips without neighbor invasion:
+ * shell footprint stays the layout box; the colored card is inset by --cal-handle-out;
+ * handles live in that gutter (visually outside the card, still inside the shell).
  */
 .cal-slot-event-shell,
 .cal-masters-event-shell {
-  --cal-handle-h: 16px;
+  /* Hit height must stay ≤ gutter so grips stay fully outside the card body. */
+  --cal-handle-out: 14px;
+  --cal-handle-h: 14px;
   --cal-handle-inset: 18%;
-  --cal-handle-visual-gap: 3px;
   overflow: visible;
+  position: relative;
 }
 
 .cal-slot-event-shell.is-short,
 .cal-masters-event-shell.is-short {
+  --cal-handle-out: 10px;
   --cal-handle-h: 10px;
   --cal-handle-inset: 24%;
-  --cal-handle-visual-gap: 2px;
+}
+
+.cal-slot-event-shell .cal-slot-event {
+  margin-top: var(--cal-handle-out);
+  margin-bottom: var(--cal-handle-out);
+  min-height: 0;
+}
+
+.cal-masters-event-shell .cal-masters-event {
+  inset: auto;
+  top: var(--cal-handle-out);
+  left: 0;
+  right: 0;
+  bottom: auto;
+  width: auto;
+  height: calc(100% - (2 * var(--cal-handle-out)));
+  min-height: 0;
 }
 
 .cal-resize-handle {
@@ -1651,24 +1672,15 @@
   content: '';
   position: absolute;
   left: 50%;
+  top: 50%;
   width: min(40px, 100%);
   height: 5px;
+  transform: translate(-50%, -50%);
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-text-primary) 62%, transparent);
-  opacity: 0.85;
+  opacity: 0.9;
   pointer-events: none;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--glass-border) 70%, transparent);
-}
-
-.cal-resize-handle.is-start::after {
-  top: 0;
-  transform: translate(-50%, calc(-100% - var(--cal-handle-visual-gap)));
-}
-
-.cal-resize-handle.is-end::after {
-  bottom: 0;
-  top: auto;
-  transform: translate(-50%, calc(100% + var(--cal-handle-visual-gap)));
 }
 
 .cal-slot-event.is-resizing,

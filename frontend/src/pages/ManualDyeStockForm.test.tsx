@@ -207,6 +207,40 @@ describe('ManualDyeStockForm', () => {
     expect(adjustCalls).toBe(1)
   })
 
+  it('shows curated brands when dye catalog is empty', async () => {
+    mockedRequest.mockImplementation(async (path: string) => {
+      if (path.includes('/product-categories')) {
+        return { items: [{ id: 'cat-kraska', name: 'Краска', slug: 'kraska' }] }
+      }
+      if (path.includes('/shop/products')) return { items: [] }
+      return { items: [] }
+    })
+    renderForm()
+    await waitFor(() => expect(screen.getByTestId('dye-brand-Schwarzkopf Professional')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('dye-brand-Schwarzkopf Professional'))
+    await waitFor(() => expect(screen.getByTestId('dye-brand-empty-shades')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('dye-submit'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/количество|оттенк/i))
+    expect(mockedRequest.mock.calls.some(([path]) => String(path).includes('/me/inventory/adjust'))).toBe(false)
+  })
+
+  it('accepts a custom brand without inventing products', async () => {
+    mockedRequest.mockImplementation(async (path: string) => {
+      if (path.includes('/product-categories')) {
+        return { items: [{ id: 'cat-kraska', name: 'Краска', slug: 'kraska' }] }
+      }
+      if (path.includes('/shop/products')) return { items: [] }
+      return { items: [] }
+    })
+    renderForm()
+    await waitFor(() => expect(screen.getByTestId('dye-brand-custom')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('dye-brand-custom'), { target: { value: '  Brand X  ' } })
+    fireEvent.click(screen.getByTestId('dye-brand-custom-apply'))
+    await waitFor(() => expect(screen.getByTestId('dye-brand-Brand X')).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByTestId('dye-brand-empty-shades')).toBeInTheDocument()
+    expect(mockedRequest.mock.calls.some(([path]) => String(path).includes('/me/inventory/adjust'))).toBe(false)
+  })
+
   it('posts warehouse receipt movements', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     mockedRequest.mockImplementation(async (path: string) => {

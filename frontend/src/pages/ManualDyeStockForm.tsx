@@ -12,6 +12,11 @@ import {
   loadDyeStockIdemSession,
   type DyeStockIdemSession,
 } from '@/pages/dyeStockIdempotency'
+import {
+  brandMatchesSelection,
+  canonicalizeBrand,
+  mergeDyeBrandOptions,
+} from '@/shared/lib/dye-brands'
 
 type CatalogProduct = {
   id: string
@@ -50,7 +55,8 @@ function isDyeProduct(p: CatalogProduct, dyeCategoryId: string | null) {
 
 /**
  * Manual dye stock entry: pick brand → enter quantities per shade.
- * Uses existing products (category «Краска») and stock movements/adjust — no new entities.
+ * Brand chips come from a curated list (+ catalog), so empty dye catalog still allows brand choice.
+ * Stock still adjusts existing product_ids only — no synthetic products.
  */
 export function ManualDyeStockForm({
   open,
@@ -63,6 +69,7 @@ export function ManualDyeStockForm({
 }: Props) {
   const qc = useQueryClient()
   const [brand, setBrand] = useState('')
+  const [customBrand, setCustomBrand] = useState('')
   const [qtys, setQtys] = useState<Record<string, string>>({})
   const [reason, setReason] = useState('Ручной приход красителей')
   const [formError, setFormError] = useState<string | null>(null)
@@ -130,18 +137,22 @@ export function ManualDyeStockForm({
   )
 
   const brands = useMemo(() => {
-    const set = new Set<string>()
-    for (const p of dyes) {
-      const b = (p.brand || '').trim()
-      if (b) set.add(b)
-    }
-    return [...set].sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [dyes])
+    const fromCatalog = dyes.map((p) => p.brand || '').filter(Boolean)
+    return mergeDyeBrandOptions(fromCatalog, customBrand)
+  }, [dyes, customBrand])
 
   const brandProducts = useMemo(() => {
     if (!brand) return [] as CatalogProduct[]
-    return dyes.filter((p) => (p.brand || '').trim() === brand)
+    return dyes.filter((p) => brandMatchesSelection(p.brand || '', brand))
   }, [dyes, brand])
+
+  function selectBrand(next: string) {
+    const canon = canonicalizeBrand(next)
+    setBrand(canon)
+    setQtys({})
+    clearDyeStockIdemSession(mode, organizationId, locationId || '')
+    idemSessionRef.current = null
+  }
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -153,7 +164,8 @@ export function ManualDyeStockForm({
       try {
         const reasonTrim = reason.trim()
         if (reasonTrim.length < 2) throw new Error('Укажите причину')
-        if (!brand) throw new Error('Выберите бренд')
+        const selectedBrand = canonicalizeBrand(brand)
+        if (!selectedBrand) throw new Error('Выберите бренд')
         const lines: Array<{ product: CatalogProduct; qty: number }> = []
         for (const p of brandProducts) {
           const raw = String(qtys[p.id] ?? '').trim()
@@ -171,7 +183,7 @@ export function ManualDyeStockForm({
           mode,
           organizationId,
           locationId: locationId || '',
-          brand,
+          brand: selectedBrand,
           reason: reasonTrim,
           lines: lines.map((l) => ({ productId: l.product.id, qty: l.qty })),
         })
@@ -279,24 +291,47 @@ export function ManualDyeStockForm({
                 className={`chip ${brand === b ? 'active' : ''}`}
                 data-testid={`dye-brand-${b}`}
                 aria-pressed={brand === b}
-                onClick={() => {
-                  setBrand(b)
-                  setQtys({})
-                  clearDyeStockIdemSession(mode, organizationId, locationId || '')
-                  idemSessionRef.current = null
-                }}
+                onClick={() => selectBrand(b)}
               >
                 {b}
               </button>
             ))}
           </div>
-          {brands.length === 0 && !orgProducts.isLoading && !shop.isLoading && !categories.isLoading && (
-            <p className="hint">В каталоге пока нет товаров категории «Краска». Их добавляет поставщик.</p>
-          )}
+          <label htmlFor="dye-brand-custom" className="label-text" style={{ marginTop: 8 }}>
+            Другой бренд
+          </label>
+          <div className="row gap">
+            <input
+              id="dye-brand-custom"
+              data-testid="dye-brand-custom"
+              value={customBrand}
+              placeholder="Например, новый бренд"
+              onChange={(e) => setCustomBrand(e.target.value)}
+            />
+            <button
+              className="btn btn-secondary btn-compact"
+              type="button"
+              data-testid="dye-brand-custom-apply"
+              disabled={!customBrand.trim()}
+              onClick={() => {
+                const next = canonicalizeBrand(customBrand)
+                if (!next) return
+                selectBrand(next)
+              }}
+            >
+              Выбрать
+            </button>
+          </div>
+          <p className="hint">
+            Справочник брендов доступен всегда. Оттенки и остатки берутся только из товаров каталога — без фиктивных
+            позиций.
+          </p>
         </div>
 
         {brand && brandProducts.length === 0 && (
-          <p className="muted">Нет оттенков этого бренда в каталоге красок.</p>
+          <p className="muted" data-testid="dye-brand-empty-shades">
+            Нет оттенков бренда «{brand}» в каталоге красок. Добавьте товары поставщиком или выберите другой бренд.
+          </p>
         )}
 
         {brandProducts.length > 0 && (

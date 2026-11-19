@@ -38,6 +38,9 @@ type AuditEvent struct {
 	CreatedAt  time.Time
 }
 
+// UserStats are platform account counters for admin/internal consumers.
+// UsersTotal = registered accounts with status <> deleted (active + blocked).
+// UsersActive / UsersBlocked are status buckets only — not engagement (MAU/DAU).
 type UserStats struct {
 	UsersTotal   int
 	UsersActive  int
@@ -100,7 +103,7 @@ WHERE ($1 = '' OR u.display_name ILIKE $2 OR COALESCE(u.email, '') ILIKE $2)
 func (s *Store) UserStats(ctx context.Context) (UserStats, error) {
 	var st UserStats
 	err := s.pool.QueryRow(ctx, `
-SELECT COUNT(*)::int,
+SELECT COUNT(*) FILTER (WHERE status <> 'deleted')::int,
        COUNT(*) FILTER (WHERE status = 'active')::int,
        COUNT(*) FILTER (WHERE status = 'blocked')::int
 FROM users`).Scan(&st.UsersTotal, &st.UsersActive, &st.UsersBlocked)

@@ -285,13 +285,33 @@ Flow: master `POST /v1/clients/invites` → QR/URL `/invite/client/{token}` → 
 - Contact link is best-effort after card create (accept still succeeds if communications briefly unavailable).
 - Owner-only (no master role) still cannot open `/clients/invite` (behind `RequireMaster`) — same as `/clients` pre-Stage 5.
 - Clipboard API may be unavailable on plain `http://frontend`; E2E stubs `navigator.clipboard` / `navigator.share` for the contract.
-- No Stage 6 work.
+
+## Stage 6 — user counters, dye brands, EPICA commerce (Machine B, 2026-11-19)
+
+Status: **implemented locally; not committed; production not touched.**
+
+### User counters (req 18)
+- `GET /v1/admin/stats`: `users_total` = `status <> 'deleted'`; `users_active` / `users_blocked` unchanged status buckets. No MAU/DAU. No UI changes.
+- Unit: `store.AggregateUserStats` + SQL `UserStats` query.
+
+### Dye brands (req 23)
+- Curated picker in `dye-brands.ts` + custom brand; empty dye catalog still shows brands; stock still requires real `product_id` shades.
+- Vitest: `dye-brands` + `ManualDyeStockForm` **PASS**.
+
+### EPICA commerce (req 24)
+- Official prices matched 2026-11-19 via `scripts/epica-price-match.mjs` (NBSP thousands fix); 475/475 SKUs priced.
+- Local import into supplier **ПрофиКосмет** via CSV import + publish PATCH (`scripts/epica-commerce-import.mjs`). 475 created/updated, 475 published. Re-import → **409** duplicate checksum.
+- No fictional stock; no `original_price` column (schema gap — sale price → `price_minor` only). Photos not bulk-uploaded.
+- CSV import bugfix: set `audience=all` on create (constraint).
+- Playwright `e2e/epica-shop-brand.spec.ts` phone-390 **PASS**.
+
+Artifacts (local, untracked): `tmp/epica-price-match.json`, `tmp/epica-commerce-import-report.json`.
 
 ## What was NOT done / still open
 
 | Item | Status |
 | --- | --- |
-| Stage 4/5 product sign-off / commit | **Pending explicit approval** — working tree dirty |
+| Stage 4/5/6 product sign-off / commit | **Pending explicit approval** — working tree dirty |
 | Public salon catalog | Not built — needs product decision |
 | Push to origin | Not done |
 | Caddy locally | Keep stopped unless using a local-only Caddyfile |

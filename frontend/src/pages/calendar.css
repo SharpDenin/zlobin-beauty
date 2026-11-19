@@ -307,8 +307,15 @@
 
 .calendar-display-range {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-3);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.calendar-display-range > .field {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .calendar-color-token-grid {

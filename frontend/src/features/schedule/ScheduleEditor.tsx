@@ -16,6 +16,7 @@ import {
   type SalonChair,
   type WorkModeInterval,
 } from '@/shared/lib/work-mode'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 
 const WEEKDAYS = [
   { value: 1, label: 'Пн' },
@@ -26,42 +27,6 @@ const WEEKDAYS = [
   { value: 6, label: 'Сб' },
   { value: 0, label: 'Вс' },
 ]
-
-/** Half-hour options including 24:00 — `<select>` shrinks on iOS; `input[type=time]` does not. */
-const SCHEDULE_TIME_OPTIONS = Array.from({ length: 49 }, (_, i) => minutesToHHMM(i * 30))
-
-function scheduleTimeOptions(current: string) {
-  if (!current || SCHEDULE_TIME_OPTIONS.includes(current)) return SCHEDULE_TIME_OPTIONS
-  return [...SCHEDULE_TIME_OPTIONS, current].sort((a, b) => (parseHHMM(a) ?? 0) - (parseHHMM(b) ?? 0))
-}
-
-function ScheduleTimeSelect({
-  id,
-  value,
-  onChange,
-  'aria-required': ariaRequired,
-}: {
-  id: string
-  value: string
-  onChange: (next: string) => void
-  'aria-required'?: boolean
-}) {
-  return (
-    <select
-      id={id}
-      className="schedule-time-select"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      aria-required={ariaRequired}
-    >
-      {scheduleTimeOptions(value).map((opt) => (
-        <option key={opt} value={opt}>
-          {opt}
-        </option>
-      ))}
-    </select>
-  )
-}
 
 type HoursItem = { weekday: number; start_minute: number; end_minute: number }
 
@@ -351,10 +316,10 @@ export function ScheduleEditor({
                 <span>{d.label}</span>
               </label>
               {row ? (
-                <div className="schedule-time-pair">
+                <div className="field-pair">
                   <div className="field">
                     <label htmlFor={`wh-start-${d.value}`}>С</label>
-                    <ScheduleTimeSelect
+                    <TimeSelect
                       id={`wh-start-${d.value}`}
                       value={minutesToHHMM(row.start_minute)}
                       onChange={(next) => {
@@ -366,7 +331,7 @@ export function ScheduleEditor({
                   </div>
                   <div className="field">
                     <label htmlFor={`wh-end-${d.value}`}>До</label>
-                    <ScheduleTimeSelect
+                    <TimeSelect
                       id={`wh-end-${d.value}`}
                       value={minutesToHHMM(row.end_minute)}
                       onChange={(next) => {
@@ -400,14 +365,14 @@ export function ScheduleEditor({
           <span>Выходной</span>
         </label>
         {!exceptionOff ? (
-          <div className="schedule-time-pair">
+          <div className="field-pair">
             <div className="field">
               <label htmlFor="ex-start">С</label>
-              <ScheduleTimeSelect id="ex-start" value={exceptionStart} onChange={setExceptionStart} aria-required />
+              <TimeSelect id="ex-start" value={exceptionStart} onChange={setExceptionStart} aria-required />
             </div>
             <div className="field">
               <label htmlFor="ex-end">До</label>
-              <ScheduleTimeSelect id="ex-end" value={exceptionEnd} onChange={setExceptionEnd} aria-required />
+              <TimeSelect id="ex-end" value={exceptionEnd} onChange={setExceptionEnd} aria-required />
             </div>
           </div>
         ) : null}

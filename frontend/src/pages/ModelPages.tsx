@@ -186,13 +186,15 @@ export function ModelsPage() {
               <label htmlFor="model-city">Город</label>
               <input id="model-city" value={city} onChange={(e) => setCity(e.target.value)} />
             </div>
-            <div className="field">
-              <label htmlFor="model-from">С даты</label>
-              <input id="model-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </div>
-            <div className="field">
-              <label htmlFor="model-to">По дату</label>
-              <input id="model-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <div className="field-pair">
+              <div className="field">
+                <label htmlFor="model-from">С даты</label>
+                <input id="model-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="model-to">По дату</label>
+                <input id="model-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              </div>
             </div>
             <button className="btn btn-secondary" type="button" data-testid="save-model-prefs" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
               Сохранить уведомления

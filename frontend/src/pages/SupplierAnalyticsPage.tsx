@@ -84,9 +84,9 @@ export function SupplierAnalyticsPage() {
         ))}
       </div>
       {period === 'custom' && (
-        <div className="row">
-          <div className="field"><label>С</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-          <div className="field"><label>По</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="field-pair">
+          <div className="field"><label htmlFor="analytics-from">С</label><input id="analytics-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+          <div className="field"><label htmlFor="analytics-to">По</label><input id="analytics-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
         </div>
       )}
       {q.isLoading && <div className="state-box">Считаем агрегаты…</div>}

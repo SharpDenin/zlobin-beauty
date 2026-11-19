@@ -9,6 +9,7 @@ import { useBuyerOrg } from '@/shared/lib/commerce'
 import { statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 import { toast } from '@/shared/ui/Toast'
 
 type Member = { id: string; user_id?: string; role: string; status: string }
@@ -240,13 +241,31 @@ export function StaffPage() {
           <p className="muted">Рабочие часы по дням недели. Если есть записи вне новых часов, изменение будет отклонено.</p>
           {hoursQ.isLoading && <div className="state-box">Загрузка часов…</div>}
           {hoursDraft.map((h) => (
-            <div className="row" key={h.weekday}>
-              <label className="field-check" style={{ minWidth: 72 }}>
+            <div className="schedule-hours-row" key={h.weekday}>
+              <label className="field-check schedule-hours-day">
                 <input type="checkbox" checked={h.enabled} onChange={(e) => setHoursDraft((cur) => cur.map((x) => x.weekday === h.weekday ? { ...x, enabled: e.target.checked } : x))} />
                 <span>{WEEKDAYS[h.weekday]}</span>
               </label>
-              <input type="time" value={h.start} disabled={!h.enabled} onChange={(e) => setHoursDraft((cur) => cur.map((x) => x.weekday === h.weekday ? { ...x, start: e.target.value } : x))} />
-              <input type="time" value={h.end} disabled={!h.enabled} onChange={(e) => setHoursDraft((cur) => cur.map((x) => x.weekday === h.weekday ? { ...x, end: e.target.value } : x))} />
+              <div className="field-pair">
+                <div className="field">
+                  <label className="visually-hidden" htmlFor={`staff-h-start-${h.weekday}`}>С</label>
+                  <TimeSelect
+                    id={`staff-h-start-${h.weekday}`}
+                    value={h.start}
+                    disabled={!h.enabled}
+                    onChange={(start) => setHoursDraft((cur) => cur.map((x) => x.weekday === h.weekday ? { ...x, start } : x))}
+                  />
+                </div>
+                <div className="field">
+                  <label className="visually-hidden" htmlFor={`staff-h-end-${h.weekday}`}>До</label>
+                  <TimeSelect
+                    id={`staff-h-end-${h.weekday}`}
+                    value={h.end}
+                    disabled={!h.enabled}
+                    onChange={(end) => setHoursDraft((cur) => cur.map((x) => x.weekday === h.weekday ? { ...x, end } : x))}
+                  />
+                </div>
+              </div>
             </div>
           ))}
           <button className="btn btn-primary" type="button" disabled={saveHours.isPending} onClick={() => saveHours.mutate()}>Сохранить часы</button>

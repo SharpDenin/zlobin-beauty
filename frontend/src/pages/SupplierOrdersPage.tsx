@@ -21,6 +21,7 @@ import {
 } from '@/shared/lib/status'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 import { supplierOrderIsTerminal } from '@/pages/supplier-helpers'
 
 /** Commercial order machine only — physical progress lives on Delivery. */
@@ -341,21 +342,21 @@ function DeliveryScheduleBlock({
           onChange={(e) => onDraftChange({ ...draft, date: e.target.value })}
         />
       </div>
-      <div className="row">
-        <div className="field" style={{ flex: 1 }}>
-          <label>Окно с</label>
-          <input
-            type="time"
+      <div className="field-pair">
+        <div className="field">
+          <label htmlFor="delivery-window-start">Окно с</label>
+          <TimeSelect
+            id="delivery-window-start"
             value={draft.windowStart}
-            onChange={(e) => onDraftChange({ ...draft, windowStart: e.target.value })}
+            onChange={(windowStart) => onDraftChange({ ...draft, windowStart })}
           />
         </div>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Окно до</label>
-          <input
-            type="time"
+        <div className="field">
+          <label htmlFor="delivery-window-end">Окно до</label>
+          <TimeSelect
+            id="delivery-window-end"
             value={draft.windowEnd}
-            onChange={(e) => onDraftChange({ ...draft, windowEnd: e.target.value })}
+            onChange={(windowEnd) => onDraftChange({ ...draft, windowEnd })}
           />
         </div>
       </div>

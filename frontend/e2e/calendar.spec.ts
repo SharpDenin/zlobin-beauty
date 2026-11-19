@@ -297,8 +297,8 @@ test.describe('production calendar', () => {
       // Measure the actual controls (selects) — must sit side-by-side without overlap/clip.
       const overlaps: Array<{ a: string; b: string; gap: number }> = []
       let sideBySide = false
-      for (const pair of document.querySelectorAll('.schedule-time-pair')) {
-        const controls = [...pair.querySelectorAll('select, input')].map((n) => ({
+      for (const pair of document.querySelectorAll('.field-pair, .schedule-time-pair, .calendar-display-range')) {
+        const controls = [...pair.querySelectorAll('select.time-select, select, input')].map((n) => ({
           id: (n as HTMLInputElement | HTMLSelectElement).id || 'time',
           r: (n as HTMLElement).getBoundingClientRect(),
         }))
@@ -314,12 +314,16 @@ test.describe('production calendar', () => {
           }
         }
       }
-      const usesSelect = Boolean(document.querySelector('.schedule-time-pair .schedule-time-select'))
-      return { issues, overlaps, sideBySide, usesSelect }
+      const usesSelect = Boolean(document.querySelector('.field-pair .time-select, .schedule-time-pair .time-select'))
+      const leftoverNativeTime = document.querySelectorAll(
+        '.field-pair input[type="time"], .schedule-time-pair input[type="time"], .calendar-display-range input[type="time"]',
+      ).length
+      return { issues, overlaps, sideBySide, usesSelect, leftoverNativeTime }
     })
     // eslint-disable-next-line no-console
     console.log('[schedule-time-layout]', info.project.name, JSON.stringify(layout))
     expect(layout.usesSelect).toBe(true)
+    expect(layout.leftoverNativeTime).toBe(0)
     expect(layout.issues, JSON.stringify(layout.issues)).toEqual([])
     expect(layout.overlaps, JSON.stringify(layout.overlaps)).toEqual([])
     expect(layout.sideBySide, JSON.stringify(layout)).toBe(true)

@@ -1151,8 +1151,45 @@ button.btn > svg {
 .btn-block { width: 100%; }
 .btn-loading { pointer-events: none; opacity: 0.78; }
 
-.field { display: grid; gap: var(--space-2); min-width: 0; }
+.field { display: grid; gap: var(--space-2); min-width: 0; max-width: 100%; }
 .field label { font-size: var(--text-sm); font-weight: 600; }
+/*
+ * Temporal controls (date / time / datetime-local) have large intrinsic widths on iOS WebKit.
+ * Never let them dictate a flex/grid track; always allow shrink inside .field / .field-pair.
+ */
+.field input[type='date'],
+.field input[type='time'],
+.field input[type='datetime-local'],
+.field .time-select,
+.field .schedule-time-select {
+  display: block;
+  min-width: 0 !important;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+/* Two sibling fields in one row (С/До, Начало/Конец, date ranges). */
+.field-pair,
+.schedule-time-pair,
+.calendar-display-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.field-pair > .field,
+.schedule-time-pair > .field,
+.calendar-display-range > .field {
+  min-width: 0;
+  max-width: 100%;
+}
+.row > .field {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+}
 /* Required marker: one rule for the whole product. Mark inputs with `required` or aria-required="true". */
 .field:has(:is(input, select, textarea)[required], :is(input, select, textarea)[aria-required="true"]) > :is(label, span.label-text, span:not(.visually-hidden)):first-child::after,
 .field:has(:is(input, select, textarea)[required], :is(input, select, textarea)[aria-required="true"]) > .label-text:first-child::after,
@@ -2713,8 +2750,7 @@ button.list-item:hover {
   max-height: min(92vh, 100dvh);
 }
 
-/* Schedule editor: С/До always one row.
- * Native `input[type=time]` refuses to shrink on iOS — use `.schedule-time-select`. */
+/* Schedule editor shell + weekday row (С/До pair uses global .field-pair). */
 .schedule-editor,
 .schedule-editor-drawer {
   min-width: 0;
@@ -2730,21 +2766,6 @@ button.list-item:hover {
   min-width: 0;
   max-width: 100%;
 }
-.schedule-editor .field,
-.schedule-editor-drawer .field {
-  min-width: 0;
-  max-width: 100%;
-}
-.schedule-editor .field input,
-.schedule-editor .field select,
-.schedule-editor-drawer .field input,
-.schedule-editor-drawer .field select {
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  width: 100%;
-  box-sizing: border-box;
-}
 .schedule-hours-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2757,23 +2778,6 @@ button.list-item:hover {
 .schedule-hours-day {
   padding-bottom: 10px;
   white-space: nowrap;
-}
-.schedule-time-pair {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--space-2);
-  min-width: 0;
-  width: 100%;
-  max-width: 100%;
-}
-.schedule-time-pair .field {
-  min-width: 0;
-  max-width: 100%;
-}
-.schedule-time-pair .schedule-time-select {
-  min-width: 0;
-  width: 100%;
-  max-width: 100%;
 }
 .visit-plan-dialog { min-width: 0; }
 .visit-plan-current { display: grid; gap: var(--space-1); min-width: 0; }
@@ -3239,8 +3243,20 @@ button.list-item:hover {
   word-break: break-word;
 }
 .hint-pop p { margin: 8px 0; color: var(--color-text-muted); font-size: var(--text-sm); }
-.compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-.filters-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.compare-grid,
+.filters-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.compare-grid > .field,
+.filters-grid > .field {
+  min-width: 0;
+  max-width: 100%;
+}
 @media (max-width: 768px) {
   .dash-grid, .compare-grid, .filters-grid { grid-template-columns: 1fr; }
   .dash-widget.size-full, .dash-widget.size-large { grid-column: auto; }

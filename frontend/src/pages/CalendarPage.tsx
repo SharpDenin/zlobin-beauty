@@ -72,6 +72,7 @@ import { CalendarMoveCopyDialog } from '@/pages/CalendarMoveCopyDialog'
 import { RescheduleDialog } from '@/pages/RescheduleDialog'
 import { ScheduleEditor, type ScheduleEditorTab } from '@/features/schedule/ScheduleEditor'
 import { findCalendarScrollRoots, lockCalendarGesture } from '@/pages/calendar-event-resize'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 import '@/pages/calendar.css'
 
 function parseScheduleTab(raw: string | null): ScheduleEditorTab {
@@ -1841,14 +1842,24 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <strong>Диапазон сетки</strong>
         <p className="muted">Отображаемые часы, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится.</p>
       </div>
-      <div className="calendar-display-range">
+      <div className="field-pair calendar-display-range">
         <div className="field">
           <label htmlFor="cal-range-from">Начало</label>
-          <input id="cal-range-from" type="time" step={1800} value={rangeDraft.from} onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))} aria-required="true" />
+          <TimeSelect
+            id="cal-range-from"
+            value={rangeDraft.from}
+            onChange={(from) => setRangeDraft((r) => ({ ...r, from }))}
+            aria-required
+          />
         </div>
         <div className="field">
           <label htmlFor="cal-range-to">Конец</label>
-          <input id="cal-range-to" type="time" step={1800} value={rangeDraft.to} onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))} aria-required="true" />
+          <TimeSelect
+            id="cal-range-to"
+            value={rangeDraft.to}
+            onChange={(to) => setRangeDraft((r) => ({ ...r, to }))}
+            aria-required
+          />
         </div>
       </div>
       {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}

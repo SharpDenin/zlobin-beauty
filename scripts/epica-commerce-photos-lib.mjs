@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { join, extname } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { join, extname, basename } from 'node:path'
 
 export const ALLOWED_CT = new Set(['image/jpeg', 'image/png', 'image/webp'])
 export const MAX_BYTES = 10 << 20
@@ -48,6 +48,10 @@ export function resolveLocalImagePath(mediaRootDir, imageFile) {
   return existsSync(full) ? full : null
 }
 
+/**
+ * Checkpoint media_id means upload already succeeded; if product still lacks photo_media_id,
+ * plan an attach-only job (do not skip and do not re-upload).
+ */
 export function planPhotoJobs({ products, catalogBySku, checkpoint, mediaRootDir, allowRemoteUrls }) {
   const jobs = []
   for (const p of products) {
@@ -58,8 +62,26 @@ export function planPhotoJobs({ products, catalogBySku, checkpoint, mediaRootDir
       jobs.push({ sku, action: 'skip_already_attached', product_id: p.id, media_id: p.photo_media_id })
       continue
     }
+    if (cp?.media_id && cp?.linked === true) {
+      // Linked according to checkpoint but product row lacks photo — re-attach without upload.
+      jobs.push({
+        sku,
+        action: 'attach_existing',
+        product_id: p.id,
+        media_id: cp.media_id,
+        source: 'checkpoint_linked',
+      })
+      continue
+    }
     if (cp?.media_id) {
-      jobs.push({ sku, action: 'skip_checkpoint_has_media', product_id: p.id, media_id: cp.media_id })
+      jobs.push({
+        sku,
+        action: 'attach_existing',
+        product_id: p.id,
+        media_id: cp.media_id,
+        source: 'checkpoint_uploaded',
+        sha256: cp.sha256 || null,
+      })
       continue
     }
     const localPath = resolveLocalImagePath(mediaRootDir, src.imageFile)
@@ -73,6 +95,7 @@ export function planPhotoJobs({ products, catalogBySku, checkpoint, mediaRootDir
         path: localPath,
         content_type: ct,
         imageFile: src.imageFile,
+        file: basename(localPath),
       })
       continue
     }
@@ -96,4 +119,95 @@ export function planPhotoJobs({ products, catalogBySku, checkpoint, mediaRootDir
     })
   }
   return jobs
+}
+
+export function prevalidateLocalCatalog({ products, catalogBySku, mediaRootDir }) {
+  const rows = []
+  const bySha = new Map()
+  const skuSet = new Set()
+  let duplicateSkus = 0
+  for (const p of products) {
+    const sku = String(p.sku)
+    if (skuSet.has(sku)) duplicateSkus += 1
+    skuSet.add(sku)
+    const src = catalogBySku.get(sku) || {}
+    const localPath = resolveLocalImagePath(mediaRootDir, src.imageFile)
+    const row = {
+      sku,
+      product_id: p.id,
+      imageFile: src.imageFile || null,
+      path: localPath,
+      ok: false,
+      reason: null,
+      sha256: null,
+      size: null,
+      content_type: null,
+      already_has_photo: Boolean(p.photo_media_id),
+      photo_media_id: p.photo_media_id || null,
+    }
+    if (!src.imageFile) {
+      row.reason = 'missing_imageFile'
+      rows.push(row)
+      continue
+    }
+    if (!localPath) {
+      row.reason = 'file_not_found'
+      rows.push(row)
+      continue
+    }
+    const ct = contentTypeForExt(extname(localPath))
+    row.content_type = ct
+    if (!ct) {
+      row.reason = 'unsupported_format'
+      rows.push(row)
+      continue
+    }
+    let bytes
+    try {
+      bytes = readFileSync(localPath)
+    } catch (err) {
+      row.reason = `read_error:${err.message || err}`
+      rows.push(row)
+      continue
+    }
+    const v = validateImageCandidate({ bytes, contentType: ct })
+    row.ok = v.ok
+    row.reason = v.reason
+    row.sha256 = v.sha256 || null
+    row.size = v.size || bytes.length
+    if (v.ok && v.sha256) {
+      if (!bySha.has(v.sha256)) bySha.set(v.sha256, [])
+      bySha.get(v.sha256).push({ sku, file: basename(localPath), imageFile: src.imageFile })
+    }
+    rows.push(row)
+  }
+  const duplicateGroups = [...bySha.entries()]
+    .filter(([, list]) => list.length > 1)
+    .map(([sha256, list]) => ({ sha256, count: list.length, items: list }))
+  return {
+    total_products: products.length,
+    unique_skus: skuSet.size,
+    duplicate_sku_rows: duplicateSkus,
+    found_files: rows.filter((r) => r.path).length,
+    validated_ok: rows.filter((r) => r.ok).length,
+    validated_fail: rows.filter((r) => !r.ok).length,
+    already_has_photo: rows.filter((r) => r.already_has_photo).length,
+    unique_sha256: bySha.size,
+    duplicate_content_groups: duplicateGroups,
+    failures: rows.filter((r) => !r.ok),
+    rows,
+  }
+}
+
+export function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+export function backoffMs(attempt, base = 8000, cap = 45000) {
+  const ms = Math.min(cap, base * Math.pow(2, Math.max(0, attempt - 1)))
+  return ms
+}
+
+export function isRetryableStatus(status) {
+  return status === 429 || status === 502 || status === 503 || status === 504
 }

@@ -288,32 +288,46 @@ Flow: master `POST /v1/clients/invites` → QR/URL `/invite/client/{token}` → 
 
 ## Stage 6 — user counters, dye brands, EPICA commerce (Machine B, 2026-11-19)
 
-Status: **implemented locally; not committed; production not touched.**
+Status: **implemented and verified locally through Stage 6.3; Stage 6.4 read-only audit PASS WITH WARNINGS; production not touched.**
 
 ### User counters (req 18)
-- `GET /v1/admin/stats`: `users_total` = `status <> 'deleted'`; `users_active` / `users_blocked` unchanged status buckets. No MAU/DAU. No UI changes.
+- `GET /v1/admin/stats`: `users_total` excludes `status = 'deleted'`; `users_active` counts `active`; `users_blocked` counts `blocked`.
+- No MAU/DAU and no stats UI work in Stage 6.
 - Unit: `store.AggregateUserStats` + SQL `UserStats` query.
 
 ### Dye brands (req 23)
-- Curated picker in `dye-brands.ts` + custom brand; empty dye catalog still shows brands; stock still requires real `product_id` shades.
-- Vitest: `dye-brands` + `ManualDyeStockForm` **PASS**.
+- Curated picker in `dye-brands.ts` with canonicalization and custom brand; brands remain available when the dye product catalog is empty.
+- Selecting a brand alone does not create a product or stock row; stock still requires a real `product_id` shade.
+- Vitest coverage: `dye-brands` + `ManualDyeStockForm` (PASS on prior Stage 6 run; not re-run in Stage 6.4).
 
 ### EPICA commerce (req 24)
 - Official prices matched 2026-11-19 via `scripts/epica-price-match.mjs` (NBSP thousands fix); 475/475 SKUs priced.
-- Local import into supplier **ПрофиКосмет** via CSV import + publish PATCH (`scripts/epica-commerce-import.mjs`). 475 created/updated, 475 published. Re-import → **409** duplicate checksum.
-- No fictional stock; no `original_price` column (schema gap — sale price → `price_minor` only). Photos not bulk-uploaded.
-- CSV import bugfix: set `audience=all` on create (constraint).
-- Playwright `e2e/epica-shop-brand.spec.ts` phone-390 **PASS**.
+- Local import into supplier **ПрофиКосмет** via CSV import + publish PATCH (`scripts/epica-commerce-import.mjs`). 475 created/updated, 475 published. Re-import with same checksum → **409** treated as success by import tooling (`already applied`).
+- Categories remapped in Stage 6.2 to existing commerce slugs plus `aksessuary` / `zavivka` / `nabory` (flat catalog).
+- No fictional stock; no `original_price` column (schema gap — sale price → `price_minor` only).
+- CSV import sets `audience=all` on create (satisfies `products_audience_check`).
+- Photos: Stage 6.3 applied local files from `seed/media/epica/` only (no CDN). Fingerprint after apply: `475|475|45822200|475|475` (475 products / 475 SKUs / Σ price_minor / 475 published / 475 `photo_media_id`).
+- Unique media objects: **473** for 475 products — two SHA-identical source files reused one media ID each (group of three identical PNGs → one upload + two attaches).
+- Photo tooling: `scripts/epica-commerce-photos.mjs` (+ lib/tests). Default is dry-run; apply requires `--apply --i-understand-apply`; checkpoint/resume; SHA reuse; rate-limit-friendly interval.
+- Playwright `e2e/epica-shop-brand.spec.ts` phone-390 **PASS** on prior Stage 6 / 6.3 evidence (not re-run in Stage 6.4).
 
-Artifacts (local, untracked): `tmp/epica-price-match.json`, `tmp/epica-commerce-import-report.json`.
+### Stage 6 test evidence (do not treat as re-executed in Stage 6.4/6.5 unless noted)
+| Area | Result | When |
+| --- | --- | --- |
+| Go identity user-stats unit | PASS | Stage 6 prior run / in-tree tests |
+| Dye brands Vitest | PASS | Stage 6 prior run |
+| EPICA import / category / idempotency Node unit | PASS | Stage 6.1–6.2 |
+| EPICA photos Node unit | **6/6 PASS** | Stage 6.3 |
+| Playwright mobile 390 | PASS | Stage 6 / 6.3 |
+| Stage 6.4 | read-only audit only; tests not re-run | 2026-11-19 |
+
+Local untracked artifacts (do **not** commit): under `tmp/` (price-match reports, photo checkpoint/batch reports, fingerprints). User JPGs at repo root stay untracked.
 
 ## What was NOT done / still open
 
 | Item | Status |
 | --- | --- |
-| Stage 4/5/6 product sign-off / commit | **Pending explicit approval** — working tree dirty |
 | Public salon catalog | Not built — needs product decision |
-| Push to origin | Not done |
 | Caddy locally | Keep stopped unless using a local-only Caddyfile |
 | `scripts/test-docker.ps1` still references `docker-compose.dev.yml` | App on B runs **prod** compose; Playwright with `docker-compose.yml` + `docker-compose.test.yml` |
 | Real production deploy | Not touched |
@@ -325,7 +339,6 @@ Artifacts (local, untracked): `tmp/epica-price-match.json`, `tmp/epica-commerce-
 - Do not return to hybrid Windows Go/Vitest/Playwright.
 - Do not replace real two-user E2E with smoke stubs.
 - Do not auto-switch messenger to WebSocket before bottleneck is proven.
-- Do not start Stage 6 without agreement.
 - Do not commit/push without explicit request.
 
 ## Commands to resume (Machine C)

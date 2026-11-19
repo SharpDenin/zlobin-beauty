@@ -9,6 +9,11 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mapEpicaToCommerceSlug } from './epica-category-map.mjs'
+import {
+  isDuplicateImportAlreadyApplied,
+  DUPLICATE_IMPORT_APPLIED_MESSAGE,
+} from './epica-import-idempotency.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
@@ -25,17 +30,6 @@ const outPath = resolve(root, arg('--out', 'tmp/epica-commerce-import-report.jso
 function arg(flag, fallback) {
   const i = args.indexOf(flag)
   return i >= 0 ? args[i + 1] : fallback
-}
-
-const CATEGORY_MAP = {
-  'Окрашивание и осветление': 'kraska',
-  'Уход за волосами': 'uhod',
-  'Стайлинг': 'stajling',
-  'Аксессуары': 'uhod',
-  'Для мужчин': 'uhod',
-  'Уход за кожей рук': 'uhod',
-  'Завивка': 'uhod',
-  'Наборы': 'uhod',
 }
 
 function csvEscape(v) {
@@ -93,10 +87,6 @@ if (priced.length === 0) {
 const login = await apiJSON('POST', '/v1/auth/login', null, { email, password })
 const token = login.access_token
 const mine = await apiJSON('GET', '/v1/organizations/mine', token)
-const org = (mine.items || mine || []).find?.((row) => {
-  const o = row.organization || row
-  return o?.name === orgName || o?.type === 'supplier'
-}) || (Array.isArray(mine.items) ? mine.items.find((r) => (r.organization || r).name === orgName) : null)
 
 let orgID = null
 if (Array.isArray(mine.items)) {
@@ -123,8 +113,7 @@ const cats = await apiJSON('GET', '/v1/commerce/product-categories', token)
 const catBySlug = Object.fromEntries((cats.items || []).map((c) => [c.slug, c.id]))
 
 const rows = priced.map((p) => {
-  const top = String(p.category || '').split('/')[0].trim()
-  const slug = CATEGORY_MAP[top] || null
+  const slug = mapEpicaToCommerceSlug(p.category || '', p.title || '')
   return {
     sku: String(p.sku),
     brand,
@@ -134,7 +123,7 @@ const rows = priced.map((p) => {
     min_stock: '0',
     // intentionally omit qty_on_hand — no fictional stock
     category_slug: slug,
-    category_id: slug ? catBySlug[slug] || null : null,
+    category_id: catBySlug[slug] || null,
     volume: p.volume || '',
     source_url: p.url || p.sourceUrl || '',
     checked_at: match.checked_at,
@@ -154,13 +143,14 @@ const summary = {
   checked_at: match.checked_at,
   source: match.source,
   priced_candidates: rows.length,
-  category_map: CATEGORY_MAP,
+  category_slugs_used: [...new Set(rows.map((r) => r.category_slug))],
   dry_run: dryRun,
   import_job_id: null,
   created_or_updated: 0,
   published: 0,
   publish_failures: [],
   category_patch_failures: [],
+  already_applied: false,
   note: 'No original_price column in commerce schema; retail sale price stored in price_minor only. Photos not bulk-uploaded (media rate limits).',
 }
 
@@ -171,13 +161,31 @@ if (dryRun) {
   process.exit(0)
 }
 
-const validate = await apiJSON(
-  'POST',
-  `/v1/commerce/imports/products/validate?organization_id=${orgID}`,
-  token,
-  new TextEncoder().encode(csv),
-  { 'Content-Type': 'text/csv; charset=utf-8' },
-)
+let validate
+try {
+  validate = await apiJSON(
+    'POST',
+    `/v1/commerce/imports/products/validate?organization_id=${orgID}`,
+    token,
+    new TextEncoder().encode(csv),
+    { 'Content-Type': 'text/csv; charset=utf-8' },
+  )
+} catch (err) {
+  if (isDuplicateImportAlreadyApplied(err.status, err.body)) {
+    summary.already_applied = true
+    summary.validate_status = 409
+    summary.validate_error = err.body
+    writeFileSync(outPath, JSON.stringify(summary, null, 2))
+    console.log(DUPLICATE_IMPORT_APPLIED_MESSAGE)
+    process.exit(0)
+  }
+  summary.validate_status = err.status
+  summary.validate_error = err.body
+  writeFileSync(outPath, JSON.stringify(summary, null, 2))
+  console.error(`import validate failed: HTTP ${err.status}`, err.body)
+  process.exit(1)
+}
+
 summary.import_job_id = validate.id
 summary.validate_status = validate.status
 summary.validate_errors = validate.report?.errors || []

@@ -1,5 +1,5 @@
 -- Per-user message hide (delete for me) and forward attribution.
--- Global messages.deleted_at remains unused by product APIs (reserved for future delete-for-all).
+-- Global messages.deleted_at is used by delete-for-all (see SoftDeleteMessage / migration 010).
 
 CREATE TABLE IF NOT EXISTS message_hides (
     message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,

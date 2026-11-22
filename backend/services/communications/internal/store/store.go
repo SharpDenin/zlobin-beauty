@@ -19,9 +19,23 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 func (s *Store) CreateNotification(ctx context.Context, n domain.Notification) error {
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO notifications(id, user_id, type, title, body, entity_type, entity_id, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, n.ID, n.UserID, n.Type, n.Title, n.Body, n.EntityType, n.EntityID, n.CreatedAt)
+INSERT INTO notifications(id, user_id, type, title, body, entity_type, entity_id, message_id, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, n.ID, n.UserID, n.Type, n.Title, n.Body, n.EntityType, n.EntityID, n.MessageID, n.CreatedAt)
 	return err
+}
+
+// SoftDeleteNotificationsForMessage redacts and soft-deletes in-app notifications tied to a message.
+func (s *Store) SoftDeleteNotificationsForMessage(ctx context.Context, messageID uuid.UUID, at time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE notifications SET
+  deleted_at = COALESCE(deleted_at, $2),
+  body = '',
+  title = CASE WHEN type = 'new_message' THEN 'Сообщение удалено' ELSE title END
+WHERE message_id = $1 AND deleted_at IS NULL`, messageID, at)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *Store) ListNotifications(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {

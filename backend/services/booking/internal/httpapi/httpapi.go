@@ -58,6 +58,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("GET /v1/appointments/{id}/group", auth(http.HandlerFunc(a.visitGroup)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
+	mux.Handle("POST /v1/appointments/{id}/view-client-card", auth(http.HandlerFunc(a.viewClientCard)))
 	mux.Handle("POST /v1/appointments/{id}/reject", auth(http.HandlerFunc(a.reject)))
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
@@ -570,7 +571,13 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": a.appointmentDTOs(r, items)})
+	out := a.appointmentDTOs(r, items)
+	if role == "master" {
+		for i := range items {
+			a.enrichMasterAppointmentFlags(r, out[i], items[i], claims.UserID)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *API) hideAppointment(w http.ResponseWriter, r *http.Request) {
@@ -642,6 +649,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 	if hidden, herr := a.svc.IsHiddenForUser(r.Context(), id, claims.UserID); herr == nil {
 		dto["hidden_for_me"] = hidden
 	}
+	a.enrichMasterAppointmentFlags(r, dto, *item, claims.UserID)
 	httpx.JSON(w, http.StatusOK, dto)
 }
 
@@ -658,6 +666,36 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) viewClientCard(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	cardID, err := a.svc.ViewClientCard(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"client_card_id":      cardID.String(),
+		"client_card_viewed":  true,
+		"appointment_id":      id.String(),
+	})
+}
+
+func (a *API) enrichMasterAppointmentFlags(r *http.Request, dto map[string]any, item domain.Appointment, actor uuid.UUID) {
+	viewed, requires, allergy, first := a.svc.AppointmentMasterFlags(r.Context(), item, actor)
+	if item.MasterUserID != actor {
+		return
+	}
+	dto["client_card_viewed"] = viewed
+	dto["requires_client_card_view"] = requires
+	dto["allergy_test_recommended"] = allergy
+	dto["first_visit_with_master"] = first
 }
 
 func (a *API) reject(w http.ResponseWriter, r *http.Request) {

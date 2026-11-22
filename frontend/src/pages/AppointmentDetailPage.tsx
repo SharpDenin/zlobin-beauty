@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -47,6 +47,10 @@ type Appointment = {
   booking_mode?: string
   visit_group_id?: string | null
   hidden_for_me?: boolean
+  client_card_viewed?: boolean
+  requires_client_card_view?: boolean
+  allergy_test_recommended?: boolean
+  first_visit_with_master?: boolean
 }
 
 const cancelSchema = z.object({ reason: z.string().min(2, 'Укажите причину') })
@@ -59,6 +63,7 @@ const reviewSchema = z.object({
 
 export function AppointmentDetailPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const fromArchive = searchParams.get('from') === 'archive'
   const { accessToken, user } = useAuth()
@@ -67,6 +72,7 @@ export function AppointmentDetailPage() {
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [cardBusy, setCardBusy] = useState(false)
   const [hiddenView, setHiddenView] = useState(fromArchive)
   const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
   const [afterDraft, setAfterDraft] = useState<string | null>(null)
@@ -201,8 +207,29 @@ export function AppointmentDetailPage() {
   const canNoShow = isMaster && a.status === 'confirmed'
   const canReview = isClient && a.status === 'completed'
   const canUploadPhotos = isMaster && ['confirmed', 'in_progress', 'completed'].includes(a.status)
+  const canConfirm = isMaster && a.status === 'pending_confirmation'
+  const needsCardView = Boolean(a.requires_client_card_view)
   const hasFormula = hasColorFormulaInput(schemeFields, productName)
   const canOmitFormula = isPremium && hasFormula
+
+  async function openClientCard() {
+    if (!accessToken || !id) return
+    setCardBusy(true)
+    setError(null)
+    try {
+      const res = await apiRequest<{ client_card_id: string }>(`/v1/appointments/${id}/view-client-card`, {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      })
+      await qc.invalidateQueries({ queryKey: ['appointment', id] })
+      navigate(`/clients/${res.client_card_id}?fromAppointment=${id}&returnTo=${encodeURIComponent(`/appointments/${id}`)}`)
+    } catch (e) {
+      setError(userError(e, 'Не удалось открыть карточку клиента'))
+    } finally {
+      setCardBusy(false)
+    }
+  }
 
   async function attachVisitPhoto(mediaId: string | null, kind: 'before' | 'after') {
     if (!mediaId) {
@@ -321,6 +348,55 @@ export function AppointmentDetailPage() {
 
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
+
+      {isMaster && a.allergy_test_recommended && (
+        <section className="card stack-sm" data-testid="allergy-test-warning" role="status">
+          <h2>Аллерго-проба</h2>
+          <p>
+            {a.first_visit_with_master
+              ? 'Первая запись клиента к вам: проведите аллерго-пробу по утверждённому протоколу салона/бренда перед окрашиванием.'
+              : 'Рекомендуется провести аллерго-пробу по утверждённому протоколу салона/бренда при необходимости.'}
+          </p>
+          <p className="muted">
+            Отсутствие отмеченных аллергий в паспорте клиента не означает, что проба уже проведена.
+          </p>
+        </section>
+      )}
+
+      {canConfirm && (
+        <section className="card stack-sm" data-testid="appointment-confirm-block">
+          <h2>Подтверждение</h2>
+          {needsCardView ? (
+            <>
+              <p data-testid="confirm-blocked-hint">
+                Сначала просмотрите карточку клиента. Подтверждение станет доступно после просмотра.
+              </p>
+              <button
+                className="btn btn-secondary btn-block"
+                type="button"
+                data-testid="open-client-card-before-confirm"
+                disabled={cardBusy || act.isPending}
+                onClick={() => void openClientCard()}
+              >
+                {cardBusy ? 'Открываем…' : 'Открыть карточку клиента'}
+              </button>
+              <button className="btn btn-primary btn-block" type="button" disabled data-testid="confirm-appointment-disabled">
+                Подтвердить
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn-primary btn-block"
+              type="button"
+              data-testid="confirm-appointment"
+              disabled={act.isPending}
+              onClick={() => act.mutate({ path: `/v1/appointments/${a.id}/confirm` })}
+            >
+              Подтвердить запись
+            </button>
+          )}
+        </section>
+      )}
 
       <button
         className="btn btn-ghost"
@@ -450,7 +526,15 @@ export function AppointmentDetailPage() {
             </button>
           )}
           {isMaster && (
-            <Link className="btn btn-secondary" to={`/clients/by-appointment/${a.id}`}>Карточка клиента</Link>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              data-testid="open-client-card"
+              disabled={cardBusy}
+              onClick={() => void openClientCard()}
+            >
+              Карточка клиента
+            </button>
           )}
         </div>
 

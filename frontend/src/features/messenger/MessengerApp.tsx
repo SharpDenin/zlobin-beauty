@@ -72,6 +72,8 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null)
   const [forwardMessage, setForwardMessage] = useState<ChatMessage | null>(null)
   const [forwardBusy, setForwardBusy] = useState(false)
+  const [deleteForAllMessage, setDeleteForAllMessage] = useState<ChatMessage | null>(null)
+  const [deleteForAllBusy, setDeleteForAllBusy] = useState(false)
   const composing = useRef(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -324,6 +326,15 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
     void sendNow()
   }
 
+  function stripMessageLocally(messageId: string) {
+    const strip = (items: ChatMessage[]) => items.filter((m) => m.id !== messageId)
+    qc.setQueryData<MessageListResponse>(['conversation-messages', id], (prev) =>
+      prev ? { ...prev, items: strip(prev.items) } : prev,
+    )
+    setOlder((cur) => strip(cur))
+    setLocal((cur) => cur.filter((m) => m.id !== messageId))
+  }
+
   async function hideMessage(msg: ChatMessage) {
     if (!accessToken || !id || msg.status === 'sending' || msg.status === 'failed') return
     setMenuMessage(null)
@@ -332,17 +343,34 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
         method: 'DELETE',
         token: accessToken,
       })
-      const strip = (items: ChatMessage[]) => items.filter((m) => m.id !== msg.id)
-      qc.setQueryData<MessageListResponse>(['conversation-messages', id], (prev) =>
-        prev ? { ...prev, items: strip(prev.items) } : prev,
-      )
-      setOlder((cur) => strip(cur))
-      setLocal((cur) => cur.filter((m) => m.id !== msg.id))
-      toast.success('Сообщение удалено')
+      stripMessageLocally(msg.id)
+      toast.success('Сообщение удалено у вас')
       await qc.invalidateQueries({ queryKey: ['conversations'] })
       await qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
     } catch (e) {
       toast.error(userError(e, 'Не удалось удалить сообщение'))
+    }
+  }
+
+  async function deleteMessageForAll(msg: ChatMessage) {
+    if (!accessToken || !id || msg.status === 'sending' || msg.status === 'failed') return
+    setDeleteForAllBusy(true)
+    try {
+      await apiRequest(`/v1/conversations/${id}/messages/${msg.id}/delete-for-all`, {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      })
+      stripMessageLocally(msg.id)
+      setDeleteForAllMessage(null)
+      toast.success('Сообщение удалено для всех')
+      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      await qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
+      await qc.invalidateQueries({ queryKey: ['notifications'] })
+    } catch (e) {
+      toast.error(userError(e, 'Не удалось удалить сообщение для всех'))
+    } finally {
+      setDeleteForAllBusy(false)
     }
   }
 
@@ -707,13 +735,58 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
               if (menuMessage) void hideMessage(menuMessage)
             }}
           >
-            Удалить
+            Удалить у себя
           </button>
+          {menuMessage && menuMessage.sender_user_id === user?.id && menuMessage.status !== 'sending' && menuMessage.status !== 'failed' && (
+            <button
+              type="button"
+              className="btn btn-danger btn-block"
+              data-testid="message-delete-for-all"
+              onClick={() => {
+                setDeleteForAllMessage(menuMessage)
+                setMenuMessage(null)
+              }}
+            >
+              Удалить для всех
+            </button>
+          )}
           <button type="button" className="btn btn-ghost btn-block" onClick={() => setMenuMessage(null)}>
             Отмена
           </button>
         </div>
       </Drawer>
+      <Modal
+        open={Boolean(deleteForAllMessage)}
+        onClose={() => !deleteForAllBusy && setDeleteForAllMessage(null)}
+        title="Удалить для всех?"
+        label="Подтверждение удаления сообщения для всех участников"
+      >
+        <div className="stack gap">
+          <p data-testid="message-delete-for-all-warning">
+            Сообщение исчезнет у всех участников диалога и будет удалено из серверных уведомлений.
+            Это действие нельзя отменить.
+          </p>
+          <button
+            type="button"
+            className="btn btn-danger btn-block"
+            data-testid="message-delete-for-all-confirm"
+            disabled={deleteForAllBusy}
+            onClick={() => {
+              if (deleteForAllMessage) void deleteMessageForAll(deleteForAllMessage)
+            }}
+          >
+            {deleteForAllBusy ? 'Удаляем…' : 'Удалить для всех'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-block"
+            disabled={deleteForAllBusy}
+            onClick={() => setDeleteForAllMessage(null)}
+          >
+            Отмена
+          </button>
+        </div>
+      </Modal>
       <Modal
         open={Boolean(forwardMessage)}
         onClose={() => !forwardBusy && setForwardMessage(null)}

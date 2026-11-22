@@ -23,12 +23,13 @@ const (
 	VerApproved         = "approved"
 	VerSuperseded       = "superseded"
 
-	SlotOverview  = "overview"
-	SlotRoots     = "roots"
-	SlotLength    = "length"
-	SlotEnds      = "ends"
-	SlotStrandA4  = "strand_a4"
-	SlotReference = "reference"
+	SlotOverview      = "overview"
+	SlotRoots         = "roots"
+	SlotLength        = "length"
+	SlotEnds          = "ends"
+	SlotStrandA4      = "strand_a4"
+	SlotReference     = "reference"
+	SlotCuttingScheme = "cutting_scheme"
 )
 
 type HairConsultation struct {
@@ -109,7 +110,7 @@ func ValidVersionStatus(s string) bool {
 
 func ValidMediaSlot(s string) bool {
 	switch s {
-	case SlotOverview, SlotRoots, SlotLength, SlotEnds, SlotStrandA4, SlotReference:
+	case SlotOverview, SlotRoots, SlotLength, SlotEnds, SlotStrandA4, SlotReference, SlotCuttingScheme:
 		return true
 	default:
 		return false

@@ -442,6 +442,40 @@ SELECT EXISTS(SELECT 1 FROM appointment_user_hides WHERE appointment_id=$1 AND u
 	return ok, err
 }
 
+func (s *Store) RecordAppointmentCardView(ctx context.Context, appointmentID, masterUserID uuid.UUID, clientCardID *uuid.UUID, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO appointment_card_views(appointment_id, master_user_id, client_card_id, viewed_at)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (appointment_id, master_user_id) DO UPDATE SET
+  client_card_id = COALESCE(EXCLUDED.client_card_id, appointment_card_views.client_card_id),
+  viewed_at = EXCLUDED.viewed_at`, appointmentID, masterUserID, clientCardID, at)
+	return err
+}
+
+func (s *Store) HasAppointmentCardView(ctx context.Context, appointmentID, masterUserID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM appointment_card_views
+  WHERE appointment_id=$1 AND master_user_id=$2
+)`, appointmentID, masterUserID).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) GetAppointmentCardViewID(ctx context.Context, appointmentID, masterUserID uuid.UUID) (*uuid.UUID, error) {
+	var id *uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+SELECT client_card_id FROM appointment_card_views
+WHERE appointment_id=$1 AND master_user_id=$2`, appointmentID, masterUserID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return id, nil
+}
+
 func (s *Store) MasterAppointmentOverlaps(ctx context.Context, masterUserID uuid.UUID, excludeID uuid.UUID, starts, ends time.Time) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `

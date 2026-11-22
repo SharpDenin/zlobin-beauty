@@ -46,8 +46,12 @@ func New(st *store.Store, bookingURL string) *Service {
 }
 
 func (s *Service) CreateNotification(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID *uuid.UUID) error {
+	return s.CreateNotificationWithMessage(ctx, userID, typ, title, body, entityType, entityID, nil)
+}
+
+func (s *Service) CreateNotificationWithMessage(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID, messageID *uuid.UUID) error {
 	if err := wrap(s.store.CreateNotification(ctx, domain.Notification{
-		ID: ids.New(), UserID: userID, Type: typ, Title: title, Body: body, EntityType: entityType, EntityID: entityID, CreatedAt: s.now().UTC(),
+		ID: ids.New(), UserID: userID, Type: typ, Title: title, Body: body, EntityType: entityType, EntityID: entityID, MessageID: messageID, CreatedAt: s.now().UTC(),
 	})); err != nil {
 		return err
 	}

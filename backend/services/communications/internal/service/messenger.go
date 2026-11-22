@@ -483,13 +483,61 @@ func (s *Service) HideMessage(ctx context.Context, conversationID, messageID, ac
 	if err != nil {
 		return apperr.Internal(err)
 	}
-	if m == nil {
+	if m == nil || m.DeletedAt != nil {
 		return apperr.NotFound("message not found")
 	}
 	if err := s.store.HideMessageForUser(ctx, messageID, actor, s.now().UTC()); err != nil {
 		return apperr.Internal(err)
 	}
 	return nil
+}
+
+// SoftDeleteMessage deletes a message for all participants. Only the sender may do this.
+// Soft-deletes linked in-app notifications and clears message body/media refs.
+func (s *Service) SoftDeleteMessage(ctx context.Context, conversationID, messageID, actor uuid.UUID) error {
+	if err := s.requireParticipant(ctx, conversationID, actor); err != nil {
+		return err
+	}
+	m, err := s.store.GetMessage(ctx, conversationID, messageID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if m == nil || m.DeletedAt != nil {
+		return apperr.NotFound("message not found")
+	}
+	if m.SenderUserID != actor {
+		return apperr.Forbidden("only the sender can delete a message for everyone")
+	}
+	now := s.now().UTC()
+	ok, err := s.store.SoftDeleteMessage(ctx, messageID, now)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !ok {
+		return apperr.NotFound("message not found")
+	}
+	_, _ = s.store.SoftDeleteNotificationsForMessage(ctx, messageID, now)
+	// Best-effort: send a redacted replacement push for conversation openers.
+	// Delivered OS notifications cannot be reliably revoked via Web Push.
+	s.notifyMessageDeleted(ctx, conversationID, actor)
+	return nil
+}
+
+func (s *Service) notifyMessageDeleted(ctx context.Context, conversationID, actor uuid.UUID) {
+	parts, err := s.store.ListParticipants(ctx, conversationID)
+	if err != nil {
+		return
+	}
+	for _, p := range parts {
+		if p.UserID == actor {
+			continue
+		}
+		if s.syncPush {
+			s.dispatchPush(ctx, p.UserID, "Сообщение удалено", "", "conversation", &conversationID)
+		} else {
+			s.schedulePush(p.UserID, "Сообщение удалено", "", "conversation", &conversationID)
+		}
+	}
 }
 
 type ForwardMessageInput struct {
@@ -563,7 +611,7 @@ func (s *Service) ForwardMessage(ctx context.Context, sourceConversationID, mess
 		return nil, apperr.Internal(err)
 	}
 	s.attachForwardMeta(ctx, &m)
-	s.notifyNewMessage(ctx, in.TargetConversationID, actor, messagePreview(m))
+	s.notifyNewMessage(ctx, in.TargetConversationID, actor, messagePreview(m), m.ID)
 	return &m, nil
 }
 
@@ -663,7 +711,7 @@ func (s *Service) SendMessage(ctx context.Context, conversationID, actor uuid.UU
 		}
 		return nil, apperr.Internal(err)
 	}
-	s.notifyNewMessage(ctx, conversationID, actor, messagePreview(m))
+	s.notifyNewMessage(ctx, conversationID, actor, messagePreview(m), m.ID)
 	return &m, nil
 }
 
@@ -725,17 +773,18 @@ func messagePreview(m domain.Message) string {
 	}
 }
 
-func (s *Service) notifyNewMessage(ctx context.Context, conversationID, sender uuid.UUID, preview string) {
+func (s *Service) notifyNewMessage(ctx context.Context, conversationID, sender uuid.UUID, preview string, messageID uuid.UUID) {
 	parts, err := s.store.ListParticipants(ctx, conversationID)
 	if err != nil {
 		return
 	}
 	from := s.displayName(ctx, sender)
+	mid := messageID
 	for _, p := range parts {
 		if p.UserID == sender {
 			continue
 		}
-		_ = s.CreateNotification(ctx, p.UserID, "new_message", "Новое сообщение от "+from, preview, "conversation", &conversationID)
+		_ = s.CreateNotificationWithMessage(ctx, p.UserID, "new_message", "Новое сообщение от "+from, preview, "conversation", &conversationID, &mid)
 	}
 }
 

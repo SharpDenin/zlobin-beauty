@@ -212,6 +212,51 @@ describe('MessengerApp', () => {
     await screen.findByTestId('message-composer')
     expect(screen.getByTestId('send-message')).toBeDisabled()
   })
+
+  it('allows sender to delete a message for everyone', async () => {
+    let deleted = false
+    mockedRequest.mockImplementation(async (path: string, opts?: { method?: string }) => {
+      if (path === '/v1/conversations/c1/messages/m-own/delete-for-all' && opts?.method === 'POST') {
+        deleted = true
+        return undefined
+      }
+      if (path.startsWith('/v1/conversations/c1/messages') && opts?.method !== 'POST') {
+        return {
+          items: deleted
+            ? []
+            : [
+                {
+                  id: 'm-own',
+                  sender_user_id: 'u1',
+                  kind: 'text',
+                  body: 'Секретный текст',
+                  created_at: '2026-08-30T10:01:00.000Z',
+                },
+              ],
+          has_more: false,
+        }
+      }
+      if (path === '/v1/conversations/c1/read') return undefined
+      if (path === '/v1/conversations/c1') return conversation
+      if (path.startsWith('/v1/conversations')) return { items: [conversation] }
+      if (path.startsWith('/v1/contacts')) return { items: [], total: 0, limit: 100, offset: 0 }
+      throw new Error(`unexpected ${path}`)
+    })
+    renderApp('c1')
+    expect(await screen.findByText('Секретный текст')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('message-menu-m-own'))
+    fireEvent.click(await screen.findByTestId('message-delete-for-all'))
+    expect(await screen.findByTestId('message-delete-for-all-warning')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('message-delete-for-all-confirm'))
+    await waitFor(() => {
+      expect(screen.queryByText('Секретный текст')).toBeNull()
+    })
+    expect(
+      mockedRequest.mock.calls.some(
+        ([path, opts]) => path === '/v1/conversations/c1/messages/m-own/delete-for-all' && opts?.method === 'POST',
+      ),
+    ).toBe(true)
+  })
 })
 
 describe('desktop messenger overlay', () => {

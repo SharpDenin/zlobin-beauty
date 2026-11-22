@@ -5,7 +5,7 @@ import "testing"
 func TestAllowedDisputeField(t *testing.T) {
 	ok := []string{
 		"hair_color", "hair_condition", "preferences", "display_name", "phone", "email",
-		"skin_type", "skin_features", "loyalty_status", "birth_date", "general_notes",
+		"skin_type", "skin_features", "loyalty_status", "birth_date", "general_notes", "allergies",
 	}
 	for _, k := range ok {
 		if !AllowedDisputeField(k) {

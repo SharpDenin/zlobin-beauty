@@ -26,6 +26,10 @@ type Appointment = {
   visit_group_id?: string | null
   location_timezone?: string
   location_city?: string
+  requires_client_card_view?: boolean
+  client_card_viewed?: boolean
+  allergy_test_recommended?: boolean
+  first_visit_with_master?: boolean
 }
 
 export function AppointmentsPage() {
@@ -186,19 +190,35 @@ export function AppointmentsPage() {
                 </button>
               ) : role === 'master' && a.status === 'pending_confirmation' ? (
               <>
-                <button
-                  className="btn btn-primary btn-compact"
-                  type="button"
-                  disabled={confirm.isPending || reject.isPending}
-                  onClick={() => confirm.mutate(a.id)}
-                >
-                  Подтвердить
-                </button>
+                {a.requires_client_card_view ? (
+                  <Link
+                    className="btn btn-secondary btn-compact"
+                    to={`/appointments/${a.id}`}
+                    data-testid={`appointment-review-card-${a.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Карточка клиента
+                  </Link>
+                ) : (
+                  <button
+                    className="btn btn-primary btn-compact"
+                    type="button"
+                    data-testid={`appointment-confirm-${a.id}`}
+                    disabled={confirm.isPending || reject.isPending}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      confirm.mutate(a.id)
+                    }}
+                  >
+                    Подтвердить
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary btn-compact"
                   type="button"
                   disabled={confirm.isPending || reject.isPending}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.preventDefault()
                     setRejectReason('Не могу принять запись')
                     setRejectId(a.id)
                   }}

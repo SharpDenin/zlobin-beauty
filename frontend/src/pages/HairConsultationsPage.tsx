@@ -1018,8 +1018,8 @@ export function HairConsultationDetailPage() {
         </section>
       )}
 
-      {(isMaster || showPlanToClient || (viewing && Object.keys(viewing.master_assessment || {}).length > 0)) && (
-        <details className="card stack-gap" data-testid="consult-assessment">
+      {((isMaster || showPlanToClient || (viewing && Object.keys(viewing.master_assessment || {}).length > 0) || Boolean(slotMedia('cutting_scheme')))) && (
+        <details className="card stack-gap" data-testid="consult-assessment" open={Boolean(masterEditable || slotMedia('cutting_scheme'))}>
           <summary>Профессиональная оценка (подробно)</summary>
           <fieldset className="stack-gap" disabled={!masterEditable}>
             <label className="field"><span>Искусственные красители</span>
@@ -1028,7 +1028,60 @@ export function HairConsultationDetailPage() {
               <input value={a.lightened_areas} onChange={(e) => setA({ ...a, lightened_areas: e.target.value })} /></label>
             <label className="field"><span>Заметки</span><textarea value={a.notes} onChange={(e) => setA({ ...a, notes: e.target.value })} rows={2} /></label>
           </fieldset>
+          <div className="stack-gap" data-testid="consult-cutting-scheme">
+            <h3>Схема стрижки</h3>
+            <p className="muted">Загрузите изображение схемы стрижки. Конструктор схемы — отдельная задача.</p>
+            <MediaDropzone
+              purpose="hair_consultation"
+              value={slotMedia('cutting_scheme')}
+              allowGif={false}
+              label="Схема стрижки"
+              disabled={!masterEditable}
+              onChange={(mediaId) => {
+                const mid = slotMedia('cutting_scheme')
+                if (!mediaId) {
+                  if (mid) detach.mutate(mid)
+                  return
+                }
+                attach.mutate({ mediaId, slot: 'cutting_scheme' })
+              }}
+            />
+          </div>
         </details>
+      )}
+
+      {(isMaster || Boolean(p.allergy_test) || showPlanToClient) && (
+        <section className="card stack-gap consult-allergy-test" data-testid="consult-allergy-test">
+          <h2>Аллерго-проба</h2>
+          <div className="state-box" data-testid="consult-allergy-test-instruction" role="note">
+            <p>
+              <strong>Инструкция для мастера.</strong> Текст порядка проведения аллерго-пробы ожидает
+              согласования с заказчиком. Не подставляйте неподтверждённые сроки, дозировки или медицинские рекомендации.
+            </p>
+            <p className="muted">После утверждения инструкция будет размещена здесь.</p>
+          </div>
+          <label className="field">
+            <span>Описание проведения пробы</span>
+            <textarea
+              value={p.allergy_test}
+              onChange={(e) => setP({ ...p, allergy_test: e.target.value })}
+              rows={3}
+              disabled={!masterEditable}
+              data-testid="p-allergy-test"
+              placeholder="Зафиксируйте факт и результат проведения пробы"
+            />
+          </label>
+          {masterEditable && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => savePlan.mutate()}
+              disabled={savePlan.isPending}
+            >
+              Сохранить аллерго-пробу
+            </button>
+          )}
+        </section>
       )}
 
       <section className="card consult-price-card" data-testid="consult-price">
@@ -1102,8 +1155,6 @@ export function HairConsultationDetailPage() {
             <textarea value={p.shades_ratios} onChange={(e) => setP({ ...p, shades_ratios: e.target.value })} rows={2} /></label>
           <label className="field"><span>Тест пряди</span>
             <textarea value={p.strand_test} onChange={(e) => setP({ ...p, strand_test: e.target.value })} rows={2} data-testid="p-strand-test" /></label>
-          <label className="field"><span>Аллергопроба</span>
-            <textarea value={p.allergy_test} onChange={(e) => setP({ ...p, allergy_test: e.target.value })} rows={2} data-testid="p-allergy-test" /></label>
         </fieldset>
         {masterEditable && (
           <button type="button" className="btn btn-primary" onClick={() => { savePlan.mutate(); setSchemeOpen(false) }}>

@@ -22,6 +22,7 @@ type ClientCard struct {
 	SkinFeatures       string
 	SkinPhotoMediaIDs  json.RawMessage
 	GeneralNotes       string
+	Allergies          string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	ContactsHidden     bool
@@ -117,7 +118,7 @@ type DisputeEvent struct {
 func AllowedDisputeField(key string) bool {
 	switch key {
 	case "hair_color", "hair_condition", "preferences", "display_name", "phone", "email",
-		"skin_type", "skin_features", "loyalty_status", "birth_date", "general_notes":
+		"skin_type", "skin_features", "loyalty_status", "birth_date", "general_notes", "allergies":
 		return true
 	default:
 		return false
@@ -139,6 +140,7 @@ type PatchClientCardInput struct {
 	SkinFeatures      *string
 	SkinPhotoMediaIDs json.RawMessage
 	GeneralNotes      *string
+	Allergies         *string
 }
 
 type Consent struct {

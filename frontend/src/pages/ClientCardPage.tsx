@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { apiRequest } from '@/shared/api/client'
 import { hasMasterAccess, useAuth } from '@/features/auth/AuthProvider'
 import { formatMoney } from '@/shared/lib/money'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { VisitSchemeSummary } from '@/features/scheme/VisitSchemeSummary'
 import { RepeatOffer } from '@/pages/RepeatOffer'
 import { Hint } from '@/shared/ui/Hint'
@@ -37,6 +37,7 @@ type ClientCard = {
   skin_features?: string
   skin_photo_media_ids?: string[] | unknown
   general_notes?: string
+  allergies?: string
   segment?: string
 }
 
@@ -83,6 +84,7 @@ const DISPUTE_FIELDS = [
   { key: 'hair_color', label: 'Цвет волос' },
   { key: 'hair_condition', label: 'Состояние волос' },
   { key: 'preferences', label: 'Предпочтения' },
+  { key: 'allergies', label: 'Аллергии' },
   { key: 'display_name', label: 'Имя' },
   { key: 'phone', label: 'Телефон' },
   { key: 'email', label: 'Email' },
@@ -187,7 +189,10 @@ function consultStatusLabel(status: string) {
 }
 
 export function ClientCardPage() {
-  const { id, appointmentId } = useParams()
+  const { id, appointmentId: appointmentIdParam } = useParams()
+  const [searchParams] = useSearchParams()
+  const returnTo = searchParams.get('returnTo')
+  const fromAppointmentId = searchParams.get('fromAppointment') || appointmentIdParam || null
   const { accessToken, user } = useAuth()
   const messenger = useMessenger()
   const canMaster = hasMasterAccess(user)
@@ -202,16 +207,39 @@ export function ClientCardPage() {
   const [disputeDone, setDisputeDone] = useState(false)
 
   const cardQuery = useQuery({
-    queryKey: ['client', id, appointmentId],
+    queryKey: ['client', id, appointmentIdParam],
     queryFn: async () => {
-      if (appointmentId) {
-        return apiRequest<ClientCard>(`/v1/clients/appointment/${appointmentId}`, { token: accessToken })
+      if (appointmentIdParam) {
+        return apiRequest<ClientCard>(`/v1/clients/appointment/${appointmentIdParam}`, { token: accessToken })
       }
       return apiRequest<ClientCard>(`/v1/clients/id/${id}`, { token: accessToken })
     },
-    enabled: Boolean(accessToken && (id || appointmentId)),
+    enabled: Boolean(accessToken && (id || appointmentIdParam)),
     retry: false,
   })
+
+  useEffect(() => {
+    if (!accessToken || !fromAppointmentId || !canMaster) return
+    let cancelled = false
+    void (async () => {
+      try {
+        await apiRequest(`/v1/appointments/${fromAppointmentId}/view-client-card`, {
+          method: 'POST',
+          token: accessToken,
+          body: {},
+        })
+        if (!cancelled) {
+          await qc.invalidateQueries({ queryKey: ['appointment', fromAppointmentId] })
+          await qc.invalidateQueries({ queryKey: ['appointments'] })
+        }
+      } catch {
+        // Card may still load; confirm gate stays until view succeeds.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, fromAppointmentId, canMaster, qc])
 
   const cardId = cardQuery.data?.id
   const clientUserId = cardQuery.data?.user_id
@@ -308,6 +336,7 @@ export function ClientCardPage() {
     skin_features: '',
     general_notes: '',
     preferences: '',
+    allergies: '',
     photo_media_id: null as string | null,
     skin_photos: [] as string[],
   })
@@ -322,6 +351,7 @@ export function ClientCardPage() {
       skin_features: c.skin_features ?? '',
       general_notes: c.general_notes ?? '',
       preferences: c.preferences ?? '',
+      allergies: c.allergies ?? '',
       photo_media_id: c.photo_media_id ?? null,
       skin_photos: asSkinPhotos(c.skin_photo_media_ids),
     })
@@ -337,6 +367,9 @@ export function ClientCardPage() {
         birth_date: draft.birth_date || null,
         clear_birth_date: !draft.birth_date,
       }
+      if (isCardOwner) {
+        body.allergies = draft.allergies
+      }
       if (canEditClinical) {
         body.loyalty_status = draft.loyalty_status
         body.skin_type = draft.skin_type
@@ -351,7 +384,7 @@ export function ClientCardPage() {
       })
     },
     onSuccess: async (card) => {
-      qc.setQueryData(['client', id, appointmentId], card)
+      qc.setQueryData(['client', id, appointmentIdParam], card)
       await qc.invalidateQueries({
         predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'client',
       })
@@ -417,7 +450,7 @@ export function ClientCardPage() {
       const msg = Boolean(res.already_open) ? 'Несоответствие уже зарегистрировано' : 'Несоответствие зафиксировано'
       setOk(msg)
       toast.success(msg)
-      await qc.invalidateQueries({ queryKey: ['client', id, appointmentId] })
+      await qc.invalidateQueries({ queryKey: ['client', id, appointmentIdParam] })
     },
     onError: (e) => setError(formatUserError(e, 'Не удалось зафиксировать несоответствие')),
   })
@@ -453,6 +486,16 @@ export function ClientCardPage() {
         subtitle={card.display_name}
         actions={<span className="badge" data-testid="client-card-role">{roleBadge}</span>}
       />
+
+      {(returnTo || fromAppointmentId) && (
+        <Link
+          className="btn btn-secondary btn-block"
+          to={returnTo || `/appointments/${fromAppointmentId}`}
+          data-testid="client-card-back-to-appointment"
+        >
+          Вернуться к записи
+        </Link>
+      )}
 
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
@@ -578,6 +621,17 @@ export function ClientCardPage() {
                   rows={2}
                 />
               </label>
+              {isCardOwner && (
+                <label className="field" data-testid="client-allergies-edit">
+                  <span>Аллергии</span>
+                  <textarea
+                    value={draft.allergies}
+                    onChange={(e) => setDraft((d) => ({ ...d, allergies: e.target.value }))}
+                    rows={3}
+                    placeholder="Укажите известные аллергии или оставьте пустым"
+                  />
+                </label>
+              )}
               {canEditClinical && (
                 <>
                   <label className="field">
@@ -667,6 +721,12 @@ export function ClientCardPage() {
             </section>
           ) : (
             <>
+              <section className="card stack" data-testid="client-allergies-section">
+                <h2>Аллергии</h2>
+                <p className="muted">Заполняет клиент. Не является медицинским диагнозом.</p>
+                <p data-testid="client-allergies">{card.allergies?.trim() ? card.allergies : 'Не указаны'}</p>
+              </section>
+
               <section className="card stack" data-testid="client-skin-section">
                 <h2>Кожа и особенности</h2>
                 <p>

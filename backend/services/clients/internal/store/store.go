@@ -18,7 +18,7 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 const cardColumns = `id, organization_id, user_id, display_name, phone, email, preferences,
-	photo_media_id, birth_date, loyalty_status, skin_type, skin_features, skin_photo_media_ids, general_notes,
+	photo_media_id, birth_date, loyalty_status, skin_type, skin_features, skin_photo_media_ids, general_notes, allergies,
 	created_at, updated_at`
 
 // UpsertCardAndVisit gets-or-creates the client card for (organization_id, user_id)
@@ -121,7 +121,7 @@ func prefixedCardColumns(alias string) string {
 		alias + `.phone, ` + alias + `.email, ` + alias + `.preferences, ` +
 		alias + `.photo_media_id, ` + alias + `.birth_date, ` + alias + `.loyalty_status, ` +
 		alias + `.skin_type, ` + alias + `.skin_features, ` + alias + `.skin_photo_media_ids, ` +
-		alias + `.general_notes, ` + alias + `.created_at, ` + alias + `.updated_at`
+		alias + `.general_notes, ` + alias + `.allergies, ` + alias + `.created_at, ` + alias + `.updated_at`
 }
 
 func (s *Store) UpdateCardProfile(ctx context.Context, card domain.ClientCard) (*domain.ClientCard, error) {
@@ -133,14 +133,32 @@ func (s *Store) UpdateCardProfile(ctx context.Context, card domain.ClientCard) (
 UPDATE client_cards SET
   display_name=$2, phone=$3, email=$4, preferences=$5,
   photo_media_id=$6, birth_date=$7, loyalty_status=$8,
-  skin_type=$9, skin_features=$10, skin_photo_media_ids=$11, general_notes=$12,
-  updated_at=$13
+  skin_type=$9, skin_features=$10, skin_photo_media_ids=$11, general_notes=$12, allergies=$13,
+  updated_at=$14
 WHERE id=$1
 RETURNING `+cardColumns,
 		card.ID, card.DisplayName, card.Phone, card.Email, card.Preferences,
 		card.PhotoMediaID, card.BirthDate, card.LoyaltyStatus,
-		card.SkinType, card.SkinFeatures, skinIDs, card.GeneralNotes, card.UpdatedAt,
+		card.SkinType, card.SkinFeatures, skinIDs, card.GeneralNotes, card.Allergies, card.UpdatedAt,
 	))
+}
+
+func (s *Store) GrantMasterCardAccess(ctx context.Context, cardID, masterUserID uuid.UUID, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO client_card_master_grants(client_card_id, master_user_id, granted_at)
+VALUES ($1,$2,$3)
+ON CONFLICT (client_card_id, master_user_id) DO NOTHING`, cardID, masterUserID, at)
+	return err
+}
+
+func (s *Store) MasterHasCardGrant(ctx context.Context, cardID, masterUserID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM client_card_master_grants
+  WHERE client_card_id=$1 AND master_user_id=$2
+)`, cardID, masterUserID).Scan(&ok)
+	return ok, err
 }
 
 func (s *Store) ListNotesForCard(ctx context.Context, cardID uuid.UUID) ([]domain.VisitNoteView, error) {
@@ -293,7 +311,7 @@ func scanCard(row pgx.Row) (*domain.ClientCard, error) {
 	var c domain.ClientCard
 	if err := row.Scan(
 		&c.ID, &c.OrganizationID, &c.UserID, &c.DisplayName, &c.Phone, &c.Email, &c.Preferences,
-		&c.PhotoMediaID, &c.BirthDate, &c.LoyaltyStatus, &c.SkinType, &c.SkinFeatures, &c.SkinPhotoMediaIDs, &c.GeneralNotes,
+		&c.PhotoMediaID, &c.BirthDate, &c.LoyaltyStatus, &c.SkinType, &c.SkinFeatures, &c.SkinPhotoMediaIDs, &c.GeneralNotes, &c.Allergies,
 		&c.CreatedAt, &c.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -313,7 +331,7 @@ func scanCards(rows pgx.Rows) ([]domain.ClientCard, error) {
 		var c domain.ClientCard
 		if err := rows.Scan(
 			&c.ID, &c.OrganizationID, &c.UserID, &c.DisplayName, &c.Phone, &c.Email, &c.Preferences,
-			&c.PhotoMediaID, &c.BirthDate, &c.LoyaltyStatus, &c.SkinType, &c.SkinFeatures, &c.SkinPhotoMediaIDs, &c.GeneralNotes,
+			&c.PhotoMediaID, &c.BirthDate, &c.LoyaltyStatus, &c.SkinType, &c.SkinFeatures, &c.SkinPhotoMediaIDs, &c.GeneralNotes, &c.Allergies,
 			&c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, err

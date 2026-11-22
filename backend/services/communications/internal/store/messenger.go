@@ -381,6 +381,18 @@ ON CONFLICT (message_id, user_id) DO UPDATE SET hidden_at=EXCLUDED.hidden_at`, m
 	return err
 }
 
+// SoftDeleteMessage marks a message deleted for all participants (product delete-for-all).
+// Body is cleared so leftovers cannot leak through accidental reads; row is kept for audit/FKs.
+func (s *Store) SoftDeleteMessage(ctx context.Context, messageID uuid.UUID, at time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE messages SET deleted_at = $2, body = '', media_id = NULL
+WHERE id = $1 AND deleted_at IS NULL`, messageID, at)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) IsMessageHiddenForUser(ctx context.Context, messageID, userID uuid.UUID) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `
@@ -396,7 +408,7 @@ func (s *Store) FindMessageByClientID(ctx context.Context, conversationID, sende
 	row := s.pool.QueryRow(ctx, `
 SELECT `+messageSelectCols+`
 FROM messages
-WHERE conversation_id=$1 AND sender_user_id=$2 AND client_id=$3
+WHERE conversation_id=$1 AND sender_user_id=$2 AND client_id=$3 AND deleted_at IS NULL
 LIMIT 1`, conversationID, sender, clientID)
 	m, err := scanMessage(row)
 	if err != nil {

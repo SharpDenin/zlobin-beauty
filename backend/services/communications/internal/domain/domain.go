@@ -14,6 +14,7 @@ type Notification struct {
 	Body       string
 	EntityType string
 	EntityID   *uuid.UUID
+	MessageID  *uuid.UUID
 	ReadAt     *time.Time
 	HiddenAt   *time.Time
 	DeletedAt  *time.Time

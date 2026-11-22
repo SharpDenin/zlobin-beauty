@@ -20,6 +20,7 @@ func (a *API) registerMessengerRoutes(mux *http.ServeMux, auth func(http.Handler
 	mux.Handle("GET /v1/conversations/{id}/messages", auth(http.HandlerFunc(a.listMessages)))
 	mux.Handle("POST /v1/conversations/{id}/messages", auth(http.HandlerFunc(a.sendMessage)))
 	mux.Handle("DELETE /v1/conversations/{id}/messages/{messageID}", auth(http.HandlerFunc(a.hideMessage)))
+	mux.Handle("POST /v1/conversations/{id}/messages/{messageID}/delete-for-all", auth(http.HandlerFunc(a.deleteMessageForAll)))
 	mux.Handle("POST /v1/conversations/{id}/messages/{messageID}/forward", auth(http.HandlerFunc(a.forwardMessage)))
 	mux.Handle("POST /v1/conversations/{id}/read", auth(http.HandlerFunc(a.readConversation)))
 }
@@ -211,6 +212,25 @@ func (a *API) hideMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.svc.HideMessage(r.Context(), id, messageID, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteMessageForAll(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	messageID, err := uuid.Parse(r.PathValue("messageID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid message id"))
+		return
+	}
+	if err := a.svc.SoftDeleteMessage(r.Context(), id, messageID, claims.UserID); err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}

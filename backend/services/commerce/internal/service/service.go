@@ -1171,9 +1171,13 @@ func (s *Service) validateDestinationBranch(ctx context.Context, branchID uuid.U
 	var out struct {
 		Published     bool `json:"published"`
 		PickupEnabled bool `json:"pickup_enabled"`
+		Active        *bool `json:"active"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return apperr.Internal(err)
+	}
+	if out.Active != nil && !*out.Active {
+		return apperr.Validation("destination branch is closed")
 	}
 	if !out.Published || !out.PickupEnabled {
 		return apperr.Validation("destination branch must be published and pickup_enabled")
@@ -1186,6 +1190,7 @@ type branchInfo struct {
 	Name           string
 	Published      bool
 	PickupEnabled  bool
+	Active         bool
 }
 
 func (s *Service) fetchBranch(ctx context.Context, branchID uuid.UUID) (*branchInfo, error) {
@@ -1213,6 +1218,7 @@ func (s *Service) fetchBranch(ctx context.Context, branchID uuid.UUID) (*branchI
 		Name           string `json:"name"`
 		Published      bool   `json:"published"`
 		PickupEnabled  bool   `json:"pickup_enabled"`
+		Active         *bool  `json:"active"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, apperr.Internal(err)
@@ -1221,7 +1227,11 @@ func (s *Service) fetchBranch(ctx context.Context, branchID uuid.UUID) (*branchI
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return &branchInfo{OrganizationID: orgID, Name: out.Name, Published: out.Published, PickupEnabled: out.PickupEnabled}, nil
+	active := true
+	if out.Active != nil {
+		active = *out.Active
+	}
+	return &branchInfo{OrganizationID: orgID, Name: out.Name, Published: out.Published, PickupEnabled: out.PickupEnabled, Active: active}, nil
 }
 
 func (s *Service) requireSalonPickupAccess(ctx context.Context, actor, branchID uuid.UUID) (*branchInfo, error) {

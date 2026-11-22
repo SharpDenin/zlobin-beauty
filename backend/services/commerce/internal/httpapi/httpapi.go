@@ -60,6 +60,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/internal/inventory/repeat-availability", internal(http.HandlerFunc(a.internalRepeatAvailability)))
 	mux.Handle("GET /v1/internal/products/audiences", internal(http.HandlerFunc(a.internalListProductAudiences)))
 	mux.Handle("GET /v1/internal/products/{id}", internal(http.HandlerFunc(a.internalGetProduct)))
+	a.registerCloseRoutes(mux)
 	mux.Handle("GET /v1/commerce/supplier/dashboard", auth(http.HandlerFunc(a.supplierDashboard)))
 	mux.Handle("GET /v1/commerce/supplier/analytics", auth(http.HandlerFunc(a.supplierAnalytics)))
 	mux.Handle("POST /v1/commerce/dev/backdate", auth(http.HandlerFunc(a.devBackdate)))

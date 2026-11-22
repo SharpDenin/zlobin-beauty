@@ -19,4 +19,9 @@ describe('branchLabel', () => {
     expect(branchLabel(branches[1], branches)).toBe('Новосибирск · ул. Ленина, 8')
     expect(branchLabel(branches[0], branches)).not.toBe(branchLabel(branches[1], branches))
   })
+
+  it('marks closed branches', () => {
+    const branches = [{ id: '1', name: 'Центр', city: 'Москва', active: false }]
+    expect(branchLabel(branches[0], branches)).toBe('Центр · Закрыт')
+  })
 })

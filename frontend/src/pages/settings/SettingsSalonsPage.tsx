@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { apiRequest } from '@/shared/api/client'
@@ -8,7 +8,18 @@ import { useCabinet } from '@/shared/lib/cabinet'
 import { useMyOrgs, type OrgItem } from '@/shared/lib/commerce'
 import { CreateSalonForm, type CreateSalonPayload } from '@/shared/ui/CreateSalonForm'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { Modal } from '@/shared/ui/Modal'
 import { toast } from '@/shared/ui/Toast'
+
+const MANAGE_ORG_STORAGE_KEY = 'zb.settings-manage-org'
+
+function readStoredManageId(): string | null {
+  try {
+    return sessionStorage.getItem(MANAGE_ORG_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
 
 type Readiness = {
   ready: boolean
@@ -30,7 +41,17 @@ export function SettingsSalonsPage() {
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [manageId, setManageId] = useState<string | null>(null)
+  // sessionStorage-backed: survives auth/cabinet remounts without triggering a route navigation.
+  const [manageId, setManageIdState] = useState<string | null>(() => readStoredManageId())
+  const setManageId = useCallback((id: string | null) => {
+    setManageIdState(id)
+    try {
+      if (id) sessionStorage.setItem(MANAGE_ORG_STORAGE_KEY, id)
+      else sessionStorage.removeItem(MANAGE_ORG_STORAGE_KEY)
+    } catch {
+      /* private mode */
+    }
+  }, [])
 
   const owned = useMemo(() => ownedSalons(orgs.data?.items ?? []), [orgs.data?.items])
   const managed = owned.find((o) => o.organization.id === manageId) ?? null
@@ -313,6 +334,34 @@ function SalonManagePanel({
   )
 }
 
+type BranchClosePreflight = {
+  branch_id: string
+  branch_name: string
+  organization_name: string
+  active: boolean
+  already_closed: boolean
+  future_appointments: number
+  masters_affected: number
+  last_active_branch: boolean
+  will_unpublish_org: boolean
+  contact_phone: string
+  contact_source: string
+  contact_display: string
+  can_close: boolean
+  blockers: Array<{ code: string; label: string; count: number; href?: string }>
+  latest_job_id?: string
+  latest_job_status?: string
+  latest_job_error?: string
+}
+
+type BranchCloseJob = {
+  id: string
+  status: string
+  error_message?: string
+  org_unpublished?: boolean
+  result?: { cancelled_appointments?: number }
+}
+
 function BranchManageRow({
   branch,
   token,
@@ -322,13 +371,36 @@ function BranchManageRow({
   token: string | null | undefined
   onChanged: () => Promise<void>
 }) {
+  const qc = useQueryClient()
   const [phone, setPhone] = useState(branch.phone || '')
   const [error, setError] = useState<string | null>(null)
+  const [closeOpen, setCloseOpen] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const [closeResult, setCloseResult] = useState<BranchCloseJob | null>(null)
+  /** Defer org list refresh until the close modal dismisses, so Modal local state is not wiped. */
+  const [pendingListRefresh, setPendingListRefresh] = useState(false)
+  const isClosed = branch.active === false
 
   const ready = useQuery({
     queryKey: ['branch-readiness', branch.id],
     queryFn: () => apiRequest<Readiness>(`/v1/branches/${branch.id}/readiness`, { token }),
     enabled: Boolean(token && branch.id),
+    staleTime: 30_000,
+  })
+
+  // One query key for close status + modal preflight to avoid racing duplicate fetches.
+  const closeInfo = useQuery({
+    queryKey: ['branch-close-preflight', branch.id],
+    queryFn: () => apiRequest<BranchClosePreflight>(`/v1/branches/${branch.id}/close/preflight`, { token }),
+    enabled: Boolean(token && branch.id),
+    staleTime: 30_000,
+    // While the close modal is open, freeze the snapshot so React Query refetches
+    // cannot remount modal children (checkbox/submit) mid-interaction.
+    refetchOnWindowFocus: !closeOpen,
+    refetchInterval: (q) => {
+      if (closeOpen) return false
+      return q.state.data?.latest_job_status === 'running' ? 2000 : false
+    },
   })
 
   const savePhone = useMutation({
@@ -363,47 +435,257 @@ function BranchManageRow({
     onError: (e) => setError(formatUserError(e, 'Не удалось изменить публикацию филиала')),
   })
 
+  const closeBranch = useMutation({
+    mutationFn: () =>
+      apiRequest<BranchCloseJob>(`/v1/branches/${branch.id}/close`, {
+        method: 'POST',
+        token,
+        body: {},
+      }),
+    onSuccess: async (job) => {
+      setCloseResult(job)
+      setConfirmClose(false)
+      // Keep Modal mounted with closeResult; refresh org list only after the user dismisses it.
+      if (job.status === 'completed') {
+        toast.success('Филиал закрыт')
+        setPendingListRefresh(true)
+        await qc.setQueryData(['branch-close-preflight', branch.id], (prev: BranchClosePreflight | undefined) =>
+          prev
+            ? {
+                ...prev,
+                active: false,
+                already_closed: true,
+                can_close: false,
+                latest_job_status: 'completed',
+                latest_job_id: job.id,
+              }
+            : prev,
+        )
+      } else if (job.status === 'failed' || job.status === 'blocked') {
+        await closeInfo.refetch()
+      } else if (job.status === 'running') {
+        await closeInfo.refetch()
+      }
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось закрыть филиал')),
+  })
+
+  const jobStatus = closeResult?.status || closeInfo.data?.latest_job_status
+  const needsResume = jobStatus === 'failed' || (isClosed && jobStatus === 'blocked')
+  const isRunning = jobStatus === 'running' || closeBranch.isPending
+
+  const openCloseModal = useCallback(() => {
+    setError(null)
+    setConfirmClose(false)
+    setCloseResult(null)
+    setCloseOpen(true)
+  }, [])
+
+  const closeModal = useCallback(() => {
+    setCloseOpen(false)
+    setConfirmClose(false)
+    const shouldRefresh = pendingListRefresh || closeResult?.status === 'completed'
+    setPendingListRefresh(false)
+    setCloseResult(null)
+    if (shouldRefresh) {
+      void onChanged()
+    }
+  }, [onChanged, pendingListRefresh, closeResult?.status])
+
+  const pf = closeOpen ? closeInfo.data : undefined
+  const blockers = pf?.blockers ?? []
+  const blocked = blockers.length > 0
+  const preflightPending = closeOpen && closeInfo.isFetching && !closeInfo.data
+
   return (
     <article className="card stack-sm" data-testid="settings-branch-row">
-      <strong>{branch.name}</strong>
-      <p className="muted">
-        {branch.city}, {branch.address_line}
-        {' · '}
-        {branch.published ? 'опубликован' : 'скрыт'}
-      </p>
-      {error && <ErrorBanner error={error} />}
-      {ready.data && !ready.data.ready && (
-        <p className="muted">Не готов: {ready.data.missing.join(', ')}</p>
-      )}
-      <div className="field">
-        <label htmlFor={`bp-${branch.id}`}>Телефон филиала</label>
-        <input id={`bp-${branch.id}`} value={phone} onChange={(e) => setPhone(e.target.value)} />
-      </div>
-      <div className="row gap wrap">
-        <button type="button" className="btn btn-secondary" disabled={savePhone.isPending} onClick={() => savePhone.mutate()}>
-          Сохранить телефон
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          data-testid="settings-publish-branch"
-          disabled={publish.isPending || !ready.data?.ready || Boolean(branch.published)}
-          onClick={() => publish.mutate(true)}
-        >
-          Опубликовать филиал
-        </button>
-        {branch.published && (
+      <div className="row between gap" style={{ alignItems: 'flex-start' }}>
+        <div className="stack-sm" style={{ minWidth: 0, flex: 1 }}>
+          <strong style={{ overflowWrap: 'anywhere' }}>{branch.name}</strong>
+          <p className="muted">
+            {branch.city}, {branch.address_line}
+            {' · '}
+            {isRunning ? 'закрытие выполняется' : isClosed || closeResult?.status === 'completed' ? 'закрыт' : branch.published ? 'опубликован' : 'скрыт'}
+            {needsResume ? ' · ошибка закрытия' : ''}
+          </p>
+        </div>
+        {(!isClosed || needsResume) && !isRunning && closeResult?.status !== 'completed' && Boolean(closeInfo.data) && (
           <button
             type="button"
-            className="btn btn-secondary"
-            data-testid="settings-unpublish-branch"
-            disabled={publish.isPending}
-            onClick={() => publish.mutate(false)}
+            className="btn btn-secondary btn-icon"
+            data-testid="settings-close-branch"
+            aria-label={needsResume ? `Повторить закрытие филиала ${branch.name}` : `Закрыть филиал ${branch.name}`}
+            style={{ minWidth: 44, minHeight: 44, flexShrink: 0 }}
+            onClick={openCloseModal}
           >
-            Скрыть филиал
+            ×
           </button>
         )}
       </div>
+      {isRunning && (
+        <p className="state-box" data-testid="branch-close-running-badge" role="status">
+          Закрытие выполняется…
+        </p>
+      )}
+      {needsResume && !isRunning && (
+        <p className="state-box" data-testid="branch-close-failed-badge">
+          Закрытие не завершено: {closeInfo.data?.latest_job_error || 'повторите операцию'}
+        </p>
+      )}
+      {error && <ErrorBanner error={error} />}
+      {ready.data && !ready.data.ready && !isClosed && (
+        <p className="muted">Не готов: {ready.data.missing.join(', ')}</p>
+      )}
+      {!isClosed && closeResult?.status !== 'completed' && (
+        <>
+          <div className="field">
+            <label htmlFor={`bp-${branch.id}`}>Телефон филиала</label>
+            <input id={`bp-${branch.id}`} value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </div>
+          <div className="row gap wrap">
+            <button type="button" className="btn btn-secondary" disabled={savePhone.isPending} onClick={() => savePhone.mutate()}>
+              Сохранить телефон
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="settings-publish-branch"
+              disabled={publish.isPending || !ready.data?.ready || Boolean(branch.published)}
+              onClick={() => publish.mutate(true)}
+            >
+              Опубликовать филиал
+            </button>
+            {branch.published && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                data-testid="settings-unpublish-branch"
+                disabled={publish.isPending}
+                onClick={() => publish.mutate(false)}
+              >
+                Скрыть филиал
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      <Modal
+        open={closeOpen}
+        onClose={closeModal}
+        title="Закрытие филиала"
+        size="md"
+        closeOnBackdrop={!closeBranch.isPending && closeResult?.status !== 'completed'}
+      >
+        {preflightPending && <div className="state-box">Проверяем последствия…</div>}
+        {closeInfo.isError && closeOpen && !closeResult && (
+          <ErrorBanner error={closeInfo.error} fallbackTitle="Не удалось загрузить проверку" />
+        )}
+        {pf && !closeResult && (
+          <div className="stack" data-testid="branch-close-preflight">
+            <p>
+              Филиал <strong style={{ overflowWrap: 'anywhere' }}>{pf.branch_name}</strong>
+            </p>
+            <ul className="stack-sm" style={{ margin: 0, paddingLeft: 18 }}>
+              <li data-testid="branch-close-future-count">Будущих записей к отмене: {pf.future_appointments}</li>
+              <li data-testid="branch-close-masters-count">Затронутых мастеров: {pf.masters_affected}</li>
+              <li>Контакт для клиентов: {pf.contact_display}</li>
+            </ul>
+            {pf.will_unpublish_org && (
+              <p className="state-box" data-testid="branch-close-last-branch">
+                Это последний активный филиал — салон будет снят с публикации. История сохранится.
+              </p>
+            )}
+            {blocked && (
+              <div className="stack-sm" data-testid="branch-close-blockers">
+                <p className="muted">Закрытие недоступно, пока не завершены операции:</p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {blockers.map((b) => (
+                    <li key={b.code}>
+                      {b.label}: {b.count}
+                      {b.href ? (
+                        <>
+                          {' '}
+                          <Link to={b.href}>Открыть</Link>
+                        </>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {pf.latest_job_status === 'running' && (
+              <p className="state-box" data-testid="branch-close-running" role="status">
+                Закрытие выполняется…
+              </p>
+            )}
+            {(pf.latest_job_status === 'failed' || (pf.already_closed && pf.latest_job_status === 'blocked')) && (
+              <p className="state-box" data-testid="branch-close-resume-hint">
+                Предыдущая попытка не завершилась{pf.latest_job_error ? `: ${pf.latest_job_error}` : ''}. Можно возобновить.
+              </p>
+            )}
+            {!blocked && pf.can_close && pf.latest_job_status !== 'running' && (
+              <label className="row gap" style={{ alignItems: 'flex-start' }}>
+                <input
+                  type="checkbox"
+                  data-testid="branch-close-confirm"
+                  checked={confirmClose}
+                  onChange={(e) => setConfirmClose(e.target.checked)}
+                  style={{ marginTop: 4, minWidth: 20, minHeight: 20 }}
+                />
+                <span>
+                  {needsResume
+                    ? 'Подтверждаю возобновление закрытия филиала.'
+                    : 'Понимаю: будущие записи будут отменены, филиал станет недоступен для новых записей, данные сохранятся.'}
+                </span>
+              </label>
+            )}
+            {pf.already_closed && pf.latest_job_status === 'completed' && (
+              <p className="muted">Филиал уже закрыт.</p>
+            )}
+          </div>
+        )}
+        {closeResult && (
+          <div className="stack-sm" data-testid="branch-close-result">
+            {closeResult.status === 'running' && (
+              <p className="state-box" role="status" data-testid="branch-close-running-state">
+                Закрытие выполняется…
+              </p>
+            )}
+            {closeResult.status === 'completed' && (
+              <p className="state-box success" role="status">
+                Филиал закрыт
+                {typeof closeResult.result?.cancelled_appointments === 'number'
+                  ? `. Отменено записей: ${closeResult.result.cancelled_appointments}`
+                  : ''}
+                {closeResult.org_unpublished ? '. Салон снят с публикации.' : ''}
+              </p>
+            )}
+            {closeResult.status === 'blocked' && (
+              <p className="state-box">Закрытие заблокировано незавершёнными операциями.</p>
+            )}
+            {closeResult.status === 'failed' && (
+              <ErrorBanner error={closeResult.error_message || 'Ошибка закрытия филиала'} />
+            )}
+          </div>
+        )}
+        <div className="row gap wrap" style={{ marginTop: 12 }}>
+          <button type="button" className="btn btn-secondary" onClick={closeModal} disabled={closeBranch.isPending}>
+            {closeResult?.status === 'completed' ? 'Готово' : 'Отмена'}
+          </button>
+          {!closeResult && !blocked && pf && pf.can_close && pf.latest_job_status !== 'running' && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="branch-close-submit"
+              disabled={!confirmClose || closeBranch.isPending}
+              onClick={() => closeBranch.mutate()}
+            >
+              {closeBranch.isPending ? 'Закрываем…' : needsResume ? 'Возобновить закрытие' : 'Закрыть филиал'}
+            </button>
+          )}
+        </div>
+      </Modal>
     </article>
   )
 }

@@ -106,6 +106,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production-32chars}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       IDENTITY_URL: http://identity:8080
+      BOOKING_URL: http://booking:8080
+      MARKETPLACE_URL: http://marketplace:8080
+      COMMERCE_URL: http://commerce:8080
       MIGRATIONS_DIR: /migrations
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LOG_LEVEL: info

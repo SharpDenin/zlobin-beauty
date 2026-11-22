@@ -75,6 +75,7 @@ func main() {
 	mux.Handle("/v1/organizations/", organizations)
 	mux.Handle("/v1/branches", organizations)
 	mux.Handle("/v1/branches/", organizations)
+	mux.Handle("/v1/branch-close-jobs/", organizations)
 	mux.Handle("/v1/suppliers", organizations)
 	mux.Handle("/v1/suppliers/", organizations)
 	mux.Handle("/v1/me/master", marketplace)

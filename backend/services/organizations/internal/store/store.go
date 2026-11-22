@@ -238,13 +238,13 @@ func (s *Store) ListPickupBranches(ctx context.Context, city string) ([]domain.B
 		rows, err = s.pool.Query(ctx, `
 SELECT `+branchCols+`
 FROM branches
-WHERE published = TRUE AND pickup_enabled = TRUE AND lower(city) = lower($1)
+WHERE published = TRUE AND pickup_enabled = TRUE AND active = TRUE AND lower(city) = lower($1)
 ORDER BY name`, city)
 	} else {
 		rows, err = s.pool.Query(ctx, `
 SELECT `+branchCols+`
 FROM branches
-WHERE published = TRUE AND pickup_enabled = TRUE
+WHERE published = TRUE AND pickup_enabled = TRUE AND active = TRUE
 ORDER BY city, name`)
 	}
 	if err != nil {

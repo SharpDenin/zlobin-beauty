@@ -11,6 +11,7 @@ export type BranchCard = {
   phone: string
   timezone?: string
   published?: boolean
+  active?: boolean
   pickup_enabled?: boolean
   latitude?: number | null
   longitude?: number | null
@@ -178,7 +179,7 @@ export async function fetchPickupBranches(
   coords?: { lat: number; lng: number } | null,
 ): Promise<BranchCard[]> {
   const fromMine = () =>
-    (fallbackBranches ?? []).filter((b) => b.published !== false && b.pickup_enabled === true)
+    (fallbackBranches ?? []).filter((b) => b.published !== false && b.pickup_enabled === true && b.active !== false)
 
   try {
     const res = await apiRequest<{ items: BranchCard[] }>(

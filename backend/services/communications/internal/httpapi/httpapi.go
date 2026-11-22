@@ -67,10 +67,11 @@ func (a *API) createNotification(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID     string  `json:"user_id"`
 		Type       string  `json:"type"`
-		Title      string  `json:"title"`
-		Body       string  `json:"body"`
-		EntityType string  `json:"entity_type"`
-		EntityID   *string `json:"entity_id"`
+		Title          string  `json:"title"`
+		Body           string  `json:"body"`
+		EntityType     string  `json:"entity_type"`
+		EntityID       *string `json:"entity_id"`
+		IdempotencyKey string  `json:"idempotency_key"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -90,7 +91,7 @@ func (a *API) createNotification(w http.ResponseWriter, r *http.Request) {
 		}
 		entityID = &id
 	}
-	if err := a.svc.CreateNotification(r.Context(), userID, req.Type, req.Title, req.Body, req.EntityType, entityID); err != nil {
+	if err := a.svc.CreateNotificationIdempotent(r.Context(), userID, req.Type, req.Title, req.Body, req.EntityType, entityID, nil, req.IdempotencyKey); err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}

@@ -1060,10 +1060,14 @@ func (s *Service) isBranchPublished(ctx context.Context, branchID uuid.UUID) (bo
 		return false, apperr.Internal(fmt.Errorf("branch publication check status %d: %s", resp.StatusCode, string(body)))
 	}
 	var out struct {
-		BranchPublished bool `json:"branch_published"`
+		BranchPublished bool  `json:"branch_published"`
+		BranchActive    *bool `json:"branch_active"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return false, apperr.Internal(err)
+	}
+	if out.BranchActive != nil && !*out.BranchActive {
+		return false, nil
 	}
 	return out.BranchPublished, nil
 }

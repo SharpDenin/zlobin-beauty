@@ -112,7 +112,7 @@ export function RecurringPage() {
     enabled: Boolean(accessToken && supplierId && !isSupplier),
   })
 
-  const pickupBranches = buyerOrg?.branches.filter((b) => b.pickup_enabled) ?? buyerOrg?.branches ?? []
+  const pickupBranches = buyerOrg?.branches.filter((b) => b.pickup_enabled && b.active !== false) ?? buyerOrg?.branches.filter((b) => b.active !== false) ?? []
   const pickupBranchId = useMemo(
     () => branchId || pickupBranches[0]?.id || '',
     [branchId, pickupBranches],

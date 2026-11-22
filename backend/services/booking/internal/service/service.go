@@ -787,6 +787,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		}
 	}
 
+	if err := s.requireBranchBookable(ctx, branchID); err != nil {
+		if bookedOccurrence {
+			_ = s.releaseOccurrence(ctx, *occurrenceID)
+		}
+		return nil, err
+	}
+
 	loc := s.fetchBranchLocation(ctx, branchID)
 	locName, locCity, locAddr, locTZ := "", "", "", defaultTimezone
 	if loc != nil {
@@ -1167,6 +1174,9 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 	if err := rescheduleEligibility(a); err != nil {
 		return nil, err
 	}
+	if err := s.requireBranchBookable(ctx, a.BranchID); err != nil {
+		return nil, err
+	}
 	duration := a.DurationMinutes
 	if durationMinutes != nil {
 		if *durationMinutes < 15 {
@@ -1283,24 +1293,36 @@ func (s *Service) notifyVisitCompleted(ctx context.Context, a *domain.Appointmen
 }
 
 func (s *Service) notify(ctx context.Context, userID uuid.UUID, typ, title, body string, entityID uuid.UUID) {
+	s.notifyIdempotent(ctx, userID, typ, title, body, entityID, "")
+}
+
+func (s *Service) notifyIdempotent(ctx context.Context, userID uuid.UUID, typ, title, body string, entityID uuid.UUID, idemKey string) error {
 	if s.communicationsURL == "" || s.internalToken == "" {
-		return
+		return nil
 	}
-	payload, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"user_id": userID.String(), "type": typ, "title": title, "body": body,
 		"entity_type": "appointment", "entity_id": entityID.String(),
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.communicationsURL+"/v1/internal/notifications", strings.NewReader(string(payload)))
+	}
+	if strings.TrimSpace(idemKey) != "" {
+		payload["idempotency_key"] = idemKey
+	}
+	raw, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.communicationsURL+"/v1/internal/notifications", strings.NewReader(string(raw)))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Internal-Token", s.internalToken)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return
+		return err
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("notifications status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (s *Service) createVisitRecord(ctx context.Context, a *domain.Appointment) {

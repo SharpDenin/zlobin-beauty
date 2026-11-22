@@ -1292,14 +1292,14 @@ func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appoint
 	return a, nil
 }
 
-func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, from, to *time.Time) ([]domain.Appointment, error) {
+func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, from, to *time.Time, hiddenOnly bool) ([]domain.Appointment, error) {
 	asMaster := role == "master"
 	var items []domain.Appointment
 	var err error
 	if from != nil && to != nil {
-		items, err = s.store.ListForUserInRange(ctx, userID, asMaster, from.UTC(), to.UTC())
+		items, err = s.store.ListForUserInRange(ctx, userID, asMaster, from.UTC(), to.UTC(), hiddenOnly)
 	} else {
-		items, err = s.store.ListForUser(ctx, userID, asMaster)
+		items, err = s.store.ListForUser(ctx, userID, asMaster, hiddenOnly)
 	}
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -1308,6 +1308,34 @@ func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, f
 		items = []domain.Appointment{}
 	}
 	return items, nil
+}
+
+func (s *Service) HideAppointment(ctx context.Context, id, actor uuid.UUID) error {
+	if _, err := s.Get(ctx, id, actor); err != nil {
+		return err
+	}
+	if err := s.store.HideAppointmentForUser(ctx, id, actor, s.now().UTC()); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) UnhideAppointment(ctx context.Context, id, actor uuid.UUID) error {
+	if _, err := s.Get(ctx, id, actor); err != nil {
+		return err
+	}
+	if err := s.store.UnhideAppointmentForUser(ctx, id, actor); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) IsHiddenForUser(ctx context.Context, id, actor uuid.UUID) (bool, error) {
+	ok, err := s.store.IsAppointmentHiddenForUser(ctx, id, actor)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ok, nil
 }
 
 func (s *Service) isOrgOwnerOrAdmin(ctx context.Context, orgID, actor uuid.UUID) bool {
@@ -1331,7 +1359,7 @@ func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, f
 		domain.StatusCancelledBySalon,
 		domain.StatusNoShow,
 	}
-	items, err := s.store.ListByOrgInRange(ctx, orgID, from.UTC(), to.UTC(), statuses)
+	items, err := s.store.ListByOrgInRangeForViewer(ctx, orgID, actor, from.UTC(), to.UTC(), statuses, false)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}

@@ -281,4 +281,38 @@ test.describe('production messenger', () => {
     await clientCtx.close()
     await masterCtx.close()
   })
+
+  test('mobile: delete hides message for actor; forward creates copy', async ({ page }, info) => {
+    test.skip(info.project.name !== 'phone-390', 'mobile viewport priority')
+    if (!(await apiHealthy())) {
+      test.skip(true, `API unhealthy at ${api}`)
+    }
+    const masterLogin = await fetch(`${api}/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'master1@demo.local', password }),
+    })
+    if (!masterLogin.ok) test.skip(true, 'seed login unavailable')
+    const masterSession = await masterLogin.json() as { access_token: string; user: { id: string } }
+    const profile = await fetch(`${api}/v1/me/master`, { headers: { Authorization: `Bearer ${masterSession.access_token}` } })
+    const prof = await profile.json() as { master?: { id: string } }
+    expect(prof.master?.id).toBeTruthy()
+
+    await loginUI(page, 'client1@demo.local')
+    await page.goto(`/masters/${prof.master!.id}`)
+    await page.getByTestId('write-master').click()
+    await expect(page).toHaveURL(/\/messages\//, { timeout: 15_000 })
+    const text = `Удалить/переслать ${Date.now()}`
+    await page.getByTestId('message-composer').fill(text)
+    await page.getByTestId('send-message').click()
+    const bubble = page.getByTestId('message-history').getByText(text)
+    await expect(bubble).toBeVisible({ timeout: 10_000 })
+    const menuBtn = page.getByTestId('message-history').locator('[data-testid^="message-menu-"]').last()
+    await expect(menuBtn).toBeVisible()
+    await menuBtn.click()
+    await expect(page.getByTestId('message-forward')).toBeVisible()
+    await expect(page.getByTestId('message-delete')).toBeVisible()
+    await page.getByTestId('message-delete').click()
+    await expect(page.getByTestId('message-history').getByText(text)).toHaveCount(0, { timeout: 10_000 })
+  })
 })

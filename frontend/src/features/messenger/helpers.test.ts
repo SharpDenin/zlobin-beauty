@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareMessages, mergeConversationMessages, messageDedupeKey } from '@/features/messenger/helpers'
+import { compareMessages, lastMessagePreview, mergeConversationMessages, messageDedupeKey } from '@/features/messenger/helpers'
 import type { ChatMessage } from '@/features/messenger/types'
 
 function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'created_at'>): ChatMessage {
@@ -10,6 +10,14 @@ function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'created_a
     ...partial,
   }
 }
+
+describe('lastMessagePreview', () => {
+  it('shows deleted and forwarded previews', () => {
+    expect(lastMessagePreview({ body: 'x', kind: 'text', deleted_at: '2026-01-01T00:00:00Z' })).toBe('Сообщение удалено')
+    expect(lastMessagePreview({ body: 'Привет', kind: 'text', forwarded_from_message_id: 'm1' })).toBe('Переслано · Привет')
+    expect(lastMessagePreview({ body: '', kind: 'image', forwarded_from_message_id: 'm1' })).toBe('Переслано · Фото')
+  })
+})
 
 describe('messenger message order + merge', () => {
   it('orders by created_at then id when timestamps collide', () => {

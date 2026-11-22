@@ -52,6 +52,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/plans/confirm", auth(http.HandlerFunc(a.confirmVisitPlan)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/calendar/appointments", auth(http.HandlerFunc(a.calendarAppointments)))
+	mux.Handle("POST /v1/appointments/{id}/hide", auth(http.HandlerFunc(a.hideAppointment)))
+	mux.Handle("POST /v1/appointments/{id}/unhide", auth(http.HandlerFunc(a.unhideAppointment)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
 	mux.Handle("GET /v1/appointments/{id}/group", auth(http.HandlerFunc(a.visitGroup)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
@@ -559,12 +561,44 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("from and to must be provided together"))
 		return
 	}
-	items, err := a.svc.ListMine(r.Context(), claims.UserID, role, fromPtr, toPtr)
+	hiddenOnly := false
+	if v := strings.TrimSpace(r.URL.Query().Get("hidden")); v == "1" || strings.EqualFold(v, "true") {
+		hiddenOnly = true
+	}
+	items, err := a.svc.ListMine(r.Context(), claims.UserID, role, fromPtr, toPtr, hiddenOnly)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": a.appointmentDTOs(r, items)})
+}
+
+func (a *API) hideAppointment(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.HideAppointment(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) unhideAppointment(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.UnhideAppointment(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
@@ -604,7 +638,11 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, a.namedAppointment(r, *item))
+	dto := a.namedAppointment(r, *item)
+	if hidden, herr := a.svc.IsHiddenForUser(r.Context(), id, claims.UserID); herr == nil {
+		dto["hidden_for_me"] = hidden
+	}
+	httpx.JSON(w, http.StatusOK, dto)
 }
 
 func (a *API) confirm(w http.ResponseWriter, r *http.Request) {

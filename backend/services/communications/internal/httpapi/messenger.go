@@ -120,14 +120,26 @@ func (a *API) listMessages(w http.ResponseWriter, r *http.Request) {
 	limit, _ := parseLimitOffset(r.URL.Query().Get("limit"), "0")
 	var before *time.Time
 	if v := r.URL.Query().Get("before"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			t, err = time.Parse(time.RFC3339, v)
+		}
 		if err != nil {
 			httpx.WriteError(w, r, a.log, apperr.Validation("invalid before timestamp"))
 			return
 		}
 		before = &t
 	}
-	items, hasMore, err := a.svc.ListMessages(r.Context(), id, claims.UserID, limit, before)
+	var beforeID *uuid.UUID
+	if v := r.URL.Query().Get("before_id"); v != "" {
+		parsed, err := uuid.Parse(v)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("invalid before_id"))
+			return
+		}
+		beforeID = &parsed
+	}
+	items, hasMore, err := a.svc.ListMessages(r.Context(), id, claims.UserID, limit, before, beforeID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -147,8 +159,9 @@ func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Body    string  `json:"body"`
-		MediaID *string `json:"media_id"`
+		Body     string  `json:"body"`
+		MediaID  *string `json:"media_id"`
+		ClientID string  `json:"client_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -159,7 +172,9 @@ func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid media_id"))
 		return
 	}
-	m, err := a.svc.SendMessage(r.Context(), id, claims.UserID, service.SendMessageInput{Body: req.Body, MediaID: mediaID})
+	m, err := a.svc.SendMessage(r.Context(), id, claims.UserID, service.SendMessageInput{
+		Body: req.Body, MediaID: mediaID, ClientID: req.ClientID,
+	})
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -269,9 +284,13 @@ func messageDTO(m domain.Message) map[string]any {
 	if m.MediaID != nil {
 		mediaID = m.MediaID.String()
 	}
-	return map[string]any{
+	dto := map[string]any{
 		"id": m.ID.String(), "conversation_id": m.ConversationID.String(),
 		"sender_user_id": m.SenderUserID.String(), "kind": kind, "body": body, "media_id": mediaID,
 		"created_at": m.CreatedAt, "edited_at": m.EditedAt, "deleted_at": m.DeletedAt,
 	}
+	if m.ClientID != nil && *m.ClientID != "" {
+		dto["client_id"] = *m.ClientID
+	}
+	return dto
 }

@@ -243,7 +243,12 @@ function sendForm(form: FormData, token: string | null, onProgress?: UploadProgr
     }
     xhr.onerror = () => {
       finish()
-      reject(networkApiError())
+      // XHR onerror is not proof of offline (CORS/gateway/mixed-content also fire it).
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        reject(networkApiError())
+        return
+      }
+      reject(new ApiError('upload failed', 'upload_failed', 0, { technicalMessage: 'xhr network error while online' }))
     }
     xhr.onabort = () => {
       finish()

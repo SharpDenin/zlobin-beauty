@@ -16,7 +16,6 @@ func isProfessional(roles []string) bool {
 	return auth.HasRole(&auth.Claims{Roles: roles}, "master") ||
 		auth.HasRole(&auth.Claims{Roles: roles}, "supplier") ||
 		auth.HasRole(&auth.Claims{Roles: roles}, "supplier_rep") ||
-		auth.HasRole(&auth.Claims{Roles: roles}, "salon_owner") ||
 		auth.HasRole(&auth.Claims{Roles: roles}, "salon_admin") ||
 		auth.HasRole(&auth.Claims{Roles: roles}, "system_admin")
 }

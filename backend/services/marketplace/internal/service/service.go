@@ -54,21 +54,22 @@ func (s *Service) WithCommerce(commerceURL string) *Service {
 }
 
 type UpsertMasterInput struct {
-	UserID            uuid.UUID
-	OrganizationID    uuid.UUID
-	BranchID          *uuid.UUID
-	DisplayName       string
-	Bio               string
-	Specializations   []string
-	City              string
-	ExperienceYears   int
-	Education         string
-	PhotoMediaID      *uuid.UUID
-	WorkType          string
-	WorkTypes         *[]string // nil = field omitted (preserve existing); non-nil replaces formats
-	Published         bool
-	AccessToken       string
-	ProfessionTypeIDs *[]uuid.UUID
+	UserID             uuid.UUID
+	OrganizationID     uuid.UUID
+	BranchID           *uuid.UUID
+	DisplayName        string
+	Bio                string
+	Specializations    []string
+	CuttingTechniques  *[]string // nil = field omitted (preserve); non-nil replaces (may be empty)
+	City               string
+	ExperienceYears    int
+	Education          string
+	PhotoMediaID       *uuid.UUID
+	WorkType           string
+	WorkTypes          *[]string // nil = field omitted (preserve existing); non-nil replaces formats
+	Published          bool
+	AccessToken        string
+	ProfessionTypeIDs  *[]uuid.UUID
 }
 
 // Canonical master work formats (employment model). Ownership and org membership are separate.
@@ -279,6 +280,13 @@ func (s *Service) UpsertMaster(ctx context.Context, in UpsertMasterInput) (*doma
 		return nil, err
 	}
 	m.Specializations = specs
+	if in.CuttingTechniques != nil {
+		m.CuttingTechniques = domain.NormalizeCuttingTechniques(*in.CuttingTechniques)
+	} else if existing != nil {
+		m.CuttingTechniques = existing.CuttingTechniques
+	} else {
+		m.CuttingTechniques = []string{}
+	}
 	if m.Published {
 		ready, err := s.evaluateReadiness(ctx, &m, in.AccessToken)
 		if err != nil {

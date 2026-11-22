@@ -272,9 +272,9 @@ func (s *Store) InsertMessage(ctx context.Context, m domain.Message) error {
 		kind = domain.MessageKindText
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO messages(id, conversation_id, sender_user_id, kind, body, media_id, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		m.ID, m.ConversationID, m.SenderUserID, kind, m.Body, m.MediaID, m.CreatedAt); err != nil {
+INSERT INTO messages(id, conversation_id, sender_user_id, kind, body, media_id, client_id, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		m.ID, m.ConversationID, m.SenderUserID, kind, m.Body, m.MediaID, m.ClientID, m.CreatedAt); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE conversations SET updated_at=$2 WHERE id=$1`, m.ConversationID, m.CreatedAt); err != nil {
@@ -283,7 +283,9 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 	return tx.Commit(ctx)
 }
 
-func (s *Store) ListMessages(ctx context.Context, conversationID uuid.UUID, limit int, before *time.Time) ([]domain.Message, error) {
+const messageSelectCols = `id, conversation_id, sender_user_id, kind, body, media_id, client_id, created_at, edited_at, deleted_at`
+
+func (s *Store) ListMessages(ctx context.Context, conversationID uuid.UUID, limit int, before *time.Time, beforeID *uuid.UUID) ([]domain.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -292,16 +294,23 @@ func (s *Store) ListMessages(ctx context.Context, conversationID uuid.UUID, limi
 	}
 	var rows pgx.Rows
 	var err error
-	if before != nil {
+	if before != nil && beforeID != nil {
 		rows, err = s.pool.Query(ctx, `
-SELECT id, conversation_id, sender_user_id, kind, body, media_id, created_at, edited_at, deleted_at
+SELECT `+messageSelectCols+`
+FROM messages
+WHERE conversation_id=$1 AND (created_at < $2 OR (created_at = $2 AND id < $3))
+ORDER BY created_at DESC, id DESC
+LIMIT $4`, conversationID, *before, *beforeID, limit)
+	} else if before != nil {
+		rows, err = s.pool.Query(ctx, `
+SELECT `+messageSelectCols+`
 FROM messages
 WHERE conversation_id=$1 AND created_at < $2
 ORDER BY created_at DESC, id DESC
 LIMIT $3`, conversationID, *before, limit)
 	} else {
 		rows, err = s.pool.Query(ctx, `
-SELECT id, conversation_id, sender_user_id, kind, body, media_id, created_at, edited_at, deleted_at
+SELECT `+messageSelectCols+`
 FROM messages
 WHERE conversation_id=$1
 ORDER BY created_at DESC, id DESC
@@ -331,8 +340,28 @@ LIMIT $2`, conversationID, limit)
 
 func (s *Store) LastMessage(ctx context.Context, conversationID uuid.UUID) (*domain.Message, error) {
 	row := s.pool.QueryRow(ctx, `
-SELECT id, conversation_id, sender_user_id, kind, body, media_id, created_at, edited_at, deleted_at
+SELECT `+messageSelectCols+`
 FROM messages WHERE conversation_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1`, conversationID)
+	m, err := scanMessage(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return m, nil
+}
+
+func (s *Store) FindMessageByClientID(ctx context.Context, conversationID, sender uuid.UUID, clientID string) (*domain.Message, error) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return nil, nil
+	}
+	row := s.pool.QueryRow(ctx, `
+SELECT `+messageSelectCols+`
+FROM messages
+WHERE conversation_id=$1 AND sender_user_id=$2 AND client_id=$3
+LIMIT 1`, conversationID, sender, clientID)
 	m, err := scanMessage(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -393,11 +422,19 @@ func scanConversation(row interface{ Scan(dest ...any) error }) (*domain.Convers
 
 func scanMessage(row interface{ Scan(dest ...any) error }) (*domain.Message, error) {
 	var m domain.Message
-	if err := row.Scan(&m.ID, &m.ConversationID, &m.SenderUserID, &m.Kind, &m.Body, &m.MediaID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.ConversationID, &m.SenderUserID, &m.Kind, &m.Body, &m.MediaID, &m.ClientID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
 		return nil, err
 	}
 	if m.Kind == "" {
 		m.Kind = domain.MessageKindText
+	}
+	if m.ClientID != nil {
+		trimmed := strings.TrimSpace(*m.ClientID)
+		if trimmed == "" {
+			m.ClientID = nil
+		} else {
+			m.ClientID = &trimmed
+		}
 	}
 	return &m, nil
 }

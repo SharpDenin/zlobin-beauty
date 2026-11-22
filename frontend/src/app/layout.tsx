@@ -77,6 +77,94 @@ function linkActive(pathname: string, to: string, end?: boolean) {
   return pathname === to || pathname.startsWith(`${to}/`)
 }
 
+function NavLeaf({
+  link,
+  pathname,
+  onNavigate,
+  className,
+  nested,
+}: {
+  link: NavLink
+  pathname: string
+  onNavigate?: () => void
+  className?: string
+  nested?: boolean
+}) {
+  const messenger = useMessengerOptional()
+  const messagesActive = link.to === '/messages' && Boolean(messenger?.overlayOpen)
+  return (
+    <Link
+      to={link.to === '/more' ? '#' : link.to}
+      className={`${className ?? ''} ${nested ? 'nav-link-nested' : ''} ${linkActive(pathname, link.to, link.end) || messagesActive ? 'active' : ''}`.trim()}
+      aria-current={linkActive(pathname, link.to, link.end) ? 'page' : undefined}
+      onClick={(e) => {
+        if (link.to === '/more') {
+          e.preventDefault()
+          onNavigate?.()
+          return
+        }
+        if (link.to === '/messages' && messenger?.isDesktop) {
+          e.preventDefault()
+          messenger.openList()
+          onNavigate?.()
+          return
+        }
+        onNavigate?.()
+      }}
+    >
+      <NavIcon to={link.to} />
+      <span>{link.label}</span>
+      {link.to === '/messages' && (messenger?.unreadTotal ?? 0) > 0 && (
+        <span className="nav-unread" aria-label={`${messenger!.unreadTotal} непрочитанных`}>
+          {messenger!.unreadTotal > 99 ? '99+' : messenger!.unreadTotal}
+        </span>
+      )}
+    </Link>
+  )
+}
+
+function NavGroup({
+  link,
+  pathname,
+  onNavigate,
+  className,
+}: {
+  link: NavLink
+  pathname: string
+  onNavigate?: () => void
+  className?: string
+}) {
+  const children = link.children ?? []
+  const childActive = children.some((c) => linkActive(pathname, c.to, c.end))
+  const [open, setOpen] = useState(childActive)
+
+  useEffect(() => {
+    if (childActive) setOpen(true)
+  }, [childActive])
+
+  return (
+    <div className={`nav-group${open ? ' is-open' : ''}${childActive ? ' has-active' : ''}`} data-testid={`nav-group-${link.label}`}>
+      <button
+        type="button"
+        className={`${className ?? ''} nav-group-toggle${childActive ? ' active' : ''}`.trim()}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <NavIcon to={link.to} />
+        <span>{link.label}</span>
+        <span className="nav-group-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="nav-group-children stack-sm">
+          {children.map((c) => (
+            <NavLeaf key={`${link.label}-${c.to}-${c.label}`} link={c} pathname={pathname} onNavigate={onNavigate} className={className} nested />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NavLinks({
   links,
   pathname,
@@ -88,40 +176,22 @@ function NavLinks({
   onNavigate?: () => void
   className?: string
 }) {
-  const messenger = useMessengerOptional()
   return (
     <>
       {links.map((l) => {
-        const messagesActive = l.to === '/messages' && Boolean(messenger?.overlayOpen)
+        if (l.children?.length) {
+          return (
+            <NavGroup
+              key={`group-${l.label}-${l.to}`}
+              link={l}
+              pathname={pathname}
+              onNavigate={onNavigate}
+              className={className}
+            />
+          )
+        }
         return (
-        <Link
-          key={l.to}
-          to={l.to === '/more' ? '#' : l.to}
-          className={`${className ?? ''} ${linkActive(pathname, l.to, l.end) || messagesActive ? 'active' : ''}`.trim()}
-          aria-current={linkActive(pathname, l.to, l.end) ? 'page' : undefined}
-          onClick={(e) => {
-            if (l.to === '/more') {
-              e.preventDefault()
-              onNavigate?.()
-              return
-            }
-            if (l.to === '/messages' && messenger?.isDesktop) {
-              e.preventDefault()
-              messenger.openList()
-              onNavigate?.()
-              return
-            }
-            onNavigate?.()
-          }}
-        >
-          <NavIcon to={l.to} />
-          <span>{l.label}</span>
-          {l.to === '/messages' && (messenger?.unreadTotal ?? 0) > 0 && (
-            <span className="nav-unread" aria-label={`${messenger!.unreadTotal} непрочитанных`}>
-              {messenger!.unreadTotal > 99 ? '99+' : messenger!.unreadTotal}
-            </span>
-          )}
-        </Link>
+          <NavLeaf key={`${l.to}-${l.label}`} link={l} pathname={pathname} onNavigate={onNavigate} className={className} />
         )
       })}
     </>
@@ -139,7 +209,7 @@ function MoreDrawer({
   links: NavLink[]
   pathname: string
 }) {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const cabinet = useCabinet()
   const [navOrder, setNavOrder] = usePreference<string[]>('nav.order', [])
   const [editing, setEditing] = useState(false)
@@ -221,7 +291,7 @@ function MoreDrawer({
 
       {editing ? (
         <section className="stack-sm nav-order" data-testid="menu-order-editor">
-          <p className="muted">Перетащите за ручку. Порядок сохранится и для нижних вкладок.</p>
+          <p className="muted">Перетащите за ручку. Порядок сохранится в меню навигации.</p>
           {ordered.map((l, i) => (
             <div
               key={l.to}
@@ -255,16 +325,13 @@ function MoreDrawer({
       )}
 
       <div className="stack-sm more-footer">
-        <button
+        <Link
           className="btn btn-secondary btn-block"
-          type="button"
-          onClick={() => {
-            onClose()
-            void logout()
-          }}
+          to="/settings/account"
+          onClick={onClose}
         >
-          Выйти
-        </button>
+          Аккаунт и выход
+        </Link>
       </div>
     </Drawer>
   )
@@ -281,7 +348,7 @@ export function AppShell() {
 }
 
 function AppShellInner() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)
   const [desktopNav, setDesktopNav] = useState(() =>
@@ -305,7 +372,6 @@ function AppShellInner() {
     releaseOrphanedOverlayLock()
   }, [location.pathname])
 
-  const primary = cabinet.primary
   const secondary = cabinet.secondary
   const sideLinks = cabinet.side
 
@@ -323,7 +389,6 @@ function AppShellInner() {
   return (
     <div
       className={`app-shell${fillShell ? ' app-shell--fill' : ''}${homeRoute ? ' app-shell--home' : ''}`}
-      style={{ ['--bottom-nav-cols' as string]: String(primary.length) }}
     >
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
@@ -377,7 +442,7 @@ function AppShellInner() {
         </nav>
         <div style={{ marginTop: 'auto' }} className="stack-sm">
           <div className="muted">{user?.display_name}</div>
-          <button className="btn btn-secondary" type="button" onClick={() => void logout()}>Выйти</button>
+          <Link className="btn btn-secondary" to="/settings/account">Аккаунт</Link>
         </div>
       </aside>
       <div className="shell-main">
@@ -409,56 +474,16 @@ function AppShellInner() {
             >
               Меню
             </button>
-            {/* Desktop-only chrome kept for wide layouts where topbar is hidden anyway;
-                sidenav holds Premium / logout. Compact mobile keeps header short. */}
+            {/* Desktop-only chrome: topbar is hidden on ≥768px; sidenav holds Premium / account. */}
             <span className="topbar-desktop-only">
               <PremiumStatusLink compact />
               <span className="muted topbar-name">{user?.display_name}</span>
             </span>
-            <button
-              className="btn btn-secondary btn-compact topbar-logout"
-              type="button"
-              onClick={() => void logout()}
-              aria-label="Выйти"
-            >
-              Выйти
-            </button>
           </div>
         </header>
         <Outlet />
       </div>
-      {homeRoute ? null : (
-      <nav className="bottomnav" aria-label="Основная навигация">
-        {primary.map((l) => {
-          if (l.to === '/more') {
-            return (
-              <button
-                key={l.to}
-                type="button"
-                className={`nav-tab ${moreOpen ? 'active' : ''}`}
-                aria-expanded={moreOpen}
-                aria-haspopup="dialog"
-                onClick={() => setMoreOpen(true)}
-              >
-                <NavIcon to="/more" />
-                <span>{l.label}</span>
-              </button>
-            )
-          }
-          return (
-            <Link
-              key={l.to}
-              to={l.to}
-              className={linkActive(location.pathname, l.to, l.end) ? 'active' : ''}
-              aria-current={linkActive(location.pathname, l.to, l.end) ? 'page' : undefined}
-            >
-              <NavIcon to={l.to} />
-              <span>{l.label}</span>
-            </Link>
-          )
-        })}
-      </nav>
-      )}
+      {/* Bottom tab bar removed: navigation stays in Меню / sidenav so calendar and other fill routes reclaim vertical space. */}
       {!desktopNav && (
         <MoreDrawer
           open={moreOpen}

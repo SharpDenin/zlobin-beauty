@@ -13,7 +13,8 @@ import (
 
 func hasMasterJWTRole(roles []string) bool {
 	for _, r := range roles {
-		if r == "master" || r == "salon_owner" || r == "system_admin" {
+		// Identity salon_owner is not a master capability (ownership is membership-only).
+		if r == "master" || r == "system_admin" {
 			return true
 		}
 	}

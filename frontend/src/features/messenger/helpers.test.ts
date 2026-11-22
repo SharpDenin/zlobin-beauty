@@ -1,66 +1,63 @@
 import { describe, expect, it } from 'vitest'
-import {
-  bookingMasterUserId,
-  canSendMessage,
-  conversationTypeLabel,
-  emptyMessengerAction,
-  isNearBottom,
-  lastMessagePreview,
-  MAX_MESSAGE_CHARS,
-  peerInitials,
-} from '@/features/messenger/helpers'
+import { compareMessages, mergeConversationMessages, messageDedupeKey } from '@/features/messenger/helpers'
+import type { ChatMessage } from '@/features/messenger/types'
 
-describe('messenger helpers', () => {
-  it('labels conversation types in Russian', () => {
-    expect(conversationTypeLabel('client_master')).toBe('Клиент и мастер')
-    expect(conversationTypeLabel('master_supplier')).toBe('Мастер и поставщик')
+function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'created_at'>): ChatMessage {
+  return {
+    sender_user_id: 'u1',
+    kind: 'text',
+    body: partial.body ?? partial.id,
+    ...partial,
+  }
+}
+
+describe('messenger message order + merge', () => {
+  it('orders by created_at then id when timestamps collide', () => {
+    const a = msg({ id: 'b', created_at: '2026-08-30T10:00:00.000Z' })
+    const b = msg({ id: 'a', created_at: '2026-08-30T10:00:00.000Z' })
+    const c = msg({ id: 'c', created_at: '2026-08-30T10:00:01.000Z' })
+    expect([a, c, b].sort(compareMessages).map((m) => m.id)).toEqual(['a', 'b', 'c'])
   })
 
-  it('previews last message by kind when body is empty', () => {
-    expect(lastMessagePreview({ body: 'Привет', kind: 'text' })).toBe('Привет')
-    expect(lastMessagePreview({ body: '', kind: 'image' })).toBe('Фото')
-    expect(lastMessagePreview({ body: '  ', kind: 'video' })).toBe('Видео')
-    expect(lastMessagePreview(null)).toBe('Нет сообщений')
+  it('dedupes optimistic local against server client_id', () => {
+    const server = [
+      msg({ id: 'srv-1', client_id: 'local-1', created_at: '2026-08-30T10:00:02.000Z', body: 'hi' }),
+    ]
+    const local = [
+      msg({
+        id: 'local-1',
+        client_id: 'local-1',
+        created_at: '2026-08-30T10:00:01.500Z',
+        body: 'hi',
+        status: 'sending',
+      }),
+    ]
+    const merged = mergeConversationMessages([], server, local)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe('srv-1')
+    expect(merged[0].status).toBe('sent')
   })
 
-  it('builds initials and send rules', () => {
-    expect(peerInitials('Анна Волкова')).toBe('АВ')
-    expect(peerInitials('')).toBe('?')
-    expect(canSendMessage('  ', null)).toBe(false)
-    expect(canSendMessage('', new File(['x'], 'a.jpg', { type: 'image/jpeg' }))).toBe(true)
-    expect(canSendMessage('ok', null)).toBe(true)
-    expect(canSendMessage('я'.repeat(MAX_MESSAGE_CHARS + 1), null)).toBe(false)
+  it('keeps failed optimistic messages and appends newer server rows in order', () => {
+    const older = [msg({ id: 'm0', created_at: '2026-08-30T09:00:00.000Z', body: 'old' })]
+    const server = [msg({ id: 'm2', created_at: '2026-08-30T10:00:02.000Z', body: 'ok' })]
+    const local = [
+      msg({
+        id: 'local-fail',
+        client_id: 'local-fail',
+        created_at: '2026-08-30T10:00:01.000Z',
+        body: 'fail',
+        status: 'failed',
+      }),
+    ]
+    const merged = mergeConversationMessages(older, server, local)
+    expect(merged.map((m) => m.id)).toEqual(['m0', 'local-fail', 'm2'])
+    expect(messageDedupeKey(local[0])).toBe('c:local-fail')
   })
 
-  it('offers a role-specific empty action', () => {
-    expect(emptyMessengerAction('client')).toEqual({ label: 'Напишите мастеру', to: '/search' })
-    expect(emptyMessengerAction('private_master')).toEqual({ label: 'Связаться с поставщиком', to: '/cosmetics' })
-    expect(emptyMessengerAction('supplier')).toBeNull()
-  })
-
-  it('detects near-bottom scroll without jumping', () => {
-    const el = {
-      scrollHeight: 1000,
-      scrollTop: 900,
-      clientHeight: 80,
-    } as HTMLElement
-    expect(isNearBottom(el)).toBe(true)
-    el.scrollTop = 10
-    expect(isNearBottom(el)).toBe(false)
-  })
-
-  it('resolves booking master for client/model chats, not for master or supplier side', () => {
-    const conv = {
-      type: 'client_master',
-      participants: [
-        { user_id: 'client-1', role: 'client' },
-        { user_id: 'master-1', role: 'master' },
-      ],
-    }
-    expect(bookingMasterUserId(conv, 'client-1')).toBe('master-1')
-    expect(bookingMasterUserId(conv, 'master-1')).toBeNull()
-    expect(bookingMasterUserId({ ...conv, type: 'model_request' }, 'client-1')).toBe('master-1')
-    expect(bookingMasterUserId({ ...conv, type: 'master_supplier' }, 'client-1')).toBeNull()
-    expect(bookingMasterUserId(conv, undefined)).toBeNull()
+  it('does not duplicate the same id from older + server pages', () => {
+    const row = msg({ id: 'm1', created_at: '2026-08-30T10:00:00.000Z' })
+    const merged = mergeConversationMessages([row], [row], [])
+    expect(merged).toHaveLength(1)
   })
 })

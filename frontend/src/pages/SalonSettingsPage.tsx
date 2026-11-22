@@ -104,19 +104,54 @@ function ChairManagement({ orgId, branchId, token }: { orgId?: string; branchId?
   const approve = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/approve`, { method: 'POST', token }),
     onSuccess: () => {
+      setError(null)
       toast.success('Аренда подтверждена')
       void qc.invalidateQueries({ queryKey: ['org-leases'] })
     },
+    onError: (e) => setError(formatUserError(e, 'Не удалось подтвердить аренду')),
   })
   const reject = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/reject`, { method: 'POST', token }),
     onSuccess: () => {
+      setError(null)
       toast.success('Запрос аренды отклонён')
       void qc.invalidateQueries({ queryKey: ['org-leases'] })
     },
+    onError: (e) => setError(formatUserError(e, 'Не удалось отклонить аренду')),
+  })
+  const cancelLease = useMutation({
+    mutationFn: (id: string) => apiRequest(`/v1/chair-leases/${id}/cancel`, { method: 'POST', token }),
+    onSuccess: () => {
+      setError(null)
+      toast.success('Аренда отменена')
+      void qc.invalidateQueries({ queryKey: ['org-leases'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось отменить аренду')),
+  })
+  const toggleListed = useMutation({
+    mutationFn: ({ id, listed_for_rent }: { id: string; listed_for_rent: boolean }) =>
+      apiRequest(`/v1/chairs/${id}`, {
+        method: 'PATCH',
+        token,
+        body: { listed_for_rent },
+      }),
+    onSuccess: () => {
+      setError(null)
+      toast.success('Публикация кресла обновлена')
+      void qc.invalidateQueries({ queryKey: ['org-chairs'] })
+    },
+    onError: (e) => setError(formatUserError(e, 'Не удалось изменить публикацию кресла')),
   })
 
-  if (!orgId || !branchId) return null
+  if (!orgId) return null
+  if (!branchId) {
+    return (
+      <section className="card stack" data-testid="chair-admin-missing-branch">
+        <h2>Кресла салона</h2>
+        <p className="muted">Сначала создайте филиал в «Настройки → Мои салоны», затем управляйте креслами здесь.</p>
+      </section>
+    )
+  }
 
   return (
     <>
@@ -142,6 +177,16 @@ function ChairManagement({ orgId, branchId, token }: { orgId?: string; branchId?
           <article key={c.id} className="card stack" data-testid="org-chair">
             <strong>{c.name}</strong>
             <p className="muted">{c.listed_for_rent ? 'Доступно для аренды' : 'Не публикуется'}</p>
+            <label className="field-check">
+              <input
+                type="checkbox"
+                data-testid="chair-listed-toggle"
+                checked={Boolean(c.listed_for_rent)}
+                disabled={toggleListed.isPending}
+                onChange={(e) => toggleListed.mutate({ id: c.id, listed_for_rent: e.target.checked })}
+              />
+              <span>Публиковать в витрине аренды</span>
+            </label>
           </article>
         ))}
       </section>
@@ -151,11 +196,23 @@ function ChairManagement({ orgId, branchId, token }: { orgId?: string; branchId?
           <article key={l.id} className="card stack" data-testid="lease-request">
             <strong>{l.chair?.name || 'Кресло'}</strong>
             <p>{LEASE_LABELS[l.status] || l.status}</p>
+            {l.renter_user_id && <p className="muted">Арендатор: {l.renter_user_id}</p>}
             {l.status === 'requested' && (
               <div className="row">
                 <button className="btn btn-primary" type="button" data-testid="approve-lease" onClick={() => approve.mutate(l.id)}>Подтвердить</button>
                 <button className="btn" type="button" onClick={() => reject.mutate(l.id)}>Отклонить</button>
               </div>
+            )}
+            {(l.status === 'requested' || l.status === 'active') && (
+              <button
+                className="btn"
+                type="button"
+                data-testid="owner-cancel-lease"
+                disabled={cancelLease.isPending}
+                onClick={() => cancelLease.mutate(l.id)}
+              >
+                Отменить
+              </button>
             )}
           </article>
         ))}

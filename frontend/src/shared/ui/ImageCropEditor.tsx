@@ -124,8 +124,9 @@ export function ImageCropEditor({
     const cropper = new Cropper(img, {
       viewMode: 1,
       dragMode: 'move',
+      // NaN = free rectangle (width/height independent) — required on touch for arbitrary crops.
       aspectRatio: freeAspect ? NaN : aspect,
-      autoCropArea: 0.85,
+      autoCropArea: 0.8,
       responsive: true,
       background: false,
       guides: true,
@@ -139,6 +140,9 @@ export function ImageCropEditor({
       zoomOnTouch: true,
       scalable: false,
       rotatable: false,
+      checkOrientation: true,
+      minCropBoxWidth: 48,
+      minCropBoxHeight: 48,
       ready() {
         if (disposed) return
         const canvas = cropper.getCanvasData()

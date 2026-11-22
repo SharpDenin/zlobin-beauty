@@ -8,6 +8,7 @@ import { fetchPickupBranches, useSupplierOrg } from '@/shared/lib/commerce'
 import { formatMoney } from '@/shared/lib/money'
 import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 
 type Rep = {
   id: string
@@ -232,14 +233,14 @@ export function SupplierTeamPage() {
                       ))}
                     </select>
                   </div>
-                  <div className="row">
+                  <div className="field-pair">
                     <div className="field">
                       <label htmlFor={`task-date-${r.id}`}>Дата</label>
                       <input id={`task-date-${r.id}`} type="date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} />
                     </div>
                     <div className="field">
                       <label htmlFor={`task-time-${r.id}`}>Время</label>
-                      <input id={`task-time-${r.id}`} type="time" value={taskTime} onChange={(e) => setTaskTime(e.target.value)} />
+                      <TimeSelect id={`task-time-${r.id}`} value={taskTime} onChange={setTaskTime} />
                     </div>
                   </div>
                   <div className="field">

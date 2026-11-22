@@ -108,7 +108,7 @@ func main() {
 		OrgName: "Ателье цвета «Волкова»", BranchName: "Красноярск, Ленина",
 		City: "Красноярск", Address: "ул. Ленина, 50", Phone: "+79001112233", Timezone: "Asia/Krasnoyarsk",
 		Display: "Анна Волкова", Bio: "Колорист с 7-летней практикой: сложный блонд, балаяж и бережное тонирование. Работаю в собственном ателье в центре Красноярска.",
-		Specs: []string{"колористика", "стрижки"}, Experience: 7, Education: "L'Oréal Professionnel Academy",
+		Specs: []string{"Балаяж", "Женские стрижки"}, Experience: 7, Education: "L'Oréal Professionnel Academy",
 		WorkType:          "owner",
 		ProfessionTypeIDs: []string{professionTypeColorist, professionTypeHairdresser},
 		SalonPhotos:       []string{"salons/volkova.jpg"},
@@ -134,8 +134,9 @@ func main() {
 		OrgName: "Барбер-студия «Белов»", BranchName: "Новосибирск, Красный",
 		City: "Новосибирск", Address: "ул. Красный проспект, 25", Phone: "+79004445566", Timezone: "Asia/Novosibirsk",
 		Display: "Иван Белов", Bio: "Стилист и барбер: мужские стрижки, бороды и быстрые укладки. Арендую кресло в студии на Красном проспекте.",
-		Specs: []string{"стрижки", "укладки"}, Experience: 5, Education: "Barber Cross Academy",
+		Specs: []string{"Мужские стрижки", "Укладки", "Фейд"}, Experience: 5, Education: "Barber Cross Academy",
 		WorkType:          "renter",
+		ProfessionTypeIDs: []string{professionTypeHairdresser, professionTypeBarber},
 		SalonPhotos:       []string{"salons/belov.jpg"},
 		Portfolio:         []string{"services/мужская-стрижка.jpg", "services/укладка.jpg"},
 		PortfolioCaptions: []string{"Fade и текстура", "Укладка феном"},
@@ -154,8 +155,9 @@ func main() {
 		OrgName: "Nail Room «Новикова»", BranchName: "Москва, Кутузовский",
 		City: "Москва", Address: "Кутузовский просп., 12", Phone: "+79007778899", Timezone: "Europe/Moscow",
 		Display: "Ольга Новикова", Bio: "Мастер маникюра и педикюра: чистый срез, стойкое покрытие и аккуратный дизайн без перегруза.",
-		Specs: []string{"маникюр", "педикюр"}, Experience: 4, Education: "Nail Pro Moscow",
+		Specs: []string{"Покрытие гель-лак", "Классический педикюр"}, Experience: 4, Education: "Nail Pro Moscow",
 		WorkType:          "employee",
+		ProfessionTypeIDs: []string{professionTypeNailMaster, professionTypePedicureMaster},
 		SalonPhotos:       []string{"salons/novikova.jpg"},
 		Portfolio:         []string{"services/маникюр.jpg", "services/дизайн-ногтей.jpg", "services/педикюр.jpg"},
 		PortfolioCaptions: []string{"Нюдовый маникюр", "Дизайн foil", "Педикюр"},
@@ -175,8 +177,9 @@ func main() {
 		OrgName: "Студия бровей «Орлов»", BranchName: "Красноярск, Мира",
 		City: "Красноярск", Address: "ул. Мира, 12", Phone: "+79001234567", Timezone: "Asia/Krasnoyarsk",
 		Display: "Дмитрий Орлов", Bio: "Независимый мастер бровей и ресниц: архитектура формы, окрашивание и ламинирование.",
-		Specs: []string{"брови", "ресницы"}, Experience: 6, Education: "Brow Expert School",
+		Specs: []string{"Архитектура бровей", "Ламинирование ресниц"}, Experience: 6, Education: "Brow Expert School",
 		WorkType:          "independent",
+		ProfessionTypeIDs: []string{professionTypeBrowLash},
 		SalonPhotos:       []string{"salons/orlov.jpg"},
 		Portfolio:         []string{"services/коррекция-бровей.jpg", "services/ламинирование-ресниц.jpg"},
 		PortfolioCaptions: []string{"Форма бровей", "Ламинирование ресниц"},
@@ -198,7 +201,7 @@ func main() {
 		OrgName: "Студия «Романова Color»", BranchName: "Красноярск, Мира 88",
 		City: "Красноярск", Address: "пр. Мира, 88", Phone: "+79007776655", Timezone: "Asia/Krasnoyarsk",
 		Display: "Ксения Романова", Bio: "Колорист премиум-студии: редкие техники и долгие консультации. Подписка Premium.",
-		Specs: []string{"колористика"}, Experience: 10, Education: "Goldwell Guest Artist",
+		Specs: []string{"Сложное окрашивание"}, Experience: 10, Education: "Goldwell Guest Artist",
 		WorkType:    "independent",
 		SalonPhotos: []string{"salons/premium.jpg"},
 		Services: []serviceSpec{
@@ -214,7 +217,7 @@ func main() {
 		OrgName: "Студия Светланы", BranchName: "Красноярск, Вавилова",
 		City: "Красноярск", Address: "ул. Вавилова, 3", Phone: "+79006665544", Timezone: "Asia/Krasnoyarsk",
 		Display: "Светлана Егорова", Bio: "Колорист с истёкшим trial — дальше Free: схему на окрашивании заполняем полностью.",
-		Specs: []string{"колористика"}, Experience: 4, Education: "Estel Professional",
+		Specs: []string{"Тонирование"}, Experience: 4, Education: "Estel Professional",
 		WorkType: "independent",
 		Services: []serviceSpec{
 			{Name: "Окрашивание (Phase4 Expired)", Category: "колористика", Description: "Окрашивание, где на Free обязательна схема визита.", Duration: 120, Price: 410000},
@@ -782,6 +785,25 @@ func seedMaster(c *http.Client, base string, user authUser, cfg masterSeed) (org
 	return orgID, branchID, profileID, firstServiceID, nil
 }
 
+// seedWorkFormatForAPI maps seed role labels to marketplace canonical work formats.
+// Ownership/employment are org membership concepts — profile work_type must be a format.
+func seedWorkFormatForAPI(workType string) string {
+	switch strings.TrimSpace(strings.ToLower(workType)) {
+	case "owner", "salon_owner", "chain_owner", "independent", "private_master", "":
+		return "private_practice"
+	case "employee":
+		return "percentage_based"
+	case "renter", "chair_master":
+		return "chair_rental"
+	case "mobile_master":
+		return "mobile_service"
+	case "private_practice", "percentage_based", "mobile_service", "chair_rental":
+		return workType
+	default:
+		return "private_practice"
+	}
+}
+
 func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID string, cfg masterSeed, published bool) (string, error) {
 	var resp struct {
 		ID string `json:"id"`
@@ -802,10 +824,9 @@ func upsertMaster(c *http.Client, base string, user authUser, orgID, branchID st
 	if branchID != "" {
 		body["branch_id"] = branchID
 	}
-	if cfg.WorkType != "" {
-		body["work_type"] = cfg.WorkType
-		body["work_types"] = []string{cfg.WorkType}
-	}
+	format := seedWorkFormatForAPI(cfg.WorkType)
+	body["work_type"] = format
+	body["work_types"] = []string{format}
 	if cfg.PhotoMediaID != "" {
 		body["photo_media_id"] = cfg.PhotoMediaID
 	}
@@ -835,6 +856,7 @@ const (
 	professionTypeBarber         = "11111111-1111-4111-8111-111111111003"
 	professionTypeNailMaster     = "11111111-1111-4111-8111-111111111004"
 	professionTypePedicureMaster = "11111111-1111-4111-8111-111111111005"
+	professionTypeBrowLash       = "11111111-1111-4111-8111-111111111006"
 )
 
 func professionTypeIDsForSeed(cfg masterSeed) []string {
@@ -852,20 +874,30 @@ func professionTypeIDsForSeed(cfg masterSeed) []string {
 	}
 	for _, spec := range cfg.Specs {
 		switch strings.ToLower(strings.TrimSpace(spec)) {
-		case "колористика", "колорист", "окрашивание":
+		case "колористика", "колорист", "окрашивание",
+			"балаяж", "омбре", "тонирование", "airtouch", "колорирование",
+			"обесцвечивание", "сложное окрашивание", "коррекция цвета":
 			add(professionTypeColorist)
-		case "стрижки", "стрижка", "парикмахер", "укладки", "укладка", "уход":
+		case "стрижки", "стрижка", "парикмахер", "укладки", "укладка", "уход",
+			"женские стрижки", "мужские стрижки", "детские стрижки", "причёски", "прически",
+			"долговременная укладка", "восстановление волос", "кератиновое выпрямление":
 			add(professionTypeHairdresser)
-		case "барбер", "борода":
+		case "барбер", "борода", "фейд", "классическое бритьё", "классическое бритье",
+			"борода и усы", "детский барберинг", "стрижка машинкой", "камуфляж седины",
+			"уход за кожей головы":
 			add(professionTypeBarber)
-		case "маникюр", "ногти":
+		case "маникюр", "ногти", "классический маникюр", "аппаратный маникюр", "покрытие гель-лак",
+			"наращивание ногтей", "дизайн ногтей", "укрепление ногтей", "снятие покрытия":
 			add(professionTypeNailMaster)
-		case "педикюр":
+		case "педикюр", "классический педикюр", "аппаратный педикюр", "покрытие гель-лак (педикюр)",
+			"обработка стоп", "spa-педикюр", "уход за кутикулой":
 			add(professionTypePedicureMaster)
+		case "брови", "ресницы", "архитектура бровей", "окрашивание бровей", "ламинирование бровей",
+			"наращивание ресниц", "ламинирование ресниц", "коррекция бровей":
+			add(professionTypeBrowLash)
 		}
 	}
 	if len(out) == 0 {
-		// Demo-only fallback for unmapped tags (брови/ресницы). Not used for new registrations.
 		add(professionTypeHairdresser)
 	}
 	return out
@@ -2887,8 +2919,9 @@ func seedSalonEmployee(c *http.Client, base string, owner, employee, client auth
 	}
 	elena := withOptionalPortrait(c, base, employee, masterSeed{
 		Display: "Елена Савельева", Bio: "Мастер ухода в ателье «Волкова»: ритуалы после цвета и домашние рекомендации.",
-		Specs: []string{"уход"}, Experience: 3, Education: "Kerastase Rituals",
+		Specs: []string{"Восстановление волос"}, Experience: 3, Education: "Kerastase Rituals",
 		City: "Красноярск", WorkType: "employee",
+		ProfessionTypeIDs: []string{professionTypeHairdresser},
 	})
 	profileID, err := upsertMaster(c, base, employee, orgID, branchID, elena, false)
 	if err != nil {
@@ -2981,7 +3014,7 @@ func seedChainOwner(c *http.Client, base string, user authUser) error {
 		OrgName: "Сеть «Лебедева»", BranchName: "Красноярск, Мира",
 		City: "Красноярск", Address: "ул. Мира, 10", Phone: "+79009990001", Timezone: "Asia/Krasnoyarsk",
 		Display: "Виктория Лебедева", Bio: "Управляю сетью из двух филиалов: Красноярск и Новосибирск.",
-		Specs: []string{"колористика", "уход"}, Experience: 10, Education: "Salon Business School",
+		Specs: []string{"Балаяж", "Восстановление волос"}, Experience: 10, Education: "Salon Business School",
 		WorkType: "chain_owner",
 		Services: []serviceSpec{
 			{Name: "Стрижка сети", Category: "стрижки", Description: "Стрижка в филиале сети.", Duration: 50, Price: 180000},

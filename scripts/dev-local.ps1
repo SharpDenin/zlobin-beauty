@@ -73,29 +73,40 @@ function Start-GoSvc($name, $pkg, $port, $db, $extra = @{}) {
   Write-Host "started $name on $port"
 }
 
+$identityURL = "http://127.0.0.1:8101"
+
 Start-GoSvc "identity" "./services/identity/cmd/identity" 8101 "postgres://identity:identity@localhost:5433/identity?sslmode=disable"
-Start-GoSvc "organizations" "./services/organizations/cmd/organizations" 8102 "postgres://organizations:organizations@localhost:5433/organizations?sslmode=disable"
+Start-GoSvc "organizations" "./services/organizations/cmd/organizations" 8102 "postgres://organizations:organizations@localhost:5433/organizations?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
+}
 Start-GoSvc "marketplace" "./services/marketplace/cmd/marketplace" 8103 "postgres://marketplace:marketplace@localhost:5433/marketplace?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
   ORGANIZATIONS_URL = "http://127.0.0.1:8102"
   BOOKING_URL = "http://127.0.0.1:8104"
 }
 Start-GoSvc "booking" "./services/booking/cmd/booking" 8104 "postgres://booking:booking@localhost:5433/booking?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
   MARKETPLACE_URL = "http://127.0.0.1:8103"
   ORGANIZATIONS_URL = "http://127.0.0.1:8102"
   CLIENTS_URL = "http://127.0.0.1:8105"
   COMMUNICATIONS_URL = "http://127.0.0.1:8106"
   COMMERCE_URL = "http://127.0.0.1:8107"
 }
-Start-GoSvc "clients" "./services/clients/cmd/clients" 8105 "postgres://clients:clients@localhost:5433/clients?sslmode=disable"
+Start-GoSvc "clients" "./services/clients/cmd/clients" 8105 "postgres://clients:clients@localhost:5433/clients?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
+}
 Start-GoSvc "communications" "./services/communications/cmd/communications" 8106 "postgres://communications:communications@localhost:5433/communications?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
   BOOKING_URL = "http://127.0.0.1:8104"
 }
 Start-GoSvc "commerce" "./services/commerce/cmd/commerce" 8107 "postgres://commerce:commerce@localhost:5433/commerce?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
   ORGANIZATIONS_URL = "http://127.0.0.1:8102"
   BOOKING_URL = "http://127.0.0.1:8104"
   INTERNAL_TOKEN = $internal
 }
 Start-GoSvc "media" "./services/media/cmd/media" 8108 "postgres://media:media@localhost:5433/media?sslmode=disable" @{
+  IDENTITY_URL = $identityURL
   MINIO_ENDPOINT = "localhost:9000"
   MINIO_ACCESS_KEY = "minioadmin"
   MINIO_SECRET_KEY = "minioadmin"

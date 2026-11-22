@@ -440,14 +440,14 @@ func (s *Service) hydrate(ctx context.Context, c domain.Conversation, actor uuid
 	return &c, nil
 }
 
-func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.UUID, limit int, before *time.Time) ([]domain.Message, bool, error) {
+func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.UUID, limit int, before *time.Time, beforeID *uuid.UUID) ([]domain.Message, bool, error) {
 	if err := s.requireParticipant(ctx, conversationID, actor); err != nil {
 		return nil, false, err
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	items, err := s.store.ListMessages(ctx, conversationID, limit+1, before)
+	items, err := s.store.ListMessages(ctx, conversationID, limit+1, before, beforeID)
 	if err != nil {
 		return nil, false, apperr.Internal(err)
 	}
@@ -462,8 +462,9 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.U
 }
 
 type SendMessageInput struct {
-	Body    string
-	MediaID *uuid.UUID
+	Body     string
+	MediaID  *uuid.UUID
+	ClientID string
 }
 
 func ValidateMessageContent(body string, hasMedia bool) error {
@@ -525,12 +526,35 @@ func (s *Service) SendMessage(ctx context.Context, conversationID, actor uuid.UU
 			return nil, err
 		}
 	}
+	clientID := strings.TrimSpace(in.ClientID)
+	if len(clientID) > 128 {
+		return nil, apperr.Validation("client_id is too long")
+	}
+	if clientID != "" {
+		existing, err := s.store.FindMessageByClientID(ctx, conversationID, actor, clientID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
 	now := s.now().UTC()
 	m := domain.Message{
 		ID: ids.New(), ConversationID: conversationID, SenderUserID: actor,
 		Kind: kind, Body: body, MediaID: in.MediaID, CreatedAt: now,
 	}
+	if clientID != "" {
+		m.ClientID = &clientID
+	}
 	if err := s.store.InsertMessage(ctx, m); err != nil {
+		// Race on unique (conversation, sender, client_id): return the winner.
+		if clientID != "" {
+			existing, findErr := s.store.FindMessageByClientID(ctx, conversationID, actor, clientID)
+			if findErr == nil && existing != nil {
+				return existing, nil
+			}
+		}
 		return nil, apperr.Internal(err)
 	}
 	s.notifyNewMessage(ctx, conversationID, actor, messagePreview(m))

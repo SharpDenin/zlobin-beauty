@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/zlobin/zlobin-beauty/backend/services/clients/internal/domain"
+	"github.com/zlobin/zlobin-beauty/backend/shared/ids"
 )
 
 const consultCols = `id, client_user_id, master_user_id, organization_id, client_card_id, status,
@@ -246,6 +247,24 @@ FROM hair_consultation_media WHERE version_id=$1 ORDER BY created_at ASC`, versi
 		out = []domain.HairConsultationMedia{}
 	}
 	return out, rows.Err()
+}
+
+// CopyHairConsultationMedia duplicates media attachments onto a new version (photos survive revisions).
+func (s *Store) CopyHairConsultationMedia(ctx context.Context, fromVersionID, toVersionID uuid.UUID, at time.Time) error {
+	src, err := s.ListHairConsultationMedia(ctx, fromVersionID)
+	if err != nil {
+		return err
+	}
+	for _, m := range src {
+		if _, err := s.pool.Exec(ctx, `
+INSERT INTO hair_consultation_media(id, version_id, media_id, slot, uploaded_by, created_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+ON CONFLICT (version_id, media_id) DO NOTHING`,
+			ids.New(), toVersionID, m.MediaID, m.Slot, m.UploadedBy, at); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListHairConsultationMediaByMediaID(ctx context.Context, mediaID uuid.UUID) ([]domain.HairConsultationMedia, error) {

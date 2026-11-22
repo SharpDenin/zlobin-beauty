@@ -358,8 +358,9 @@ func (s *Service) SubmitHairConsultation(ctx context.Context, id, actor uuid.UUI
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if !hasSlot(media, domain.SlotOverview) {
-		return nil, apperr.Validation("overview photo is required to submit")
+	// UI primary slot is strand_a4; overview remains accepted for older clients.
+	if !hasSlot(media, domain.SlotOverview) && !hasSlot(media, domain.SlotStrandA4) {
+		return nil, apperr.Validation("overview or strand_a4 photo is required to submit")
 	}
 	now := s.now().UTC()
 	if err := s.store.ApplyHairConsultationTransition(ctx, store.ConsultTransition{
@@ -531,6 +532,7 @@ func (s *Service) RequestHairConsultationChanges(ctx context.Context, id, actor 
 	}
 	meta, _ := json.Marshal(map[string]any{"comment": comment, "from_version_no": v.VersionNo})
 	commentCopy := comment
+	fromVID := v.ID
 	if err := s.store.ApplyHairConsultationTransition(ctx, store.ConsultTransition{
 		EventID: ids.New(), ConsultID: c.ID, VersionID: v.ID,
 		ConsultFrom: domain.ConsultAwaitingClient, ConsultTo: domain.ConsultInProgress,
@@ -539,6 +541,9 @@ func (s *Service) RequestHairConsultationChanges(ctx context.Context, id, actor 
 		ClientComment: &commentCopy, Meta: meta, NewVersion: &nv,
 	}); err != nil {
 		return s.mapTransitionErr(ctx, id, actor, err)
+	}
+	if err := s.store.CopyHairConsultationMedia(ctx, fromVID, newVID, now); err != nil {
+		return nil, apperr.Internal(err)
 	}
 	_ = s.store.InsertHairConsultationEvent(ctx, domain.HairConsultationEvent{
 		ID: ids.New(), ConsultationID: c.ID, VersionID: &newVID, ActorUserID: actor,
@@ -588,6 +593,9 @@ func (s *Service) CreateHairConsultationRevision(ctx context.Context, id, actor 
 		Meta: mustJSON(map[string]any{"version_no": nextNo}),
 	}); err != nil {
 		return s.mapTransitionErr(ctx, id, actor, err)
+	}
+	if err := s.store.CopyHairConsultationMedia(ctx, sid, newVID, now); err != nil {
+		return nil, apperr.Internal(err)
 	}
 	return s.loadConsultation(ctx, id, actor)
 }

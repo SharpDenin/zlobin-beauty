@@ -47,6 +47,8 @@ export default defineConfig(({ command, mode }) => {
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/v1\//, /^\/api\//],
         cleanupOutdatedCaches: true,
+        // New SW claims clients after SKIP_WAITING from the update banner — no PWA reinstall.
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         importScripts: ['sw-push.js'],
         runtimeCaching: [

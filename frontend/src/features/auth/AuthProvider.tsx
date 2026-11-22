@@ -79,7 +79,8 @@ function loadStored(): { accessToken: string; refreshToken: string; user: User }
 
 export function hasMasterAccess(user: User | null | undefined): boolean {
   if (!user) return false
-  return user.roles.some((r) => r === 'master' || r === 'salon_owner' || r === 'system_admin')
+  // Identity salon_owner is not master access; ownership is membership-only.
+  return user.roles.some((r) => r === 'master' || r === 'system_admin')
 }
 
 export function hasSupplierAccess(user: User | null | undefined): boolean {
@@ -94,7 +95,8 @@ export function hasSupplierRepAccess(user: User | null | undefined): boolean {
 
 export function hasSalonAdmin(user: User | null | undefined): boolean {
   if (!user) return false
-  return user.roles.some((r) => r === 'salon_admin' || r === 'salon_owner' || r === 'system_admin')
+  // Identity salon_owner must not elevate to admin shell without membership.
+  return user.roles.some((r) => r === 'salon_admin' || r === 'system_admin')
 }
 
 export function hasSystemAdmin(user: User | null | undefined): boolean {

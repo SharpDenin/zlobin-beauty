@@ -3,7 +3,7 @@ import type { Contact } from '@/features/contacts/types'
 export function conversationStartBody(roles: string[] | null | undefined, userId: string): Record<string, unknown> | null {
   if (!userId) return null
   const set = new Set(roles ?? [])
-  if (set.has('master') || set.has('salon_owner') || set.has('salon_admin')) {
+  if (set.has('master') || set.has('salon_admin')) {
     return { type: 'client_master', master_user_id: userId }
   }
   // Backend resolves supplier_organization_id from peer_user_id via organizations.

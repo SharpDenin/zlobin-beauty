@@ -46,6 +46,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	a.registerPushRoutes(mux, auth)
 	mux.Handle("DELETE /v1/internal/users/{userID}/push-subscriptions", internal(http.HandlerFunc(a.deleteUserPushSubscriptions)))
 	mux.Handle("GET /v1/internal/media/{id}/access", internal(http.HandlerFunc(a.mediaAccess)))
+	mux.Handle("POST /v1/internal/contacts/link", internal(http.HandlerFunc(a.linkContacts)))
 }
 
 func (a *API) deleteUserPushSubscriptions(w http.ResponseWriter, r *http.Request) {

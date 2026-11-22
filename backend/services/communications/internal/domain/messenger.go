@@ -48,6 +48,7 @@ type Message struct {
 	Kind           string
 	Body           string
 	MediaID        *uuid.UUID
+	ClientID       *string
 	CreatedAt      time.Time
 	EditedAt       *time.Time
 	DeletedAt      *time.Time

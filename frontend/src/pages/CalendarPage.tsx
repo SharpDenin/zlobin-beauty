@@ -20,6 +20,7 @@ import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import { formatMoney } from '@/shared/lib/money'
 import { formatUserError } from '@/shared/lib/app-error'
 import { moderationError } from '@/shared/lib/moderation'
+import { getCachedMediaUrl, loadMediaBlobUrl } from '@/shared/lib/mediaCache'
 import { usePreference } from '@/shared/lib/preferences'
 import { Hint } from '@/shared/ui/Hint'
 import { Drawer } from '@/shared/ui/Drawer'
@@ -34,9 +35,13 @@ import {
   CALENDAR_COLOR_TOKENS,
   CALENDAR_COLOR_LABELS,
   canDragAppointment,
+  CALENDAR_SERVICE_OTHER,
+  CALENDAR_VIEW_OPTIONS,
   countEventsOutsideRange,
   DEFAULT_DISPLAY_RANGE,
+  defaultColorForCategory,
   detectHorizontalSwipe,
+  normalizeCalendarViewId,
   swipeStep,
   displayRangeToSlotTimes,
   extendDisplayRangeForEvents,
@@ -61,9 +66,13 @@ import {
   zonedYmd,
 } from '@/pages/calendar-helpers'
 import { CalendarAvailability } from '@/pages/CalendarAvailability'
+import { CalendarMastersDay, type MasterCol } from '@/pages/CalendarMastersDay'
 import { CalendarMobile } from '@/pages/CalendarMobile'
+import { CalendarMoveCopyDialog } from '@/pages/CalendarMoveCopyDialog'
 import { RescheduleDialog } from '@/pages/RescheduleDialog'
 import { ScheduleEditor, type ScheduleEditorTab } from '@/features/schedule/ScheduleEditor'
+import { findCalendarScrollRoots, lockCalendarGesture } from '@/pages/calendar-event-resize'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 import '@/pages/calendar.css'
 
 function parseScheduleTab(raw: string | null): ScheduleEditorTab {
@@ -132,6 +141,27 @@ type CalendarSelection = {
   bookingMode?: string
   timezone?: string
   readonly?: boolean
+  ownerUserId?: string
+}
+
+type MoveCopyState = {
+  mode: 'move' | 'copy'
+  multiDay?: boolean
+  selection: CalendarSelection
+}
+
+type CalendarServiceOption = { id: string; label: string }
+
+const LEGACY_CATEGORY_LABELS: Record<string, string> = {
+  personal: 'Личное',
+  break: 'Перерыв',
+  blocked: 'Заблокировано',
+  task: 'Задача',
+  delivery: 'Получение / доставка',
+  operational: 'Операционное',
+  staff: 'Сотрудники',
+  client: 'Клиент',
+  salon_visit: 'Посещение салона',
 }
 
 const MASTER_CATEGORIES: Category[] = [
@@ -221,6 +251,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const scrollPreserve = useRef<number | null>(null)
   const swipeStart = useRef<{ x: number; y: number; id: number; t: number; blocked: boolean } | null>(null)
   const interacting = useRef(false)
+  const fcGestureUnlock = useRef<(() => void) | null>(null)
   const suppressSelect = useRef(false)
   const suppressEventClick = useRef(false)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
@@ -246,19 +277,16 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const navMode: CalendarNavMode = isCalendarNavMode(navModePref) ? navModePref : 'buttons'
   const [rangeDraft, setRangeDraft] = useState<DisplayRange>(displayRangePref)
   const [rangeError, setRangeError] = useState<string | null>(null)
-  const [hoursEditorOpen, setHoursEditorOpen] = useState(false)
   const schedulePanelOpen = !embedded && searchParams.get('panel') === 'schedule'
   const scheduleTab = parseScheduleTab(searchParams.get('tab'))
   const scheduleStartQ = searchParams.get('start')
   const scheduleEndQ = searchParams.get('end')
 
   const [range, setRange] = useState(initialRange)
-  const [currentView, setCurrentView] = useState<CalendarViewId>(() => {
-    if (!isCalendarViewId(savedView)) return defaultView
-    return savedView
-  })
+  const [currentView, setCurrentView] = useState<CalendarViewId>(() => normalizeCalendarViewId(savedView, defaultView))
   const [selectedDate, setSelectedDate] = useState(() => new Date())
-  const [hidden, setHidden] = useState<string[]>([])
+  const selectedDateRef = useRef(selectedDate)
+  selectedDateRef.current = selectedDate
   const [error, setError] = useState<unknown>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -277,7 +305,10 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [masterFilter, setMasterFilter] = useState('')
   const [branchFilter, setBranchFilter] = useState('')
   const [blockTitle, setBlockTitle] = useState('Личное время')
-  const [blockCat, setBlockCat] = useState(basePalette.find((c) => !c.system)?.id ?? 'personal')
+  const [blockCat, setBlockCat] = useState(isRepPlanner ? (basePalette.find((c) => !c.system)?.id ?? 'personal') : CALENDAR_SERVICE_OTHER)
+  const [createOwnerUserId, setCreateOwnerUserId] = useState('')
+  const [moveCopy, setMoveCopy] = useState<MoveCopyState | null>(null)
+  const [moveCopyBusy, setMoveCopyBusy] = useState(false)
   const [blockStart, setBlockStart] = useState('')
   const [blockEnd, setBlockEnd] = useState('')
   const [blockColor, setBlockColor] = useState('success')
@@ -288,6 +319,65 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [intervalStartMin, setIntervalStartMin] = useState<number | null>(null)
   const [intervalEndMin, setIntervalEndMin] = useState<number | null>(null)
   const scrolledOnce = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      fcGestureUnlock.current?.()
+      fcGestureUnlock.current = null
+    }
+  }, [])
+
+  /**
+   * FullCalendar fires eventDragStart only after touch long-press (500ms) or mouse
+   * minDistance (16px). Scroll during that wait is intentional (cancels the gesture).
+   * Resize handles are an explicit intent — lock immediately on pointerdown so the
+   * first move cannot scroll the grid before eventResizeStart.
+   */
+  useEffect(() => {
+    const root = wrapRef.current
+    if (!root || embedded || readOnlyOverlay) return
+
+    let armedPointerId: number | null = null
+
+    const unlockIfArmedOnly = () => {
+      // If FC never promoted to resize/drag start, drop the early lock.
+      if (armedPointerId == null) return
+      if (interacting.current) {
+        armedPointerId = null
+        return
+      }
+      fcGestureUnlock.current?.()
+      fcGestureUnlock.current = null
+      armedPointerId = null
+    }
+
+    const onDown = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      const target = event.target as HTMLElement | null
+      if (!target?.closest('.fc-event-resizer')) return
+      armedPointerId = event.pointerId
+      fcGestureUnlock.current?.()
+      fcGestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(wrapRef.current))
+      document.body.dataset.calGestureLockSource = 'fc-resizer-pointerdown'
+    }
+
+    const onUp = (event: PointerEvent) => {
+      if (armedPointerId != null && event.pointerId === armedPointerId) {
+        // Defer one frame so eventResizeStart can flip interacting.current first.
+        window.requestAnimationFrame(unlockIfArmedOnly)
+      }
+    }
+
+    root.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onUp, true)
+    return () => {
+      root.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onUp, true)
+      unlockIfArmedOnly()
+    }
+  }, [embedded, readOnlyOverlay, compact, currentView])
 
   const selectedBranch = salonBranches.find((b) => b.id === branchFilter) ?? salonBranches[0]
   const salonTimezone = resolveServiceTimezone(selectedBranch?.timezone, selectedBranch?.city)
@@ -304,7 +394,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   useEffect(() => {
     if (wasCompact.current === compact) return
     wasCompact.current = compact
-    // Keep the chosen view across breakpoints (day / 3-day / week / month / list).
+    // Keep the chosen view across breakpoints (day / week / month / list).
     queueMicrotask(() => {
       if (compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth')) return
       calendarRef.current?.getApi().changeView(currentView)
@@ -312,15 +402,15 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [compact, currentView])
 
   useEffect(() => {
-    if (!isCalendarViewId(savedView)) return
-    if (savedView === currentView) return
-    setCurrentView(savedView)
-    if (!(compact && (savedView === 'dayGridMonth' || savedView === 'timeGridDay'))) {
-      calendarRef.current?.getApi().changeView(savedView)
+    const normalized = normalizeCalendarViewId(savedView, defaultView)
+    if (normalized === currentView) return
+    setCurrentView(normalized)
+    if (!(compact && (normalized === 'dayGridMonth' || normalized === 'timeGridDay'))) {
+      calendarRef.current?.getApi().changeView(normalized)
     }
     // hydrate from preference when it arrives / changes externally
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedView])
+  }, [savedView, defaultView])
 
   useEffect(() => {
     const el = toolbarRef.current
@@ -349,27 +439,42 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const savedColors = (rawWidgets.find((x) => x.id === 'calendar_colors')?.colors ?? {}) as Record<string, string>
   const palette = useMemo(
     () =>
-      basePalette.map((c) => ({
-        ...c,
-        color: c.system ? c.color : normalizeCalendarColor(savedColors[c.id] || c.color, c.id),
-      })),
-    [basePalette, savedColors],
+      isRepPlanner
+        ? basePalette.map((c) => ({
+          ...c,
+          color: c.system ? c.color : normalizeCalendarColor(savedColors[c.id] || c.color, c.id),
+        }))
+        : [],
+    [basePalette, savedColors, isRepPlanner],
   )
 
-  const colorSave = useMutation({
-    mutationFn: ({ category, color }: { category: string; color: string }) => {
-      const rest = rawWidgets.filter((x) => x.id !== 'calendar_colors')
-      return apiRequest('/v1/me/dashboard', {
-        method: 'PUT',
-        token: accessToken,
-        body: { widgets: [...rest, { id: 'calendar_colors', colors: { ...savedColors, [category]: color } }] },
-      })
+  const calendarServices = useQuery({
+    queryKey: ['calendar-block-services', ownerMode, masterFilter, orgID],
+    queryFn: async () => {
+      if (ownerMode && masterFilter) {
+        const res = await apiRequest<{ services: Array<{ id: string; name: string }> }>(`/v1/masters/${masterFilter}`, { token: accessToken })
+        return res.services ?? []
+      }
+      if (ownerMode && orgID) {
+        // Salon-wide day board: org published catalog (not a fake shared taxonomy).
+        const res = await apiRequest<{ items: Array<{ id: string; name: string }> }>(
+          `/v1/services?organization_id=${encodeURIComponent(orgID)}`,
+          { token: accessToken },
+        )
+        return (res.items ?? []).map((s) => ({ id: s.id, name: s.name }))
+      }
+      const res = await apiRequest<{ services: Array<{ id: string; name: string }> }>('/v1/me/master', { token: accessToken })
+      return res.services ?? []
     },
-    onSuccess: () => {
-      toast.success('Цвет категории сохранён')
-      void qc.invalidateQueries({ queryKey: ['me-dashboard'] })
-    },
+    enabled: Boolean(accessToken) && !isRepPlanner,
+    placeholderData: keepPreviousData,
   })
+
+  const serviceOptions: CalendarServiceOption[] = useMemo(() => {
+    if (isRepPlanner) return []
+    const list = (calendarServices.data ?? []).map((s) => ({ id: s.id, label: s.name }))
+    return [...list, { id: CALENDAR_SERVICE_OTHER, label: 'Прочее' }]
+  }, [calendarServices.data, isRepPlanner])
 
   const workModes = useQuery({
     queryKey: ['calendar-work-modes', ownerMode, orgID, range.from, range.to, masterFilter],
@@ -464,7 +569,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   })
 
   const staffMasters = useMemo(
-    () => (staff.data?.items ?? []).filter((m) => m.status === 'active' && (m.role === 'master' || m.role === 'owner')),
+    () => (staff.data?.items ?? []).filter((m) => m.status === 'active' && m.role === 'master'),
     [staff.data],
   )
   const masterIDs = useMemo(() => {
@@ -478,20 +583,50 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     queryFn: async () => {
       const entries = await Promise.all(masterIDs.map(async (id) => {
         try {
-          const res = await apiRequest<{ master: { display_name: string } }>(`/v1/masters/${id}`)
-          return [id, res.master.display_name] as const
+          const res = await apiRequest<{ master: { display_name: string; photo_media_id?: string | null } }>(`/v1/masters/${id}`, { token: accessToken })
+          let photoUrl: string | null = null
+          const photoId = res.master.photo_media_id
+          if (photoId) {
+            photoUrl = getCachedMediaUrl(photoId) ?? (await loadMediaBlobUrl(photoId))
+          }
+          return [id, { name: res.master.display_name, photoUrl }] as const
         } catch {
           const member = staffMasters.find((m) => m.user_id === id)
-          return [id, staffRoleLabel(member?.role)] as const
+          return [id, { name: staffRoleLabel(member?.role), photoUrl: null }] as const
         }
       }))
-      return Object.fromEntries(entries) as Record<string, string>
+      return Object.fromEntries(entries) as Record<string, { name: string; photoUrl: string | null }>
     },
     enabled: masterIDs.length > 0,
   })
 
-  function category(id: string) {
-    return palette.find((c) => c.id === id) ?? { id, label: id, color: 'neutral', icon: '•' }
+  const masterCols = useMemo((): MasterCol[] => {
+    // Staff masters first, then any masters who already have appointments in range (no duplicates).
+    const orderedIds = [...new Set([...staffMasters.map((m) => m.user_id), ...masterIDs].filter(Boolean))]
+    return orderedIds.map((id) => {
+      const member = staffMasters.find((m) => m.user_id === id)
+      return {
+        userId: id,
+        name: masters.data?.[id]?.name ?? staffRoleLabel(member?.role ?? 'master'),
+        photoUrl: masters.data?.[id]?.photoUrl ?? null,
+      }
+    })
+  }, [staffMasters, masterIDs, masters.data])
+
+  function category(id: string): Category {
+    if (isRepPlanner) {
+      return palette.find((c) => c.id === id) ?? { id, label: id, color: 'neutral', icon: '•' }
+    }
+    const svc = serviceOptions.find((s) => s.id === id)
+    if (svc) {
+      const colorKey = id === CALENDAR_SERVICE_OTHER ? 'task' : 'personal'
+      return { id, label: svc.label, color: defaultColorForCategory(colorKey), icon: '•' }
+    }
+    const legacy = LEGACY_CATEGORY_LABELS[id]
+    if (legacy) {
+      return { id, label: legacy, color: defaultColorForCategory(id), icon: '•' }
+    }
+    return { id, label: id, color: defaultColorForCategory('task'), icon: '•' }
   }
 
   const businessHours = useMemo(() => {
@@ -534,8 +669,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const events: EventInput[] = useMemo(() => {
     const out: EventInput[] = []
     for (const a of appointments.data?.items ?? []) {
-      if (hidden.includes('client') || (masterFilter && a.master_user_id !== masterFilter) || (branchFilter && a.branch_id !== branchFilter)) continue
-      const masterName = masters.data?.[a.master_user_id] ?? staffRoleLabel('master')
+      if ((masterFilter && a.master_user_id !== masterFilter) || (branchFilter && a.branch_id !== branchFilter)) continue
+      const masterName = masters.data?.[a.master_user_id]?.name ?? staffRoleLabel('master')
       const clientName = clientNames[a.client_user_id] || ''
       const terminal = isTerminalStatus(a.status)
       const own = !readOnlyOverlay && (a.master_user_id === user?.id || ownerMode)
@@ -551,7 +686,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         borderColor: 'transparent',
         editable: canMove,
         startEditable: canMove,
-        durationEditable: false,
+        durationEditable: canMove,
         classNames: [appointmentToneClass(a.status), visitLabel ? 'is-visit' : '', !canMove ? 'is-readonly' : ''].filter(Boolean),
         extendedProps: {
           kind: 'appointment',
@@ -579,8 +714,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       })
     }
     for (const b of blocks.data?.items ?? []) {
-      const cat = category(b.category || 'personal')
-      if (hidden.includes(cat.id)) continue
+      const cat = category(b.category || CALENDAR_SERVICE_OTHER)
       if (masterFilter && b.owner_user_id && b.owner_user_id !== masterFilter) continue
       const colorId = normalizeCalendarColor(b.color || cat.color, cat.id)
       const colorCss = calendarColorCss(colorId, cat.id)
@@ -605,6 +739,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           icon: cat.icon,
           color: colorId,
           colorCss,
+          ownerUserId: b.owner_user_id,
+          masterUserId: b.owner_user_id,
           readonly: !own,
         },
       })
@@ -613,7 +749,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       if (!t.due_at) continue
       const catId = t.planner_category || (t.kind === 'salon_visit' || t.kind === 'commercial_visit' ? 'salon_visit' : t.kind === 'delivery_support' ? 'delivery' : 'task')
       const cat = category(catId)
-      if (hidden.includes(cat.id)) continue
       const colorId = normalizeCalendarColor(cat.color, cat.id)
       const start = new Date(t.due_at)
       out.push({
@@ -673,7 +808,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
     return out
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, workModes.data, hidden, masterFilter, branchFilter, masters.data, palette, clientNames, visitNames, readOnlyOverlay, user?.id, ownerMode])
+  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, workModes.data, masterFilter, branchFilter, masters.data, palette, serviceOptions, clientNames, visitNames, readOnlyOverlay, user?.id, ownerMode, isRepPlanner])
 
   const visibleEventMinutes = useMemo(() => {
     const fromMs = new Date(range.from).getTime()
@@ -719,11 +854,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         timezone: salonTimezone,
         color: normalizeCalendarColor(blockColor || category(blockCat).color, blockCat),
         organization_id: orgID,
-        owner_user_id: ownerMode && masterFilter ? masterFilter : undefined,
+        owner_user_id: ownerMode ? (createOwnerUserId || masterFilter || undefined) : undefined,
       },
     }),
     onSuccess: async () => {
       setEditorOpen(false)
+      setCreateOwnerUserId('')
       toast.success('Событие добавлено в календарь')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
@@ -951,10 +1087,23 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         setSheet('empty')
       })
     }
+    const onContextMenu = (event: MouseEvent) => {
+      if (compact) return
+      const target = event.target as HTMLElement | null
+      const eventEl = target?.closest('.fc-event') as HTMLElement | null
+      if (!eventEl || eventEl.classList.contains('fc-bg-event')) return
+      const id = eventEl.dataset.calId
+      if (!id || id.startsWith('wm:')) return
+      event.preventDefault()
+      openEventById(id)
+      setSheet('event')
+    }
     root.addEventListener('pointerdown', onDown)
+    root.addEventListener('contextmenu', onContextMenu)
     return () => {
       clear()
       root.removeEventListener('pointerdown', onDown)
+      root.removeEventListener('contextmenu', onContextMenu)
     }
     // openEventById is stable enough via events closure; re-bind when grid date/tz changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -976,13 +1125,16 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
         toast.success(resized ? 'Длительность обновлена' : 'Событие перенесено')
       } else if (id.startsWith('appt:')) {
+        const body: { starts_at: string; duration_minutes?: number } = { starts_at: startsAt }
+        if (resized) body.duration_minutes = Math.round((end.getTime() - start.getTime()) / 60_000)
         await apiRequest(`/v1/appointments/${id.slice(5)}/reschedule`, {
+          method: 'POST',
           token: accessToken,
-          body: { starts_at: startsAt },
+          body,
         })
         await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
         await qc.invalidateQueries({ queryKey: ['appointments'] })
-        toast.success('Запись перенесена')
+        toast.success(resized ? 'Длительность обновлена' : 'Запись перенесена')
       }
       setError(null)
       restoreScroll()
@@ -1029,8 +1181,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       return
     }
     if (info.event.id.startsWith('appt:')) {
-      info.revert()
-      toast.error('Длительность записи определяется выбранной услугой')
+      if (!canDragAppointment(String(info.event.extendedProps.status ?? ''), String(info.event.extendedProps.bookingMode ?? ''))) {
+        info.revert()
+        toast.error('Эту запись нельзя изменить')
+        return
+      }
+      if (!await persistMove(info.event.id, info.event.start, info.event.end, true)) info.revert()
       return
     }
     if (!await persistMove(info.event.id, info.event.start, info.event.end, true)) info.revert()
@@ -1068,11 +1224,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       bookingMode: p.bookingMode,
       timezone: p.timezone,
       readonly: Boolean(p.readonly),
+      ownerUserId: p.ownerUserId,
     }
     setSelected(sel)
     if (sel.kind === 'block') {
       setBlockTitle(sel.title)
-      setBlockCat(sel.categoryId || 'personal')
+      setBlockCat(sel.categoryId || (isRepPlanner ? 'personal' : CALENDAR_SERVICE_OTHER))
       setBlockColor(normalizeCalendarColor(sel.color || category(sel.categoryId || 'personal').color, sel.categoryId || 'personal'))
       setBlockStart(sel.start ? isoToDatetimeLocal(sel.start.toISOString(), salonTimezone) : '')
       setBlockEnd(sel.end ? isoToDatetimeLocal(sel.end.toISOString(), salonTimezone) : '')
@@ -1125,11 +1282,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function onDatesSet(info: DatesSetArg) {
-    const viewType = info.view.type
+    const viewType = normalizeCalendarViewId(info.view.type, defaultView)
     if (isCalendarViewId(viewType) && viewType !== currentView) {
       setCurrentView(viewType)
       setSavedView(viewType)
     }
+    selectedDateRef.current = info.view.currentStart
     setSelectedDate(info.view.currentStart)
     const next = { from: info.start.toISOString(), to: info.end.toISOString() }
     setRange((current) => current.from === next.from && current.to === next.to ? current : next)
@@ -1198,6 +1356,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function goToDate(date: Date) {
+    selectedDateRef.current = date
     setSelectedDate(date)
     ensureRangeCovers(date)
     calendarRef.current?.getApi().gotoDate(date)
@@ -1214,11 +1373,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (api) {
       if (delta > 0) api.next()
       else api.prev()
+      selectedDateRef.current = api.getDate()
       setSelectedDate(api.getDate())
     } else {
-      const next = new Date(selectedDate)
+      const next = new Date(selectedDateRef.current)
       if (currentView === 'dayGridMonth') next.setMonth(next.getMonth() + delta)
-      else if (currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' || currentView === 'listWeek') next.setDate(next.getDate() + delta * (currentView === 'timeGridThreeDay' ? 3 : 7))
+      else if (currentView === 'timeGridWeek' || currentView === 'listWeek') next.setDate(next.getDate() + delta * 7)
       else next.setDate(next.getDate() + delta)
       goToDate(next)
     }
@@ -1226,14 +1386,17 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function shiftDay(delta: number) {
-    const next = new Date(selectedDate)
+    // Prefer FC's current date when mounted; ref avoids lost clicks under rapid taps.
+    const base = calendarRef.current?.getApi()?.getDate() ?? selectedDateRef.current
+    const next = new Date(base)
     next.setDate(next.getDate() + delta)
     goToDate(next)
     flashSwipe()
   }
 
-  function openCreateAt(date: Date) {
+  function openCreateAt(date: Date, masterUserId?: string) {
     if (readOnlyOverlay) return
+    setCreateOwnerUserId(masterUserId?.trim() || '')
     const ymd = zonedYmd(date, salonTimezone)
     const [year, month, day] = ymd.split('-').map(Number)
     const hoursToday = (hours.data?.items ?? []).find((h) => h.weekday === weekdayIndex(date, salonTimezone))
@@ -1279,7 +1442,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
     setRangeError(null)
     setDisplayRangePref(result.value)
-    setHoursEditorOpen(false)
     toast.success('Рабочий день календаря сохранён')
   }
 
@@ -1290,6 +1452,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (
       target?.closest('.fc-event') ||
       target?.closest('.fc-event-resizer') ||
+      target?.closest('.cal-resize-handle') ||
+      target?.closest('.cal-slot-event-shell') ||
+      target?.closest('.cal-masters-event-shell') ||
       target?.closest('button') ||
       target?.closest('a') ||
       target?.closest('input') ||
@@ -1332,10 +1497,121 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
   }
 
-  function openHoursEditor() {
-    setRangeDraft(displayRangePref)
-    setRangeError(null)
-    setHoursEditorOpen(true)
+  async function applyMoveCopyTargets(targets: Array<{ day: string; startMin: number }>) {
+    const ctx = moveCopy
+    if (!ctx || !ctx.selection.start || !ctx.selection.end) return
+    const blockId = ctx.selection.id.startsWith('block:') ? ctx.selection.id.slice(6) : ''
+    if (!blockId) return
+    const durationMin = Math.max(15, Math.round((ctx.selection.end.getTime() - ctx.selection.start.getTime()) / 60_000))
+    setMoveCopyBusy(true)
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i]
+        const [y, mo, d] = t.day.split('-').map(Number)
+        const startsAt = wallTimeInTimezoneToUtcIso(y, mo, d, Math.floor(t.startMin / 60), t.startMin % 60, 0, salonTimezone)
+        const endsAt = new Date(new Date(startsAt).getTime() + durationMin * 60_000).toISOString()
+        const payload = {
+          title: ctx.selection.title,
+          category: ctx.selection.categoryId || blockCat,
+          color: normalizeCalendarColor(ctx.selection.color || category(ctx.selection.categoryId || blockCat).color, ctx.selection.categoryId || blockCat),
+          starts_at: startsAt,
+          ends_at: endsAt,
+          timezone: salonTimezone,
+          organization_id: orgID,
+          owner_user_id: ctx.selection.ownerUserId || undefined,
+        }
+        if (ctx.mode === 'move' && i === 0) {
+          await apiRequest(`/v1/planner/blocks/${blockId}`, { method: 'PATCH', token: accessToken, body: payload })
+        } else {
+          await apiRequest('/v1/planner/blocks', { token: accessToken, body: payload })
+        }
+      }
+      await qc.invalidateQueries({ queryKey: ['planner-blocks'] })
+      toast.success(ctx.mode === 'move' ? 'Событие перенесено' : 'Событие скопировано')
+      setMoveCopy(null)
+      setSheet(null)
+      setSelected(null)
+      setError(null)
+    } catch (e) {
+      setError(e)
+      toast.error(formatUserError(e, ctx.mode === 'move' ? 'Не удалось перенести событие' : 'Не удалось скопировать событие'))
+    } finally {
+      setMoveCopyBusy(false)
+    }
+  }
+
+  async function applyAppointmentMove(target: { day: string; startMin: number }) {
+    const appt = moveCopy?.selection
+    if (!appt || appt.kind !== 'appointment' || !appt.start || !appt.end || !appt.id.startsWith('appt:')) return
+    const durationMin = Math.max(15, appt.durationMinutes ?? Math.round((appt.end.getTime() - appt.start.getTime()) / 60_000))
+    const [y, mo, d] = target.day.split('-').map(Number)
+    const startsAt = wallTimeInTimezoneToUtcIso(y, mo, d, Math.floor(target.startMin / 60), target.startMin % 60, 0, salonTimezone)
+    setMoveCopyBusy(true)
+    try {
+      await apiRequest(`/v1/appointments/${appt.id.slice(5)}/reschedule`, {
+        method: 'POST',
+        token: accessToken,
+        body: { starts_at: startsAt, duration_minutes: durationMin },
+      })
+      await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
+      await qc.invalidateQueries({ queryKey: ['appointments'] })
+      toast.success('Запись перенесена')
+      setMoveCopy(null)
+      setSheet(null)
+      setSelected(null)
+    } catch (e) {
+      setError(e)
+      toast.error(formatUserError(e, 'Не удалось перенести запись'))
+    } finally {
+      setMoveCopyBusy(false)
+    }
+  }
+
+  async function applyAppointmentCopy(targets: Array<{ day: string; startMin: number }>) {
+    const appt = moveCopy?.selection
+    if (!appt || appt.kind !== 'appointment' || !appt.id.startsWith('appt:') || targets.length === 0) return
+    setMoveCopyBusy(true)
+    try {
+      const bodyTargets = targets.map((t) => {
+        const [y, mo, d] = t.day.split('-').map(Number)
+        return {
+          starts_at: wallTimeInTimezoneToUtcIso(y, mo, d, Math.floor(t.startMin / 60), t.startMin % 60, 0, salonTimezone),
+        }
+      })
+      const res = await apiRequest<{
+        items: Appointment[]
+        errors?: Array<{ starts_at: string; error?: { code?: string; message?: string } }>
+      }>(`/v1/appointments/${appt.id.slice(5)}/copy`, {
+        method: 'POST',
+        token: accessToken,
+        body: { targets: bodyTargets },
+      })
+      await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
+      await qc.invalidateQueries({ queryKey: ['appointments'] })
+      const ok = res.items?.length ?? 0
+      const fail = res.errors?.length ?? 0
+      if (ok && !fail) toast.success(ok === 1 ? 'Запись скопирована' : `Скопировано записей: ${ok}`)
+      else if (ok && fail) toast.success(`Скопировано: ${ok}, не удалось: ${fail}`)
+      else toast.error('Не удалось скопировать запись')
+      setMoveCopy(null)
+      setSheet(null)
+      setSelected(null)
+      setError(null)
+    } catch (e) {
+      setError(e)
+      toast.error(formatUserError(e, 'Не удалось скопировать запись'))
+    } finally {
+      setMoveCopyBusy(false)
+    }
+  }
+
+  async function applyGridResize(id: string, startMin: number, endMin: number) {
+    if (readOnlyOverlay || endMin - startMin < 15) return
+    const ymd = zonedYmd(selectedDate, salonTimezone)
+    const [y, mo, d] = ymd.split('-').map(Number)
+    const startsAt = wallTimeInTimezoneToUtcIso(y, mo, d, Math.floor(startMin / 60), startMin % 60, 0, salonTimezone)
+    const endsAt = wallTimeInTimezoneToUtcIso(y, mo, d, Math.floor(endMin / 60), endMin % 60, 0, salonTimezone)
+    await persistMove(id, new Date(startsAt), new Date(endsAt), true)
   }
 
   useEffect(() => {
@@ -1343,24 +1619,26 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [pendingInterval])
 
   const loading = appointments.isLoading || blocks.isLoading || hours.isLoading
-  // Phone day + month: reference list / month grid. 3-day and list keep FullCalendar.
-  const showMobileDayList = compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth')
-  const showMobileFc = compact && !showMobileDayList
+  // Owners with multiple masters get a column day board on phone and desktop (horizontal scroll on mobile).
+  const showMastersDay = ownerMode && !embedded && currentView === 'timeGridDay' && !masterFilter && masterCols.length > 1
+  // Phone day + month: reference list / month grid. List/week keep FullCalendar unless multi-master day board.
+  const showMobileDayList = compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth') && !showMastersDay
+  const showMobileFc = compact && !showMobileDayList && !showMastersDay
   const apptId = selected?.kind === 'appointment' && selected.id.startsWith('appt:') ? selected.id.slice(5) : ''
 
   useEffect(() => {
-    if (showMobileDayList) return
+    if (showMobileDayList || showMastersDay) return
     const api = calendarRef.current?.getApi()
     if (!api) return
     api.setOption('slotMinTime', slotMinTime)
     api.setOption('slotMaxTime', slotMaxTime)
-  }, [showMobileDayList, slotMinTime, slotMaxTime])
+  }, [showMobileDayList, showMastersDay, slotMinTime, slotMaxTime])
 
   useEffect(() => {
-    if (showMobileDayList) return
+    if (showMobileDayList || showMastersDay) return
     const id = requestAnimationFrame(() => calendarRef.current?.getApi().updateSize())
     return () => cancelAnimationFrame(id)
-  }, [showMobileDayList, currentView, loading])
+  }, [showMobileDayList, showMastersDay, currentView, loading])
 
   useEffect(() => {
     const topbar = document.querySelector('.topbar') as HTMLElement | null
@@ -1378,7 +1656,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [])
 
   useEffect(() => {
-    if (scrolledOnce.current || loading || showMobileDayList) return
+    if (scrolledOnce.current || loading || showMobileDayList || showMastersDay) return
     scrolledOnce.current = true
     requestAnimationFrame(() => {
       const wrap = wrapRef.current
@@ -1392,7 +1670,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         wrap.querySelector('.fc-event')
       slot?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     })
-  }, [loading, showMobileDayList, salonTimezone])
+  }, [loading, showMobileDayList, showMastersDay, salonTimezone])
 
   const colorTokenPicker = (value: string, onPick: (token: string) => void) => (
     <div className="calendar-color-token-grid" role="listbox" aria-label="Цвет">
@@ -1414,9 +1692,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     <>
       <div className="field"><label htmlFor="cal-block-title">Название</label><input id="cal-block-title" value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} autoFocus aria-required="true" /></div>
       <div className="field">
-        <label htmlFor="cal-block-cat">Категория</label>
-        <select id="cal-block-cat" value={blockCat} onChange={(e) => { setBlockCat(e.target.value); setBlockColor(normalizeCalendarColor(category(e.target.value).color, e.target.value)) }}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
-        <p className="muted">Тип занятости в планере (перерыв, задача, блокировка и т.д.).</p>
+        <label htmlFor="cal-block-cat">{isRepPlanner ? 'Категория' : 'Услуга / тип'}</label>
+        <select id="cal-block-cat" value={blockCat} onChange={(e) => { setBlockCat(e.target.value); setBlockColor(normalizeCalendarColor(category(e.target.value).color, e.target.value)) }}>
+          {(isRepPlanner ? palette.filter((c) => !c.system) : serviceOptions).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+        <p className="muted">{isRepPlanner ? 'Тип занятости в планере (перерыв, задача, блокировка и т.д.).' : 'Связь с услугой каталога или «Прочее» для личных блоков.'}</p>
       </div>
       <div className="field"><span className="label">Цвет</span>{colorTokenPicker(blockColor, setBlockColor)}</div>
       <div className="field"><label htmlFor="cal-block-start">Начало</label><input id="cal-block-start" type="datetime-local" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} aria-required="true" /></div>
@@ -1457,7 +1737,41 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       )}
       <div className="row gap wrap">
         {!selected.readonly && canDragAppointment(selected.statusRaw, selected.bookingMode) ? (
-          <button className="btn btn-secondary" type="button" onClick={() => setRescheduleOpen(true)}>Перенести</button>
+          <>
+            <button className="btn btn-secondary" type="button" onClick={() => setRescheduleOpen(true)}>Перенести</button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => {
+                if (!selected.start || !selected.end) return
+                setMoveCopy({ mode: 'copy', selection: selected })
+              }}
+            >
+              Копировать
+            </button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => {
+                if (!selected.start || !selected.end) return
+                setMoveCopy({ mode: 'copy', multiDay: true, selection: selected })
+              }}
+            >
+              На несколько дней
+            </button>
+          </>
+        ) : null}
+        {!selected.readonly && selected.statusRaw === 'completed' && selected.bookingMode !== 'fixed_window' ? (
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => {
+              if (!selected.start || !selected.end) return
+              setMoveCopy({ mode: 'copy', multiDay: true, selection: selected })
+            }}
+          >
+            Копировать на дни
+          </button>
         ) : null}
         <button className="btn btn-primary" type="button" onClick={() => navigate(`/appointments/${apptId}`)}>Открыть запись</button>
       </div>
@@ -1470,9 +1784,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <>
           <div className="field"><label htmlFor="cal-edit-title">Название</label><input id="cal-edit-title" value={blockTitle} onChange={(e) => setBlockTitle(e.target.value)} /></div>
           <div className="field">
-            <label htmlFor="cal-edit-cat">Категория</label>
-            <select id="cal-edit-cat" value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>{palette.filter((c) => !c.system).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
-            <p className="muted">Тип занятости в планере (перерыв, задача, блокировка и т.д.).</p>
+            <label htmlFor="cal-edit-cat">{isRepPlanner ? 'Категория' : 'Услуга / тип'}</label>
+            <select id="cal-edit-cat" value={blockCat} onChange={(e) => setBlockCat(e.target.value)}>
+              {(isRepPlanner ? palette.filter((c) => !c.system) : serviceOptions).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <p className="muted">{isRepPlanner ? 'Тип занятости в планере (перерыв, задача, блокировка и т.д.).' : 'Связь с услугой каталога или «Прочее» для личных блоков.'}</p>
           </div>
           <div className="field"><span className="label">Цвет</span>{colorTokenPicker(blockColor, setBlockColor)}</div>
           <div className="field"><label htmlFor="cal-edit-start">Начало</label><input id="cal-edit-start" type="datetime-local" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} /></div>
@@ -1487,71 +1803,63 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     </div>
   ) : null
 
-  const hoursEditorForm = (
-    <div className="stack" data-testid="calendar-hours-editor">
-      <p className="muted">Отображаемые часы сетки календаря. Это не недельный график мастера.</p>
-      <div className="calendar-display-range">
-        <div className="field">
-          <label htmlFor="cal-hours-from">Начало</label>
-          <input
-            id="cal-hours-from"
-            type="time"
-            step={1800}
-            value={rangeDraft.from}
-            onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))}
-            aria-required="true"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="cal-hours-to">Конец</label>
-          <input
-            id="cal-hours-to"
-            type="time"
-            step={1800}
-            value={rangeDraft.to}
-            onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))}
-            aria-required="true"
-          />
-        </div>
-      </div>
-      {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
-      <button className="btn btn-primary" type="button" onClick={saveDisplayRange}>Сохранить</button>
-    </div>
-  )
-
   const settingsPanel = (
     <div className="stack calendar-color-settings" data-testid="calendar-settings">
-      <div>
-        <strong>Показ категорий</strong>
-        <p className="muted">Скрытые категории не отображаются в календаре. Настройки сохраняются до перезагрузки сессии.</p>
-      </div>
-      <div className="calendar-category-row calendar-category-row--settings" role="group" aria-label="Фильтры категорий">
-        {palette.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className={`calendar-category-chip ${hidden.includes(c.id) ? 'is-hidden' : ''}`}
-            aria-pressed={!hidden.includes(c.id)}
-            onClick={() => setHidden((h) => (h.includes(c.id) ? h.filter((x) => x !== c.id) : [...h, c.id]))}
-          >
-            <span style={{ backgroundColor: calendarColorCss(c.color, c.id) } as CSSProperties}>{c.icon}</span>
-            {c.label}
-          </button>
-        ))}
-      </div>
+      {ownerMode ? (
+        <div className="stack gap">
+          <strong>Фильтры салона</strong>
+          <div className="field">
+            <label htmlFor="cal-settings-master">Мастер</label>
+            <select id="cal-settings-master" data-testid="calendar-master-filter" value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
+              <option value="">Все мастера</option>
+              {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id]?.name ?? 'Мастер'}</option>)}
+            </select>
+          </div>
+          {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) ? (
+            <div className="field">
+              <label htmlFor="cal-settings-branch">Филиал</label>
+              <select
+                id="cal-settings-branch"
+                data-testid="calendar-branch-switcher"
+                value={branchFilter}
+                onChange={(e) => {
+                  setBranchFilter(e.target.value)
+                  if (e.target.value) cabinet.setSelectedBranchId(e.target.value)
+                }}
+              >
+                <option value="">Все филиалы</option>
+                {salonBranches.map((b) => <option key={b.id} value={b.id}>{branchLabel(b, salonBranches)}</option>)}
+              </select>
+              {branchFilter ? (
+                <p className="muted" data-testid="calendar-branch-timezone">Часовой пояс сетки: {salonTimezone}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div>
         <strong>Диапазон сетки</strong>
         <p className="muted">Отображаемые часы, например 09:00–21:00. События вне диапазона всё равно видны — сетка чуть расширится.</p>
       </div>
-      <div className="calendar-display-range">
+      <div className="field-pair calendar-display-range">
         <div className="field">
           <label htmlFor="cal-range-from">Начало</label>
-          <input id="cal-range-from" type="time" step={1800} value={rangeDraft.from} onChange={(e) => setRangeDraft((r) => ({ ...r, from: e.target.value }))} aria-required="true" />
+          <TimeSelect
+            id="cal-range-from"
+            value={rangeDraft.from}
+            onChange={(from) => setRangeDraft((r) => ({ ...r, from }))}
+            aria-required
+          />
         </div>
         <div className="field">
           <label htmlFor="cal-range-to">Конец</label>
-          <input id="cal-range-to" type="time" step={1800} value={rangeDraft.to} onChange={(e) => setRangeDraft((r) => ({ ...r, to: e.target.value }))} aria-required="true" />
+          <TimeSelect
+            id="cal-range-to"
+            value={rangeDraft.to}
+            onChange={(to) => setRangeDraft((r) => ({ ...r, to }))}
+            aria-required
+          />
         </div>
       </div>
       {rangeError ? <p className="muted" role="alert">{rangeError}</p> : null}
@@ -1595,23 +1903,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         </label>
       </div>
 
-      <div>
-        <strong>Цвета и категории</strong>
-        <p className="muted">Цвет записи клиента нельзя менять. Для личных задач цвет сохраняется в событии и в профиле категории.</p>
-      </div>
-      <div className="calendar-color-grid stack">
-        {palette.map((c) => (
-          <div key={c.id} className={c.system ? 'is-disabled' : ''}>
-            <span>{c.label}</span>
-            {c.system ? (
-              <span className="muted">нельзя менять</span>
-            ) : (
-              colorTokenPicker(normalizeCalendarColor(c.color, c.id), (token) => colorSave.mutate({ category: c.id, color: token }))
-            )}
-          </div>
-        ))}
-      </div>
-
       <div className="row wrap gap">
         <button
           className="btn btn-secondary"
@@ -1631,7 +1922,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   const body = (
     <div
-      className={`stack calendar-shell ${showMobileDayList ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${currentView === 'timeGridWeek' || currentView === 'timeGridThreeDay' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
+      className={`stack calendar-shell ${showMobileDayList ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${showMastersDay ? 'is-masters-day' : ''} ${currentView === 'timeGridWeek' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
       style={{ touchAction: 'pan-y' }}
       onPointerDown={onPointerDownSwipe}
       onPointerMove={onPointerMoveSwipe}
@@ -1642,7 +1933,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         {!embedded && (
           <div className="calendar-page-head">
             {showMobileDayList || compact ? (
-              <h1 className={showMobileDayList ? 'visually-hidden' : 'calendar-page-title'}>
+              <h1 className="calendar-page-title">
                 {ownerMode ? 'Календарь салона' : 'Мой календарь'}
               </h1>
             ) : (
@@ -1655,7 +1946,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 </p>
               </div>
             )}
-            <div className={`row calendar-page-head-actions ${showMobileDayList ? 'is-compact-day' : ''}`}>
+            <div className={`row calendar-page-head-actions ${showMobileDayList || showMastersDay ? 'is-compact-day' : ''}`}>
               {!readOnlyOverlay ? (
                 <button
                   className="btn btn-secondary btn-compact"
@@ -1666,11 +1957,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                   {compact ? 'График' : 'Установка графика'}
                 </button>
               ) : null}
-              {!showMobileDayList && !compact ? (
-                <button className="btn btn-ghost btn-compact" type="button" onClick={openHoursEditor} data-testid="calendar-open-hours">
-                  Диапазон сетки
-                </button>
-              ) : null}
               {!readOnlyOverlay ? (
                 <button className="btn btn-primary btn-compact" type="button" onClick={() => (blockStart && blockEnd ? setEditorOpen(true) : openCreateAt(selectedDate))}>+ Событие</button>
               ) : null}
@@ -1678,44 +1964,9 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           </div>
         )}
 
-        {ownerMode && (
-          <section className="calendar-resource-bar">
-            <div className="field">
-              <label htmlFor="cal-master-filter">Мастер</label>
-              <select id="cal-master-filter" value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
-                <option value="">Все мастера</option>
-                {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id] ?? 'Мастер'}</option>)}
-              </select>
-            </div>
-            {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) && (
-              <div className="field">
-                <label htmlFor="calendar-branch-switcher">Филиал</label>
-                <select
-                  id="calendar-branch-switcher"
-                  value={branchFilter}
-                  onChange={(e) => {
-                    setBranchFilter(e.target.value)
-                    if (e.target.value) cabinet.setSelectedBranchId(e.target.value)
-                  }}
-                  data-testid="calendar-branch-switcher"
-                >
-                  <option value="">Все филиалы</option>
-                  {salonBranches.map((b) => <option key={b.id} value={b.id}>{branchLabel(b, salonBranches)}</option>)}
-                </select>
-              </div>
-            )}
-          </section>
-        )}
-
         <div className="calendar-controls">
           <div className="calendar-view-tabs" aria-label="Режим календаря" data-testid="calendar-view-tabs">
-            {([
-              ['timeGridDay', 'День'],
-              ['timeGridThreeDay', '3 дня'],
-              ['timeGridWeek', 'Неделя'],
-              ['dayGridMonth', 'Месяц'],
-              ['listWeek', 'Список'],
-            ] as const).map(([id, label]) => (
+            {CALENDAR_VIEW_OPTIONS.map(({ id, label }) => (
               <button
                 key={id}
                 type="button"
@@ -1737,6 +1988,30 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             Настройки
           </button>
         </div>
+
+        {compact && (showMastersDay || showMobileFc) ? (
+          <div className="cal-mobile-day-nav cal-chrome-day-nav" role="group" aria-label="Навигация по дате">
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact cal-touch"
+              onClick={() => (showMobileFc ? shiftPeriod(-1) : shiftDay(-1))}
+              aria-label="Назад"
+            >
+              Назад
+            </button>
+            <button type="button" className="btn btn-secondary btn-compact cal-touch" onClick={() => goToDate(new Date())}>
+              Сегодня
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact cal-touch"
+              onClick={() => (showMobileFc ? shiftPeriod(1) : shiftDay(1))}
+              aria-label="Вперёд"
+            >
+              Вперёд
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {!editorOpen && !selected ? <ErrorBanner error={error} fallbackTitle="Не удалось изменить расписание" /> : null}
@@ -1780,6 +2055,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             setSheet('event')
             navigator.vibrate?.(10)
           }}
+          onEventResize={readOnlyOverlay ? undefined : applyGridResize}
           onCreateSlot={readOnlyOverlay ? undefined : openCreateAt}
           onLongPressEmpty={readOnlyOverlay ? undefined : (d) => {
             setSheetSlot(d)
@@ -1792,14 +2068,36 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileDayList && loading ? (
+      {showMastersDay ? (
+        <CalendarMastersDay
+          masters={masterCols}
+          events={events}
+          timezone={salonTimezone}
+          selectedDate={selectedDate}
+          displayRange={appliedRange}
+          loading={loading}
+          onEventClick={(id) => {
+            openEventById(id)
+            setSheet(null)
+          }}
+          onEventLongPress={readOnlyOverlay ? undefined : (id) => {
+            openEventById(id)
+            setSheet('event')
+            navigator.vibrate?.(10)
+          }}
+          onEventResize={readOnlyOverlay ? undefined : applyGridResize}
+          onCreateSlot={readOnlyOverlay ? undefined : (start, masterUserId) => openCreateAt(start, masterUserId)}
+        />
+      ) : null}
+
+      {!showMobileDayList && !showMastersDay && loading ? (
         <div className="calendar-wrap" aria-busy="true">
           <div className="skeleton skeleton-card" />
           <div className="skeleton skeleton-card" />
         </div>
       ) : null}
 
-      {!showMobileDayList && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
+      {!showMobileDayList && !showMastersDay && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
         <EmptyState
           title="Рабочий график пока не задан"
           text="Календарь покажет рабочие часы после того, как мастер сохранит расписание."
@@ -1811,7 +2109,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileDayList ? (
+      {!showMobileDayList && !showMastersDay ? (
       <div
         className="calendar-wrap"
         ref={wrapRef}
@@ -1822,14 +2120,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin, luxonPlugin]}
           initialView={currentView}
-          views={{
-            timeGridThreeDay: {
-              type: 'timeGrid',
-              duration: { days: 3 },
-              buttonText: '3 дня',
-            },
-          }}
-          headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
+          // Mobile chrome already owns Назад/Сегодня/Вперёд — keep FC title only.
+          headerToolbar={
+            compact
+              ? { left: '', center: 'title', right: '' }
+              : { left: 'prev,next today', center: 'title', right: '' }
+          }
           buttonIcons={false}
           locale={ruLocale}
           timeZone={salonTimezone}
@@ -1844,6 +2140,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           slotDuration="00:30:00"
           eventDragMinDistance={16}
           selectMinDistance={16}
+          dragScroll={false}
           longPressDelay={500}
           eventLongPressDelay={500}
           selectLongPressDelay={500}
@@ -1879,10 +2176,31 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               arg.el.style.setProperty('--cal-hex', css)
             }
           }}
-          eventDragStart={() => { interacting.current = true }}
-          eventDragStop={() => { interacting.current = false }}
-          eventResizeStart={() => { interacting.current = true }}
-          eventResizeStop={() => { interacting.current = false }}
+          eventDragStart={() => {
+            interacting.current = true
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(wrapRef.current))
+            document.body.dataset.calGestureLockSource = 'fc-eventDragStart'
+          }}
+          eventDragStop={() => {
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = null
+            interacting.current = false
+            delete document.body.dataset.calGestureLockSource
+          }}
+          eventResizeStart={() => {
+            interacting.current = true
+            // May already be locked from resizer pointerdown; refresh freeze snapshot.
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = lockCalendarGesture(findCalendarScrollRoots(wrapRef.current))
+            document.body.dataset.calGestureLockSource = 'fc-eventResizeStart'
+          }}
+          eventResizeStop={() => {
+            fcGestureUnlock.current?.()
+            fcGestureUnlock.current = null
+            interacting.current = false
+            delete document.body.dataset.calGestureLockSource
+          }}
           selectAllow={() => {
             interacting.current = true
             return true
@@ -1900,11 +2218,11 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       ) : null}
 
       {compact ? (
-        <Drawer open={editorOpen} onClose={() => setEditorOpen(false)} title={<div><p className="eyebrow">Календарь</p><h2>Новое событие</h2></div>}>
+        <Drawer open={editorOpen} onClose={() => { setEditorOpen(false); setCreateOwnerUserId('') }} title={<div><p className="eyebrow">Календарь</p><h2>Новое событие</h2></div>}>
           {editorForm}
         </Drawer>
       ) : (
-        <Modal open={editorOpen} onClose={() => setEditorOpen(false)} title="Новое событие">
+        <Modal open={editorOpen} onClose={() => { setEditorOpen(false); setCreateOwnerUserId('') }} title="Новое событие">
           {editorForm}
         </Modal>
       )}
@@ -1954,7 +2272,69 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               <>
                 <button type="button" className="btn btn-primary" onClick={() => { setSheet(null); navigate(`/appointments/${apptId}`) }}>Открыть</button>
                 {!selected.readonly && canDragAppointment(selected.statusRaw, selected.bookingMode) ? (
-                  <button type="button" className="btn btn-secondary" onClick={() => { setSheet(null); setRescheduleOpen(true) }}>Перенести</button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'move', selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Перенести
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'copy', selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Копировать
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'copy', multiDay: true, selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Копировать на несколько дней
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => { setSheet(null); setRescheduleOpen(true) }}>Выбрать свободный слот</button>
+                  </>
+                ) : null}
+                {/* Completed flexible visits can still be re-booked as copies via Create rules */}
+                {!selected.readonly && selected.statusRaw === 'completed' && selected.bookingMode !== 'fixed_window' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'copy', selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Копировать
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'copy', multiDay: true, selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Копировать на несколько дней
+                    </button>
+                  </>
                 ) : null}
                 <button type="button" className="btn btn-secondary" onClick={() => setSheet(null)}>Подробнее</button>
               </>
@@ -1962,14 +2342,49 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
               <>
                 <button type="button" className="btn btn-primary" onClick={() => setSheet(null)}>Изменить</button>
                 {!selected.readonly ? (
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    disabled={removeBlock.isPending}
-                    onClick={() => { removeBlock.mutate(selected.id.slice(6)); setSheet(null); setSelected(null) }}
-                  >
-                    Удалить
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'move', selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Перенести
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'copy', selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Копировать
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!selected.start || !selected.end) return
+                        setMoveCopy({ mode: 'copy', multiDay: true, selection: selected })
+                        setSheet(null)
+                      }}
+                    >
+                      Копировать на несколько дней
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      disabled={removeBlock.isPending}
+                      onClick={() => { removeBlock.mutate(selected.id.slice(6)); setSheet(null); setSelected(null) }}
+                    >
+                      Удалить
+                    </button>
+                  </>
                 ) : null}
               </>
             )}
@@ -2075,15 +2490,6 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       </Drawer>
 
       <Drawer
-        open={hoursEditorOpen}
-        onClose={() => setHoursEditorOpen(false)}
-        title={<div><p className="eyebrow">Календарь</p><h2>Отображаемые часы</h2></div>}
-        label="Диапазон сетки календаря"
-      >
-        {hoursEditorForm}
-      </Drawer>
-
-      <Drawer
         open={schedulePanelOpen}
         onClose={closeSchedulePanel}
         title={<div><p className="eyebrow">Календарь</p><h2>Установка графика</h2></div>}
@@ -2160,6 +2566,33 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             </div>
           </div>
         </Modal>
+      ) : null}
+
+      {moveCopy && moveCopy.selection.start && moveCopy.selection.end ? (
+        <CalendarMoveCopyDialog
+          open
+          mode={moveCopy.mode}
+          multiDay={Boolean(moveCopy.multiDay)}
+          title={moveCopy.selection.kind === 'appointment' ? moveCopy.selection.title : 'Событие планера'}
+          timezone={moveCopy.selection.timezone || salonTimezone}
+          initialStart={moveCopy.selection.start}
+          durationMinutes={Math.max(
+            15,
+            moveCopy.selection.durationMinutes
+              ?? Math.round((moveCopy.selection.end.getTime() - moveCopy.selection.start.getTime()) / 60_000),
+          )}
+          compact={compact}
+          busy={moveCopyBusy}
+          onClose={() => setMoveCopy(null)}
+          onConfirm={async (targets) => {
+            if (moveCopy.selection.kind === 'appointment') {
+              if (moveCopy.mode === 'copy') await applyAppointmentCopy(targets)
+              else if (targets[0]) await applyAppointmentMove(targets[0])
+            } else {
+              await applyMoveCopyTargets(targets)
+            }
+          }}
+        />
       ) : null}
 
       {pendingInterval ? (

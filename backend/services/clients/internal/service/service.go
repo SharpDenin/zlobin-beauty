@@ -482,7 +482,8 @@ func (s *Service) ApplyContactPolicy(ctx context.Context, actor uuid.UUID, roles
 	if card == nil || card.UserID == actor {
 		return
 	}
-	if hasRole(roles, "salon_owner") || hasRole(roles, "salon_admin") || hasRole(roles, "admin") {
+	// Owner/admin contact visibility is membership-backed only (legacy identity salon_owner is not enough).
+	if hasRole(roles, "salon_admin") || hasRole(roles, "admin") {
 		return
 	}
 	if s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin") {

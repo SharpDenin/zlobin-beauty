@@ -13,27 +13,12 @@ export const CROP_MAX_ZOOM = 4
 export const CROP_ZOOM_STEP = 0.01
 
 /**
- * Aspect hints aligned with how photos are framed in the UI (object-fit cover).
- * `null` = free crop rectangle (resize by corners/edges independently).
+ * Free rectangular crop for every upload purpose (corners + edges independently).
+ * Display frames (cards, avatars) still use object-fit cover — the editor must not
+ * lock the user into 16:9 / square / product ratios.
  */
-export function cropAspectForPurpose(purpose: string): number | null {
-  switch (purpose) {
-    case 'profile':
-      return 1
-    case 'service':
-      return 16 / 9
-    case 'salon':
-      return 16 / 9
-    case 'article':
-      return 16 / 9
-    case 'product':
-      return 4 / 5
-    case 'wallpaper':
-      return 16 / 10
-    default:
-      // portfolio, message, hair_consultation, before_after, …
-      return null
-  }
+export function cropAspectForPurpose(_purpose: string): number | null {
+  return null
 }
 
 /** Static raster photos go through the editor; GIF/video keep their original pipeline. */

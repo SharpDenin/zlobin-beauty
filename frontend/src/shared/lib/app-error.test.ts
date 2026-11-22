@@ -93,6 +93,19 @@ describe('normalizeError', () => {
     expect(formatUserError(n)).not.toMatch(/Failed to fetch/i)
   })
 
+  it('does not treat arbitrary TypeErrors as offline', () => {
+    const n = normalizeError(new TypeError('Cannot read properties of undefined'))
+    expect(n.code).not.toBe('network_error')
+    expect(formatUserError(n)).not.toContain('Нет подключения')
+  })
+
+  it('keeps upload_failed distinct from offline', () => {
+    const n = normalizeError({ code: 'upload_failed', status: 0, message: 'upload failed' })
+    expect(n.kind).toBe('upload')
+    expect(n.title).toContain('загрузить файл')
+    expect(formatUserError(n)).not.toContain('Нет подключения')
+  })
+
   it('keeps safe local Russian validation messages', () => {
     const n = normalizeError({
       code: 'validation_error',

@@ -26,8 +26,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [background.id, background.accent, background.src, theme])
 
   useEffect(() => {
+    // Re-hydrate when scoped wallpaper changes (login / preference sync) without blocking first paint.
     void hydrateCustomBackground()
-  }, [])
+  }, [background.id, background.mediaId])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: light)')

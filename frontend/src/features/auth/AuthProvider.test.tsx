@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { AuthProvider, useAuth } from '@/features/auth/AuthProvider'
+import { AuthProvider, hasMasterAccess, hasSalonAdmin, useAuth } from '@/features/auth/AuthProvider'
 import { SESSION_STORAGE_KEY } from '@/features/auth/session-storage'
 import { SESSION_ENDED_KEY, markSessionEnded, peekSessionEnded } from '@/features/pwa/pwa'
 import { apiRequest } from '@/shared/api/client'
@@ -217,5 +217,15 @@ describe('AuthProvider session lifecycle', () => {
     expect(result.current.user?.id).toBe('client-b')
     expect(result.current.user?.roles).toEqual(['client'])
     expect(result.current.user?.display_name).toBe('Клиент Б')
+  })
+})
+
+describe('identity salon_owner is not an access role', () => {
+  it('does not grant master or salon-admin access from legacy salon_owner alone', () => {
+    const legacy = { id: 'u', email: 'o@x', phone: null, display_name: 'O', city: '', roles: ['client', 'salon_owner'], status: 'active' }
+    expect(hasMasterAccess(legacy)).toBe(false)
+    expect(hasSalonAdmin(legacy)).toBe(false)
+    expect(hasMasterAccess({ ...legacy, roles: ['client', 'master'] })).toBe(true)
+    expect(hasSalonAdmin({ ...legacy, roles: ['client', 'salon_admin'] })).toBe(true)
   })
 })

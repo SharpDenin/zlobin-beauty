@@ -1,0 +1,115 @@
+# Local full-stack override. Does not replace production docker-compose.yml.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Differences vs production-oriented base compose:
+# - backend services build from backend/Dockerfile.dev (Debian), not Alpine Dockerfile
+# - caddy disabled by default (ports 80/443 often conflict on Windows desktops)
+# - frontend baked with empty VITE_API_BASE_URL → same-origin /v1/ via nginx → gateway
+# - CORS allows local SPA origins used by Playwright / browser on the host
+
+x-backend-dev-build: &backend-dev-build
+  context: ./backend
+  dockerfile: Dockerfile.dev
+
+services:
+  caddy:
+    profiles: ["caddy"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Same-origin API through nginx.conf proxy_pass to gateway DNS name.
+        VITE_API_BASE_URL: ""
+    ports:
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-5173}:80"
+
+  gateway:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: gateway/cmd/gateway
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8090,http://127.0.0.1:8090}
+    ports:
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${GATEWAY_PORT:-8090}:8080"
+
+  identity:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/identity/cmd/identity
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://127.0.0.1:5173}
+
+  organizations:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/organizations/cmd/organizations
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+  marketplace:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/marketplace/cmd/marketplace
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+  booking:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/booking/cmd/booking
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+  clients:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/clients/cmd/clients
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      # Local SPA origin for client QR invite links (production sets PUBLIC_APP_URL in deploy env).
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://127.0.0.1:5173}
+
+  commerce:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/commerce/cmd/commerce
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+  communications:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/communications/cmd/communications
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+  media:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/media/cmd/media
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+  seed:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: cmd/seed
+
+  bootstrap-admin:
+    build:
+      <<: *backend-dev-build
+      args:
+        SERVICE_PATH: services/identity/cmd/bootstrap-admin

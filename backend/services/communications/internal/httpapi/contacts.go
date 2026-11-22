@@ -19,6 +19,33 @@ func (a *API) registerContactRoutes(mux *http.ServeMux, auth func(http.Handler) 
 	mux.Handle("DELETE /v1/contacts/{id}", auth(http.HandlerFunc(a.deleteContact)))
 }
 
+func (a *API) linkContacts(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserA string `json:"user_a"`
+		UserB string `json:"user_b"`
+		Note  string `json:"note"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	aID, err := uuid.Parse(strings.TrimSpace(req.UserA))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_a"))
+		return
+	}
+	bID, err := uuid.Parse(strings.TrimSpace(req.UserB))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid user_b"))
+		return
+	}
+	if err := a.svc.LinkMutualContacts(r.Context(), aID, bID, req.Note); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (a *API) listContacts(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	q := r.URL.Query()

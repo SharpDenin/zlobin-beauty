@@ -16,6 +16,7 @@ import {
   type SalonChair,
   type WorkModeInterval,
 } from '@/shared/lib/work-mode'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 
 const WEEKDAYS = [
   { value: 1, label: 'Пн' },
@@ -268,7 +269,7 @@ export function ScheduleEditor({
   }
 
   const body = (
-    <div className="stack" data-testid="schedule-editor">
+    <div className="stack schedule-editor" data-testid="schedule-editor">
       {!embedded ? (
         <>
           <h1>Установка графика</h1>
@@ -305,8 +306,8 @@ export function ScheduleEditor({
         {WEEKDAYS.map((d) => {
           const row = hoursDraft.find((h) => h.weekday === d.value)
           return (
-            <div key={d.value} className="row gap wrap" style={{ alignItems: 'end' }}>
-              <label className="field-check">
+            <div key={d.value} className="schedule-hours-row">
+              <label className="field-check schedule-hours-day">
                 <input
                   type="checkbox"
                   checked={Boolean(row)}
@@ -315,36 +316,32 @@ export function ScheduleEditor({
                 <span>{d.label}</span>
               </label>
               {row ? (
-                <>
+                <div className="field-pair">
                   <div className="field">
                     <label htmlFor={`wh-start-${d.value}`}>С</label>
-                    <input
+                    <TimeSelect
                       id={`wh-start-${d.value}`}
-                      type="time"
-                      step={1800}
                       value={minutesToHHMM(row.start_minute)}
-                      onChange={(e) => {
-                        const m = parseHHMM(e.target.value)
+                      onChange={(next) => {
+                        const m = parseHHMM(next)
                         if (m != null) updateHour(d.value, { start_minute: m })
                       }}
-                      aria-required="true"
+                      aria-required
                     />
                   </div>
                   <div className="field">
                     <label htmlFor={`wh-end-${d.value}`}>До</label>
-                    <input
+                    <TimeSelect
                       id={`wh-end-${d.value}`}
-                      type="time"
-                      step={1800}
                       value={minutesToHHMM(row.end_minute)}
-                      onChange={(e) => {
-                        const m = parseHHMM(e.target.value)
+                      onChange={(next) => {
+                        const m = parseHHMM(next)
                         if (m != null) updateHour(d.value, { end_minute: m })
                       }}
-                      aria-required="true"
+                      aria-required
                     />
                   </div>
-                </>
+                </div>
               ) : (
                 <span className="muted">выходной</span>
               )}
@@ -368,14 +365,14 @@ export function ScheduleEditor({
           <span>Выходной</span>
         </label>
         {!exceptionOff ? (
-          <div className="row gap wrap">
+          <div className="field-pair">
             <div className="field">
               <label htmlFor="ex-start">С</label>
-              <input id="ex-start" type="time" step={1800} value={exceptionStart} onChange={(e) => setExceptionStart(e.target.value)} aria-required="true" />
+              <TimeSelect id="ex-start" value={exceptionStart} onChange={setExceptionStart} aria-required />
             </div>
             <div className="field">
               <label htmlFor="ex-end">До</label>
-              <input id="ex-end" type="time" step={1800} value={exceptionEnd} onChange={(e) => setExceptionEnd(e.target.value)} aria-required="true" />
+              <TimeSelect id="ex-end" value={exceptionEnd} onChange={setExceptionEnd} aria-required />
             </div>
           </div>
         ) : null}

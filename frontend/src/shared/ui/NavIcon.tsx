@@ -28,6 +28,7 @@ function iconFor(to: string): AppIconName {
   if (to.startsWith('/profile')) return 'user'
   if (to.startsWith('/staff/invite')) return 'qr'
   if (to.startsWith('/staff')) return 'staff'
+  if (to.startsWith('/clients/invite')) return 'qr'
   if (to.startsWith('/clients')) return 'contacts'
   if (to.startsWith('/reports') || to.startsWith('/supplier/analytics') || to.startsWith('/rep/analytics')) return 'reports'
   if (to.startsWith('/services')) return 'scissors'

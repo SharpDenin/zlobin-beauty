@@ -305,6 +305,11 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Загрузка остановилась',
     hint: 'Связь нестабильна. Проверьте интернет и повторите — фото сожмётся автоматически.',
   },
+  upload_failed: {
+    kind: 'upload',
+    title: 'Не удалось загрузить файл',
+    hint: 'Попробуйте ещё раз. Если ошибка повторяется, выберите другой файл.',
+  },
   upstream_unavailable: {
     kind: 'server',
     title: 'Сервис временно недоступен',
@@ -477,7 +482,8 @@ function resolveCode(code: string, message: string): string {
 }
 
 function statusFallback(status: number): CatalogEntry {
-  if (status === 0) return CATALOG.network_error
+  // status 0 is ambiguous (abort, upload, opaque gateway) — never imply offline here.
+  if (status === 0) return UNKNOWN
   if (status === 400 || status === 422) return CATALOG.validation_error
   if (status === 401) return CATALOG.session_expired
   if (status === 403) return CATALOG.forbidden
@@ -514,11 +520,18 @@ function formatFieldHint(fields: Record<string, string>): string {
     .join('\n')
 }
 
+const NETWORK_MESSAGE_RE =
+  /failed to fetch|networkerror|network error|load failed|fetch failed|econnrefused|enetunreach|enotfound|network request failed|ns_error_net|err_internet_disconnected|err_network_changed|err_connection_/i
+
+/** True only for confirmed transport/connectivity failures — not every TypeError. */
 function isNetworkFailure(error: unknown): boolean {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true
-  if (error instanceof TypeError) return true
   const msg = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
-  return /failed to fetch|networkerror|load failed|fetch failed|econnrefused|network request failed/i.test(msg)
+  if (NETWORK_MESSAGE_RE.test(msg)) return true
+  // Offline + a TypeError from fetch() (often empty/"Failed to fetch") is a real outage.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false && error instanceof TypeError) {
+    return true
+  }
+  return false
 }
 
 function isAbort(error: unknown): boolean {
@@ -625,7 +638,11 @@ export function normalizeError(error: unknown): NormalizedError {
 }
 
 export function isNetworkError(error: unknown): boolean {
-  return normalizeError(error).kind === 'network' || isNetworkFailure(error)
+  const normalized = normalizeError(error)
+  if (normalized.code === 'network_error') return true
+  // stalled/aborted share kind "network" for UX grouping but are not "offline".
+  if (normalized.code === 'aborted' || normalized.code === 'upload_stalled') return false
+  return normalized.kind === 'network' || isNetworkFailure(error)
 }
 
 export function formatNormalized(error: NormalizedError): string {

@@ -19,22 +19,22 @@ import { toast } from '@/shared/ui/Toast'
 import { userError } from '@/shared/lib/app-error'
 import { useMessengerOptional } from '@/features/messenger/MessengerProvider'
 import { NotificationBubbles } from '@/features/notifications/NotificationBubbles'
-import { notificationHref } from '@/features/notifications/notificationHref'
-import { isAppointmentNotification } from '@/features/notifications/groupBubbleNotifications'
-import { DevicePushCard } from '@/features/pwa/DevicePushCard'
 import {
-  dayKey,
+  appointmentOnYmd,
+  dayNumberForYmd,
   formatOwnerDate,
   homeAudience,
   homeShowsSchedule,
   homeTiles,
   isDemoAccount,
   pendingConfirmLabel,
-  sameCalendarDay,
-  scheduleHeading,
+  scheduleHeadingYmd,
   shortPersonName,
-  weekDays,
+  weekdayLabelForYmd,
+  weekYmds,
 } from '@/features/owner-home/owner-home-helpers'
+import { formatLocalInTimezone, ymdInTimezone, zonedDayBoundsUtc } from '@/shared/lib/time'
+import { resolveServiceTimezone } from '@/shared/lib/service-timezone'
 import '@/features/owner-home/owner-home.css'
 
 type OwnerAppointment = {
@@ -47,6 +47,8 @@ type OwnerAppointment = {
   client_display_name?: string
   master_display_name?: string
   branch_id?: string
+  location_timezone?: string
+  location_city?: string
 }
 
 type MasterHero = {
@@ -64,16 +66,6 @@ type MasterHero = {
   work_types?: string[]
   published?: boolean
   profession_types?: { id: string }[]
-}
-
-type NotificationItem = {
-  id: string
-  title: string
-  body: string
-  read_at: string | null
-  created_at: string
-  entity_type?: string
-  entity_id?: string | null
 }
 
 const TILE_ICONS: Record<string, AppIconName> = {
@@ -127,28 +119,26 @@ export function OwnerStartPage() {
   const messenger = useMessengerOptional()
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [selectedDay, setSelectedDay] = useState(() => new Date())
   const [photoBusy, setPhotoBusy] = useState(false)
   const [cropFile, setCropFile] = useState<File | null>(null)
   const [photoLightbox, setPhotoLightbox] = useState(false)
-  const days = useMemo(() => weekDays(new Date()), [])
   const audience = homeAudience(cabinet.kind)
   const showSchedule = homeShowsSchedule(cabinet.kind)
 
   const orgID = cabinet.selectedOrg?.organization.id
   const salonName = cabinet.selectedOrg?.organization.name || user?.display_name || 'Мой салон'
-  const rangeFrom = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 7)
-    d.setHours(0, 0, 0, 0)
-    return d
-  }, [])
+  const homeTz = resolveServiceTimezone(
+    cabinet.selectedBranch?.timezone,
+    cabinet.selectedBranch?.city || cabinet.selectedOrg?.organization.city || user?.city,
+  )
+  const days = useMemo(() => weekYmds(homeTz), [homeTz])
+  const todayYmd = ymdInTimezone(new Date(), homeTz)
+  const [selectedYmd, setSelectedYmd] = useState(todayYmd)
+  const rangeFrom = useMemo(() => new Date(zonedDayBoundsUtc(ymdInTimezone(new Date(Date.now() - 7 * 86400000), homeTz), homeTz).startIso), [homeTz])
   const rangeTo = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() + 14)
-    d.setHours(23, 59, 59, 999)
-    return d
-  }, [])
+    const endYmd = ymdInTimezone(new Date(Date.now() + 14 * 86400000), homeTz)
+    return new Date(zonedDayBoundsUtc(endYmd, homeTz).endIso)
+  }, [homeTz])
 
   const appointments = useQuery({
     queryKey: ['owner-start-appointments', audience, orgID, rangeFrom.toISOString(), rangeTo.toISOString()],
@@ -178,25 +168,20 @@ export function OwnerStartPage() {
     retry: false,
   })
 
-  const notifications = useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => apiRequest<{ items: NotificationItem[] }>('/v1/notifications', { token: accessToken }),
-    enabled: Boolean(accessToken),
-  })
   const items = (appointments.data?.items ?? []).filter((a) => {
     if (cabinet.kind !== 'chain_owner' || !cabinet.selectedBranch?.id) return true
     return !a.branch_id || a.branch_id === cabinet.selectedBranch.id
   })
 
-  const today = new Date()
-  const todayItems = items.filter((a) => sameCalendarDay(a.starts_at, today) && !a.status.startsWith('cancelled'))
+  const apptTz = (a: OwnerAppointment) => resolveServiceTimezone(a.location_timezone, a.location_city || cabinet.selectedBranch?.city) || homeTz
+  const todayItems = items.filter((a) => appointmentOnYmd(a.starts_at, todayYmd, apptTz(a)) && !a.status.startsWith('cancelled'))
   const dayItems = items
-    .filter((a) => sameCalendarDay(a.starts_at, selectedDay) && !a.status.startsWith('cancelled'))
+    .filter((a) => appointmentOnYmd(a.starts_at, selectedYmd, apptTz(a)) && !a.status.startsWith('cancelled'))
     .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
     .slice(0, 4)
   const pending = items.filter((a) => a.status === 'pending_confirmation')
   const nextAppt = [...items]
-    .filter((a) => !a.status.startsWith('cancelled') && new Date(a.starts_at).getTime() >= today.getTime() - 60 * 60 * 1000)
+    .filter((a) => !a.status.startsWith('cancelled') && new Date(a.starts_at).getTime() >= Date.now() - 60 * 60 * 1000)
     .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0]
 
   const bookedMinutes = todayItems.reduce((sum, a) => {
@@ -214,18 +199,17 @@ export function OwnerStartPage() {
   const photo = master?.photo_media_id
   const canEditPhoto = Boolean(master?.id || master?.display_name)
   const demo = isDemoAccount(user?.email)
-  // Right column: appointment notifications only — chat messages live in bubbles / messenger.
-  const notes = (notifications.data?.items ?? []).filter(isAppointmentNotification)
-  const unread = notes.filter((n) => !n.read_at)
   const branches = cabinet.selectedOrg?.branches ?? []
   const busyDays = useMemo(() => {
     const set = new Set<string>()
+    const branchCity = cabinet.selectedBranch?.city
     for (const a of items) {
       if (a.status.startsWith('cancelled')) continue
-      set.add(dayKey(new Date(a.starts_at)))
+      const tz = resolveServiceTimezone(a.location_timezone, a.location_city || branchCity) || homeTz
+      set.add(ymdInTimezone(a.starts_at, tz))
     }
     return set
-  }, [items])
+  }, [items, homeTz, cabinet.selectedBranch?.city])
 
   const title = audience === 'salon'
     ? salonName
@@ -441,24 +425,23 @@ export function OwnerStartPage() {
               <span>Ожидают</span>
             </div>
             <div>
-              <strong>{nextAppt ? new Date(nextAppt.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—'}</strong>
+              <strong>{nextAppt ? formatLocalInTimezone(nextAppt.starts_at, apptTz(nextAppt)) : '—'}</strong>
               <span>Ближайшая</span>
             </div>
           </section>
         )}
 
         {showSchedule && (
-          <section className="owner-start-day" aria-label={scheduleHeading(selectedDay)}>
+          <section className="owner-start-day" aria-label={scheduleHeadingYmd(selectedYmd, homeTz, todayYmd)}>
             <div className="owner-start-day-head">
-              <h2>{scheduleHeading(selectedDay)}</h2>
+              <h2>{scheduleHeadingYmd(selectedYmd, homeTz, todayYmd)}</h2>
               <Link to="/appointments">Все записи ›</Link>
             </div>
 
             <div className="owner-start-strip" role="listbox" aria-label="Дни недели">
-              {days.map((d) => {
-                const key = dayKey(d)
-                const selected = dayKey(selectedDay) === key
-                const weekday = d.toLocaleDateString('ru-RU', { weekday: 'short' })
+              {days.map((key) => {
+                const selected = selectedYmd === key
+                const weekday = weekdayLabelForYmd(key, homeTz)
                 const hasItems = busyDays.has(key)
                 return (
                   <button
@@ -467,10 +450,10 @@ export function OwnerStartPage() {
                     role="option"
                     aria-selected={selected}
                     className={`owner-start-chip${selected ? ' is-selected' : ''}${hasItems ? ' has-items' : ''}`}
-                    onClick={() => setSelectedDay(d)}
+                    onClick={() => setSelectedYmd(key)}
                   >
                     <span>{weekday}</span>
-                    <strong>{d.getDate()}</strong>
+                    <strong>{dayNumberForYmd(key)}</strong>
                   </button>
                 )
               })}
@@ -490,7 +473,7 @@ export function OwnerStartPage() {
 
             <ul className="owner-start-appts">
               {dayItems.map((a) => {
-                const time = new Date(a.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+                const time = formatLocalInTimezone(a.starts_at, apptTz(a))
                 const person = shortPersonName(audience === 'client' ? a.master_display_name : a.client_display_name) || (audience === 'client' ? 'Мастер' : 'Клиент')
                 const other = audience === 'client' ? '' : shortPersonName(a.master_display_name)
                 return (
@@ -531,31 +514,6 @@ export function OwnerStartPage() {
             </Link>
           </section>
         )}
-
-        <section className="owner-start-notes" aria-label="Уведомления">
-          <div className="owner-start-day-head">
-            <h2>
-              Уведомления
-              {unread.length > 0 && <span className="owner-start-unread">{unread.length}</span>}
-            </h2>
-            <Link to="/notifications">Все ›</Link>
-          </div>
-          {notifications.isLoading && <div className="skeleton skeleton-card" />}
-          {!notifications.isLoading && notes.length === 0 && (
-            <p className="owner-start-empty">Пока нет уведомлений</p>
-          )}
-          <DevicePushCard compact homePrompt className="owner-start-push-card" />
-          <ul className="owner-start-note-list">
-            {notes.slice(0, 3).map((n) => (
-              <li key={n.id}>
-                <Link className={`owner-start-note${!n.read_at ? ' is-unread' : ''}`} to={notificationHref(n)}>
-                  <strong>{n.title}</strong>
-                  <span>{n.body}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
 
         {audience === 'client' && <ClientMasters city={user?.city} />}
 

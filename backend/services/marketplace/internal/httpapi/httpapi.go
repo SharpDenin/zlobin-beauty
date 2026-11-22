@@ -243,19 +243,20 @@ func (a *API) myMaster(w http.ResponseWriter, r *http.Request) {
 }
 
 type upsertMasterReq struct {
-	OrganizationID    string    `json:"organization_id"`
-	BranchID          string    `json:"branch_id"`
-	DisplayName       string    `json:"display_name"`
-	Bio               string    `json:"bio"`
-	Specializations   []string  `json:"specializations"`
-	City              string    `json:"city"`
-	ExperienceYears   int       `json:"experience_years"`
-	Education         string    `json:"education"`
-	PhotoMediaID      string    `json:"photo_media_id"`
-	WorkType          string    `json:"work_type"`
-	WorkTypes         *[]string `json:"work_types"`
-	Published         bool      `json:"published"`
-	ProfessionTypeIDs *[]string `json:"profession_type_ids"`
+	OrganizationID     string    `json:"organization_id"`
+	BranchID           string    `json:"branch_id"`
+	DisplayName        string    `json:"display_name"`
+	Bio                string    `json:"bio"`
+	Specializations    []string  `json:"specializations"`
+	CuttingTechniques  *[]string `json:"cutting_techniques"`
+	City               string    `json:"city"`
+	ExperienceYears    int       `json:"experience_years"`
+	Education          string    `json:"education"`
+	PhotoMediaID       string    `json:"photo_media_id"`
+	WorkType           string    `json:"work_type"`
+	WorkTypes          *[]string `json:"work_types"`
+	Published          bool      `json:"published"`
+	ProfessionTypeIDs  *[]string `json:"profession_type_ids"`
 }
 
 func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +347,7 @@ func (a *API) upsertMaster(w http.ResponseWriter, r *http.Request) {
 	m, err := a.svc.UpsertMaster(r.Context(), service.UpsertMasterInput{
 		UserID: claims.UserID, OrganizationID: orgID, BranchID: branchID,
 		DisplayName: req.DisplayName, Bio: req.Bio, Specializations: req.Specializations,
+		CuttingTechniques: req.CuttingTechniques,
 		City: req.City, ExperienceYears: req.ExperienceYears, Education: req.Education,
 		PhotoMediaID: photoMediaID, WorkType: req.WorkType, WorkTypes: req.WorkTypes,
 		Published: req.Published, AccessToken: token,
@@ -522,6 +524,10 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	if specs == nil {
 		specs = []string{}
 	}
+	techniques := m.CuttingTechniques
+	if techniques == nil {
+		techniques = []string{}
+	}
 	types := make([]map[string]any, 0, len(m.ProfessionTypes))
 	for _, t := range m.ProfessionTypes {
 		types = append(types, professionTypeDTO(t))
@@ -537,6 +543,7 @@ func masterDTO(m domain.MasterProfile) map[string]any {
 	return map[string]any{
 		"id": m.ID.String(), "user_id": m.UserID.String(), "organization_id": orgID,
 		"branch_id": branchID, "display_name": m.DisplayName, "bio": m.Bio, "specializations": specs,
+		"cutting_techniques": techniques,
 		"city": m.City, "experience_years": m.ExperienceYears, "education": m.Education,
 		"photo_media_id": photoMediaID, "work_type": workType, "work_types": workTypes,
 		"profession_types": types,

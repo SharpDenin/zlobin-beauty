@@ -9,6 +9,13 @@ frontend/dist/
 # Local runtime
 .logs/
 bin/
+test-results/
+frontend/test-results/
+frontend/playwright-report/
+# Local MinIO image archives (never commit / never bake into images)
+minio.tar
+minio-image.tar
+*.minio.tar
 epica-export/
 epica-mapping.local.json
 epica-mapping.passthrough.json

@@ -105,31 +105,39 @@ function bookingModeLabel(mode?: string) {
   return mode === 'fixed_window' ? 'Фиксированное окно' : 'Гибкая запись'
 }
 
+function ymdLocalParts(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 function nextOpenBookingDate(from = new Date()): string {
   const d = new Date(from)
   d.setHours(12, 0, 0, 0)
   while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1)
-  return d.toISOString().slice(0, 10)
+  return ymdLocalParts(d)
 }
 
+/** Nearby bookable civil dates — never use toISOString().slice(0,10) (UTC day shift). */
 function nearbyDates(centerISO: string, span = 7): string[] {
   const base = new Date(`${centerISO}T12:00:00`)
   const out: string[] = []
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
   for (let i = -1; i < span + 6; i++) {
     const d = new Date(base)
     d.setDate(base.getDate() + i)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    d.setHours(12, 0, 0, 0)
     if (d < today) continue
     if (d.getDay() === 0 || d.getDay() === 6) continue
-    out.push(d.toISOString().slice(0, 10))
+    out.push(ymdLocalParts(d))
     if (out.length >= span) break
   }
   while (out.length < span) {
     const last = out[out.length - 1] ? new Date(`${out[out.length - 1]}T12:00:00`) : new Date()
     last.setDate(last.getDate() + 1)
+    last.setHours(12, 0, 0, 0)
     if (last.getDay() === 0 || last.getDay() === 6) continue
-    out.push(last.toISOString().slice(0, 10))
+    out.push(ymdLocalParts(last))
   }
   return out.slice(0, span)
 }

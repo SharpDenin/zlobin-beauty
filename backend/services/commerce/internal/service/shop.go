@@ -841,7 +841,8 @@ func (s *Service) ApplyProductImport(ctx context.Context, actor, jobID uuid.UUID
 			p := domain.Product{
 				ID: ids.New(), OrganizationID: job.OrganizationID, Brand: row.Brand, Name: row.Name,
 				SKU: row.SKU, Unit: unit, PriceMinor: priceMinor, Currency: "RUB", MinStock: minStock,
-				CreatedAt: now, UpdatedAt: now,
+				// CSV path must satisfy products_audience_check (empty string is invalid).
+				Audience: "all", ForSale: true, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := s.store.CreateProduct(ctx, p); err != nil {
 				if ae, ok := apperr.As(err); ok {

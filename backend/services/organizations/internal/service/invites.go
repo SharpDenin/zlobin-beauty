@@ -196,12 +196,19 @@ func (s *Service) grantIdentityRole(ctx context.Context, userID uuid.UUID, membe
 	if s.identityURL == "" || s.internalToken == "" {
 		return nil
 	}
-	identRole := "master"
+	// Ownership is membership-only (REG-03): never mint identity salon_owner/master for owner.
+	identRole := ""
 	switch membershipRole {
+	case "owner":
+		return nil
 	case "admin":
 		identRole = "salon_admin"
+	case "master", "staff":
+		identRole = "master"
 	case "rep":
 		identRole = "supplier_rep"
+	default:
+		return nil
 	}
 	body, err := json.Marshal(map[string]any{"user_id": userID.String(), "role": identRole})
 	if err != nil {

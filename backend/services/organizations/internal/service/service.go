@@ -148,6 +148,7 @@ func (s *Service) Create(ctx context.Context, in CreateOrgInput) (*OrgBundle, er
 	if err := s.store.CreateOrgWithOwner(ctx, org, branch, membership); err != nil {
 		return nil, apperr.Internal(err)
 	}
+	// Ownership is organization membership only — do not grant identity salon_owner/master.
 	return &OrgBundle{Organization: org, Branch: branch}, nil
 }
 
@@ -187,7 +188,7 @@ func (s *Service) AddBranch(ctx context.Context, actor, orgID uuid.UUID, in AddB
 	b := domain.Branch{
 		ID: ids.New(), OrganizationID: orgID, Name: name, City: city, AddressLine: addr,
 		Phone: strings.TrimSpace(in.Phone), Timezone: branchTZ, CancelWindowHours: 12,
-		PickupEnabled: true, Published: true, Latitude: in.Latitude, Longitude: in.Longitude,
+		PickupEnabled: true, Published: false, Latitude: in.Latitude, Longitude: in.Longitude,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.store.CreateBranch(ctx, b); err != nil {

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   canFeatureFromCaps,
   navForCabinet,
+  navHasPath,
   resolveCabinetKind,
   resolveCapabilities,
+  topLevelNavCount,
 } from './cabinet'
 import type { User } from '@/features/auth/AuthProvider'
 import type { OrgItem } from '@/shared/lib/commerce'
@@ -107,11 +109,11 @@ describe('resolveCapabilities / legacy owner shell', () => {
     })
     expect(kind).toBe('salon_owner')
     const withKindOnly = navForCabinet(kind)
-    expect(withKindOnly.secondary.some((l) => l.to === '/staff')).toBe(true)
+    expect(navHasPath(withKindOnly.side, '/staff')).toBe(true)
     const gated = navForCabinet(kind, (f) => canFeatureFromCaps(caps, f))
-    expect(gated.secondary.some((l) => l.to === '/staff')).toBe(false)
-    expect(gated.secondary.some((l) => l.to === '/salon/settings')).toBe(false)
-    expect(gated.secondary.some((l) => l.to === '/reports')).toBe(false)
+    expect(navHasPath(gated.side, '/staff')).toBe(false)
+    expect(navHasPath(gated.side, '/salon/settings')).toBe(false)
+    expect(navHasPath(gated.side, '/reports')).toBe(false)
   })
 
   it('keeps owner action links when membership is active', () => {
@@ -119,8 +121,8 @@ describe('resolveCapabilities / legacy owner shell', () => {
     const caps = resolveCapabilities(baseUser(['salon_owner']), orgs, { id: 'm1', work_types: ['private_practice'] })
     const kind = resolveCabinetKind(baseUser(['salon_owner']), { orgs, master: { id: 'm1' } })
     const gated = navForCabinet(kind, (f) => canFeatureFromCaps(caps, f))
-    expect(gated.secondary.some((l) => l.to === '/staff')).toBe(true)
-    expect(gated.secondary.some((l) => l.to === '/salon/settings')).toBe(true)
+    expect(navHasPath(gated.side, '/staff')).toBe(true)
+    expect(navHasPath(gated.side, '/salon/settings')).toBe(true)
   })
 
   it('does not treat work_type ownership as the sole owner signal when membership exists', () => {
@@ -173,54 +175,105 @@ describe('resolveCapabilities / legacy owner shell', () => {
 describe('navForCabinet', () => {
   it('does not expose /rep/map to sales reps', () => {
     const nav = navForCabinet('supplier_rep')
-    const all = [...nav.primary, ...nav.secondary, ...nav.side]
-    expect(all.some((l) => l.to === '/rep/map')).toBe(false)
-    expect(all.some((l) => l.label === 'Маршрут')).toBe(false)
+    expect(navHasPath(nav.side, '/rep/map')).toBe(false)
   })
 
   it('exposes messenger and marketplaces without replacing notifications', () => {
     const client = navForCabinet('client')
     expect(client.primary.some((l) => l.to === '/search' && l.label === 'Поиск мастера')).toBe(true)
     expect(client.primary.some((l) => l.to === '/more')).toBe(true)
-    expect(client.secondary.some((l) => l.to === '/messages' && l.label === 'Сообщения')).toBe(true)
-    expect(client.secondary.some((l) => l.to === '/settings' && l.label === 'Настройки')).toBe(true)
-    expect(client.secondary.some((l) => l.to === '/profile')).toBe(true)
-    expect(client.secondary.some((l) => l.to === '/models')).toBe(true)
-    expect(client.secondary.some((l) => l.to === '/consultations')).toBe(true)
+    expect(navHasPath(client.side, '/messages')).toBe(true)
+    expect(navHasPath(client.side, '/models')).toBe(true)
+    expect(navHasPath(client.side, '/consultations')).toBe(true)
+    expect(navHasPath(client.side, '/settings')).toBe(false)
+    expect(topLevelNavCount(client.side)).toBeLessThanOrEqual(10)
     const master = navForCabinet('private_master')
-    expect(master.secondary.some((l) => l.to === '/messages')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/masterclasses')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/models')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/consultations')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/inventory' && l.label === 'Мой склад')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/inventory/receipts' && l.label === 'На приёмке')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/knowledge' && l.label === 'База знаний')).toBe(true)
-    expect(master.secondary.some((l) => l.to === '/settings' && l.label === 'Настройки')).toBe(true)
-    expect(master.secondary.filter((l) => l.label === 'Настройки')).toHaveLength(1)
+    expect(navHasPath(master.side, '/messages')).toBe(true)
+    expect(navHasPath(master.side, '/masterclasses')).toBe(true)
+    expect(navHasPath(master.side, '/models')).toBe(true)
+    expect(navHasPath(master.side, '/consultations')).toBe(true)
+    expect(navHasPath(master.side, '/inventory')).toBe(true)
+    expect(navHasPath(master.side, '/inventory/receipts')).toBe(true)
+    expect(navHasPath(master.side, '/knowledge')).toBe(true)
+    expect(navHasPath(master.side, '/settings')).toBe(false)
+    expect(topLevelNavCount(master.side)).toBeLessThanOrEqual(10)
   })
 
-  it('keeps salon settings distinct from app settings for owners', () => {
+  it('keeps salon settings under Салон group for owners', () => {
     const owner = navForCabinet('salon_owner')
-    expect(owner.secondary.some((l) => l.to === '/settings' && l.label === 'Настройки')).toBe(true)
-    expect(owner.secondary.some((l) => l.to === '/salon/settings' && l.label === 'Настройки салона')).toBe(true)
-    expect(owner.secondary.filter((l) => l.label === 'Настройки')).toHaveLength(1)
+    expect(navHasPath(owner.side, '/salon/settings')).toBe(true)
+    expect(navHasPath(owner.side, '/settings')).toBe(false)
+    expect(topLevelNavCount(owner.side)).toBeLessThanOrEqual(10)
   })
 
   it('does not put personal warehouse on supplier nav', () => {
     const nav = navForCabinet('supplier')
-    const all = [...nav.primary, ...nav.secondary, ...nav.side]
-    expect(all.some((l) => l.to === '/inventory')).toBe(false)
+    expect(navHasPath(nav.side, '/inventory')).toBe(false)
+    expect(topLevelNavCount(nav.side)).toBeLessThanOrEqual(10)
   })
 
   it('exposes platform admin information architecture', () => {
     const nav = navForCabinet('platform_admin')
-    const all = [...nav.primary, ...nav.secondary, ...nav.side]
     expect(nav.primary.some((l) => l.to === '/admin' && l.end)).toBe(true)
-    expect(all.some((l) => l.to === '/admin/users')).toBe(true)
-    expect(all.some((l) => l.to === '/admin/disputes')).toBe(true)
-    expect(all.some((l) => l.to === '/admin/audit')).toBe(true)
-    expect(all.some((l) => l.to === '/admin/catalogs')).toBe(true)
-    expect(all.some((l) => l.to === '/calendar')).toBe(false)
+    expect(navHasPath(nav.side, '/admin/users')).toBe(true)
+    expect(navHasPath(nav.side, '/admin/disputes')).toBe(true)
+    expect(navHasPath(nav.side, '/admin/audit')).toBe(true)
+    expect(navHasPath(nav.side, '/admin/catalogs')).toBe(true)
+    expect(navHasPath(nav.side, '/calendar')).toBe(false)
+    expect(topLevelNavCount(nav.side)).toBeLessThanOrEqual(10)
     expect(resolveCabinetKind(baseUser(['system_admin', 'master']))).toBe('platform_admin')
+  })
+
+  it('keeps master-owner combo within 10 top-level items', () => {
+    const orgs = [ownerOrg()]
+    const caps = resolveCapabilities(baseUser(['master']), orgs, { id: 'm1', work_types: ['private_practice'] })
+    const kind = resolveCabinetKind(baseUser(['master']), { orgs, master: { id: 'm1' } })
+    const gated = navForCabinet(kind, (f) => canFeatureFromCaps(caps, f))
+    expect(topLevelNavCount(gated.side)).toBeLessThanOrEqual(10)
+    expect(navHasPath(gated.side, '/clients/invite')).toBe(true)
+    expect(navHasPath(gated.side, '/staff/invite')).toBe(true)
+  })
+
+  it('Stage 5 closing: exact top-level counts for five capability combos', () => {
+    const client = navForCabinet('client')
+    expect(topLevelNavCount(client.side)).toBe(7)
+
+    const masterCaps = resolveCapabilities(baseUser(['master']), [], {
+      id: 'm1',
+      work_types: ['private_practice'],
+    })
+    const masterKind = resolveCabinetKind(baseUser(['master']), {
+      orgs: [],
+      master: { id: 'm1', work_types: ['private_practice'] },
+    })
+    const masterNav = navForCabinet(masterKind, (f) => canFeatureFromCaps(masterCaps, f))
+    expect(topLevelNavCount(masterNav.side)).toBe(9)
+
+    const orgs = [ownerOrg()]
+    const ownerOnlyCaps = resolveCapabilities(baseUser(['client']), orgs, null)
+    const ownerOnlyKind = resolveCabinetKind(baseUser(['client']), { orgs, master: null })
+    const ownerOnlyNav = navForCabinet(ownerOnlyKind, (f) => canFeatureFromCaps(ownerOnlyCaps, f))
+    // Owner-only: no knowledge/cosmetics (masterLike false); still has pickup Склад + reports.
+    expect(topLevelNavCount(ownerOnlyNav.side)).toBe(9)
+
+    const bothCaps = resolveCapabilities(baseUser(['master']), orgs, {
+      id: 'm1',
+      work_types: ['private_practice'],
+    })
+    const bothKind = resolveCabinetKind(baseUser(['master']), {
+      orgs,
+      master: { id: 'm1', work_types: ['private_practice'] },
+    })
+    const bothNav = navForCabinet(bothKind, (f) => canFeatureFromCaps(bothCaps, f))
+    expect(topLevelNavCount(bothNav.side)).toBe(10)
+
+    const dualClientKind = resolveCabinetKind(baseUser(['master', 'client']), {
+      orgs,
+      master: { id: 'm1', work_types: ['private_practice'] },
+      interactionMode: 'client',
+    })
+    const dualClientNav = navForCabinet(dualClientKind, (f) => canFeatureFromCaps(bothCaps, f))
+    expect(dualClientKind).toBe('client')
+    expect(topLevelNavCount(dualClientNav.side)).toBe(7)
   })
 })

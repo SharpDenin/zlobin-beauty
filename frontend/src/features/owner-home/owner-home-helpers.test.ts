@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  appointmentOnYmd,
   dayKey,
   formatOwnerDate,
   homeTiles,
@@ -10,6 +11,7 @@ import {
   sameCalendarDay,
   shortPersonName,
   weekDays,
+  weekYmds,
 } from '@/features/owner-home/owner-home-helpers'
 
 describe('owner-home-helpers', () => {
@@ -37,6 +39,17 @@ describe('owner-home-helpers', () => {
     const day = new Date(2026, 9, 2, 12)
     expect(sameCalendarDay(new Date(2026, 9, 2, 10).toISOString(), day)).toBe(true)
     expect(sameCalendarDay(new Date(2026, 9, 3, 10).toISOString(), day)).toBe(false)
+  })
+
+  it('matches appointments by salon YMD when browser zone differs', () => {
+    // 02:00 Krasnoyarsk on Aug 20 = previous evening UTC
+    const iso = '2026-08-19T19:00:00.000Z'
+    expect(appointmentOnYmd(iso, '2026-08-20', 'Asia/Krasnoyarsk')).toBe(true)
+    expect(sameCalendarDay(iso, new Date('2026-08-20T12:00:00Z'), 'Asia/Krasnoyarsk')).toBe(true)
+    const week = weekYmds('Asia/Krasnoyarsk', new Date('2026-08-20T05:00:00.000Z'))
+    expect(week).toHaveLength(7)
+    expect(week[0]).toBe('2026-08-17') // Monday
+    expect(week).toContain('2026-08-20')
   })
 
   it('picks compact management tiles from real capabilities', () => {

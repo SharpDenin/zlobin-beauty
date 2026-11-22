@@ -120,13 +120,15 @@ export function MasterclassListPage() {
             <label htmlFor="mc-interest-city">Город</label>
             <input id="mc-interest-city" value={city} onChange={(e) => setCity(e.target.value)} />
           </div>
-          <div className="field">
-            <label htmlFor="mc-interest-from">С даты</label>
-            <input id="mc-interest-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="mc-interest-to">По дату</label>
-            <input id="mc-interest-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          <div className="field-pair">
+            <div className="field">
+              <label htmlFor="mc-interest-from">С даты</label>
+              <input id="mc-interest-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="mc-interest-to">По дату</label>
+              <input id="mc-interest-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
           </div>
           <button className="btn btn-secondary" type="submit" disabled={addInterest.isPending}>Сохранить интерес</button>
         </form>

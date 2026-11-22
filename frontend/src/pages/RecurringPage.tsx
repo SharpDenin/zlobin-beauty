@@ -7,6 +7,7 @@ import { useBuyerOrg, useSupplierOrg } from '@/shared/lib/commerce'
 import { statusBadgeClass } from '@/shared/lib/status'
 import { Hint } from '@/shared/ui/Hint'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
+import { TimeSelect } from '@/shared/ui/TimeSelect'
 import { toast } from '@/shared/ui/Toast'
 
 type RecurringItem = { product_id: string; qty: number }
@@ -244,30 +245,30 @@ export function RecurringPage() {
               </select>
             </div>
           </div>
-          <div className="row">
-            <div className="field" style={{ flex: 1 }}>
+          <div className="field-pair">
+            <div className="field">
               <label htmlFor="start">Старт</label>
               <input id="start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </div>
-            <div className="field" style={{ flex: 1 }}>
-              <label htmlFor="end">Окончание (необязательно)</label>
+            <div className="field">
+              <label htmlFor="end">Окончание</label>
               <input id="end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
             </div>
-            <div className="field" style={{ flex: 1 }}>
-              <label htmlFor="branch">Филиал</label>
-              <select id="branch" value={pickupBranchId} onChange={(e) => setBranchId(e.target.value)}>
-                {pickupBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </div>
           </div>
-          <div className="row">
-            <div className="field" style={{ flex: 1 }}>
-              <label>Окно с</label>
-              <input type="time" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
+          <div className="field">
+            <label htmlFor="branch">Филиал</label>
+            <select id="branch" value={pickupBranchId} onChange={(e) => setBranchId(e.target.value)}>
+              {pickupBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+          <div className="field-pair">
+            <div className="field">
+              <label htmlFor="window-start">Окно с</label>
+              <TimeSelect id="window-start" value={windowStart} onChange={setWindowStart} />
             </div>
-            <div className="field" style={{ flex: 1 }}>
-              <label>Окно до</label>
-              <input type="time" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
+            <div className="field">
+              <label htmlFor="window-end">Окно до</label>
+              <TimeSelect id="window-end" value={windowEnd} onChange={setWindowEnd} />
             </div>
           </div>
           <button
@@ -319,7 +320,7 @@ export function RecurringPage() {
             {isSupplier && proposeId === a.id && (
               <div className="stack-sm">
                 <div className="field"><label>Новое количество (для всех позиций)</label><input value={proposeQty} onChange={(e) => setProposeQty(e.target.value)} /></div>
-                <div className="field"><label>Новое окно с</label><input type="time" value={proposeWindow} onChange={(e) => setProposeWindow(e.target.value)} /></div>
+                <div className="field"><label htmlFor="propose-window">Новое окно с</label><TimeSelect id="propose-window" value={proposeWindow} onChange={setProposeWindow} /></div>
                 <div className="field"><label>Комментарий</label><input value={proposeReason} onChange={(e) => setProposeReason(e.target.value)} /></div>
                 <button className="btn btn-primary btn-compact" type="button" onClick={() => decide.mutate({
                   id: a.id, action: 'propose', qty: Number(proposeQty) || 1, reason: proposeReason,

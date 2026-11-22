@@ -150,7 +150,14 @@ describe('uploadMedia', () => {
     await expect(uploadMedia(file('image/jpeg', 2048), 'profile', null)).rejects.toMatchObject({ code: 'upstream_unavailable' })
   })
 
-  it('reports a dropped connection as a network error', async () => {
+  it('reports xhr transport failure while online as upload_failed, not offline', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    FakeXhr.queue.push({ status: 0, body: '' })
+    await expect(uploadMedia(file('image/jpeg', 2048), 'profile', null)).rejects.toMatchObject({ code: 'upload_failed' })
+  })
+
+  it('reports xhr failure as network_error only when the browser is offline', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
     FakeXhr.queue.push({ status: 0, body: '' })
     await expect(uploadMedia(file('image/jpeg', 2048), 'profile', null)).rejects.toMatchObject({ code: 'network_error' })
   })

@@ -31,9 +31,10 @@ function cleanupFailedMessage(err: unknown): string | null {
 }
 
 export function SettingsAccountPage() {
-  const { accessToken, logout } = useAuth()
+  const { accessToken, logout, user } = useAuth()
   const navigate = useNavigate()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [logoutBusy, setLogoutBusy] = useState(false)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -49,6 +50,17 @@ export function SettingsAccountPage() {
     setConfirmOpen(false)
     setPassword('')
     setError(null)
+  }
+
+  async function submitLogout() {
+    if (logoutBusy) return
+    setLogoutBusy(true)
+    try {
+      await logout()
+      navigate('/login', { replace: true })
+    } finally {
+      setLogoutBusy(false)
+    }
   }
 
   async function submitDelete() {
@@ -83,7 +95,29 @@ export function SettingsAccountPage() {
 
   return (
     <div className="stack" data-testid="settings-account-page">
-      <section className="card stack" data-testid="settings-account-danger">
+      <section className="card stack" data-testid="settings-account-session">
+        <h2 style={{ margin: 0 }}>Сессия</h2>
+        {user?.email || user?.display_name ? (
+          <p className="muted" style={{ margin: 0 }}>
+            Вы вошли как {user.display_name || user.email}
+            {user.email && user.display_name ? ` (${user.email})` : ''}
+          </p>
+        ) : null}
+        <p className="muted">
+          Выход завершает сессию на этом устройстве. Записи, настройки и медиа остаются на сервере.
+        </p>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          data-testid="settings-account-logout"
+          disabled={logoutBusy}
+          onClick={() => void submitLogout()}
+        >
+          {logoutBusy ? 'Выходим…' : 'Выйти из аккаунта'}
+        </button>
+      </section>
+
+      <section className="card stack settings-account-danger" data-testid="settings-account-danger">
         <h2 className="text-danger" style={{ color: 'var(--color-danger)', margin: 0 }}>Удаление аккаунта</h2>
         <p className="muted">
           Удаление необратимо: вы потеряете доступ к Salon-X. История записей, заказов и сообщений салонов

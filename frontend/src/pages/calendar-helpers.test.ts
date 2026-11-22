@@ -13,6 +13,7 @@ import {
   extendDisplayRangeForEvents,
   isCalendarViewId,
   isTerminalStatus,
+  normalizeCalendarViewId,
   longPressMoved,
   LONG_PRESS_SLOP_PX,
   formatCalendarNowLabel,
@@ -120,7 +121,7 @@ describe('calendar helpers', () => {
     expect(swipeStep('timeGridDay', true)).toBe('day')
     expect(swipeStep('dayGridMonth', true)).toBe('period')
     expect(swipeStep('timeGridWeek', false)).toBe('period')
-    expect(swipeStep('timeGridThreeDay', true)).toBe('period')
+    expect(swipeStep('timeGridWeek', true)).toBe('period')
   })
 
   it('detects horizontal swipe without fighting vertical scroll', () => {
@@ -148,7 +149,8 @@ describe('calendar helpers', () => {
     })
     const midnight = new Date('2026-08-30T17:00:00Z') // 00:00 next day in +07
     expect(rangeToDayInterval(start, midnight, tz)?.end_minute).toBe(1440)
-    expect(isCalendarViewId('timeGridThreeDay')).toBe(true)
+    expect(isCalendarViewId('timeGridThreeDay')).toBe(false)
+    expect(normalizeCalendarViewId('timeGridThreeDay', 'timeGridWeek')).toBe('timeGridDay')
     expect(isCalendarViewId('timeGridYear')).toBe(false)
   })
 

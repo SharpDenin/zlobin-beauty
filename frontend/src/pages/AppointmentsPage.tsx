@@ -74,6 +74,7 @@ export function AppointmentsPage() {
   return (
     <main className="page stack">
       <PageHeader
+        back={false}
         title="Записи"
         actions={canMaster ? (
           <div className="segmented segmented--2" role="group" aria-label="Роль в записях">

@@ -829,7 +829,7 @@ export function ClientCardPage() {
       {tab === 'analyses' && (
         <div className="stack" data-testid="client-tab-analyses-panel">
           <section className="stack">
-            <h2>Диагностики волос</h2>
+            <h2>Диагностики</h2>
             {(consultations.data?.items ?? []).length === 0 && <p className="muted">Диагностик пока нет</p>}
             <ul className="list stack-sm">
               {(consultations.data?.items ?? []).map((c) => (

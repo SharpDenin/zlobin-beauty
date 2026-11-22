@@ -10,7 +10,7 @@ export function conversationTypeLabel(type: string) {
     case 'master_supplier':
       return 'Мастер и поставщик'
     case 'masterclass':
-      return 'Мастер-класс'
+      return 'Обучение'
     case 'model_request':
       return 'Модели'
     default:

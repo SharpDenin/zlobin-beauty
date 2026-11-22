@@ -106,7 +106,7 @@ export function ProfilePage() {
 
   return (
     <main className="page stack">
-      <PageHeader title="Профиль" />
+      <PageHeader back={false} title="Профиль" />
 
       <section className="card profile-hero">
         <MasterPortrait mediaId={photoMediaId} name={user?.display_name ?? ''} token={accessToken} />

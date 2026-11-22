@@ -333,7 +333,7 @@ func (s *Service) evaluateReadiness(ctx context.Context, m *domain.MasterProfile
 		{Key: "specializations", Label: "Специализация", OK: domain.HasValidSpecialization(m.Specializations)},
 		{Key: "profession_types", Label: "Профессиональный тип", OK: len(m.ProfessionTypes) > 0},
 		{Key: "bio", Label: "Описание (от 10 символов)", OK: len([]rune(strings.TrimSpace(m.Bio))) >= 10},
-		{Key: "experience", Label: "Опыт (лет)", OK: m.ExperienceYears > 0},
+		// experience_years is optional: 0 means "not specified" (NOT NULL DEFAULT 0 in DB).
 	}
 	svcs, err := s.store.ListMasterServices(ctx, m.ID)
 	if err != nil {

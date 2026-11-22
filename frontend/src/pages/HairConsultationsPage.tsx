@@ -13,6 +13,7 @@ import { Modal } from '@/shared/ui/Modal'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { openConversation } from '@/features/messenger/api'
 import { toast } from '@/shared/ui/Toast'
+import { BackButton } from '@/shared/ui/BackButton'
 
 type MediaRow = { id: string; media_id: string; slot: string; uploaded_by: string; created_at: string }
 
@@ -386,9 +387,10 @@ export function HairConsultationsPage() {
 
   return (
     <div className="page stack-gap" data-testid="hair-consultations-page">
+      <BackButton />
       <header className="page-header">
-        <h1>Консультации по волосам</h1>
-        <p className="muted">Анкета, профессиональная оценка и согласование плана окрашивания</p>
+        <h1>Консультации</h1>
+        <p className="muted">Анкета, профессиональная оценка и согласование плана услуги</p>
       </header>
       {error && <ErrorBanner error={error} />}
 
@@ -735,10 +737,10 @@ export function HairConsultationDetailPage() {
 
   return (
     <div className="page stack-gap consult-detail" data-testid="hair-consultation-detail">
-      <Link className="btn btn-ghost btn-compact" to="/consultations">← К консультациям</Link>
+      <BackButton />
       <header className="page-header row between">
         <div>
-          <h1>Диагностика волос</h1>
+          <h1>Диагностика услуги</h1>
           <p className="muted">
             {statusLabel(c.status)} · версия {current?.version_no ?? '—'}
             {c.client_card_id ? (
@@ -772,7 +774,7 @@ export function HairConsultationDetailPage() {
         )}
         {(isMaster || isClient) && (
           <button type="button" className="btn btn-secondary btn-compact" data-testid="consult-open-services" onClick={() => setServicesOpen(true)}>
-            Услуги для волос
+            Услуги
           </button>
         )}
       </div>
@@ -829,7 +831,7 @@ export function HairConsultationDetailPage() {
       </section>
 
       <section className="card stack-gap" data-testid="consult-questionnaire">
-        <h2>Параметры волос</h2>
+        <h2>Параметры услуги</h2>
         <fieldset className="consult-param-list" disabled={!clientEditable && !masterEditable}>
           <label className="consult-param-row">
             <span>Уровень глубины тона корней</span>
@@ -1110,7 +1112,7 @@ export function HairConsultationDetailPage() {
         )}
       </Modal>
 
-      <Modal open={servicesOpen} onClose={() => setServicesOpen(false)} title="Услуги для волос" size="lg">
+      <Modal open={servicesOpen} onClose={() => setServicesOpen(false)} title="Услуги" size="lg">
         <p className="muted">Выберите услуги из каталога. Итоговая сумма попадёт в диагностику.</p>
         <label className="field">
           <span className="visually-hidden">Поиск</span>

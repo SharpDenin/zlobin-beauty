@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { BackButton } from '@/shared/ui/BackButton'
 import { apiRequest, ApiError } from '@/shared/api/client'
 import { userError, formatUserError } from '@/shared/lib/app-error'
 import { useAuth } from '@/features/auth/AuthProvider'
@@ -48,7 +49,11 @@ const masterSchema = z.object({
   bio: z.string().optional(),
   specializations: z.array(z.string()).min(1, 'Выберите хотя бы одну специализацию'),
   cutting_techniques: z.array(z.string()),
-  experience_years: z.coerce.number().int().min(0, 'Не меньше 0'),
+  experience_years: z
+    .number({ invalid_type_error: 'Укажите число' })
+    .int()
+    .min(0, 'Не меньше 0')
+    .optional(),
   education: z.string().optional(),
   work_types: z.array(z.string()).min(1, 'Выберите формат работы'),
   profession_type_ids: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один тип мастера'),
@@ -180,7 +185,7 @@ export function MasterCabinetPage() {
       published: false,
       display_name: user?.display_name ?? '',
       city: 'Красноярск',
-      experience_years: 1,
+      experience_years: undefined,
       education: '',
       specializations: [],
       cutting_techniques: [],
@@ -238,7 +243,7 @@ export function MasterCabinetPage() {
       bio: m.bio ?? '',
       specializations: uniqueSpecializationTags(m.specializations),
       cutting_techniques: normalizeCuttingTechniques(m.cutting_techniques),
-      experience_years: m.experience_years ?? 1,
+      experience_years: m.experience_years && m.experience_years > 0 ? m.experience_years : undefined,
       education: m.education ?? '',
       work_types: types.length ? types : ['private_practice'],
       profession_type_ids: selectedProfessionIds(m),
@@ -367,7 +372,7 @@ export function MasterCabinetPage() {
           bio: existing.bio ?? '',
           specializations: uniqueSpecializationTags(existing.specializations),
           cutting_techniques: normalizeCuttingTechniques(existing.cutting_techniques),
-          experience_years: existing.experience_years ?? 1,
+          experience_years: existing.experience_years ?? 0,
           education: existing.education ?? '',
           work_type: primaryWorkType(types),
           work_types: types.length ? types : ['private_practice'],
@@ -424,7 +429,7 @@ export function MasterCabinetPage() {
           bio: values.bio ?? '',
           specializations: specs,
           cutting_techniques: normalizeCuttingTechniques(values.cutting_techniques),
-          experience_years: values.experience_years,
+          experience_years: values.experience_years ?? 0,
           education: values.education ?? '',
           work_type: primaryWorkType(types),
           work_types: types,
@@ -617,6 +622,7 @@ export function MasterCabinetPage() {
 
   return (
     <main className="page stack">
+      <BackButton />
       <h1>Профиль мастера</h1>
       <p>Заполните профиль и типы услуг. Салон нужен только если вы владелец или работаете в чужой точке.</p>
       {error && <ErrorBanner error={error} />}
@@ -909,12 +915,22 @@ export function MasterCabinetPage() {
             />
           </div>
           <div className="field">
-            <label htmlFor="master-experience">Опыт, лет</label>
-            <input id="master-experience" type="number" inputMode="numeric" {...masterForm.register('experience_years')} />
+            <label htmlFor="master-experience">Стаж, лет <span className="muted">(необязательно)</span></label>
+            <input
+              id="master-experience"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              placeholder="Не указан"
+              {...masterForm.register('experience_years', {
+                setValueAs: (v) => {
+                  if (v === '' || v == null) return undefined
+                  const n = typeof v === 'number' ? v : Number(v)
+                  return Number.isFinite(n) ? n : undefined
+                },
+              })}
+            />
             {masterForm.formState.errors.experience_years && <span className="error">{masterForm.formState.errors.experience_years.message}</span>}
-            {!masterForm.formState.errors.experience_years && fieldHint('experience') && (
-              <span className="hint field-need" role="status">{fieldHint('experience')}</span>
-            )}
           </div>
           <WorkFormatPicker
             value={watchedWorkTypes ?? ['private_practice']}

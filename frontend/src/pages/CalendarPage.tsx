@@ -1807,7 +1807,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     <div className="stack calendar-color-settings" data-testid="calendar-settings">
       {ownerMode ? (
         <div className="stack gap">
-          <strong>Фильтры салона</strong>
+          <strong>Выбор салона</strong>
           <div className="field">
             <label htmlFor="cal-settings-master">Мастер</label>
             <select id="cal-settings-master" data-testid="calendar-master-filter" value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
@@ -1985,7 +1985,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             data-testid="calendar-open-settings"
             onClick={() => setSettingsOpen(true)}
           >
-            Настройки
+            Календари
           </button>
         </div>
 
@@ -2231,7 +2231,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <Drawer
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
-          title="Настройки календаря"
+          title="Календари"
           panelClassName="calendar-settings-drawer"
         >
           {settingsPanel}
@@ -2240,7 +2240,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <Modal
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
-          title="Настройки календаря"
+          title="Календари"
           size="lg"
           className="calendar-settings-modal"
         >

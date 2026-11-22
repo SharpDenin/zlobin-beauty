@@ -6,6 +6,7 @@ import { userError, formatUserError } from '@/shared/lib/app-error'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
+import { BackButton } from '@/shared/ui/BackButton'
 
 type Masterclass = {
   id: string
@@ -97,14 +98,15 @@ export function MasterclassListPage() {
 
   return (
     <main className="page stack">
+      <BackButton />
       <div className="row between">
-        <h1>Мастер-классы</h1>
-        <Link className="btn btn-primary" to="/masterclasses/new">Готов провести мастер-класс</Link>
+        <h1>Обучение</h1>
+        <Link className="btn btn-primary" to="/masterclasses/new">Готов провести обучение</Link>
       </div>
       {error && <ErrorBanner error={error} />}
 
       <section className="card stack">
-        <h2>Хочу мастер-класс</h2>
+        <h2>Хочу обучение</h2>
         <form
           className="stack"
           onSubmit={(e) => {
@@ -148,7 +150,7 @@ export function MasterclassListPage() {
         <h2>Афиша</h2>
         {published.isLoading && <div className="state-box">Загрузка…</div>}
         {(published.data?.items.length ?? 0) === 0 && !published.isLoading && (
-          <div className="empty-state"><h2>Пока нет опубликованных мастер-классов</h2></div>
+          <div className="empty-state"><h2>Пока нет опубликованных обучений</h2></div>
         )}
         <div className="cards-grid">
           {published.data?.items.map((e) => (
@@ -166,7 +168,7 @@ export function MasterclassListPage() {
 
       {(mine.data?.items.length ?? 0) > 0 && (
         <section className="stack">
-          <h2>Мои мастер-классы</h2>
+          <h2>Мои обучения</h2>
           <div className="list">
             {mine.data?.items.map((e) => (
               <Link key={e.id} className="list-item" to={`/masterclasses/${e.id}`}>
@@ -216,8 +218,8 @@ export function MasterclassCreatePage() {
 
   return (
     <main className="page stack">
-      <Link className="btn btn-ghost btn-compact" to="/masterclasses">← К афише</Link>
-      <h1>Готов провести мастер-класс</h1>
+      <BackButton />
+      <h1>Готов провести обучение</h1>
       {error && <ErrorBanner error={error} />}
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate() }}>
         <div className="field"><label htmlFor="mc-title">Название</label><input id="mc-title" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
@@ -268,7 +270,7 @@ export function MasterclassDetailPage() {
 
   return (
     <main className="page stack">
-      <Link className="btn btn-ghost btn-compact" to="/masterclasses">← Афиша</Link>
+      <BackButton />
       {event.isLoading && <div className="state-box">Загрузка…</div>}
       {event.isError && <ErrorBanner error={event.error} fallbackTitle="Мероприятие недоступно" />}
       {error && <ErrorBanner error={error} />}

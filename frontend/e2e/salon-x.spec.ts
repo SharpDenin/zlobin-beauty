@@ -1825,7 +1825,7 @@ test.describe('Salon-X P0 flows (seeded stack)', () => {
     await page.getByRole('button', { name: 'Выйти' }).first().click()
 
     await loginUI(page, 'master2@demo.local')
-    await expect(page.locator('.topbar-cabinet')).toHaveText('Аренда кресла', { timeout: 15_000 })
+    await expect(page.locator('.topbar-cabinet')).toHaveText('Коворкинг рабочего места', { timeout: 15_000 })
     await moreLinks()
     await expect(page.getByRole('link', { name: 'Команда' })).toHaveCount(0)
     await closeMoreDrawer(page)

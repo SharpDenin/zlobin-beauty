@@ -19,7 +19,8 @@
 @media (max-width: 599px) {
   .page.calendar-page-root:has(.is-mobile-day),
   .page.calendar-page-root:has(.is-mobile-fc),
-  .page.calendar-page-root:has(.is-masters-day) {
+  .page.calendar-page-root:has(.is-masters-day),
+  .page.calendar-page-root:has(.is-masters-week) {
     width: 100%;
     max-width: none;
     padding-left: var(--space-4);
@@ -33,7 +34,8 @@
   }
   .calendar-shell.is-mobile-day,
   .calendar-shell.is-mobile-fc,
-  .calendar-shell.is-masters-day {
+  .calendar-shell.is-masters-day,
+  .calendar-shell.is-masters-week {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -42,10 +44,12 @@
   }
   .calendar-shell.is-mobile-day .calendar-chrome,
   .calendar-shell.is-mobile-fc .calendar-chrome,
-  .calendar-shell.is-masters-day .calendar-chrome {
+  .calendar-shell.is-masters-day .calendar-chrome,
+  .calendar-shell.is-masters-week .calendar-chrome {
     flex-shrink: 0;
   }
-  .calendar-shell.is-masters-day .cal-masters-day {
+  .calendar-shell.is-masters-day .cal-masters-day,
+  .calendar-shell.is-masters-week .cal-masters-week {
     flex: 1 1 auto;
     min-height: 0;
   }
@@ -73,7 +77,8 @@
   }
   .calendar-shell.is-mobile-fc .calendar-chrome.calendar-toolbar-sticky,
   .calendar-shell.is-mobile-day .calendar-chrome.calendar-toolbar-sticky,
-  .calendar-shell.is-masters-day .calendar-chrome.calendar-toolbar-sticky {
+  .calendar-shell.is-masters-day .calendar-chrome.calendar-toolbar-sticky,
+  .calendar-shell.is-masters-week .calendar-chrome.calendar-toolbar-sticky {
     /* Keep chrome in normal flow so sticky master heads cannot slide under date nav. */
     position: static;
   }
@@ -266,7 +271,7 @@
 }
 .calendar-chrome .calendar-controls {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -1368,13 +1373,16 @@
 }
 
 .cal-masters-col-head {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
   padding: var(--space-2) var(--space-1);
-  min-width: var(--cal-masters-col-min);
+  min-width: 0;
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
   box-sizing: border-box;
@@ -1443,14 +1451,15 @@
 .cal-masters-cols {
   grid-column: 2;
   grid-row: 2;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(var(--cal-masters-cols, 1), var(--cal-masters-col-min));
   min-width: 0;
 }
 
 .cal-masters-col {
   position: relative;
-  flex: 0 0 var(--cal-masters-col-min);
-  min-width: var(--cal-masters-col-min);
+  min-width: 0;
+  width: 100%;
   border-left: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
   scroll-snap-align: start;
   background: var(--glass-fill-subtle);
@@ -1723,5 +1732,234 @@ body.is-cal-resizing {
   .cal-masters-avatar {
     width: 32px;
     height: 32px;
+  }
+}
+
+.cal-masters-day.is-single-col {
+  --cal-masters-col-min: min(100%, 360px);
+}
+
+.cal-masters-day.is-single-col .cal-masters-head {
+  grid-template-columns: var(--cal-masters-gutter-w) minmax(0, 1fr);
+}
+
+.cal-masters-day.is-single-col .cal-masters-cols {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cal-masters-master-btn,
+.cal-masters-week-master-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: var(--space-1);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.cal-masters-master-btn:focus-visible,
+.cal-masters-week-master-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.cal-owner-master-filter {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cal-owner-master-filter-trigger {
+  width: 100%;
+  max-width: 220px;
+  justify-content: flex-start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-owner-master-filter-panel {
+  position: absolute;
+  z-index: var(--z-dropdown, 40);
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: min(280px, 100vw - 32px);
+  max-height: min(280px, 50vh);
+  overflow: auto;
+  padding: var(--space-2);
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-fill-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.cal-owner-master-filter-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.cal-owner-master-filter-option:hover {
+  background: var(--glass-fill-subtle);
+}
+
+.cal-owner-schedule-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.cal-owner-schedule-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+/* Owner multi-master week board */
+.cal-masters-week {
+  --cal-masters-week-col-min: 160px;
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cal-masters-week-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.cal-masters-week-board {
+  min-width: min-content;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cal-masters-week-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(var(--cal-masters-week-cols, 1), minmax(var(--cal-masters-week-col-min), 1fr));
+  background: var(--glass-chrome-fill);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.cal-masters-week-col-head {
+  min-width: var(--cal-masters-week-col-min);
+  padding: var(--space-2) var(--space-1);
+  border-left: 1px solid color-mix(in srgb, var(--glass-border) 55%, transparent);
+  text-align: center;
+}
+
+.cal-masters-week-body {
+  display: grid;
+  grid-template-columns: repeat(var(--cal-masters-week-cols, 1), minmax(var(--cal-masters-week-col-min), 1fr));
+  align-items: start;
+}
+
+.cal-masters-week-col {
+  min-width: var(--cal-masters-week-col-min);
+  border-left: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1) var(--space-4);
+  background: var(--glass-fill-subtle);
+}
+
+.cal-masters-week-day {
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 60%, transparent);
+  background: var(--glass-work-fill);
+  overflow: hidden;
+}
+
+.cal-masters-week-day-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--glass-border) 50%, transparent);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.cal-masters-week-day-label {
+  color: var(--color-text-primary);
+}
+
+.cal-masters-week-day-events {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-2);
+  min-height: 36px;
+}
+
+.cal-masters-week-empty {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.cal-masters-week-event {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 8px;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--cal-event-accent, var(--color-primary)) 38%, var(--glass-border));
+  border-left: 3px solid var(--cal-event-accent, var(--color-primary));
+  background: color-mix(in srgb, var(--cal-event-accent, var(--color-primary)) 16%, var(--glass-fill-strong));
+  color: var(--color-text-primary);
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.cal-masters-week-event-time {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--color-text-secondary);
+}
+
+.cal-masters-week-event-title {
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 430px) {
+  .cal-masters-week {
+    --cal-masters-week-col-min: 140px;
   }
 }

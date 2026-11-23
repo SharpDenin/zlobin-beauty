@@ -696,7 +696,16 @@ func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("to must be RFC3339 and after from"))
 		return
 	}
-	items, err := a.svc.ListOrgCalendar(r.Context(), claims.UserID, orgID, from, to)
+	var branchID *uuid.UUID
+	if raw := strings.TrimSpace(r.URL.Query().Get("branch_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("branch_id must be a UUID"))
+			return
+		}
+		branchID = &id
+	}
+	items, err := a.svc.ListOrgCalendar(r.Context(), claims.UserID, orgID, from, to, branchID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

@@ -40,6 +40,13 @@ type Props = {
   initialEnd?: string | null
   /** Hide page chrome when embedded in a drawer. */
   embedded?: boolean
+  /**
+   * Owner calendar: edit another master's hours/exceptions via
+   * `/v1/calendar/working-hours` + `/v1/calendar/schedule-exceptions`
+   * (same StaffPage targeting). Omit for master self-schedule (`/v1/me/*`).
+   */
+  targetMasterUserId?: string
+  targetOrganizationId?: string
   onSaved?: () => void
 }
 
@@ -48,14 +55,18 @@ export function ScheduleEditor({
   initialStart = null,
   initialEnd = null,
   embedded = false,
+  targetMasterUserId,
+  targetOrganizationId,
   onSaved,
 }: Props) {
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const cabinet = useCabinet()
   const qc = useQueryClient()
-  const orgId = cabinet.selectedOrg?.organization.id
+  const orgId = targetOrganizationId || cabinet.selectedOrg?.organization.id
   const branch = cabinet.selectedBranch
   const salonTz = resolveServiceTimezone(branch?.timezone, branch?.city)
+  const staffTarget =
+    Boolean(targetMasterUserId && targetOrganizationId && targetMasterUserId !== user?.id)
   const [mode, setMode] = useState<'chair' | 'onsite' | 'percentage'>('chair')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
@@ -124,16 +135,35 @@ export function ScheduleEditor({
   }, [])
 
   const intervals = useQuery({
-    queryKey: ['work-mode-intervals', range.from, range.to],
-    queryFn: () => apiRequest<{ items: WorkModeInterval[] }>(
-      `/v1/me/work-mode-intervals?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
-      { token: accessToken },
-    ),
+    queryKey: ['work-mode-intervals', range.from, range.to, staffTarget ? targetMasterUserId : 'me', orgId],
+    queryFn: () => {
+      const qs = new URLSearchParams({ from: range.from, to: range.to })
+      if (staffTarget && orgId && targetMasterUserId) {
+        qs.set('organization_id', orgId)
+        qs.set('master_user_id', targetMasterUserId)
+        return apiRequest<{ items: WorkModeInterval[] }>(
+          `/v1/calendar/work-mode-intervals?${qs.toString()}`,
+          { token: accessToken },
+        )
+      }
+      return apiRequest<{ items: WorkModeInterval[] }>(
+        `/v1/me/work-mode-intervals?${qs.toString()}`,
+        { token: accessToken },
+      )
+    },
     enabled: Boolean(accessToken),
   })
   const hours = useQuery({
-    queryKey: ['me-working-hours'],
-    queryFn: () => apiRequest<{ items: HoursItem[] }>('/v1/me/working-hours', { token: accessToken }),
+    queryKey: ['schedule-working-hours', staffTarget ? targetMasterUserId : 'me', orgId],
+    queryFn: () => {
+      if (staffTarget && orgId && targetMasterUserId) {
+        return apiRequest<{ items: HoursItem[] }>(
+          `/v1/calendar/working-hours?organization_id=${orgId}&master_user_id=${targetMasterUserId}`,
+          { token: accessToken },
+        )
+      }
+      return apiRequest<{ items: HoursItem[] }>('/v1/me/working-hours', { token: accessToken })
+    },
     enabled: Boolean(accessToken),
   })
   useEffect(() => {
@@ -167,6 +197,9 @@ export function ScheduleEditor({
 
   const create = useMutation({
     mutationFn: () => {
+      if (staffTarget) {
+        throw new Error('Режимы работы мастера редактируются в его кабинете')
+      }
       const body: Record<string, unknown> = {
         mode,
         starts_at: datetimeLocalToIso(start, tz),
@@ -198,7 +231,12 @@ export function ScheduleEditor({
   })
 
   const remove = useMutation({
-    mutationFn: (id: string) => apiRequest(`/v1/me/work-mode-intervals/${id}`, { method: 'DELETE', token: accessToken }),
+    mutationFn: (id: string) => {
+      if (staffTarget) {
+        throw new Error('Режимы работы мастера редактируются в его кабинете')
+      }
+      return apiRequest(`/v1/me/work-mode-intervals/${id}`, { method: 'DELETE', token: accessToken })
+    },
     onSuccess: () => {
       toast.success('Интервал режима удалён')
       void qc.invalidateQueries({ queryKey: ['work-mode-intervals'] })
@@ -206,15 +244,28 @@ export function ScheduleEditor({
   })
 
   const saveHours = useMutation({
-    mutationFn: () => apiRequest('/v1/me/working-hours', {
-      method: 'PUT',
-      token: accessToken,
-      body: { items: hoursDraft },
-    }),
+    mutationFn: () => {
+      if (staffTarget && orgId && targetMasterUserId) {
+        return apiRequest(
+          `/v1/calendar/working-hours?organization_id=${orgId}&master_user_id=${targetMasterUserId}`,
+          {
+            method: 'PUT',
+            token: accessToken,
+            body: { items: hoursDraft },
+          },
+        )
+      }
+      return apiRequest('/v1/me/working-hours', {
+        method: 'PUT',
+        token: accessToken,
+        body: { items: hoursDraft },
+      })
+    },
     onSuccess: async () => {
       setOk('Недельный график сохранён')
       toast.success('Недельный график сохранён')
       setError(null)
+      await qc.invalidateQueries({ queryKey: ['schedule-working-hours'] })
       await qc.invalidateQueries({ queryKey: ['me-working-hours'] })
       await qc.invalidateQueries({ queryKey: ['calendar-hours'] })
       onSaved?.()
@@ -229,18 +280,25 @@ export function ScheduleEditor({
       if (!exceptionDay || (!exceptionOff && (startMin == null || endMin == null || endMin <= startMin))) {
         throw new Error('Укажите день и корректный интервал')
       }
+      const body = {
+        items: [{
+          day: exceptionDay,
+          is_day_off: exceptionOff,
+          start_minute: exceptionOff ? null : startMin,
+          end_minute: exceptionOff ? null : endMin,
+          note: exceptionOff ? 'Выходной' : 'Рабочий интервал',
+        }],
+      }
+      if (staffTarget && orgId && targetMasterUserId) {
+        return apiRequest(
+          `/v1/calendar/schedule-exceptions?organization_id=${orgId}&master_user_id=${targetMasterUserId}`,
+          { method: 'PUT', token: accessToken, body },
+        )
+      }
       return apiRequest('/v1/me/schedule-exceptions', {
         method: 'PUT',
         token: accessToken,
-        body: {
-          items: [{
-            day: exceptionDay,
-            is_day_off: exceptionOff,
-            start_minute: exceptionOff ? null : startMin,
-            end_minute: exceptionOff ? null : endMin,
-            note: exceptionOff ? 'Выходной' : 'Рабочий интервал',
-          }],
-        },
+        body,
       })
     },
     onSuccess: async () => {
@@ -269,15 +327,28 @@ export function ScheduleEditor({
   }
 
   const body = (
-    <div className="stack schedule-editor" data-testid="schedule-editor">
+    <div
+      className="stack schedule-editor"
+      data-testid="schedule-editor"
+      data-schedule-target={staffTarget ? targetMasterUserId : 'self'}
+    >
       {!embedded ? (
         <>
           <h1>Установка графика</h1>
           <p className="muted">Недельные часы, исключения на день и режимы работы.</p>
         </>
       ) : (
-        <p className="muted">Недельные часы, исключения на день и режимы работы.</p>
+        <p className="muted">
+          {staffTarget
+            ? 'График выбранного мастера: часы и исключения (как в разделе «Команда»).'
+            : 'Недельные часы, исключения на день и режимы работы.'}
+        </p>
       )}
+      {staffTarget ? (
+        <p className="muted" data-testid="schedule-editor-target-hint">
+          Цель: мастер <code data-testid="schedule-editor-target-master">{targetMasterUserId}</code>
+        </p>
+      ) : null}
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
 
@@ -383,69 +454,77 @@ export function ScheduleEditor({
 
       <section className="card stack" data-testid="work-mode-form" id="schedule-panel-modes">
         <strong>Режим работы</strong>
-        <p className="muted">Кресло / выезд / проценты на выбранный интервал.</p>
-        <div className="field">
-          <label htmlFor="work-mode">Режим</label>
-          <select id="work-mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
-            <option value="chair">В салоне</option>
-            <option value="onsite">Выезд</option>
-            <option value="percentage">На процентах</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="wm-start">Начало</label>
-          <input id="wm-start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} aria-required="true" />
-        </div>
-        <div className="field">
-          <label htmlFor="wm-end">Конец</label>
-          <input id="wm-end" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} aria-required="true" />
-        </div>
-        {mode === 'chair' && (
-          <div className="field">
-            <label htmlFor="wm-chair">Кресло</label>
-            <select id="wm-chair" value={chairId} onChange={(e) => setChairId(e.target.value)}>
-              <option value="">Выберите кресло</option>
-              {(chairs.data?.items ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
+        {staffTarget ? (
+          <p className="muted">Просмотр интервалов мастера. Создание и удаление режимов — в кабинете мастера.</p>
+        ) : (
+          <p className="muted">Кресло / выезд / проценты на выбранный интервал.</p>
         )}
-        {mode === 'onsite' && (
+        {!staffTarget ? (
           <>
             <div className="field">
-              <label htmlFor="wm-city">Город</label>
-              <select id="wm-city" value={cityId} onChange={(e) => { setCityId(e.target.value); setDistrictIds([]) }}>
-                <option value="">Выберите город</option>
-                {(cities.data?.items ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+              <label htmlFor="work-mode">Режим</label>
+              <select id="work-mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+                <option value="chair">В салоне</option>
+                <option value="onsite">Выезд</option>
+                <option value="percentage">На процентах</option>
               </select>
             </div>
-            <fieldset className="field">
-              <legend>Районы</legend>
-              {(districts.data?.items ?? []).map((d) => (
-                <label key={d.id} className="field-check">
-                  <input
-                    type="checkbox"
-                    checked={districtIds.includes(d.id)}
-                    onChange={(e) => setDistrictIds((prev) => e.target.checked ? [...prev, d.id] : prev.filter((id) => id !== d.id))}
-                  />
-                  <span>{d.name}</span>
-                </label>
-              ))}
-            </fieldset>
+            <div className="field">
+              <label htmlFor="wm-start">Начало</label>
+              <input id="wm-start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} aria-required="true" />
+            </div>
+            <div className="field">
+              <label htmlFor="wm-end">Конец</label>
+              <input id="wm-end" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} aria-required="true" />
+            </div>
+            {mode === 'chair' && (
+              <div className="field">
+                <label htmlFor="wm-chair">Кресло</label>
+                <select id="wm-chair" value={chairId} onChange={(e) => setChairId(e.target.value)}>
+                  <option value="">Выберите кресло</option>
+                  {(chairs.data?.items ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {mode === 'onsite' && (
+              <>
+                <div className="field">
+                  <label htmlFor="wm-city">Город</label>
+                  <select id="wm-city" value={cityId} onChange={(e) => { setCityId(e.target.value); setDistrictIds([]) }}>
+                    <option value="">Выберите город</option>
+                    {(cities.data?.items ?? []).map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <fieldset className="field">
+                  <legend>Районы</legend>
+                  {(districts.data?.items ?? []).map((d) => (
+                    <label key={d.id} className="field-check">
+                      <input
+                        type="checkbox"
+                        checked={districtIds.includes(d.id)}
+                        onChange={(e) => setDistrictIds((prev) => e.target.checked ? [...prev, d.id] : prev.filter((id) => id !== d.id))}
+                      />
+                      <span>{d.name}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              </>
+            )}
+            {mode === 'percentage' && (
+              <div className="field">
+                <label htmlFor="wm-rate">Процент от стоимости услуги</label>
+                <input id="wm-rate" type="number" min={1} max={100} value={rate} onChange={(e) => setRate(e.target.value)} />
+              </div>
+            )}
+            <button className="btn btn-primary" type="button" data-testid="save-work-mode" disabled={create.isPending} onClick={() => create.mutate()}>
+              Добавить интервал
+            </button>
           </>
-        )}
-        {mode === 'percentage' && (
-          <div className="field">
-            <label htmlFor="wm-rate">Процент от стоимости услуги</label>
-            <input id="wm-rate" type="number" min={1} max={100} value={rate} onChange={(e) => setRate(e.target.value)} />
-          </div>
-        )}
-        <button className="btn btn-primary" type="button" data-testid="save-work-mode" disabled={create.isPending} onClick={() => create.mutate()}>
-          Добавить интервал
-        </button>
+        ) : null}
       </section>
       <section className="stack">
         {(intervals.data?.items ?? []).map((it) => (
@@ -453,7 +532,9 @@ export function ScheduleEditor({
             <strong>{it.mode_label || workModeLabel(it.mode)}</strong>
             <p>{new Date(it.starts_at).toLocaleString('ru-RU')} — {new Date(it.ends_at).toLocaleString('ru-RU')}</p>
             {it.location_label && <p className="muted">{it.location_label}</p>}
-            <button className="btn" type="button" onClick={() => remove.mutate(it.id)}>Удалить</button>
+            {!staffTarget ? (
+              <button className="btn" type="button" onClick={() => remove.mutate(it.id)}>Удалить</button>
+            ) : null}
           </article>
         ))}
       </section>

@@ -1482,9 +1482,47 @@ func (s *Service) isOrgOwnerOrAdmin(ctx context.Context, orgID, actor uuid.UUID)
 	return s.requireMembership(ctx, orgID, actor, "owner", "admin") == nil
 }
 
-func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time) ([]domain.Appointment, error) {
+func (s *Service) requireOrgBranch(ctx context.Context, orgID, branchID uuid.UUID) error {
+	if s.organizationsURL == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/branches/"+branchID.String(), nil)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return apperr.NotFound("branch not found")
+	}
+	if resp.StatusCode >= 300 {
+		return apperr.Internal(fmt.Errorf("branch lookup status %d", resp.StatusCode))
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	var payload struct {
+		OrganizationID string `json:"organization_id"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return apperr.Internal(err)
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(payload.OrganizationID))
+	if err != nil || parsed != orgID {
+		return apperr.Forbidden("branch does not belong to organization")
+	}
+	return nil
+}
+
+func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time, branchID *uuid.UUID) ([]domain.Appointment, error) {
 	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
 		return nil, err
+	}
+	if branchID != nil && *branchID != uuid.Nil {
+		if err := s.requireOrgBranch(ctx, orgID, *branchID); err != nil {
+			return nil, err
+		}
 	}
 	statuses := []string{
 		domain.StatusPendingConfirmation,
@@ -1496,7 +1534,7 @@ func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, f
 		domain.StatusCancelledBySalon,
 		domain.StatusNoShow,
 	}
-	items, err := s.store.ListByOrgInRangeForViewer(ctx, orgID, actor, from.UTC(), to.UTC(), statuses, false)
+	items, err := s.store.ListByOrgInRangeForViewerBranch(ctx, orgID, actor, from.UTC(), to.UTC(), statuses, false, branchID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}

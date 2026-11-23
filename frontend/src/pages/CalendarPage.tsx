@@ -67,6 +67,9 @@ import {
 } from '@/pages/calendar-helpers'
 import { CalendarAvailability } from '@/pages/CalendarAvailability'
 import { CalendarMastersDay, type MasterCol } from '@/pages/CalendarMastersDay'
+import { CalendarMastersWeek, weekStartFromDate } from '@/pages/CalendarMastersWeek'
+import { CalendarOwnerMasterFilter } from '@/pages/CalendarOwnerMasterFilter'
+import { ownerMasterIdsForBranch } from '@/pages/calendar-owner-masters'
 import { CalendarMobile } from '@/pages/CalendarMobile'
 import { CalendarMoveCopyDialog } from '@/pages/CalendarMoveCopyDialog'
 import { RescheduleDialog } from '@/pages/RescheduleDialog'
@@ -263,6 +266,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const ownerMode = ['salon_owner', 'chain_owner', 'salon_admin'].includes(cabinet.kind)
   const orgID = cabinet.selectedOrg?.organization.id
   const salonBranches = cabinet.selectedOrg?.branches ?? []
+  const salonBranchKey = salonBranches.map((b) => b.id).join(',')
 
   const viewPrefKey = embedded
     ? 'calendar.view.embedded'
@@ -303,6 +307,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   const [pendingDayOff, setPendingDayOff] = useState(false)
   const [moving, setMoving] = useState(false)
   const [masterFilter, setMasterFilter] = useState('')
+  /** Owner multi-select: null = all branch masters. Isolated from masterFilter (master calendar). */
+  const [ownerMasterIds, setOwnerMasterIds] = useState<string[] | null>(null)
   const [branchFilter, setBranchFilter] = useState('')
   const [blockTitle, setBlockTitle] = useState('Личное время')
   const [blockCat, setBlockCat] = useState(isRepPlanner ? (basePalette.find((c) => !c.system)?.id ?? 'personal') : CALENDAR_SERVICE_OTHER)
@@ -427,8 +433,20 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   useEffect(() => {
     setMasterFilter('')
-    setBranchFilter(cabinet.selectedBranch?.id ?? '')
-  }, [orgID, cabinet.selectedBranch?.id])
+    setOwnerMasterIds(null)
+    const fromCabinet = cabinet.selectedBranch?.id ?? ''
+    if (fromCabinet) {
+      setBranchFilter(fromCabinet)
+      return
+    }
+    // Single-branch salon: use the only branch (not an arbitrary pick among many).
+    const branches = cabinet.selectedOrg?.branches ?? []
+    if (branches.length === 1) {
+      setBranchFilter(branches[0].id)
+      return
+    }
+    setBranchFilter('')
+  }, [orgID, cabinet.selectedBranch?.id, salonBranchKey, cabinet.selectedOrg?.branches])
 
   const dashboard = useQuery({
     queryKey: ['me-dashboard'],
@@ -492,18 +510,28 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   })
 
   const appointments = useQuery({
-    queryKey: ['calendar-appointments', ownerMode, orgID, range.from, range.to],
-    queryFn: () => ownerMode
-      ? apiRequest<{ items: Appointment[] }>(
-        `/v1/calendar/appointments?organization_id=${orgID}&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+    queryKey: ['calendar-appointments', ownerMode, orgID, branchFilter, range.from, range.to],
+    queryFn: () => {
+      if (!ownerMode) {
+        return apiRequest<{ items: Appointment[] }>(
+          `/v1/appointments/mine?role=master&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+          { token: accessToken },
+        )
+      }
+      const qs = new URLSearchParams({
+        organization_id: String(orgID),
+        from: range.from,
+        to: range.to,
+      })
+      if (branchFilter) qs.set('branch_id', branchFilter)
+      return apiRequest<{ items: Appointment[] }>(
+        `/v1/calendar/appointments?${qs.toString()}`,
         { token: accessToken },
       )
-      : apiRequest<{ items: Appointment[] }>(
-        `/v1/appointments/mine?role=master&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
-        { token: accessToken },
-      ),
+    },
     enabled: Boolean(accessToken && (!ownerMode || orgID)) && cabinet.kind !== 'supplier_rep',
-    placeholderData: keepPreviousData,
+    // Owner branch switches must not briefly paint the previous branch's appointments.
+    placeholderData: ownerMode ? undefined : keepPreviousData,
   })
 
   const blocks = useQuery({
@@ -583,27 +611,54 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     queryFn: async () => {
       const entries = await Promise.all(masterIDs.map(async (id) => {
         try {
-          const res = await apiRequest<{ master: { display_name: string; photo_media_id?: string | null } }>(`/v1/masters/${id}`, { token: accessToken })
+          const res = await apiRequest<{ master: { display_name: string; photo_media_id?: string | null; branch_id?: string | null } }>(`/v1/masters/${id}`, { token: accessToken })
           let photoUrl: string | null = null
           const photoId = res.master.photo_media_id
           if (photoId) {
             photoUrl = getCachedMediaUrl(photoId) ?? (await loadMediaBlobUrl(photoId))
           }
-          return [id, { name: res.master.display_name, photoUrl }] as const
+          return [id, {
+            name: res.master.display_name,
+            photoUrl,
+            branchId: res.master.branch_id ? String(res.master.branch_id) : '',
+          }] as const
         } catch {
           const member = staffMasters.find((m) => m.user_id === id)
-          return [id, { name: staffRoleLabel(member?.role), photoUrl: null }] as const
+          return [id, { name: staffRoleLabel(member?.role), photoUrl: null, branchId: '' }] as const
         }
       }))
-      return Object.fromEntries(entries) as Record<string, { name: string; photoUrl: string | null }>
+      return Object.fromEntries(entries) as Record<string, { name: string; photoUrl: string | null; branchId: string }>
     },
     enabled: masterIDs.length > 0,
   })
 
-  const masterCols = useMemo((): MasterCol[] => {
+  const branchByMaster = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const [id, info] of Object.entries(masters.data ?? {})) {
+      if (info.branchId) map[id] = info.branchId
+    }
+    return map
+  }, [masters.data])
+
+  const branchMasterCols = useMemo((): MasterCol[] => {
     // Staff masters first, then any masters who already have appointments in range (no duplicates).
     const orderedIds = [...new Set([...staffMasters.map((m) => m.user_id), ...masterIDs].filter(Boolean))]
-    return orderedIds.map((id) => {
+    if (!ownerMode) {
+      return orderedIds.map((id) => {
+        const member = staffMasters.find((m) => m.user_id === id)
+        return {
+          userId: id,
+          name: masters.data?.[id]?.name ?? staffRoleLabel(member?.role ?? 'master'),
+          photoUrl: masters.data?.[id]?.photoUrl ?? null,
+        }
+      })
+    }
+    // Owner Day/Week: only profiles with explicit branch_id === selected branch.
+    // Unknown / unloaded branch_id are excluded (no temporary cross-branch leak).
+    const scopedIds = branchFilter
+      ? ownerMasterIdsForBranch(orderedIds, branchFilter, branchByMaster)
+      : []
+    return scopedIds.map((id) => {
       const member = staffMasters.find((m) => m.user_id === id)
       return {
         userId: id,
@@ -611,7 +666,33 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         photoUrl: masters.data?.[id]?.photoUrl ?? null,
       }
     })
-  }, [staffMasters, masterIDs, masters.data])
+  }, [staffMasters, masterIDs, masters.data, ownerMode, branchFilter, branchByMaster])
+
+  /** Columns after owner multi-filter (null = all). */
+  const masterCols = useMemo((): MasterCol[] => {
+    if (!ownerMode || ownerMasterIds == null) return branchMasterCols
+    const allow = new Set(ownerMasterIds)
+    return branchMasterCols.filter((m) => allow.has(m.userId))
+  }, [ownerMode, ownerMasterIds, branchMasterCols])
+
+  // Drop owner filter ids that are no longer in the selected branch (keep explicit arrays; do not collapse to «Все»).
+  useEffect(() => {
+    if (!ownerMode || ownerMasterIds == null) return
+    const allowed = new Set(branchMasterCols.map((m) => m.userId))
+    const next = ownerMasterIds.filter((id) => allowed.has(id))
+    if (next.length === ownerMasterIds.length) return
+    setOwnerMasterIds(next)
+  }, [ownerMode, ownerMasterIds, branchMasterCols])
+
+  // Drive schedule/hours single-master targeting from owner multi-filter when exactly one is selected.
+  useEffect(() => {
+    if (!ownerMode) return
+    if (ownerMasterIds != null && ownerMasterIds.length === 1) {
+      setMasterFilter(ownerMasterIds[0])
+      return
+    }
+    setMasterFilter('')
+  }, [ownerMode, ownerMasterIds])
 
   function category(id: string): Category {
     if (isRepPlanner) {
@@ -668,8 +749,19 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
 
   const events: EventInput[] = useMemo(() => {
     const out: EventInput[] = []
+    const ownerAllow = ownerMode && ownerMasterIds != null ? new Set(ownerMasterIds) : null
+    function masterAllowed(userId: string | undefined | null) {
+      if (!userId) return true
+      if (ownerMode) {
+        if (ownerAllow && !ownerAllow.has(userId)) return false
+        return true
+      }
+      if (masterFilter && userId !== masterFilter) return false
+      return true
+    }
     for (const a of appointments.data?.items ?? []) {
-      if ((masterFilter && a.master_user_id !== masterFilter) || (branchFilter && a.branch_id !== branchFilter)) continue
+      if (branchFilter && a.branch_id !== branchFilter) continue
+      if (!masterAllowed(a.master_user_id)) continue
       const masterName = masters.data?.[a.master_user_id]?.name ?? staffRoleLabel('master')
       const clientName = clientNames[a.client_user_id] || ''
       const terminal = isTerminalStatus(a.status)
@@ -715,7 +807,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
     for (const b of blocks.data?.items ?? []) {
       const cat = category(b.category || CALENDAR_SERVICE_OTHER)
-      if (masterFilter && b.owner_user_id && b.owner_user_id !== masterFilter) continue
+      if (!masterAllowed(b.owner_user_id)) continue
       const colorId = normalizeCalendarColor(b.color || cat.color, cat.id)
       const colorCss = calendarColorCss(colorId, cat.id)
       const colorClass = calendarColorClass(colorId, cat.id)
@@ -787,7 +879,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
       }
     }
     for (const w of workModes.data?.items ?? []) {
-      if (masterFilter && w.master_user_id && w.master_user_id !== masterFilter) continue
+      if (!masterAllowed(w.master_user_id)) continue
       out.push({
         id: `mode:${w.id}`,
         title: `${w.mode_label}${w.location_label ? ` · ${w.location_label}` : ''}`,
@@ -808,7 +900,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     }
     return out
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, workModes.data, masterFilter, branchFilter, masters.data, palette, serviceOptions, clientNames, visitNames, readOnlyOverlay, user?.id, ownerMode, isRepPlanner])
+  }, [appointments.data, blocks.data, fieldTasks.data, exceptions.data, workModes.data, masterFilter, ownerMasterIds, branchFilter, masters.data, palette, serviceOptions, clientNames, visitNames, readOnlyOverlay, user?.id, ownerMode, isRepPlanner])
 
   const visibleEventMinutes = useMemo(() => {
     const fromMs = new Date(range.from).getTime()
@@ -1247,6 +1339,14 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }
 
   function openSchedulePanel(tab: ScheduleEditorTab = 'hours', slot?: Date | null) {
+    if (ownerMode) {
+      // ScheduleEditor staff APIs target exactly one master (StaffPage pattern).
+      // Derive target from ownerMasterIds when the panel is open — no separate state (avoids RR race).
+      if (ownerMasterIds == null || ownerMasterIds.length !== 1) {
+        toast.error('Выберите одного мастера в фильтре, чтобы открыть его график')
+        return
+      }
+    }
     const next = new URLSearchParams(searchParams)
     next.set('panel', 'schedule')
     next.set('tab', tab)
@@ -1268,6 +1368,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     next.delete('end')
     setSearchParams(next, { replace: true })
   }
+
+  /** Owner staff target while schedule drawer is open; masterMode → self (undefined). */
+  const scheduleTargetMasterId =
+    ownerMode && schedulePanelOpen && ownerMasterIds != null && ownerMasterIds.length === 1
+      ? ownerMasterIds[0]
+      : ''
 
   function markDayOffFor(day: Date) {
     const ymd = zonedYmd(day, salonTimezone)
@@ -1326,11 +1432,12 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   function changeView(id: CalendarViewId) {
     setCurrentView(id)
     setSavedView(id)
-    if (compact && (id === 'timeGridDay' || id === 'dayGridMonth')) {
-      // Day/month list unmounts FullCalendar — keep a wide fetch window around the selected day.
+    const ownerBoardView = ownerMode && (id === 'timeGridDay' || id === 'timeGridWeek')
+    if ((compact && (id === 'timeGridDay' || id === 'dayGridMonth')) || ownerBoardView) {
+      // Day/month list or owner boards unmount FullCalendar — keep a wide fetch window.
       ensureRangeCovers(selectedDate)
     }
-    if (!(compact && (id === 'dayGridMonth' || id === 'timeGridDay'))) {
+    if (!(compact && (id === 'dayGridMonth' || id === 'timeGridDay')) && !ownerBoardView) {
       calendarRef.current?.getApi().changeView(id)
     }
   }
@@ -1618,27 +1725,31 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     if (pendingInterval) setPendingDayOff(false)
   }, [pendingInterval])
 
-  const loading = appointments.isLoading || blocks.isLoading || hours.isLoading
-  // Owners with multiple masters get a column day board on phone and desktop (horizontal scroll on mobile).
-  const showMastersDay = ownerMode && !embedded && currentView === 'timeGridDay' && !masterFilter && masterCols.length > 1
-  // Phone day + month: reference list / month grid. List/week keep FullCalendar unless multi-master day board.
-  const showMobileDayList = compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth') && !showMastersDay
-  const showMobileFc = compact && !showMobileDayList && !showMastersDay
+  const ownerBranchProfilesPending = ownerMode && Boolean(branchFilter) && masters.isLoading && masterIDs.length > 0
+  const loading = appointments.isLoading || blocks.isLoading || hours.isLoading || ownerBranchProfilesPending
+  const ownerNeedsBranch = ownerMode && salonBranches.length > 1 && !branchFilter
+  // Owner day/week: multi-master boards (also correct for a single master column).
+  const showMastersDay = ownerMode && !embedded && !ownerNeedsBranch && currentView === 'timeGridDay'
+  const showMastersWeek = ownerMode && !embedded && !ownerNeedsBranch && currentView === 'timeGridWeek'
+  const showOwnerBoard = showMastersDay || showMastersWeek
+  // Phone day + month: reference list / month grid. List/week keep FullCalendar unless owner board.
+  const showMobileDayList = compact && (currentView === 'timeGridDay' || currentView === 'dayGridMonth') && !showOwnerBoard
+  const showMobileFc = compact && !showMobileDayList && !showOwnerBoard
   const apptId = selected?.kind === 'appointment' && selected.id.startsWith('appt:') ? selected.id.slice(5) : ''
 
   useEffect(() => {
-    if (showMobileDayList || showMastersDay) return
+    if (showMobileDayList || showOwnerBoard) return
     const api = calendarRef.current?.getApi()
     if (!api) return
     api.setOption('slotMinTime', slotMinTime)
     api.setOption('slotMaxTime', slotMaxTime)
-  }, [showMobileDayList, showMastersDay, slotMinTime, slotMaxTime])
+  }, [showMobileDayList, showOwnerBoard, slotMinTime, slotMaxTime])
 
   useEffect(() => {
-    if (showMobileDayList || showMastersDay) return
+    if (showMobileDayList || showOwnerBoard) return
     const id = requestAnimationFrame(() => calendarRef.current?.getApi().updateSize())
     return () => cancelAnimationFrame(id)
-  }, [showMobileDayList, showMastersDay, currentView, loading])
+  }, [showMobileDayList, showOwnerBoard, currentView, loading])
 
   useEffect(() => {
     const topbar = document.querySelector('.topbar') as HTMLElement | null
@@ -1656,7 +1767,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
   }, [])
 
   useEffect(() => {
-    if (scrolledOnce.current || loading || showMobileDayList || showMastersDay) return
+    if (scrolledOnce.current || loading || showMobileDayList || showOwnerBoard) return
     scrolledOnce.current = true
     requestAnimationFrame(() => {
       const wrap = wrapRef.current
@@ -1670,7 +1781,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         wrap.querySelector('.fc-event')
       slot?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     })
-  }, [loading, showMobileDayList, showMastersDay, salonTimezone])
+  }, [loading, showMobileDayList, showOwnerBoard, salonTimezone])
 
   const colorTokenPicker = (value: string, onPick: (token: string) => void) => (
     <div className="calendar-color-token-grid" role="listbox" aria-label="Цвет">
@@ -1807,14 +1918,8 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     <div className="stack calendar-color-settings" data-testid="calendar-settings">
       {ownerMode ? (
         <div className="stack gap">
-          <strong>Выбор салона</strong>
-          <div className="field">
-            <label htmlFor="cal-settings-master">Мастер</label>
-            <select id="cal-settings-master" data-testid="calendar-master-filter" value={masterFilter} onChange={(e) => setMasterFilter(e.target.value)}>
-              <option value="">Все мастера</option>
-              {masterIDs.map((id) => <option key={id} value={id}>{masters.data?.[id]?.name ?? 'Мастер'}</option>)}
-            </select>
-          </div>
+          <strong>Филиал</strong>
+          <p className="muted">Фильтр мастеров вынесен в основные controls календаря.</p>
           {(cabinet.kind === 'chain_owner' || salonBranches.length > 1) ? (
             <div className="field">
               <label htmlFor="cal-settings-branch">Филиал</label>
@@ -1824,16 +1929,23 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 value={branchFilter}
                 onChange={(e) => {
                   setBranchFilter(e.target.value)
+                  setOwnerMasterIds(null)
                   if (e.target.value) cabinet.setSelectedBranchId(e.target.value)
                 }}
               >
-                <option value="">Все филиалы</option>
+                <option value="">Выберите филиал</option>
                 {salonBranches.map((b) => <option key={b.id} value={b.id}>{branchLabel(b, salonBranches)}</option>)}
               </select>
               {branchFilter ? (
                 <p className="muted" data-testid="calendar-branch-timezone">Часовой пояс сетки: {salonTimezone}</p>
-              ) : null}
+              ) : (
+                <p className="muted">Расписание владельца показывается относительно выбранного филиала.</p>
+              )}
             </div>
+          ) : salonBranches[0] ? (
+            <p className="muted" data-testid="calendar-branch-timezone">
+              Филиал: {branchLabel(salonBranches[0], salonBranches)} · {salonTimezone}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -1920,9 +2032,13 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
     </div>
   )
 
+  const ownerViewOptions = ownerMode
+    ? CALENDAR_VIEW_OPTIONS.filter((o) => o.id !== 'listWeek')
+    : CALENDAR_VIEW_OPTIONS
+
   const body = (
     <div
-      className={`stack calendar-shell ${showMobileDayList ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${showMastersDay ? 'is-masters-day' : ''} ${currentView === 'timeGridWeek' ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
+      className={`stack calendar-shell ${showMobileDayList ? 'is-mobile-day' : ''} ${showMobileFc ? 'is-mobile-fc' : ''} ${showMastersDay ? 'is-masters-day' : ''} ${showMastersWeek ? 'is-masters-week' : ''} ${currentView === 'timeGridWeek' && !showMastersWeek ? 'is-fc-week' : ''} ${embedded ? 'is-embedded' : ''} ${swipeFlash ? 'is-swipe-transition' : ''} ${navMode === 'swipe' ? 'is-nav-swipe' : 'is-nav-buttons'}`}
       style={{ touchAction: 'pan-y' }}
       onPointerDown={onPointerDownSwipe}
       onPointerMove={onPointerMoveSwipe}
@@ -1946,7 +2062,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
                 </p>
               </div>
             )}
-            <div className={`row calendar-page-head-actions ${showMobileDayList || showMastersDay ? 'is-compact-day' : ''}`}>
+            <div className={`row calendar-page-head-actions ${showMobileDayList || showOwnerBoard ? 'is-compact-day' : ''}`}>
               {!readOnlyOverlay ? (
                 <button
                   className="btn btn-secondary btn-compact"
@@ -1965,8 +2081,15 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         )}
 
         <div className="calendar-controls">
+          {ownerMode && !embedded ? (
+            <CalendarOwnerMasterFilter
+              masters={branchMasterCols}
+              selectedIds={ownerMasterIds}
+              onChange={setOwnerMasterIds}
+            />
+          ) : null}
           <div className="calendar-view-tabs" aria-label="Режим календаря" data-testid="calendar-view-tabs">
-            {CALENDAR_VIEW_OPTIONS.map(({ id, label }) => (
+            {ownerViewOptions.map(({ id, label }) => (
               <button
                 key={id}
                 type="button"
@@ -1985,16 +2108,43 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             data-testid="calendar-open-settings"
             onClick={() => setSettingsOpen(true)}
           >
-            Календари
+            Настройки
           </button>
         </div>
 
-        {compact && (showMastersDay || showMobileFc) ? (
+        {showOwnerBoard ? (
+          <div className="cal-owner-schedule-head">
+            <h2 className="cal-owner-schedule-title" data-testid="calendar-owner-schedule-title">Расписание</h2>
+            <div className="cal-mobile-day-nav cal-chrome-day-nav" role="group" aria-label="Навигация по дате">
+              <button
+                type="button"
+                className="btn btn-ghost btn-compact cal-touch"
+                onClick={() => (showMastersWeek ? shiftPeriod(-1) : shiftDay(-1))}
+                aria-label="Назад"
+              >
+                Назад
+              </button>
+              <button type="button" className="btn btn-secondary btn-compact cal-touch" data-testid="calendar-owner-today" onClick={() => goToDate(new Date())}>
+                Сегодня
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-compact cal-touch"
+                onClick={() => (showMastersWeek ? shiftPeriod(1) : shiftDay(1))}
+                aria-label="Вперёд"
+              >
+                Вперёд
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {compact && (showMobileFc) ? (
           <div className="cal-mobile-day-nav cal-chrome-day-nav" role="group" aria-label="Навигация по дате">
             <button
               type="button"
               className="btn btn-ghost btn-compact cal-touch"
-              onClick={() => (showMobileFc ? shiftPeriod(-1) : shiftDay(-1))}
+              onClick={() => shiftPeriod(-1)}
               aria-label="Назад"
             >
               Назад
@@ -2005,7 +2155,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
             <button
               type="button"
               className="btn btn-ghost btn-compact cal-touch"
-              onClick={() => (showMobileFc ? shiftPeriod(1) : shiftDay(1))}
+              onClick={() => shiftPeriod(1)}
               aria-label="Вперёд"
             >
               Вперёд
@@ -2068,6 +2218,18 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
+      {ownerNeedsBranch ? (
+        <EmptyState
+          title="Выберите филиал"
+          text="Расписание владельца всегда показывается относительно выбранного филиала."
+          action={(
+            <button className="btn btn-secondary" type="button" data-testid="calendar-pick-branch" onClick={() => setSettingsOpen(true)}>
+              Открыть настройки
+            </button>
+          )}
+        />
+      ) : null}
+
       {showMastersDay ? (
         <CalendarMastersDay
           masters={masterCols}
@@ -2075,7 +2237,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           timezone={salonTimezone}
           selectedDate={selectedDate}
           displayRange={appliedRange}
-          loading={loading}
+          loading={loading || appointments.isFetching}
           onEventClick={(id) => {
             openEventById(id)
             setSheet(null)
@@ -2087,17 +2249,33 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
           }}
           onEventResize={readOnlyOverlay ? undefined : applyGridResize}
           onCreateSlot={readOnlyOverlay ? undefined : (start, masterUserId) => openCreateAt(start, masterUserId)}
+          onMasterClick={(id) => navigate(`/masters/${id}`)}
         />
       ) : null}
 
-      {!showMobileDayList && !showMastersDay && loading ? (
+      {showMastersWeek ? (
+        <CalendarMastersWeek
+          masters={masterCols}
+          events={events}
+          timezone={salonTimezone}
+          weekStart={weekStartFromDate(selectedDate, salonTimezone)}
+          loading={loading || appointments.isFetching}
+          onEventClick={(id) => {
+            openEventById(id)
+            setSheet(null)
+          }}
+          onMasterClick={(id) => navigate(`/masters/${id}`)}
+        />
+      ) : null}
+
+      {!showMobileDayList && !showOwnerBoard && loading ? (
         <div className="calendar-wrap" aria-busy="true">
           <div className="skeleton skeleton-card" />
           <div className="skeleton skeleton-card" />
         </div>
       ) : null}
 
-      {!showMobileDayList && !showMastersDay && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
+      {!showMobileDayList && !showOwnerBoard && !loading && hours.data?.items?.length === 0 && appointments.data?.items?.length === 0 ? (
         <EmptyState
           title="Рабочий график пока не задан"
           text="Календарь покажет рабочие часы после того, как мастер сохранит расписание."
@@ -2109,7 +2287,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         />
       ) : null}
 
-      {!showMobileDayList && !showMastersDay ? (
+      {!showMobileDayList && !showOwnerBoard ? (
       <div
         className="calendar-wrap"
         ref={wrapRef}
@@ -2231,7 +2409,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <Drawer
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
-          title="Календари"
+          title="Настройки"
           panelClassName="calendar-settings-drawer"
         >
           {settingsPanel}
@@ -2240,7 +2418,7 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         <Modal
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
-          title="Календари"
+          title="Настройки"
           size="lg"
           className="calendar-settings-modal"
         >
@@ -2496,16 +2674,25 @@ export function CalendarPage({ embedded = false, overlayRepId }: { embedded?: bo
         label="Установка графика"
         panelClassName="schedule-editor-drawer"
       >
-        <ScheduleEditor
-          embedded
-          tab={scheduleTab}
-          initialStart={scheduleStartQ}
-          initialEnd={scheduleEndQ}
-          onSaved={() => {
-            void qc.invalidateQueries({ queryKey: ['calendar-hours'] })
-            void qc.invalidateQueries({ queryKey: ['calendar-exceptions'] })
-          }}
-        />
+        {ownerMode && !scheduleTargetMasterId ? (
+          <p className="muted" data-testid="schedule-editor-need-master">
+            Выберите одного мастера в фильтре, чтобы открыть его график.
+          </p>
+        ) : (
+          <ScheduleEditor
+            embedded
+            tab={scheduleTab}
+            initialStart={scheduleStartQ}
+            initialEnd={scheduleEndQ}
+            targetMasterUserId={ownerMode && scheduleTargetMasterId ? scheduleTargetMasterId : undefined}
+            targetOrganizationId={ownerMode && scheduleTargetMasterId && orgID ? orgID : undefined}
+            onSaved={() => {
+              void qc.invalidateQueries({ queryKey: ['calendar-hours'] })
+              void qc.invalidateQueries({ queryKey: ['calendar-exceptions'] })
+              void qc.invalidateQueries({ queryKey: ['schedule-working-hours'] })
+            }}
+          />
+        )}
       </Drawer>
 
       {selected?.kind === 'appointment' && apptId ? (

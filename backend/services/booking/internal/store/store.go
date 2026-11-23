@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -523,25 +524,37 @@ func (s *Store) ListByOrgInRange(ctx context.Context, orgID uuid.UUID, from, to 
 
 // ListByOrgInRangeForViewer excludes appointments hidden by viewer when viewer != Nil and excludeHidden.
 func (s *Store) ListByOrgInRangeForViewer(ctx context.Context, orgID, viewer uuid.UUID, from, to time.Time, statuses []string, includeHidden bool) ([]domain.Appointment, error) {
+	return s.ListByOrgInRangeForViewerBranch(ctx, orgID, viewer, from, to, statuses, includeHidden, nil)
+}
+
+// ListByOrgInRangeForViewerBranch optionally scopes to a single branch_id within the organization.
+func (s *Store) ListByOrgInRangeForViewerBranch(ctx context.Context, orgID, viewer uuid.UUID, from, to time.Time, statuses []string, includeHidden bool, branchID *uuid.UUID) ([]domain.Appointment, error) {
 	if len(statuses) == 0 {
 		statuses = []string{domain.StatusConfirmed, domain.StatusInProgress}
 	}
 	hideSQL := ``
+	branchSQL := ``
 	args := []any{orgID, from, to, statuses}
+	argN := 5
 	if viewer != uuid.Nil {
 		if includeHidden {
-			hideSQL = ` AND EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $5)`
+			hideSQL = fmt.Sprintf(` AND EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $%d)`, argN)
 		} else {
-			hideSQL = ` AND NOT EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $5)`
+			hideSQL = fmt.Sprintf(` AND NOT EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $%d)`, argN)
 		}
 		args = append(args, viewer)
+		argN++
+	}
+	if branchID != nil && *branchID != uuid.Nil {
+		branchSQL = fmt.Sprintf(` AND branch_id = $%d`, argN)
+		args = append(args, *branchID)
 	}
 	rows, err := s.pool.Query(ctx, `
 SELECT `+appointmentCols+`
 FROM appointments
 WHERE organization_id=$1
   AND status = ANY($4)
-  AND starts_at < $3 AND ends_at > $2`+hideSQL+`
+  AND starts_at < $3 AND ends_at > $2`+hideSQL+branchSQL+`
 ORDER BY starts_at`, args...)
 	if err != nil {
 		return nil, err

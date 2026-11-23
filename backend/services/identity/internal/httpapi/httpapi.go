@@ -42,6 +42,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("PATCH /v1/auth/me", authMW(http.HandlerFunc(a.updateMe)))
 	mux.Handle("GET /v1/me/subscription", authMW(http.HandlerFunc(a.getSubscription)))
 	mux.Handle("POST /v1/me/subscription/dev", authMW(http.HandlerFunc(a.devSubscription)))
+	mux.Handle("GET /v1/me/referral-progress", authMW(http.HandlerFunc(a.getReferralProgress)))
+	mux.Handle("GET /v1/me/user-counters", authMW(http.HandlerFunc(a.getUserCounters)))
 	mux.Handle("GET /v1/me/dashboard", authMW(http.HandlerFunc(a.getDashboard)))
 	mux.Handle("PUT /v1/me/dashboard", authMW(http.HandlerFunc(a.putDashboard)))
 	mux.Handle("GET /v1/me/hints", authMW(http.HandlerFunc(a.getHints)))
@@ -55,6 +57,7 @@ func (a *API) InternalRoutes(mux *http.ServeMux, internalToken string) {
 	mux.Handle("GET /v1/internal/entitlements/{userID}", internal(http.HandlerFunc(a.internalEntitlements)))
 	mux.Handle("GET /v1/internal/users/{userID}", internal(http.HandlerFunc(a.internalUser)))
 	mux.Handle("POST /v1/internal/users/grant-role", internal(http.HandlerFunc(a.grantRole)))
+	mux.Handle("POST /v1/internal/referrals/register", internal(http.HandlerFunc(a.internalRegisterReferral)))
 	mux.Handle("POST /v1/internal/audit", internal(http.HandlerFunc(a.ingestAudit)))
 	mux.Handle("POST /v1/internal/auth/validate-access", internal(http.HandlerFunc(a.validateAccess)))
 	mux.Handle("POST /v1/internal/users/{userID}/account-cleanup", internal(http.HandlerFunc(a.internalAccountCleanup)))
@@ -421,6 +424,49 @@ func (a *API) getSubscription(w http.ResponseWriter, r *http.Request) {
 		dto["cancelled_at"] = *snap.CancelledAt
 	}
 	httpx.JSON(w, http.StatusOK, dto)
+}
+
+func (a *API) getReferralProgress(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	progress, err := a.svc.ReferralProgress(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, progress)
+}
+
+func (a *API) getUserCounters(w http.ResponseWriter, r *http.Request) {
+	counters, err := a.svc.UserCounters(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, counters)
+}
+
+func (a *API) internalRegisterReferral(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InviterUserID  string `json:"inviter_user_id"`
+		InviteeUserID  string `json:"invitee_user_id"`
+		ClientInviteID string `json:"client_invite_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	inviter, err1 := uuid.Parse(strings.TrimSpace(req.InviterUserID))
+	invitee, err2 := uuid.Parse(strings.TrimSpace(req.InviteeUserID))
+	inviteID, err3 := uuid.Parse(strings.TrimSpace(req.ClientInviteID))
+	if err1 != nil || err2 != nil || err3 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("inviter_user_id, invitee_user_id and client_invite_id are required"))
+		return
+	}
+	if err := a.svc.RegisterReferralLink(r.Context(), inviter, invitee, inviteID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *API) devSubscription(w http.ResponseWriter, r *http.Request) {

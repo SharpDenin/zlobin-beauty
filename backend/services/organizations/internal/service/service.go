@@ -289,6 +289,14 @@ func (s *Service) AddMasterMembership(ctx context.Context, orgID, actorID, maste
 	}))
 }
 
+func (s *Service) CountDistinctActiveOwners(ctx context.Context) (int, error) {
+	n, err := s.store.CountDistinctActiveOwners(ctx)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	return n, nil
+}
+
 func (s *Service) GetOrg(ctx context.Context, id uuid.UUID) (*domain.Organization, error) {
 	o, err := s.store.GetOrg(ctx, id)
 	if err != nil {

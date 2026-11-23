@@ -96,6 +96,10 @@ export function SubscriptionPage() {
             Перейти на Premium
           </button>
         )}
+        <p className="muted">
+          Реферальная программа: 10 клиентов по QR с подтверждённым email дают +3 месяца Premium.
+        </p>
+        <Link className="btn btn-secondary" to="/clients/invite">Пригласить клиентов</Link>
         <Link className="btn btn-secondary" to="/profile">К профилю</Link>
       </section>
 

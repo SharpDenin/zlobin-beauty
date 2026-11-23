@@ -5,6 +5,7 @@ import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { formatUserError } from '@/shared/lib/app-error'
+import { inviteRoleLabel, inviteStatusLabel } from '@/shared/lib/invite-status'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { PageLoading } from '@/shared/ui/PageLoading'
 
@@ -15,6 +16,19 @@ type InviteRow = {
   use_count: number
   revoked_at?: string | null
   organization_id?: string
+  created_at: string
+  status: string
+  role?: string
+  accepted_at?: string
+  accepted_display_name?: string
+}
+
+type ReferralProgress = {
+  qualified_count: number
+  progress_in_batch: number
+  batch_size: number
+  rewards_count: number
+  last_reward_at?: string
 }
 
 async function shareOrCopy(url: string) {
@@ -49,6 +63,12 @@ export function InviteClientPage() {
     enabled: Boolean(accessToken),
   })
 
+  const referral = useQuery({
+    queryKey: ['referral-progress'],
+    queryFn: () => apiRequest<ReferralProgress>('/v1/me/referral-progress', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
+
   const createQr = useMutation({
     mutationFn: () =>
       apiRequest<{ url: string; token: string; id?: string }>('/v1/clients/invites', {
@@ -56,12 +76,12 @@ export function InviteClientPage() {
         body: {
           organization_id: orgId || undefined,
           hours: 168,
-          max_uses: 20,
+          max_uses: 1,
         },
       }),
     onSuccess: async (res) => {
       setActiveUrl(res.url)
-      setOk('QR создан. Действует 7 дней, до 20 переходов.')
+      setOk('QR создан. Одноразовый, действует 7 дней.')
       setError(null)
       await qc.invalidateQueries({ queryKey: ['client-invites'] })
     },
@@ -84,9 +104,9 @@ export function InviteClientPage() {
 
   if (!cabinet.ready) return <PageLoading />
 
-  const active = (invites.data?.items ?? []).filter(
-    (i) => !i.revoked_at && new Date(i.expires_at) > new Date() && i.use_count < i.max_uses,
-  )
+  const items = invites.data?.items ?? []
+  const active = items.filter((i) => i.status === 'active')
+  const progress = referral.data
 
   return (
     <main className="page stack invite-qr-page" data-testid="invite-client-page">
@@ -101,6 +121,29 @@ export function InviteClientPage() {
 
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success" role="status">{ok}</div>}
+
+      <section className="card stack" data-testid="referral-progress-card">
+        <h2>Реферальная программа</h2>
+        {referral.isLoading && <div className="state-box">Считаем прогресс…</div>}
+        {referral.isError && <ErrorBanner error={referral.error} fallbackTitle="Не удалось загрузить прогресс" />}
+        {progress && (
+          <>
+            <p style={{ margin: 0, fontSize: '1.25rem' }} data-testid="referral-progress-value">
+              {progress.progress_in_batch}/{progress.batch_size}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              Подтверждённых приглашений в текущем наборе. Всего квалифицировано: {progress.qualified_count}.
+              Награждений Premium: {progress.rewards_count}
+              {progress.last_reward_at
+                ? ` (последнее ${new Date(progress.last_reward_at).toLocaleString('ru-RU')})`
+                : ''}.
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              10 клиентов с подтверждённым email дают +3 месяца Premium.
+            </p>
+          </>
+        )}
+      </section>
 
       <section className="card stack invite-qr-block">
         <h2>QR-код</h2>
@@ -135,7 +178,7 @@ export function InviteClientPage() {
           </>
         ) : (
           <>
-            <p className="muted">Создайте код и покажите его клиенту с другого телефона.</p>
+            <p className="muted">Создайте одноразовый код и покажите его клиенту с другого телефона.</p>
             <button
               className="btn btn-primary btn-block"
               type="button"
@@ -159,7 +202,7 @@ export function InviteClientPage() {
               <div>
                 <strong>Клиент</strong>
                 <p className="muted">
-                  до {new Date(inv.expires_at).toLocaleString('ru-RU')} · использовано {inv.use_count}/{inv.max_uses}
+                  до {new Date(inv.expires_at).toLocaleString('ru-RU')} · одноразовый
                 </p>
               </div>
               <button
@@ -170,6 +213,31 @@ export function InviteClientPage() {
               >
                 Отозвать
               </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="card stack" data-testid="invite-client-history">
+        <h2>История приглашений</h2>
+        {invites.isLoading && <div className="state-box">Загрузка…</div>}
+        {items.length === 0 && !invites.isLoading && <p className="muted">История пока пуста.</p>}
+        <div className="list">
+          {items.map((inv) => (
+            <article key={inv.id} className="list-item stack-sm">
+              <div className="row between wrap gap">
+                <strong>{inviteRoleLabel(inv.role || 'client')}</strong>
+                <span className="badge">{inviteStatusLabel(inv.status)}</span>
+              </div>
+              <p className="muted" style={{ margin: 0, wordBreak: 'break-word' }}>
+                Создано: {new Date(inv.created_at).toLocaleString('ru-RU')}
+              </p>
+              {inv.accepted_at && (
+                <p className="muted" style={{ margin: 0, wordBreak: 'break-word' }}>
+                  Принято: {new Date(inv.accepted_at).toLocaleString('ru-RU')}
+                  {inv.accepted_display_name ? ` · ${inv.accepted_display_name}` : ''}
+                </p>
+              )}
             </article>
           ))}
         </div>

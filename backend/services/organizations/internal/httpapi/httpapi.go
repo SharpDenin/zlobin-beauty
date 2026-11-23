@@ -81,6 +81,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}", a.internalOrg)
+	mux.HandleFunc("GET /v1/internal/stats/owner-users-count", a.internalOwnerUsersCount)
 	a.registerAdminRoutes(mux, auth)
 }
 
@@ -774,6 +775,19 @@ func (a *API) internalOrg(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, orgDTO(*org))
 }
 
+func (a *API) internalOwnerUsersCount(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	n, err := a.svc.CountDistinctActiveOwners(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"count": n})
+}
+
 func (a *API) internalOrgMembers(w http.ResponseWriter, r *http.Request) {
 	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
 		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
@@ -1291,6 +1305,21 @@ func inviteDTO(in domain.SalonInvite) map[string]any {
 	}
 }
 
+func inviteHistoryDTO(row domain.SalonInviteHistoryRow) map[string]any {
+	out := inviteDTO(row.Invite)
+	out["status"] = row.Status
+	if row.AcceptedAt != nil {
+		out["accepted_at"] = row.AcceptedAt.UTC().Format(time.RFC3339)
+	}
+	if row.AcceptedUserID != nil {
+		out["accepted_user_id"] = row.AcceptedUserID.String()
+	}
+	if row.DisplayNameSnapshot != nil {
+		out["accepted_display_name"] = *row.DisplayNameSnapshot
+	}
+	return out
+}
+
 func (a *API) createInvite(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	orgID, err := uuid.Parse(r.PathValue("orgID"))
@@ -1329,14 +1358,14 @@ func (a *API) listInvites(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
 		return
 	}
-	items, err := a.svc.ListInvites(r.Context(), orgID, claims.UserID)
+	items, err := a.svc.ListInviteHistory(r.Context(), orgID, claims.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, inviteDTO(it))
+		out = append(out, inviteHistoryDTO(it))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -1367,7 +1396,11 @@ func (a *API) peekInvite(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) acceptInvite(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
-	p, err := a.svc.AcceptInvite(r.Context(), r.PathValue("token"), claims.UserID)
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	p, err := a.svc.AcceptInvite(r.Context(), r.PathValue("token"), claims.UserID, req.DisplayName)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

@@ -42,6 +42,8 @@ func main() {
 	mux.Handle("/v1/auth/", identity)
 	mux.Handle("/v1/me/subscription", identity)
 	mux.Handle("/v1/me/subscription/", identity)
+	mux.Handle("/v1/me/referral-progress", identity)
+	mux.Handle("/v1/me/user-counters", identity)
 	mux.Handle("/v1/me/dashboard", identity)
 	mux.Handle("/v1/me/hints", identity)
 	mux.Handle("/v1/me/preferences", identity)

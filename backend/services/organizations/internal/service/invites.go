@@ -64,12 +64,8 @@ func (s *Service) CreateInvite(ctx context.Context, orgID, actor uuid.UUID, role
 	if ttl > 30*24*time.Hour {
 		ttl = 30 * 24 * time.Hour
 	}
-	if maxUses <= 0 {
-		maxUses = 10
-	}
-	if maxUses > 100 {
-		maxUses = 100
-	}
+	// Product QR invites are one-time; enforce on backend regardless of client payload.
+	maxUses = 1
 	token, err := newInviteToken()
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -94,6 +90,38 @@ func (s *Service) ListInvites(ctx context.Context, orgID, actor uuid.UUID) ([]do
 		return nil, apperr.Internal(err)
 	}
 	return items, nil
+}
+
+func (s *Service) ListInviteHistory(ctx context.Context, orgID, actor uuid.UUID) ([]domain.SalonInviteHistoryRow, error) {
+	if err := s.requireOwnerAdmin(ctx, orgID, actor); err != nil {
+		return nil, err
+	}
+	items, err := s.store.ListInviteHistory(ctx, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	now := s.now().UTC()
+	for i := range items {
+		items[i].Status = deriveSalonInviteStatus(items[i], now)
+	}
+	return items, nil
+}
+
+func deriveSalonInviteStatus(row domain.SalonInviteHistoryRow, now time.Time) string {
+	inv := row.Invite
+	if row.AcceptedAt != nil {
+		return "accepted"
+	}
+	if inv.RevokedAt != nil {
+		return "revoked"
+	}
+	if !inv.ExpiresAt.After(now) {
+		return "expired"
+	}
+	if inv.UseCount >= inv.MaxUses {
+		return "exhausted"
+	}
+	return "active"
 }
 
 func (s *Service) RevokeInvite(ctx context.Context, orgID, actor, inviteID uuid.UUID) error {
@@ -137,21 +165,34 @@ func (s *Service) PeekInvite(ctx context.Context, token string) (*PublicInvite, 
 	}, nil
 }
 
-func (s *Service) AcceptInvite(ctx context.Context, token string, actor uuid.UUID) (*PublicInvite, error) {
+func (s *Service) AcceptInvite(ctx context.Context, token string, actor uuid.UUID, displayName string) (*PublicInvite, error) {
 	inv, err := s.loadActiveInvite(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.ConsumeInvite(ctx, inv.ID, s.now().UTC()); err != nil {
+	now := s.now().UTC()
+	snapshot := strings.TrimSpace(displayName)
+	if snapshot == "" {
+		snapshot = s.lookupUserDisplayName(ctx, actor)
+	}
+	if snapshot == "" {
+		snapshot = "Пользователь"
+	}
+	accept := domain.SalonInviteAccept{
+		ID: ids.New(), InviteID: inv.ID, UserID: actor, Role: inv.Role,
+		DisplayNameSnapshot: snapshot, AcceptedAt: now,
+	}
+	membership := domain.Membership{
+		ID: ids.New(), OrganizationID: inv.OrganizationID, UserID: actor, Role: inv.Role, Status: "active", CreatedAt: now,
+	}
+	if err := s.store.AcceptSalonInviteAtomically(ctx, *inv, accept, membership, now); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.InviteExhausted()
 		}
-		return nil, apperr.Internal(err)
-	}
-	now := s.now().UTC()
-	if err := s.store.UpsertMembership(ctx, domain.Membership{
-		ID: ids.New(), OrganizationID: inv.OrganizationID, UserID: actor, Role: inv.Role, Status: "active", CreatedAt: now,
-	}); err != nil {
+		// Unique violation on invite_id → already accepted (race).
+		if isUniqueViolation(err) {
+			return nil, apperr.InviteExhausted()
+		}
 		return nil, apperr.Internal(err)
 	}
 	if err := s.grantIdentityRole(ctx, actor, inv.Role); err != nil {
@@ -166,6 +207,41 @@ func (s *Service) AcceptInvite(ctx context.Context, token string, actor uuid.UUI
 	return &PublicInvite{
 		OrganizationID: org.ID, OrganizationName: org.Name, Role: inv.Role, ExpiresAt: inv.ExpiresAt,
 	}, nil
+}
+
+func (s *Service) lookupUserDisplayName(ctx context.Context, userID uuid.UUID) string {
+	if s.identityURL == "" || s.internalToken == "" {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/users/"+userID.String(), nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := identityHTTP.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		return ""
+	}
+	var body struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.DisplayName)
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "unique constraint") || strings.Contains(msg, "23505")
 }
 
 func (s *Service) loadActiveInvite(ctx context.Context, token string) (*domain.SalonInvite, error) {

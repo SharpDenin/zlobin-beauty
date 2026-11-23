@@ -426,9 +426,12 @@ func (s *Service) hydrate(ctx context.Context, c domain.Conversation, actor uuid
 		names[parts[i].UserID] = s.displayName(ctx, parts[i].UserID)
 		parts[i].DisplayName = names[parts[i].UserID]
 	}
-	last, err := s.store.LastMessage(ctx, c.ID)
+	last, err := s.store.LastMessage(ctx, c.ID, actor)
 	if err != nil {
 		return nil, apperr.Internal(err)
+	}
+	if last != nil {
+		s.attachForwardMeta(ctx, last)
 	}
 	unread, err := s.store.UnreadCount(ctx, c.ID, actor, lastRead)
 	if err != nil {
@@ -447,7 +450,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.U
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	items, err := s.store.ListMessages(ctx, conversationID, limit+1, before, beforeID)
+	items, err := s.store.ListMessages(ctx, conversationID, actor, limit+1, before, beforeID)
 	if err != nil {
 		return nil, false, apperr.Internal(err)
 	}
@@ -458,7 +461,158 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, actor uuid.U
 	if hasMore {
 		items = items[1:]
 	}
+	for i := range items {
+		s.attachForwardMeta(ctx, &items[i])
+	}
 	return items, hasMore, nil
+}
+
+func (s *Service) attachForwardMeta(ctx context.Context, m *domain.Message) {
+	if m == nil || m.ForwardedFromSenderUserID == nil {
+		return
+	}
+	m.ForwardedFromSenderName = s.displayName(ctx, *m.ForwardedFromSenderUserID)
+}
+
+// HideMessage hides a message for the actor only (delete-for-me). Any participant may hide.
+func (s *Service) HideMessage(ctx context.Context, conversationID, messageID, actor uuid.UUID) error {
+	if err := s.requireParticipant(ctx, conversationID, actor); err != nil {
+		return err
+	}
+	m, err := s.store.GetMessage(ctx, conversationID, messageID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if m == nil || m.DeletedAt != nil {
+		return apperr.NotFound("message not found")
+	}
+	if err := s.store.HideMessageForUser(ctx, messageID, actor, s.now().UTC()); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+// SoftDeleteMessage deletes a message for all participants. Only the sender may do this.
+// Soft-deletes linked in-app notifications and clears message body/media refs.
+func (s *Service) SoftDeleteMessage(ctx context.Context, conversationID, messageID, actor uuid.UUID) error {
+	if err := s.requireParticipant(ctx, conversationID, actor); err != nil {
+		return err
+	}
+	m, err := s.store.GetMessage(ctx, conversationID, messageID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if m == nil || m.DeletedAt != nil {
+		return apperr.NotFound("message not found")
+	}
+	if m.SenderUserID != actor {
+		return apperr.Forbidden("only the sender can delete a message for everyone")
+	}
+	now := s.now().UTC()
+	ok, err := s.store.SoftDeleteMessage(ctx, messageID, now)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !ok {
+		return apperr.NotFound("message not found")
+	}
+	_, _ = s.store.SoftDeleteNotificationsForMessage(ctx, messageID, now)
+	// Best-effort: send a redacted replacement push for conversation openers.
+	// Delivered OS notifications cannot be reliably revoked via Web Push.
+	s.notifyMessageDeleted(ctx, conversationID, actor)
+	return nil
+}
+
+func (s *Service) notifyMessageDeleted(ctx context.Context, conversationID, actor uuid.UUID) {
+	parts, err := s.store.ListParticipants(ctx, conversationID)
+	if err != nil {
+		return
+	}
+	for _, p := range parts {
+		if p.UserID == actor {
+			continue
+		}
+		if s.syncPush {
+			s.dispatchPush(ctx, p.UserID, "Сообщение удалено", "", "conversation", &conversationID)
+		} else {
+			s.schedulePush(p.UserID, "Сообщение удалено", "", "conversation", &conversationID)
+		}
+	}
+}
+
+type ForwardMessageInput struct {
+	TargetConversationID uuid.UUID
+	ClientID             string
+}
+
+// ForwardMessage creates a new message in the target conversation copying text/media.
+// Media access for target participants is granted via the new message row (same media_id).
+func (s *Service) ForwardMessage(ctx context.Context, sourceConversationID, messageID, actor uuid.UUID, in ForwardMessageInput) (*domain.Message, error) {
+	if err := s.requireParticipant(ctx, sourceConversationID, actor); err != nil {
+		return nil, err
+	}
+	if err := s.requireParticipant(ctx, in.TargetConversationID, actor); err != nil {
+		return nil, err
+	}
+	src, err := s.store.GetMessage(ctx, sourceConversationID, messageID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if src == nil || src.DeletedAt != nil {
+		return nil, apperr.NotFound("message not found")
+	}
+	hidden, err := s.store.IsMessageHiddenForUser(ctx, messageID, actor)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if hidden {
+		return nil, apperr.NotFound("message not found")
+	}
+	body := store.NormalizeBody(src.Body)
+	if err := ValidateMessageContent(body, src.MediaID != nil); err != nil {
+		return nil, err
+	}
+	clientID := strings.TrimSpace(in.ClientID)
+	if len(clientID) > 128 {
+		return nil, apperr.Validation("client_id is too long")
+	}
+	if clientID != "" {
+		existing, err := s.store.FindMessageByClientID(ctx, in.TargetConversationID, actor, clientID)
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if existing != nil {
+			s.attachForwardMeta(ctx, existing)
+			return existing, nil
+		}
+	}
+	now := s.now().UTC()
+	srcID := src.ID
+	srcSender := src.SenderUserID
+	m := domain.Message{
+		ID: ids.New(), ConversationID: in.TargetConversationID, SenderUserID: actor,
+		Kind: src.Kind, Body: body, MediaID: src.MediaID, CreatedAt: now,
+		ForwardedFromMessageID: &srcID, ForwardedFromSenderUserID: &srcSender,
+	}
+	if m.Kind == "" {
+		m.Kind = domain.MessageKindText
+	}
+	if clientID != "" {
+		m.ClientID = &clientID
+	}
+	if err := s.store.InsertMessage(ctx, m); err != nil {
+		if clientID != "" {
+			existing, findErr := s.store.FindMessageByClientID(ctx, in.TargetConversationID, actor, clientID)
+			if findErr == nil && existing != nil {
+				s.attachForwardMeta(ctx, existing)
+				return existing, nil
+			}
+		}
+		return nil, apperr.Internal(err)
+	}
+	s.attachForwardMeta(ctx, &m)
+	s.notifyNewMessage(ctx, in.TargetConversationID, actor, messagePreview(m), m.ID)
+	return &m, nil
 }
 
 type SendMessageInput struct {
@@ -557,7 +711,7 @@ func (s *Service) SendMessage(ctx context.Context, conversationID, actor uuid.UU
 		}
 		return nil, apperr.Internal(err)
 	}
-	s.notifyNewMessage(ctx, conversationID, actor, messagePreview(m))
+	s.notifyNewMessage(ctx, conversationID, actor, messagePreview(m), m.ID)
 	return &m, nil
 }
 
@@ -619,17 +773,18 @@ func messagePreview(m domain.Message) string {
 	}
 }
 
-func (s *Service) notifyNewMessage(ctx context.Context, conversationID, sender uuid.UUID, preview string) {
+func (s *Service) notifyNewMessage(ctx context.Context, conversationID, sender uuid.UUID, preview string, messageID uuid.UUID) {
 	parts, err := s.store.ListParticipants(ctx, conversationID)
 	if err != nil {
 		return
 	}
 	from := s.displayName(ctx, sender)
+	mid := messageID
 	for _, p := range parts {
 		if p.UserID == sender {
 			continue
 		}
-		_ = s.CreateNotification(ctx, p.UserID, "new_message", "Новое сообщение от "+from, preview, "conversation", &conversationID)
+		_ = s.CreateNotificationWithMessage(ctx, p.UserID, "new_message", "Новое сообщение от "+from, preview, "conversation", &conversationID, &mid)
 	}
 }
 

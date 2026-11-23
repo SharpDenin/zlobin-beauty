@@ -168,3 +168,22 @@ type SalonInvite struct {
 	RevokedAt      *time.Time
 	CreatedAt      time.Time
 }
+
+// SalonInviteAccept is the durable one-time accept ledger + history snapshot.
+type SalonInviteAccept struct {
+	ID                  uuid.UUID
+	InviteID            uuid.UUID
+	UserID              uuid.UUID
+	Role                string
+	DisplayNameSnapshot string
+	AcceptedAt          time.Time
+}
+
+// SalonInviteHistoryRow is invite + optional accept for UI history.
+type SalonInviteHistoryRow struct {
+	Invite              SalonInvite
+	AcceptedAt          *time.Time
+	AcceptedUserID      *uuid.UUID
+	DisplayNameSnapshot *string
+	Status              string // active | accepted | revoked | expired | exhausted
+}

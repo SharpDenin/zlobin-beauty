@@ -62,12 +62,8 @@ func (s *Service) CreateClientInvite(ctx context.Context, masterID uuid.UUID, or
 	if ttl > 30*24*time.Hour {
 		ttl = 30 * 24 * time.Hour
 	}
-	if maxUses <= 0 {
-		maxUses = 20
-	}
-	if maxUses > 100 {
-		maxUses = 100
-	}
+	// Product QR invites are one-time; enforce on backend regardless of client payload.
+	maxUses = 1
 	token, err := newClientInviteToken()
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -91,6 +87,35 @@ func (s *Service) ListClientInvites(ctx context.Context, masterID uuid.UUID) ([]
 		return nil, apperr.Internal(err)
 	}
 	return items, nil
+}
+
+func (s *Service) ListClientInviteHistory(ctx context.Context, masterID uuid.UUID) ([]domain.ClientInviteHistoryRow, error) {
+	items, err := s.store.ListClientInviteHistory(ctx, masterID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	now := s.now().UTC()
+	for i := range items {
+		items[i].Status = deriveClientInviteStatus(items[i], now)
+	}
+	return items, nil
+}
+
+func deriveClientInviteStatus(row domain.ClientInviteHistoryRow, now time.Time) string {
+	inv := row.Invite
+	if row.AcceptedAt != nil {
+		return "accepted"
+	}
+	if inv.RevokedAt != nil {
+		return "revoked"
+	}
+	if !inv.ExpiresAt.After(now) {
+		return "expired"
+	}
+	if inv.UseCount >= inv.MaxUses {
+		return "exhausted"
+	}
+	return "active"
 }
 
 func (s *Service) RevokeClientInvite(ctx context.Context, masterID, inviteID uuid.UUID) error {
@@ -131,14 +156,26 @@ func (s *Service) AcceptClientInvite(ctx context.Context, token string, clientID
 	if clientID == inv.MasterUserID {
 		return nil, apperr.Unprocessable(apperr.CodeContactSelf, "cannot accept your own invite")
 	}
-	if err := s.store.ConsumeClientInvite(ctx, inv.ID, s.now().UTC()); err != nil {
+	now := s.now().UTC()
+	snapshot := strings.TrimSpace(clientName)
+	if snapshot == "" {
+		snapshot = "Клиент"
+	}
+	accept := domain.ClientInviteAccept{
+		ID: ids.New(), InviteID: inv.ID, UserID: clientID,
+		DisplayNameSnapshot: snapshot, AcceptedAt: now,
+	}
+	if err := s.store.AcceptClientInviteAtomically(ctx, inv.ID, accept, now); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.InviteExhausted()
+		}
+		if isUniqueViolation(err) {
 			return nil, apperr.InviteExhausted()
 		}
 		return nil, apperr.Internal(err)
 	}
 	if inv.OrganizationID != nil && *inv.OrganizationID != uuid.Nil {
-		if _, err := s.store.EnsureClientCard(ctx, *inv.OrganizationID, clientID, clientName, phone, email); err != nil {
+		if _, err := s.store.EnsureClientCard(ctx, *inv.OrganizationID, clientID, snapshot, phone, email); err != nil {
 			return nil, apperr.Internal(err)
 		}
 	}
@@ -146,6 +183,13 @@ func (s *Service) AcceptClientInvite(ctx context.Context, token string, clientID
 		// Card already applied; contact link is best-effort for UX.
 		_ = err
 	}
+	// Referral register is idempotent; retry a few times after durable accept.
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := s.registerReferralLink(ctx, inv.MasterUserID, clientID, inv.ID); err == nil {
+			break
+		}
+	}
+
 	name := "Мастер"
 	if n, err := s.lookupMasterDisplayName(ctx, inv.MasterUserID); err == nil && n != "" {
 		name = n
@@ -159,6 +203,41 @@ func (s *Service) AcceptClientInvite(ctx context.Context, token string, clientID
 		out.OrganizationID = inv.OrganizationID.String()
 	}
 	return out, nil
+}
+
+func (s *Service) registerReferralLink(ctx context.Context, inviter, invitee, inviteID uuid.UUID) error {
+	if s.identityURL == "" || s.internalToken == "" {
+		return fmt.Errorf("identity not configured")
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"inviter_user_id":  inviter.String(),
+		"invitee_user_id":  invitee.String(),
+		"client_invite_id": inviteID.String(),
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.identityURL+"/v1/internal/referrals/register", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return fmt.Errorf("register referral: %s %s", res.Status, string(b))
+	}
+	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "unique constraint") || strings.Contains(msg, "23505")
 }
 
 func (s *Service) loadActiveClientInvite(ctx context.Context, token string) (*domain.ClientInvite, error) {

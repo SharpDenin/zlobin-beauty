@@ -626,6 +626,9 @@ func (s *Service) AttachHairConsultationMedia(ctx context.Context, id, actor uui
 	isClient := c.ClientUserID == actor
 	isMaster := c.MasterUserID == actor
 	if isClient {
+		if in.Slot == domain.SlotCuttingScheme {
+			return nil, apperr.Forbidden("only the master can attach a cutting scheme")
+		}
 		if v.Status != domain.VerDraft || c.Status != domain.ConsultDraft {
 			return nil, apperr.Conflict("client can attach photos only while drafting the questionnaire")
 		}
@@ -635,7 +638,18 @@ func (s *Service) AttachHairConsultationMedia(ctx context.Context, id, actor uui
 			return nil, apperr.Validation("invalid media slot")
 		}
 	} else if isMaster {
-		return nil, apperr.Forbidden("master cannot attach client questionnaire photos")
+		if in.Slot != domain.SlotCuttingScheme {
+			return nil, apperr.Forbidden("master cannot attach client questionnaire photos")
+		}
+		if c.Status != domain.ConsultInProgress {
+			return nil, apperr.Conflict("cutting scheme can only be attached while work is in progress")
+		}
+		switch v.Status {
+		case domain.VerDraft, domain.VerInReview, domain.VerSubmitted:
+			// ok — same window as assessment/plan edits
+		default:
+			return nil, apperr.Conflict("cutting scheme cannot be attached in current version status")
+		}
 	} else {
 		return nil, apperr.Forbidden("access denied")
 	}
@@ -662,9 +676,6 @@ func (s *Service) DetachHairConsultationMedia(ctx context.Context, id, actor, me
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireClient(c, actor); err != nil {
-		return nil, err
-	}
 	v, err := s.currentVersion(ctx, c)
 	if err != nil {
 		return nil, err
@@ -672,8 +683,46 @@ func (s *Service) DetachHairConsultationMedia(ctx context.Context, id, actor, me
 	if domain.VersionImmutable(v) {
 		return nil, apperr.Conflict("cannot modify media on immutable version")
 	}
-	if v.Status != domain.VerDraft || c.Status != domain.ConsultDraft {
-		return nil, apperr.Conflict("photos can only be removed while drafting")
+	items, err := s.store.ListHairConsultationMedia(ctx, v.ID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	var slot string
+	found := false
+	for _, m := range items {
+		if m.MediaID == mediaID {
+			slot = m.Slot
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, apperr.NotFound("media not found")
+	}
+	isClient := c.ClientUserID == actor
+	isMaster := c.MasterUserID == actor
+	switch {
+	case isClient:
+		if slot == domain.SlotCuttingScheme {
+			return nil, apperr.Forbidden("only the master can remove a cutting scheme")
+		}
+		if v.Status != domain.VerDraft || c.Status != domain.ConsultDraft {
+			return nil, apperr.Conflict("photos can only be removed while drafting")
+		}
+	case isMaster:
+		if slot != domain.SlotCuttingScheme {
+			return nil, apperr.Forbidden("master cannot remove client questionnaire photos")
+		}
+		if c.Status != domain.ConsultInProgress {
+			return nil, apperr.Conflict("cutting scheme can only be removed while work is in progress")
+		}
+		switch v.Status {
+		case domain.VerDraft, domain.VerInReview, domain.VerSubmitted:
+		default:
+			return nil, apperr.Conflict("cutting scheme cannot be removed in current version status")
+		}
+	default:
+		return nil, apperr.Forbidden("access denied")
 	}
 	if err := s.store.DetachHairConsultationMedia(ctx, v.ID, mediaID); err != nil {
 		if store.IsConsultImmutable(err) {

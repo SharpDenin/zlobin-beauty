@@ -4,6 +4,7 @@ import { hasMasterAccess, hasSalonAdmin, hasSupplierAccess, hasSupplierRepAccess
 import { useCabinet, applyNavOrder, moveNavPath, type CabinetFeature, type NavLink } from '@/shared/lib/cabinet'
 import { usePreference } from '@/shared/lib/preferences'
 import { workTypesLabel } from '@/shared/lib/work-types'
+import { BackButton, NavHistoryTracker } from '@/shared/ui/BackButton'
 import { BrandLogo } from '@/shared/ui/BrandLogo'
 import { Drawer } from '@/shared/ui/Drawer'
 import { EmptyState } from '@/shared/ui/EmptyState'
@@ -390,6 +391,7 @@ function AppShellInner() {
     <div
       className={`app-shell${fillShell ? ' app-shell--fill' : ''}${homeRoute ? ' app-shell--home' : ''}`}
     >
+      <NavHistoryTracker />
       <aside className="sidenav">
         <div className="brand"><BrandLogo size="md" /></div>
         <div className="sidenav-toolbar">
@@ -496,14 +498,28 @@ function AppShellInner() {
   )
 }
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+export function PageHeader({
+  title,
+  subtitle,
+  actions,
+  back,
+}: {
+  title: string
+  subtitle?: ReactNode
+  actions?: ReactNode
+  /** Compact history back. Default: auto (hidden on main destinations / no in-app history). */
+  back?: boolean
+}) {
   return (
-    <div className="row between page-header">
-      <div>
-        <h1>{title}</h1>
-        {subtitle ? (typeof subtitle === 'string' ? <p className="muted">{subtitle}</p> : subtitle) : null}
+    <div className="page-header-block">
+      <BackButton force={back} />
+      <div className="row between page-header">
+        <div className="page-header-copy">
+          <h1>{title}</h1>
+          {subtitle ? (typeof subtitle === 'string' ? <p className="muted">{subtitle}</p> : subtitle) : null}
+        </div>
+        {actions}
       </div>
-      {actions}
     </div>
   )
 }

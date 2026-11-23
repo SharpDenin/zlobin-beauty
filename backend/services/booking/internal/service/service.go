@@ -787,6 +787,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Appointme
 		}
 	}
 
+	if err := s.requireBranchBookable(ctx, branchID); err != nil {
+		if bookedOccurrence {
+			_ = s.releaseOccurrence(ctx, *occurrenceID)
+		}
+		return nil, err
+	}
+
 	loc := s.fetchBranchLocation(ctx, branchID)
 	locName, locCity, locAddr, locTZ := "", "", "", defaultTimezone
 	if loc != nil {
@@ -940,8 +947,123 @@ func (s *Service) Confirm(ctx context.Context, appointmentID, actorUserID uuid.U
 		if a.MasterUserID != actorUserID {
 			return apperr.Forbidden("only assigned master can confirm")
 		}
-		return domain.Transition(a.Status, domain.StatusConfirmed)
+		if err := domain.Transition(a.Status, domain.StatusConfirmed); err != nil {
+			return err
+		}
+		viewed, err := s.store.HasAppointmentCardView(ctx, a.ID, actorUserID)
+		if err != nil {
+			return apperr.Internal(err)
+		}
+		if !viewed {
+			return apperr.ConflictCode(apperr.CodeClientCardViewRequired, "просмотрите карточку клиента перед подтверждением записи")
+		}
+		return nil
 	})
+}
+
+// ViewClientCard ensures the CRM card exists, grants master access, and records that the
+// master reviewed the passport before confirming (skipped entirely when auto-confirm applied).
+func (s *Service) ViewClientCard(ctx context.Context, appointmentID, actorUserID uuid.UUID) (clientCardID uuid.UUID, err error) {
+	a, err := s.store.GetAppointment(ctx, appointmentID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	if a == nil {
+		return uuid.Nil, apperr.NotFound("appointment not found")
+	}
+	if a.MasterUserID != actorUserID {
+		return uuid.Nil, apperr.Forbidden("only assigned master can view client card for confirmation")
+	}
+	cardID, err := s.ensureClientCardForAppointment(ctx, a)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.store.RecordAppointmentCardView(ctx, a.ID, actorUserID, &cardID, s.now().UTC()); err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	return cardID, nil
+}
+
+func (s *Service) AppointmentMasterFlags(ctx context.Context, a domain.Appointment, actor uuid.UUID) (clientCardViewed bool, requiresCardView bool, allergyTestRecommended bool, firstWithMaster bool) {
+	if a.MasterUserID != actor {
+		return false, false, false, false
+	}
+	viewed, _ := s.store.HasAppointmentCardView(ctx, a.ID, actor)
+	requires := a.Status == domain.StatusPendingConfirmation && !viewed
+	completed, _ := s.store.MasterHasCompletedWithClient(ctx, a.MasterUserID, a.ClientUserID)
+	first := !completed
+	// Soft warning: especially first completed visit with this master. Absence of allergies
+	// in the passport does not mean an allergy test was performed.
+	allergy := first || a.Status == domain.StatusPendingConfirmation || a.Status == domain.StatusConfirmed || a.Status == domain.StatusInProgress
+	return viewed, requires, allergy, first
+}
+
+func (s *Service) ensureClientCardForAppointment(ctx context.Context, a *domain.Appointment) (uuid.UUID, error) {
+	if s.clientsURL == "" || s.internalToken == "" {
+		return uuid.Nil, apperr.Internal(fmt.Errorf("clients service is not configured"))
+	}
+	display := "Клиент"
+	payload := map[string]any{
+		"organization_id": a.OrganizationID.String(),
+		"client_user_id":  a.ClientUserID.String(),
+		"master_user_id":  a.MasterUserID.String(),
+		"display_name":    display,
+	}
+	if s.identityURL != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identityURL+"/v1/internal/users/"+a.ClientUserID.String(), nil)
+		if err == nil {
+			req.Header.Set("X-Internal-Token", s.internalToken)
+			if resp, err := s.httpClient.Do(req); err == nil {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+				_ = resp.Body.Close()
+				if resp.StatusCode < 300 {
+					var u struct {
+						DisplayName string  `json:"display_name"`
+						Phone       *string `json:"phone"`
+						Email       *string `json:"email"`
+					}
+					if json.Unmarshal(body, &u) == nil {
+						if strings.TrimSpace(u.DisplayName) != "" {
+							payload["display_name"] = u.DisplayName
+						}
+						if u.Phone != nil && strings.TrimSpace(*u.Phone) != "" {
+							payload["phone"] = *u.Phone
+						}
+						if u.Email != nil && strings.TrimSpace(*u.Email) != "" {
+							payload["email"] = *u.Email
+						}
+					}
+				}
+			}
+		}
+	}
+	raw, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.clientsURL+"/v1/internal/client-cards/ensure", strings.NewReader(string(raw)))
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", s.internalToken)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return uuid.Nil, apperr.Internal(fmt.Errorf("ensure client card status %d: %s", resp.StatusCode, string(body)))
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || strings.TrimSpace(out.ID) == "" {
+		return uuid.Nil, apperr.Internal(fmt.Errorf("ensure client card: invalid response"))
+	}
+	id, err := uuid.Parse(out.ID)
+	if err != nil {
+		return uuid.Nil, apperr.Internal(err)
+	}
+	return id, nil
 }
 
 func (s *Service) Cancel(ctx context.Context, appointmentID, actorUserID uuid.UUID, reason string) (*domain.Appointment, error) {
@@ -1050,6 +1172,9 @@ func (s *Service) Reschedule(ctx context.Context, appointmentID, actorUserID uui
 		return nil, apperr.Forbidden("access denied")
 	}
 	if err := rescheduleEligibility(a); err != nil {
+		return nil, err
+	}
+	if err := s.requireBranchBookable(ctx, a.BranchID); err != nil {
 		return nil, err
 	}
 	duration := a.DurationMinutes
@@ -1168,24 +1293,36 @@ func (s *Service) notifyVisitCompleted(ctx context.Context, a *domain.Appointmen
 }
 
 func (s *Service) notify(ctx context.Context, userID uuid.UUID, typ, title, body string, entityID uuid.UUID) {
+	s.notifyIdempotent(ctx, userID, typ, title, body, entityID, "")
+}
+
+func (s *Service) notifyIdempotent(ctx context.Context, userID uuid.UUID, typ, title, body string, entityID uuid.UUID, idemKey string) error {
 	if s.communicationsURL == "" || s.internalToken == "" {
-		return
+		return nil
 	}
-	payload, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"user_id": userID.String(), "type": typ, "title": title, "body": body,
 		"entity_type": "appointment", "entity_id": entityID.String(),
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.communicationsURL+"/v1/internal/notifications", strings.NewReader(string(payload)))
+	}
+	if strings.TrimSpace(idemKey) != "" {
+		payload["idempotency_key"] = idemKey
+	}
+	raw, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.communicationsURL+"/v1/internal/notifications", strings.NewReader(string(raw)))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Internal-Token", s.internalToken)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return
+		return err
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("notifications status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (s *Service) createVisitRecord(ctx context.Context, a *domain.Appointment) {
@@ -1292,14 +1429,14 @@ func (s *Service) Get(ctx context.Context, id, actor uuid.UUID) (*domain.Appoint
 	return a, nil
 }
 
-func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, from, to *time.Time) ([]domain.Appointment, error) {
+func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, from, to *time.Time, hiddenOnly bool) ([]domain.Appointment, error) {
 	asMaster := role == "master"
 	var items []domain.Appointment
 	var err error
 	if from != nil && to != nil {
-		items, err = s.store.ListForUserInRange(ctx, userID, asMaster, from.UTC(), to.UTC())
+		items, err = s.store.ListForUserInRange(ctx, userID, asMaster, from.UTC(), to.UTC(), hiddenOnly)
 	} else {
-		items, err = s.store.ListForUser(ctx, userID, asMaster)
+		items, err = s.store.ListForUser(ctx, userID, asMaster, hiddenOnly)
 	}
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -1310,6 +1447,34 @@ func (s *Service) ListMine(ctx context.Context, userID uuid.UUID, role string, f
 	return items, nil
 }
 
+func (s *Service) HideAppointment(ctx context.Context, id, actor uuid.UUID) error {
+	if _, err := s.Get(ctx, id, actor); err != nil {
+		return err
+	}
+	if err := s.store.HideAppointmentForUser(ctx, id, actor, s.now().UTC()); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) UnhideAppointment(ctx context.Context, id, actor uuid.UUID) error {
+	if _, err := s.Get(ctx, id, actor); err != nil {
+		return err
+	}
+	if err := s.store.UnhideAppointmentForUser(ctx, id, actor); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
+func (s *Service) IsHiddenForUser(ctx context.Context, id, actor uuid.UUID) (bool, error) {
+	ok, err := s.store.IsAppointmentHiddenForUser(ctx, id, actor)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ok, nil
+}
+
 func (s *Service) isOrgOwnerOrAdmin(ctx context.Context, orgID, actor uuid.UUID) bool {
 	if orgID == uuid.Nil || actor == uuid.Nil {
 		return false
@@ -1317,9 +1482,47 @@ func (s *Service) isOrgOwnerOrAdmin(ctx context.Context, orgID, actor uuid.UUID)
 	return s.requireMembership(ctx, orgID, actor, "owner", "admin") == nil
 }
 
-func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time) ([]domain.Appointment, error) {
+func (s *Service) requireOrgBranch(ctx context.Context, orgID, branchID uuid.UUID) error {
+	if s.organizationsURL == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.organizationsURL+"/v1/branches/"+branchID.String(), nil)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return apperr.NotFound("branch not found")
+	}
+	if resp.StatusCode >= 300 {
+		return apperr.Internal(fmt.Errorf("branch lookup status %d", resp.StatusCode))
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	var payload struct {
+		OrganizationID string `json:"organization_id"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return apperr.Internal(err)
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(payload.OrganizationID))
+	if err != nil || parsed != orgID {
+		return apperr.Forbidden("branch does not belong to organization")
+	}
+	return nil
+}
+
+func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, from, to time.Time, branchID *uuid.UUID) ([]domain.Appointment, error) {
 	if err := s.requireMembership(ctx, orgID, actor, "owner", "admin"); err != nil {
 		return nil, err
+	}
+	if branchID != nil && *branchID != uuid.Nil {
+		if err := s.requireOrgBranch(ctx, orgID, *branchID); err != nil {
+			return nil, err
+		}
 	}
 	statuses := []string{
 		domain.StatusPendingConfirmation,
@@ -1331,7 +1534,7 @@ func (s *Service) ListOrgCalendar(ctx context.Context, actor, orgID uuid.UUID, f
 		domain.StatusCancelledBySalon,
 		domain.StatusNoShow,
 	}
-	items, err := s.store.ListByOrgInRange(ctx, orgID, from.UTC(), to.UTC(), statuses)
+	items, err := s.store.ListByOrgInRangeForViewerBranch(ctx, orgID, actor, from.UTC(), to.UTC(), statuses, false, branchID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}

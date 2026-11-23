@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -116,10 +117,39 @@ func (s *Service) ensureAccess(ctx context.Context, card *domain.ClientCard, act
 	if err != nil {
 		return apperr.Internal(err)
 	}
-	if !ok {
+	if ok {
+		return nil
+	}
+	granted, err := s.store.MasterHasCardGrant(ctx, card.ID, actor)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if !granted {
 		return apperr.Forbidden("access denied")
 	}
 	return nil
+}
+
+// EnsureCardForMaster creates/returns the org client card and grants the master read access
+// before the first completed visit (appointment confirm flow).
+func (s *Service) EnsureCardForMaster(ctx context.Context, orgID, clientUserID, masterUserID uuid.UUID, displayName string, phone, email *string) (*domain.ClientCard, error) {
+	if orgID == uuid.Nil || clientUserID == uuid.Nil || masterUserID == uuid.Nil {
+		return nil, apperr.Validation("organization_id, client_user_id and master_user_id are required")
+	}
+	if clientUserID == masterUserID {
+		return nil, apperr.Validation("master and client must differ")
+	}
+	card, err := s.store.EnsureClientCard(ctx, orgID, clientUserID, displayName, phone, email)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if card == nil {
+		return nil, apperr.Internal(errors.New("client card missing after ensure"))
+	}
+	if err := s.store.GrantMasterCardAccess(ctx, card.ID, masterUserID, s.now().UTC()); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return card, nil
 }
 
 func (s *Service) GetCard(ctx context.Context, id, actor uuid.UUID) (*domain.ClientCard, error) {
@@ -263,7 +293,8 @@ func (s *Service) PatchCard(ctx context.Context, cardID, actor uuid.UUID, in dom
 	isOwner := card.UserID == actor
 	privileged := s.membershipHas(ctx, card.OrganizationID, actor, "owner", "admin")
 	served, _ := s.store.MasterHasVisitOnCard(ctx, cardID, actor)
-	isMasterEditor := privileged || served
+	granted, _ := s.store.MasterHasCardGrant(ctx, cardID, actor)
+	isMasterEditor := privileged || served || granted
 
 	if !isOwner && !isMasterEditor {
 		return nil, apperr.Forbidden("no access")
@@ -303,6 +334,13 @@ func (s *Service) PatchCard(ctx context.Context, cardID, actor uuid.UUID, in dom
 		card.BirthDate = nil
 	} else if in.BirthDate != nil && (isOwner || isMasterEditor) {
 		card.BirthDate = in.BirthDate
+	}
+	// Allergies: client-owned sensitive field; masters may view via GetCard but not edit.
+	if in.Allergies != nil {
+		if !isOwner {
+			return nil, apperr.Forbidden("only the client can edit allergies")
+		}
+		card.Allergies = strings.TrimSpace(*in.Allergies)
 	}
 
 	// Clinical / loyalty annotations: masters (and org staff) only.

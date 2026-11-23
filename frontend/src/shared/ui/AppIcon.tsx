@@ -32,6 +32,7 @@ export type AppIconName =
   | 'bell'
   | 'attach'
   | 'send'
+  | 'chevronLeft'
 
 const ICONS: Record<AppIconName, ReactNode> = {
   home: (
@@ -214,6 +215,11 @@ const ICONS: Record<AppIconName, ReactNode> = {
     <>
       <path d="M5 12h12" />
       <path d="m13 6 6 6-6 6" />
+    </>
+  ),
+  chevronLeft: (
+    <>
+      <path d="m15 6-6 6 6 6" />
     </>
   ),
 }

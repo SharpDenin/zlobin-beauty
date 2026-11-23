@@ -52,4 +52,8 @@ type Message struct {
 	CreatedAt      time.Time
 	EditedAt       *time.Time
 	DeletedAt      *time.Time
+	// Forward attribution (optional).
+	ForwardedFromMessageID    *uuid.UUID
+	ForwardedFromSenderUserID *uuid.UUID
+	ForwardedFromSenderName   string // resolved at DTO time, not persisted
 }

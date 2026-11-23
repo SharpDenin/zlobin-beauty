@@ -19,6 +19,9 @@ func (a *API) registerMessengerRoutes(mux *http.ServeMux, auth func(http.Handler
 	mux.Handle("GET /v1/conversations/{id}", auth(http.HandlerFunc(a.getConversation)))
 	mux.Handle("GET /v1/conversations/{id}/messages", auth(http.HandlerFunc(a.listMessages)))
 	mux.Handle("POST /v1/conversations/{id}/messages", auth(http.HandlerFunc(a.sendMessage)))
+	mux.Handle("DELETE /v1/conversations/{id}/messages/{messageID}", auth(http.HandlerFunc(a.hideMessage)))
+	mux.Handle("POST /v1/conversations/{id}/messages/{messageID}/delete-for-all", auth(http.HandlerFunc(a.deleteMessageForAll)))
+	mux.Handle("POST /v1/conversations/{id}/messages/{messageID}/forward", auth(http.HandlerFunc(a.forwardMessage)))
 	mux.Handle("POST /v1/conversations/{id}/read", auth(http.HandlerFunc(a.readConversation)))
 }
 
@@ -196,6 +199,80 @@ func (a *API) readConversation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (a *API) hideMessage(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	messageID, err := uuid.Parse(r.PathValue("messageID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid message id"))
+		return
+	}
+	if err := a.svc.HideMessage(r.Context(), id, messageID, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteMessageForAll(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	messageID, err := uuid.Parse(r.PathValue("messageID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid message id"))
+		return
+	}
+	if err := a.svc.SoftDeleteMessage(r.Context(), id, messageID, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) forwardMessage(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	messageID, err := uuid.Parse(r.PathValue("messageID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid message id"))
+		return
+	}
+	var req struct {
+		ConversationID string `json:"conversation_id"`
+		ClientID       string `json:"client_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	targetID, err := uuid.Parse(strings.TrimSpace(req.ConversationID))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("conversation_id is required"))
+		return
+	}
+	m, err := a.svc.ForwardMessage(r.Context(), id, messageID, claims.UserID, service.ForwardMessageInput{
+		TargetConversationID: targetID,
+		ClientID:             req.ClientID,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, messageDTO(*m))
+}
+
 func (a *API) mediaAccess(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -273,15 +350,16 @@ func conversationDTO(c domain.Conversation, actor uuid.UUID) map[string]any {
 
 func messageDTO(m domain.Message) map[string]any {
 	body := m.Body
-	if m.DeletedAt != nil {
-		body = ""
-	}
 	kind := m.Kind
 	if kind == "" {
 		kind = domain.MessageKindText
 	}
 	var mediaID any
-	if m.MediaID != nil {
+	if m.DeletedAt != nil {
+		body = ""
+		mediaID = nil
+		kind = domain.MessageKindText
+	} else if m.MediaID != nil {
 		mediaID = m.MediaID.String()
 	}
 	dto := map[string]any{
@@ -291,6 +369,15 @@ func messageDTO(m domain.Message) map[string]any {
 	}
 	if m.ClientID != nil && *m.ClientID != "" {
 		dto["client_id"] = *m.ClientID
+	}
+	if m.ForwardedFromMessageID != nil {
+		dto["forwarded_from_message_id"] = m.ForwardedFromMessageID.String()
+	}
+	if m.ForwardedFromSenderUserID != nil {
+		dto["forwarded_from_sender_user_id"] = m.ForwardedFromSenderUserID.String()
+		if name := strings.TrimSpace(m.ForwardedFromSenderName); name != "" {
+			dto["forwarded_from_sender_name"] = name
+		}
 	}
 	return dto
 }

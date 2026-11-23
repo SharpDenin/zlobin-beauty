@@ -25,6 +25,7 @@ export function InvitePage() {
       const res = await apiRequest<Peek>(`/v1/invites/${encodeURIComponent(token)}/accept`, {
         method: 'POST',
         token: accessToken,
+        body: { display_name: user?.display_name || 'Мастер' },
       })
       // Bind master profile to salon via organization_id only — do not overwrite work formats.
       try {

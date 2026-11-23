@@ -8,6 +8,8 @@ import { userError } from '@/shared/lib/app-error'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Overlay } from '@/shared/ui/Overlay'
+import { Drawer } from '@/shared/ui/Drawer'
+import { Modal } from '@/shared/ui/Modal'
 import { MediaImage } from '@/shared/ui/MediaImage'
 import { AppIcon } from '@/shared/ui/AppIcon'
 import { ChatMedia } from '@/features/messenger/ChatMedia'
@@ -67,6 +69,11 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
   const [listQ, setListQ] = useState('')
   const [listType, setListType] = useState('')
   const [unreadOnly, setUnreadOnly] = useState(false)
+  const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null)
+  const [forwardMessage, setForwardMessage] = useState<ChatMessage | null>(null)
+  const [forwardBusy, setForwardBusy] = useState(false)
+  const [deleteForAllMessage, setDeleteForAllMessage] = useState<ChatMessage | null>(null)
+  const [deleteForAllBusy, setDeleteForAllBusy] = useState(false)
   const composing = useRef(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -319,6 +326,79 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
     void sendNow()
   }
 
+  function stripMessageLocally(messageId: string) {
+    const strip = (items: ChatMessage[]) => items.filter((m) => m.id !== messageId)
+    qc.setQueryData<MessageListResponse>(['conversation-messages', id], (prev) =>
+      prev ? { ...prev, items: strip(prev.items) } : prev,
+    )
+    setOlder((cur) => strip(cur))
+    setLocal((cur) => cur.filter((m) => m.id !== messageId))
+  }
+
+  async function hideMessage(msg: ChatMessage) {
+    if (!accessToken || !id || msg.status === 'sending' || msg.status === 'failed') return
+    setMenuMessage(null)
+    try {
+      await apiRequest(`/v1/conversations/${id}/messages/${msg.id}`, {
+        method: 'DELETE',
+        token: accessToken,
+      })
+      stripMessageLocally(msg.id)
+      toast.success('Сообщение удалено у вас')
+      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      await qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
+    } catch (e) {
+      toast.error(userError(e, 'Не удалось удалить сообщение'))
+    }
+  }
+
+  async function deleteMessageForAll(msg: ChatMessage) {
+    if (!accessToken || !id || msg.status === 'sending' || msg.status === 'failed') return
+    setDeleteForAllBusy(true)
+    try {
+      await apiRequest(`/v1/conversations/${id}/messages/${msg.id}/delete-for-all`, {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      })
+      stripMessageLocally(msg.id)
+      setDeleteForAllMessage(null)
+      toast.success('Сообщение удалено для всех')
+      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      await qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
+      await qc.invalidateQueries({ queryKey: ['notifications'] })
+    } catch (e) {
+      toast.error(userError(e, 'Не удалось удалить сообщение для всех'))
+    } finally {
+      setDeleteForAllBusy(false)
+    }
+  }
+
+  async function forwardToConversation(targetId: string) {
+    if (!accessToken || !id || !forwardMessage) return
+    setForwardBusy(true)
+    try {
+      const clientId = `fwd-${Date.now()}`
+      await apiRequest<ChatMessage>(`/v1/conversations/${id}/messages/${forwardMessage.id}/forward`, {
+        method: 'POST',
+        token: accessToken,
+        body: { conversation_id: targetId, client_id: clientId },
+      })
+      toast.success('Сообщение переслано')
+      setForwardMessage(null)
+      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      if (targetId === id) {
+        await qc.invalidateQueries({ queryKey: ['conversation-messages', id] })
+      } else {
+        onSelectConversation(targetId)
+      }
+    } catch (e) {
+      toast.error(userError(e, 'Не удалось переслать сообщение'))
+    } finally {
+      setForwardBusy(false)
+    }
+  }
+
   function pickFile(next: File | null) {
     if (!next) {
       setFile(null)
@@ -498,24 +578,48 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
               <article
                 className={`chat-bubble ${own ? 'is-own' : 'is-in'} ${m.status === 'failed' ? 'is-failed' : ''}`}
               >
-                {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
-                {m.media_id && m.status !== 'sending' && (
-                  <ChatMedia
-                    mediaId={m.media_id}
-                    token={accessToken}
-                    kind={m.kind}
-                    alt={m.kind === 'video' ? 'Видео' : 'Фото'}
-                    onOpenImage={() => setLightbox(m.media_id!)}
-                  />
+                {m.forwarded_from_message_id ? (
+                  <p className="chat-forward-label muted">
+                    Переслано{m.forwarded_from_sender_name ? ` · ${m.forwarded_from_sender_name}` : ''}
+                  </p>
+                ) : null}
+                {m.deleted_at ? (
+                  <p className="chat-bubble-text muted">Сообщение удалено</p>
+                ) : (
+                  <>
+                    {m.body ? <p className="chat-bubble-text">{m.body}</p> : null}
+                    {m.media_id && m.status !== 'sending' && (
+                      <ChatMedia
+                        mediaId={m.media_id}
+                        token={accessToken}
+                        kind={m.kind}
+                        alt={m.kind === 'video' ? 'Видео' : 'Фото'}
+                        onOpenImage={() => setLightbox(m.media_id!)}
+                      />
+                    )}
+                    {m.file && !m.media_id && (
+                      <PendingAttach file={m.file} />
+                    )}
+                  </>
                 )}
-                {m.file && !m.media_id && (
-                  <PendingAttach file={m.file} />
-                )}
-                <span className="chat-bubble-meta">
-                  {formatMessageTime(m.created_at)}
-                  {own && m.status === 'sending' ? ' · Отправка' : ''}
-                  {own && m.status === 'failed' ? ' · Не отправлено' : ''}
-                </span>
+                <div className="chat-bubble-footer">
+                  <span className="chat-bubble-meta">
+                    {formatMessageTime(m.created_at)}
+                    {own && m.status === 'sending' ? ' · Отправка' : ''}
+                    {own && m.status === 'failed' ? ' · Не отправлено' : ''}
+                  </span>
+                  {m.status !== 'sending' && m.status !== 'failed' && !m.deleted_at && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-compact chat-bubble-menu-btn"
+                      aria-label="Действия с сообщением"
+                      data-testid={`message-menu-${m.id}`}
+                      onClick={() => setMenuMessage(m)}
+                    >
+                      ⋯
+                    </button>
+                  )}
+                </div>
                 {m.status === 'failed' && (
                   <button className="btn btn-ghost btn-compact" type="button" onClick={() => void sendNow(m)}>
                     Повторить
@@ -604,6 +708,113 @@ export function MessengerApp({ mode, conversationId, onSelectConversation, onClo
       {showList && listBlock}
       {showThread && threadBlock}
       <ContactPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
+      <Drawer
+        open={Boolean(menuMessage)}
+        onClose={() => setMenuMessage(null)}
+        title="Сообщение"
+        label="Действия с сообщением"
+      >
+        <div className="stack gap messenger-msg-actions">
+          <button
+            type="button"
+            className="btn btn-secondary btn-block"
+            data-testid="message-forward"
+            onClick={() => {
+              if (!menuMessage) return
+              setForwardMessage(menuMessage)
+              setMenuMessage(null)
+            }}
+          >
+            Переслать
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger btn-block"
+            data-testid="message-delete"
+            onClick={() => {
+              if (menuMessage) void hideMessage(menuMessage)
+            }}
+          >
+            Удалить у себя
+          </button>
+          {menuMessage && menuMessage.sender_user_id === user?.id && menuMessage.status !== 'sending' && menuMessage.status !== 'failed' && (
+            <button
+              type="button"
+              className="btn btn-danger btn-block"
+              data-testid="message-delete-for-all"
+              onClick={() => {
+                setDeleteForAllMessage(menuMessage)
+                setMenuMessage(null)
+              }}
+            >
+              Удалить для всех
+            </button>
+          )}
+          <button type="button" className="btn btn-ghost btn-block" onClick={() => setMenuMessage(null)}>
+            Отмена
+          </button>
+        </div>
+      </Drawer>
+      <Modal
+        open={Boolean(deleteForAllMessage)}
+        onClose={() => !deleteForAllBusy && setDeleteForAllMessage(null)}
+        title="Удалить для всех?"
+        label="Подтверждение удаления сообщения для всех участников"
+      >
+        <div className="stack gap">
+          <p data-testid="message-delete-for-all-warning">
+            Сообщение исчезнет у всех участников диалога и будет удалено из серверных уведомлений.
+            Это действие нельзя отменить.
+          </p>
+          <button
+            type="button"
+            className="btn btn-danger btn-block"
+            data-testid="message-delete-for-all-confirm"
+            disabled={deleteForAllBusy}
+            onClick={() => {
+              if (deleteForAllMessage) void deleteMessageForAll(deleteForAllMessage)
+            }}
+          >
+            {deleteForAllBusy ? 'Удаляем…' : 'Удалить для всех'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-block"
+            disabled={deleteForAllBusy}
+            onClick={() => setDeleteForAllMessage(null)}
+          >
+            Отмена
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={Boolean(forwardMessage)}
+        onClose={() => !forwardBusy && setForwardMessage(null)}
+        title="Переслать в диалог"
+        label="Выбор диалога для пересылки"
+      >
+        <div className="stack gap messenger-forward-list">
+          <p className="muted">Выберите существующий диалог. Можно переслать текст и вложения.</p>
+          {(list.data?.items ?? [])
+            .filter((c) => c.id)
+            .map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="btn btn-secondary btn-block messenger-forward-row"
+                disabled={forwardBusy}
+                data-testid={`forward-to-${c.id}`}
+                onClick={() => void forwardToConversation(c.id)}
+              >
+                <span className="messenger-forward-peer">{c.peer_name || 'Диалог'}</span>
+                <span className="muted">{conversationTypeLabel(c.type)}</span>
+              </button>
+            ))}
+          {(list.data?.items.length ?? 0) === 0 && (
+            <EmptyState title="Нет диалогов" text="Сначала начните переписку с контактом." />
+          )}
+        </div>
+      </Modal>
       <Overlay
         open={Boolean(lightbox)}
         onClose={() => setLightbox(null)}

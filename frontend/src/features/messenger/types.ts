@@ -20,6 +20,10 @@ export type ChatMessage = {
   created_at: string
   status?: 'sending' | 'sent' | 'failed'
   client_id?: string
+  deleted_at?: string | null
+  forwarded_from_message_id?: string | null
+  forwarded_from_sender_user_id?: string | null
+  forwarded_from_sender_name?: string | null
 }
 
 export type Conversation = {

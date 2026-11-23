@@ -276,7 +276,7 @@ export function cabinetLabel(kind: CabinetKind) {
     case 'salon_admin':
       return 'Администратор салона'
     case 'chair_master':
-      return 'Аренда кресла'
+      return 'Коворкинг рабочего места'
     case 'mobile_master':
       return 'Выездной мастер'
     case 'salon_employee':
@@ -534,10 +534,9 @@ export function navForCabinet(
 
   const practiceChildren: NavLink[] = [
     { to: '/portfolio', label: 'Портфолио' },
-    { to: '/masterclasses', label: 'Мастер-классы' },
+    { to: '/masterclasses', label: 'Обучение' },
     { to: '/models', label: 'Модели' },
   ]
-  if (check('services')) practiceChildren.splice(1, 0, { to: '/services', label: 'Услуги' })
   secondary.push({ to: '/portfolio', label: 'Практика', children: practiceChildren })
 
   if (check('cosmetics') || check('pickup_orders')) {
@@ -559,7 +558,7 @@ export function navForCabinet(
     salonChildren.push({ to: '/staff/invite', label: 'Пригласить мастера' })
   }
   if (check('salon_settings')) salonChildren.push({ to: '/salon/settings', label: 'Настройки салона' })
-  salonChildren.push({ to: '/chairs', label: 'Аренда кресел' })
+  salonChildren.push({ to: '/chairs', label: 'Коворкинг рабочего места' })
   if (kind === 'chain_owner' || kind === 'salon_owner') {
     salonChildren.push({ to: '/settings/salons', label: 'Мои салоны' })
     salonChildren.push({ to: '/master', label: 'Профиль мастера' })
@@ -568,6 +567,7 @@ export function navForCabinet(
   } else {
     salonChildren.push({ to: '/master', label: 'Профиль мастера' })
   }
+  if (check('services')) salonChildren.push({ to: '/services', label: 'Услуги' })
   if (kind === 'private_master' || kind === 'chair_master' || kind === 'mobile_master' || kind === 'salon_employee') {
     salonChildren.push({ to: '/dashboard', label: 'Рабочий стол' })
   }

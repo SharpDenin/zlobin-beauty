@@ -206,6 +206,17 @@ describe('navForCabinet', () => {
     expect(topLevelNavCount(owner.side)).toBeLessThanOrEqual(10)
   })
 
+  it('places Услуги under Салон near Профиль мастера, not under Практика', () => {
+    const master = navForCabinet('private_master')
+    const salon = master.side.find((l) => l.label === 'Салон')
+    const practice = master.side.find((l) => l.label === 'Практика')
+    expect(salon?.children?.some((c) => c.to === '/services' && c.label === 'Услуги')).toBe(true)
+    expect(salon?.children?.some((c) => c.to === '/master')).toBe(true)
+    expect(practice?.children?.some((c) => c.to === '/services')).toBe(false)
+    expect(practice?.children?.some((c) => c.to === '/masterclasses' && c.label === 'Обучение')).toBe(true)
+    expect(salon?.children?.some((c) => c.to === '/chairs' && c.label === 'Коворкинг рабочего места')).toBe(true)
+  })
+
   it('does not put personal warehouse on supplier nav', () => {
     const nav = navForCabinet('supplier')
     expect(navHasPath(nav.side, '/inventory')).toBe(false)

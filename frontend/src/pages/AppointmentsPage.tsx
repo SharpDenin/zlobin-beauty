@@ -26,22 +26,41 @@ type Appointment = {
   visit_group_id?: string | null
   location_timezone?: string
   location_city?: string
+  requires_client_card_view?: boolean
+  client_card_viewed?: boolean
+  allergy_test_recommended?: boolean
+  first_visit_with_master?: boolean
 }
 
 export function AppointmentsPage() {
   const { accessToken, user } = useAuth()
   const canMaster = hasMasterAccess(user)
   const [role, setRole] = useState<'client' | 'master'>(canMaster ? 'master' : 'client')
+  const [archive, setArchive] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('Не могу принять запись')
   const qc = useQueryClient()
 
   const query = useQuery({
-    queryKey: ['appointments', role],
-    queryFn: () =>
-      apiRequest<{ items: Appointment[] }>(`/v1/appointments/mine?role=${role}`, { token: accessToken }),
+    queryKey: ['appointments', role, archive],
+    queryFn: () => {
+      const params = new URLSearchParams({ role })
+      if (archive) params.set('hidden', '1')
+      return apiRequest<{ items: Appointment[] }>(`/v1/appointments/mine?${params}`, { token: accessToken })
+    },
     enabled: Boolean(accessToken),
+  })
+
+  const unhide = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`/v1/appointments/${id}/unhide`, { method: 'POST', token: accessToken }),
+    onSuccess: async () => {
+      toast.success('Запись возвращена из архива')
+      await qc.invalidateQueries({ queryKey: ['appointments'] })
+      await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
+    },
+    onError: (e) => setActionError(userError(e, 'Не удалось вернуть запись')),
   })
 
   const confirm = useMutation({
@@ -74,19 +93,33 @@ export function AppointmentsPage() {
   return (
     <main className="page stack">
       <PageHeader
-        title="Записи"
-        actions={canMaster ? (
-          <div className="segmented segmented--2" role="group" aria-label="Роль в записях">
-            <label className={role === 'client' ? 'is-active' : ''}>
-              <input type="radio" name="appt-role" checked={role === 'client'} onChange={() => setRole('client')} />
-              Клиент
-            </label>
-            <label className={role === 'master' ? 'is-active' : ''}>
-              <input type="radio" name="appt-role" checked={role === 'master'} onChange={() => setRole('master')} />
-              Мастер
-            </label>
+        back={false}
+        title={archive ? 'Архив записей' : 'Записи'}
+        subtitle={archive ? 'Скрытые записи. Можно вернуть в обычный список.' : undefined}
+        actions={
+          <div className="stack-sm appointments-header-actions">
+            {canMaster ? (
+              <div className="segmented segmented--2" role="group" aria-label="Роль в записях">
+                <label className={role === 'client' ? 'is-active' : ''}>
+                  <input type="radio" name="appt-role" checked={role === 'client'} onChange={() => { setRole('client'); setArchive(false) }} />
+                  Клиент
+                </label>
+                <label className={role === 'master' ? 'is-active' : ''}>
+                  <input type="radio" name="appt-role" checked={role === 'master'} onChange={() => setRole('master')} />
+                  Мастер
+                </label>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className={`btn btn-compact ${archive ? 'btn-primary' : 'btn-secondary'}`}
+              data-testid="appointments-archive-toggle"
+              onClick={() => setArchive((v) => !v)}
+            >
+              {archive ? 'К активным' : 'Архив'}
+            </button>
           </div>
-        ) : undefined}
+        }
       />
 
       {actionError && <ErrorBanner error={actionError} />}
@@ -105,12 +138,20 @@ export function AppointmentsPage() {
       )}
       {query.data && query.data.items.length === 0 && (
         <EmptyState
-          title="Записей пока нет"
-          text={role === 'client' ? 'Выберите мастера и удобное время.' : 'Создайте запись в календаре — она появится здесь.'}
+          title={archive ? 'Архив пуст' : 'Записей пока нет'}
+          text={
+            archive
+              ? 'Скрытые записи появятся здесь.'
+              : role === 'client'
+                ? 'Выберите мастера и удобное время.'
+                : 'Создайте запись в календаре — она появится здесь.'
+          }
           action={
-            role === 'client'
-              ? <Link className="btn btn-primary" to="/search">Найти мастера</Link>
-              : <Link className="btn btn-primary" to="/calendar">Создать запись</Link>
+            archive
+              ? <button className="btn btn-secondary" type="button" onClick={() => setArchive(false)}>К активным</button>
+              : role === 'client'
+                ? <Link className="btn btn-primary" to="/search">Найти мастера</Link>
+                : <Link className="btn btn-primary" to="/calendar">Создать запись</Link>
           }
         />
       )}
@@ -124,7 +165,7 @@ export function AppointmentsPage() {
           return (
           <AppointmentCard
             key={group.key}
-            to={`/appointments/${a.id}`}
+            to={`/appointments/${a.id}${archive ? '?from=archive' : ''}`}
             serviceName={visitGroupTitle(group)}
             personName={role === 'master' ? a.client_display_name : a.master_display_name}
             subtitle={group.combined ? 'Визит из двух услуг' : undefined}
@@ -133,21 +174,51 @@ export function AppointmentsPage() {
             locationTimezone={a.location_timezone}
             locationCity={a.location_city}
             priceMinor={visitGroupPrice(group)}
-            actions={role === 'master' && a.status === 'pending_confirmation' ? (
-              <>
+            actions={
+              archive ? (
                 <button
-                  className="btn btn-primary btn-compact"
+                  className="btn btn-secondary btn-compact"
                   type="button"
-                  disabled={confirm.isPending || reject.isPending}
-                  onClick={() => confirm.mutate(a.id)}
+                  data-testid={`appointment-unhide-${a.id}`}
+                  disabled={unhide.isPending}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    unhide.mutate(a.id)
+                  }}
                 >
-                  Подтвердить
+                  Вернуть
                 </button>
+              ) : role === 'master' && a.status === 'pending_confirmation' ? (
+              <>
+                {a.requires_client_card_view ? (
+                  <Link
+                    className="btn btn-secondary btn-compact"
+                    to={`/appointments/${a.id}`}
+                    data-testid={`appointment-review-card-${a.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Карточка клиента
+                  </Link>
+                ) : (
+                  <button
+                    className="btn btn-primary btn-compact"
+                    type="button"
+                    data-testid={`appointment-confirm-${a.id}`}
+                    disabled={confirm.isPending || reject.isPending}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      confirm.mutate(a.id)
+                    }}
+                  >
+                    Подтвердить
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary btn-compact"
                   type="button"
                   disabled={confirm.isPending || reject.isPending}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.preventDefault()
                     setRejectReason('Не могу принять запись')
                     setRejectId(a.id)
                   }}

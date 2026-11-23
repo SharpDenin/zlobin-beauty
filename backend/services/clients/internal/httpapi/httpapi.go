@@ -30,6 +30,7 @@ func (a *API) WithAccessGate(gate httpx.AccessGate) *API {
 func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	auth := httpx.BearerAuthGated(jwtSecret, a.gate)
 	mux.HandleFunc("POST /v1/internal/visits/from-appointment", a.fromAppointment)
+	mux.HandleFunc("POST /v1/internal/client-cards/ensure", a.ensureCardInternal)
 	mux.HandleFunc("POST /v1/internal/formulas", a.internalFormula)
 	// Literal prefixes avoid ServeMux conflicts between "{id}/visits" and "by-appointment/{id}".
 	mux.Handle("GET /v1/clients/mine", auth(http.HandlerFunc(a.mine)))
@@ -113,6 +114,38 @@ func (a *API) fromAppointment(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, cardDTO(*card))
 }
 
+func (a *API) ensureCardInternal(w http.ResponseWriter, r *http.Request) {
+	if err := a.svc.CheckInternal(r.Header.Get("X-Internal-Token")); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	var req struct {
+		OrganizationID string  `json:"organization_id"`
+		ClientUserID   string  `json:"client_user_id"`
+		MasterUserID   string  `json:"master_user_id"`
+		DisplayName    string  `json:"display_name"`
+		Phone          *string `json:"phone"`
+		Email          *string `json:"email"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	orgID, err1 := uuid.Parse(req.OrganizationID)
+	clientID, err2 := uuid.Parse(req.ClientUserID)
+	masterID, err3 := uuid.Parse(req.MasterUserID)
+	if err1 != nil || err2 != nil || err3 != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid ids"))
+		return
+	}
+	card, err := a.svc.EnsureCardForMaster(r.Context(), orgID, clientID, masterID, req.DisplayName, req.Phone, req.Email)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, cardDTO(*card))
+}
+
 func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	var orgID *uuid.UUID
@@ -191,6 +224,7 @@ func (a *API) patchCard(w http.ResponseWriter, r *http.Request) {
 		SkinFeatures      *string          `json:"skin_features"`
 		SkinPhotoMediaIDs json.RawMessage  `json:"skin_photo_media_ids"`
 		GeneralNotes      *string          `json:"general_notes"`
+		Allergies         *string          `json:"allergies"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
@@ -200,7 +234,7 @@ func (a *API) patchCard(w http.ResponseWriter, r *http.Request) {
 		DisplayName: req.DisplayName, Phone: req.Phone, Email: req.Email, Preferences: req.Preferences,
 		ClearPhoto: req.ClearPhoto, ClearBirthDate: req.ClearBirthDate,
 		LoyaltyStatus: req.LoyaltyStatus, SkinType: req.SkinType, SkinFeatures: req.SkinFeatures,
-		SkinPhotoMediaIDs: req.SkinPhotoMediaIDs, GeneralNotes: req.GeneralNotes,
+		SkinPhotoMediaIDs: req.SkinPhotoMediaIDs, GeneralNotes: req.GeneralNotes, Allergies: req.Allergies,
 	}
 	if req.PhotoMediaID != nil && strings.TrimSpace(*req.PhotoMediaID) != "" {
 		pid, err := uuid.Parse(strings.TrimSpace(*req.PhotoMediaID))
@@ -403,7 +437,7 @@ func cardDTO(c domain.ClientCard) map[string]any {
 		"display_name": c.DisplayName, "phone": c.Phone, "email": c.Email, "preferences": c.Preferences,
 		"contacts_hidden": c.ContactsHidden,
 		"loyalty_status": c.LoyaltyStatus, "skin_type": c.SkinType, "skin_features": c.SkinFeatures,
-		"general_notes": c.GeneralNotes,
+		"general_notes": c.GeneralNotes, "allergies": c.Allergies,
 		"skin_photo_media_ids": jsonRaw(c.SkinPhotoMediaIDs),
 	}
 	if c.PhotoMediaID != nil {

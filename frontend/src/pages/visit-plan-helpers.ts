@@ -58,6 +58,10 @@ export type ListedAppointment = {
   master_display_name?: string
   location_timezone?: string
   location_city?: string
+  requires_client_card_view?: boolean
+  client_card_viewed?: boolean
+  allergy_test_recommended?: boolean
+  first_visit_with_master?: boolean
 }
 
 export type VisitGroup = {

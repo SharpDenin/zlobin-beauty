@@ -5,6 +5,7 @@ import { apiRequest } from '@/shared/api/client'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { formatUserError } from '@/shared/lib/app-error'
+import { inviteRoleLabel, inviteStatusLabel } from '@/shared/lib/invite-status'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { PageLoading } from '@/shared/ui/PageLoading'
 
@@ -15,7 +16,10 @@ type InviteRow = {
   max_uses: number
   use_count: number
   revoked_at?: string | null
-  url?: string
+  created_at: string
+  status: string
+  accepted_at?: string
+  accepted_display_name?: string
 }
 
 export function InviteMasterPage() {
@@ -82,7 +86,8 @@ export function InviteMasterPage() {
     )
   }
 
-  const active = (invites.data?.items ?? []).filter((i) => !i.revoked_at && new Date(i.expires_at) > new Date() && i.use_count < i.max_uses)
+  const items = invites.data?.items ?? []
+  const active = items.filter((i) => i.status === 'active')
 
   return (
     <main className="page stack invite-qr-page" data-testid="invite-master-page">
@@ -142,12 +147,37 @@ export function InviteMasterPage() {
           {active.map((inv) => (
             <article key={inv.id} className="list-item row between">
               <div>
-                <strong>Мастер</strong>
-                <p className="muted">до {new Date(inv.expires_at).toLocaleString('ru-RU')} · использовано {inv.use_count}/{inv.max_uses}</p>
+                <strong>{inviteRoleLabel(inv.role)}</strong>
+                <p className="muted">до {new Date(inv.expires_at).toLocaleString('ru-RU')} · одноразовый</p>
               </div>
               <button className="btn btn-secondary btn-compact" type="button" disabled={revoke.isPending} onClick={() => revoke.mutate(inv.id)}>
                 Отозвать
               </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="card stack" data-testid="invite-master-history">
+        <h2>История приглашений</h2>
+        {invites.isLoading && <div className="state-box">Загрузка…</div>}
+        {items.length === 0 && !invites.isLoading && <p className="muted">История пока пуста.</p>}
+        <div className="list">
+          {items.map((inv) => (
+            <article key={inv.id} className="list-item stack-sm">
+              <div className="row between wrap gap">
+                <strong>{inviteRoleLabel(inv.role)}</strong>
+                <span className="badge">{inviteStatusLabel(inv.status)}</span>
+              </div>
+              <p className="muted" style={{ margin: 0, wordBreak: 'break-word' }}>
+                Создано: {new Date(inv.created_at).toLocaleString('ru-RU')}
+              </p>
+              {inv.accepted_at && (
+                <p className="muted" style={{ margin: 0, wordBreak: 'break-word' }}>
+                  Принято: {new Date(inv.accepted_at).toLocaleString('ru-RU')}
+                  {inv.accepted_display_name ? ` · ${inv.accepted_display_name}` : ''}
+                </p>
+              )}
             </article>
           ))}
         </div>

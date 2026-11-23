@@ -91,27 +91,39 @@ func publicAppOrigin(r *http.Request) string {
 
 func (a *API) listClientInvites(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
-	items, err := a.svc.ListClientInvites(r.Context(), claims.UserID)
+	items, err := a.svc.ListClientInviteHistory(r.Context(), claims.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
-	for _, inv := range items {
-		row := map[string]any{
+	for _, row := range items {
+		inv := row.Invite
+		item := map[string]any{
 			"id":         inv.ID.String(),
 			"expires_at": inv.ExpiresAt,
 			"max_uses":   inv.MaxUses,
 			"use_count":  inv.UseCount,
 			"created_at": inv.CreatedAt,
+			"status":     row.Status,
+			"role":       "client",
 		}
 		if inv.OrganizationID != nil {
-			row["organization_id"] = inv.OrganizationID.String()
+			item["organization_id"] = inv.OrganizationID.String()
 		}
 		if inv.RevokedAt != nil {
-			row["revoked_at"] = inv.RevokedAt
+			item["revoked_at"] = inv.RevokedAt
 		}
-		out = append(out, row)
+		if row.AcceptedAt != nil {
+			item["accepted_at"] = row.AcceptedAt
+		}
+		if row.AcceptedUserID != nil {
+			item["accepted_user_id"] = row.AcceptedUserID.String()
+		}
+		if row.DisplayNameSnapshot != nil {
+			item["accepted_display_name"] = *row.DisplayNameSnapshot
+		}
+		out = append(out, item)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

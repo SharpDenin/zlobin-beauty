@@ -44,7 +44,10 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(pool)
-	api := httpapi.New(service.New(st).WithAudit(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")), log, os.Getenv("INTERNAL_TOKEN")).
+	svc := service.New(st).
+		WithAudit(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")).
+		WithCloseIntegrations(os.Getenv("BOOKING_URL"), os.Getenv("MARKETPLACE_URL"), os.Getenv("COMMERCE_URL"))
+	api := httpapi.New(svc, log, os.Getenv("INTERNAL_TOKEN")).
 		WithAccessGate(accesscheck.NewHTTPGate(os.Getenv("IDENTITY_URL"), os.Getenv("INTERNAL_TOKEN")))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpx.Healthz)

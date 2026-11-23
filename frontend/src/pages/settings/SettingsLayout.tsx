@@ -1,4 +1,5 @@
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
+import { BackButton } from '@/shared/ui/BackButton'
 
 const SECTIONS = [
   { to: '/settings/appearance', label: 'Оформление', end: false },
@@ -15,6 +16,7 @@ export function SettingsLayout() {
 
   return (
     <main className="page stack settings-page" data-testid="settings-page">
+      <BackButton />
       <header className="stack-sm">
         <h1>Настройки</h1>
         <p className="muted">Оформление, уведомления, салоны, выход и удаление аккаунта. Профиль мастера — в разделе «Профиль».</p>

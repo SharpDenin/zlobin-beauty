@@ -9,6 +9,7 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { datetimeLocalToIso } from '@/shared/lib/time'
 import { useCabinet } from '@/shared/lib/cabinet'
 import { LEASE_LABELS, type ChairLease, type SalonChair } from '@/shared/lib/work-mode'
+import { BackButton } from '@/shared/ui/BackButton'
 
 export function ChairMarketplacePage() {
   const { accessToken } = useAuth()
@@ -62,7 +63,8 @@ export function ChairMarketplacePage() {
 
   return (
     <main className="page stack">
-      <h1>Аренда кресел</h1>
+      <BackButton />
+      <h1>Коворкинг рабочего места</h1>
       <p className="muted">
         Доступные кресла других салонов. После одобрения добавьте интервал режима «кресло» в расписании — доступ появится в окне аренды.
       </p>

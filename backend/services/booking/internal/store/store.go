@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -379,14 +380,20 @@ func idsNew() uuid.UUID {
 	return uuid.Must(uuid.NewV7())
 }
 
-func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID, asMaster bool) ([]domain.Appointment, error) {
+func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID, asMaster bool, includeHidden bool) ([]domain.Appointment, error) {
 	col := "client_user_id"
 	if asMaster {
 		col = "master_user_id"
 	}
+	hideSQL := ``
+	if !includeHidden {
+		hideSQL = ` AND NOT EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $1)`
+	} else {
+		hideSQL = ` AND EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $1)`
+	}
 	rows, err := s.pool.Query(ctx, `
 SELECT `+appointmentCols+`
-FROM appointments WHERE `+col+`=$1 ORDER BY starts_at DESC LIMIT 100`, userID)
+FROM appointments WHERE `+col+`=$1`+hideSQL+` ORDER BY starts_at DESC LIMIT 100`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -394,21 +401,80 @@ FROM appointments WHERE `+col+`=$1 ORDER BY starts_at DESC LIMIT 100`, userID)
 	return scanAppointments(rows)
 }
 
-func (s *Store) ListForUserInRange(ctx context.Context, userID uuid.UUID, asMaster bool, from, to time.Time) ([]domain.Appointment, error) {
+func (s *Store) ListForUserInRange(ctx context.Context, userID uuid.UUID, asMaster bool, from, to time.Time, includeHidden bool) ([]domain.Appointment, error) {
 	col := "client_user_id"
 	if asMaster {
 		col = "master_user_id"
 	}
+	hideSQL := ` AND NOT EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $1)`
+	if includeHidden {
+		hideSQL = ` AND EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $1)`
+	}
 	rows, err := s.pool.Query(ctx, `
 SELECT `+appointmentCols+`
 FROM appointments
-WHERE `+col+`=$1 AND starts_at < $3 AND ends_at > $2
+WHERE `+col+`=$1 AND starts_at < $3 AND ends_at > $2`+hideSQL+`
 ORDER BY starts_at`, userID, from, to)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanAppointments(rows)
+}
+
+func (s *Store) HideAppointmentForUser(ctx context.Context, appointmentID, userID uuid.UUID, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO appointment_user_hides(appointment_id, user_id, hidden_at)
+VALUES ($1,$2,$3)
+ON CONFLICT (appointment_id, user_id) DO UPDATE SET hidden_at=EXCLUDED.hidden_at`, appointmentID, userID, at)
+	return err
+}
+
+func (s *Store) UnhideAppointmentForUser(ctx context.Context, appointmentID, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+DELETE FROM appointment_user_hides WHERE appointment_id=$1 AND user_id=$2`, appointmentID, userID)
+	return err
+}
+
+func (s *Store) IsAppointmentHiddenForUser(ctx context.Context, appointmentID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM appointment_user_hides WHERE appointment_id=$1 AND user_id=$2)`, appointmentID, userID).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) RecordAppointmentCardView(ctx context.Context, appointmentID, masterUserID uuid.UUID, clientCardID *uuid.UUID, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO appointment_card_views(appointment_id, master_user_id, client_card_id, viewed_at)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (appointment_id, master_user_id) DO UPDATE SET
+  client_card_id = COALESCE(EXCLUDED.client_card_id, appointment_card_views.client_card_id),
+  viewed_at = EXCLUDED.viewed_at`, appointmentID, masterUserID, clientCardID, at)
+	return err
+}
+
+func (s *Store) HasAppointmentCardView(ctx context.Context, appointmentID, masterUserID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM appointment_card_views
+  WHERE appointment_id=$1 AND master_user_id=$2
+)`, appointmentID, masterUserID).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) GetAppointmentCardViewID(ctx context.Context, appointmentID, masterUserID uuid.UUID) (*uuid.UUID, error) {
+	var id *uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+SELECT client_card_id FROM appointment_card_views
+WHERE appointment_id=$1 AND master_user_id=$2`, appointmentID, masterUserID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return id, nil
 }
 
 func (s *Store) MasterAppointmentOverlaps(ctx context.Context, masterUserID uuid.UUID, excludeID uuid.UUID, starts, ends time.Time) (bool, error) {
@@ -453,16 +519,43 @@ func scanAppointments(rows pgx.Rows) ([]domain.Appointment, error) {
 // ListByOrgInRange returns appointments for an organization overlapping [from, to).
 // Statuses default to confirmed and in_progress for future demand forecasting.
 func (s *Store) ListByOrgInRange(ctx context.Context, orgID uuid.UUID, from, to time.Time, statuses []string) ([]domain.Appointment, error) {
+	return s.ListByOrgInRangeForViewer(ctx, orgID, uuid.Nil, from, to, statuses, false)
+}
+
+// ListByOrgInRangeForViewer excludes appointments hidden by viewer when viewer != Nil and excludeHidden.
+func (s *Store) ListByOrgInRangeForViewer(ctx context.Context, orgID, viewer uuid.UUID, from, to time.Time, statuses []string, includeHidden bool) ([]domain.Appointment, error) {
+	return s.ListByOrgInRangeForViewerBranch(ctx, orgID, viewer, from, to, statuses, includeHidden, nil)
+}
+
+// ListByOrgInRangeForViewerBranch optionally scopes to a single branch_id within the organization.
+func (s *Store) ListByOrgInRangeForViewerBranch(ctx context.Context, orgID, viewer uuid.UUID, from, to time.Time, statuses []string, includeHidden bool, branchID *uuid.UUID) ([]domain.Appointment, error) {
 	if len(statuses) == 0 {
 		statuses = []string{domain.StatusConfirmed, domain.StatusInProgress}
+	}
+	hideSQL := ``
+	branchSQL := ``
+	args := []any{orgID, from, to, statuses}
+	argN := 5
+	if viewer != uuid.Nil {
+		if includeHidden {
+			hideSQL = fmt.Sprintf(` AND EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $%d)`, argN)
+		} else {
+			hideSQL = fmt.Sprintf(` AND NOT EXISTS (SELECT 1 FROM appointment_user_hides h WHERE h.appointment_id = appointments.id AND h.user_id = $%d)`, argN)
+		}
+		args = append(args, viewer)
+		argN++
+	}
+	if branchID != nil && *branchID != uuid.Nil {
+		branchSQL = fmt.Sprintf(` AND branch_id = $%d`, argN)
+		args = append(args, *branchID)
 	}
 	rows, err := s.pool.Query(ctx, `
 SELECT `+appointmentCols+`
 FROM appointments
 WHERE organization_id=$1
   AND status = ANY($4)
-  AND starts_at < $3 AND ends_at > $2
-ORDER BY starts_at`, orgID, from, to, statuses)
+  AND starts_at < $3 AND ends_at > $2`+hideSQL+branchSQL+`
+ORDER BY starts_at`, args...)
 	if err != nil {
 		return nil, err
 	}

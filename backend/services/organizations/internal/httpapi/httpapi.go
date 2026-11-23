@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -59,6 +60,9 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/organizations/{orgID}/routes/recommend", auth(http.HandlerFunc(a.recommendRoute)))
 	mux.Handle("POST /v1/organizations/{orgID}/routes/stops/{id}/status", auth(http.HandlerFunc(a.stopStatus)))
 	mux.Handle("GET /v1/branches/{branchID}/readiness", auth(http.HandlerFunc(a.branchReadiness)))
+	mux.Handle("GET /v1/branches/{branchID}/close/preflight", auth(http.HandlerFunc(a.branchClosePreflight)))
+	mux.Handle("POST /v1/branches/{branchID}/close", auth(http.HandlerFunc(a.branchClose)))
+	mux.Handle("GET /v1/branch-close-jobs/{jobID}", auth(http.HandlerFunc(a.getBranchCloseJob)))
 	mux.Handle("PATCH /v1/branches/{branchID}", auth(http.HandlerFunc(a.updateBranch)))
 	mux.Handle("POST /v1/branches/{branchID}/photos", auth(http.HandlerFunc(a.addBranchPhoto)))
 	mux.Handle("DELETE /v1/branches/{branchID}/photos/{photoID}", auth(http.HandlerFunc(a.deleteBranchPhoto)))
@@ -77,6 +81,7 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/contact-policy", a.internalContactPolicy)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}/members", a.internalOrgMembers)
 	mux.HandleFunc("GET /v1/internal/organizations/{orgID}", a.internalOrg)
+	mux.HandleFunc("GET /v1/internal/stats/owner-users-count", a.internalOwnerUsersCount)
 	a.registerAdminRoutes(mux, auth)
 }
 
@@ -191,6 +196,7 @@ func (a *API) branchPublication(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"branch_published": b.Published,
 		"org_published":    org.Published,
+		"branch_active":    b.Active,
 	})
 }
 
@@ -458,6 +464,102 @@ func (a *API) getBranch(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, branchDTO(*b))
 }
 
+func (a *API) branchClosePreflight(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	out, err := a.svc.BranchClosePreflight(r.Context(), claims.UserID, branchID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, branchClosePreflightDTO(out))
+}
+
+func (a *API) branchClose(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	job, err := a.svc.CloseBranch(r.Context(), claims.UserID, branchID)
+	if job != nil && err != nil {
+		// Blocked/failed jobs still return the job payload for the UI.
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, branchCloseJobDTO(job))
+}
+
+func (a *API) getBranchCloseJob(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	jobID, err := uuid.Parse(r.PathValue("jobID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid job id"))
+		return
+	}
+	job, err := a.svc.GetBranchCloseJob(r.Context(), claims.UserID, jobID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, branchCloseJobDTO(job))
+}
+
+func branchClosePreflightDTO(p *domain.BranchClosePreflight) map[string]any {
+	blockers := make([]map[string]any, 0, len(p.Blockers))
+	for _, b := range p.Blockers {
+		blockers = append(blockers, map[string]any{
+			"code": b.Code, "label": b.Label, "count": b.Count, "href": b.Href,
+		})
+	}
+	out := map[string]any{
+		"branch_id": p.BranchID.String(), "branch_name": p.BranchName,
+		"organization_id": p.OrganizationID.String(), "organization_name": p.OrganizationName,
+		"active": p.Active, "already_closed": p.AlreadyClosed,
+		"future_appointments": p.FutureAppointments, "masters_affected": p.MastersAffected,
+		"masters_private_path": p.MastersPrivatePath, "masters_unlink_only": p.MastersUnlinkOnly,
+		"last_active_branch": p.LastActiveBranch, "will_unpublish_org": p.WillUnpublishOrg,
+		"contact_phone": p.ContactPhone, "contact_source": p.ContactSource, "contact_display": p.ContactDisplay,
+		"blockers": blockers, "can_close": p.CanClose,
+		"latest_job_status": p.LatestJobStatus, "latest_job_error": p.LatestJobError,
+	}
+	if p.CompletedJobID != nil {
+		out["completed_job_id"] = p.CompletedJobID.String()
+	}
+	if p.LatestJobID != nil {
+		out["latest_job_id"] = p.LatestJobID.String()
+	}
+	return out
+}
+
+func branchCloseJobDTO(j *domain.BranchCloseJob) map[string]any {
+	var blockers any = []any{}
+	if len(j.BlockersJSON) > 0 {
+		_ = json.Unmarshal(j.BlockersJSON, &blockers)
+	}
+	var result any = map[string]any{}
+	if len(j.ResultJSON) > 0 {
+		_ = json.Unmarshal(j.ResultJSON, &result)
+	}
+	return map[string]any{
+		"id": j.ID.String(), "branch_id": j.BranchID.String(), "organization_id": j.OrganizationID.String(),
+		"status": j.Status, "contact_phone": j.ContactPhone, "contact_source": j.ContactSource,
+		"future_appointments": j.FutureAppointments, "masters_affected": j.MastersAffected,
+		"last_active_branch": j.LastActiveBranch, "org_unpublished": j.OrgUnpublished,
+		"error_message": j.ErrorMessage, "blockers": blockers, "result": result,
+		"created_at": j.CreatedAt, "updated_at": j.UpdatedAt, "completed_at": j.CompletedAt,
+	}
+}
+
 func (a *API) listPickupBranches(w http.ResponseWriter, r *http.Request) {
 	city := r.URL.Query().Get("city")
 	var lat, lng *float64
@@ -566,6 +668,7 @@ func branchDTO(b domain.Branch) map[string]any {
 		"cancel_window_hours": b.CancelWindowHours, "auto_confirm": b.AutoConfirm, "published": b.Published,
 		"pickup_enabled": b.PickupEnabled, "latitude": lat, "longitude": lng,
 		"working_hours_note": b.WorkingHoursNote, "photo_media_id": photo,
+		"active": b.Active,
 	}
 }
 
@@ -670,6 +773,19 @@ func (a *API) internalOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, orgDTO(*org))
+}
+
+func (a *API) internalOwnerUsersCount(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	n, err := a.svc.CountDistinctActiveOwners(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"count": n})
 }
 
 func (a *API) internalOrgMembers(w http.ResponseWriter, r *http.Request) {
@@ -1189,6 +1305,21 @@ func inviteDTO(in domain.SalonInvite) map[string]any {
 	}
 }
 
+func inviteHistoryDTO(row domain.SalonInviteHistoryRow) map[string]any {
+	out := inviteDTO(row.Invite)
+	out["status"] = row.Status
+	if row.AcceptedAt != nil {
+		out["accepted_at"] = row.AcceptedAt.UTC().Format(time.RFC3339)
+	}
+	if row.AcceptedUserID != nil {
+		out["accepted_user_id"] = row.AcceptedUserID.String()
+	}
+	if row.DisplayNameSnapshot != nil {
+		out["accepted_display_name"] = *row.DisplayNameSnapshot
+	}
+	return out
+}
+
 func (a *API) createInvite(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
 	orgID, err := uuid.Parse(r.PathValue("orgID"))
@@ -1227,14 +1358,14 @@ func (a *API) listInvites(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("invalid org id"))
 		return
 	}
-	items, err := a.svc.ListInvites(r.Context(), orgID, claims.UserID)
+	items, err := a.svc.ListInviteHistory(r.Context(), orgID, claims.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, inviteDTO(it))
+		out = append(out, inviteHistoryDTO(it))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -1265,7 +1396,11 @@ func (a *API) peekInvite(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) acceptInvite(w http.ResponseWriter, r *http.Request) {
 	claims, _ := httpx.ClaimsFrom(r.Context())
-	p, err := a.svc.AcceptInvite(r.Context(), r.PathValue("token"), claims.UserID)
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	p, err := a.svc.AcceptInvite(r.Context(), r.PathValue("token"), claims.UserID, req.DisplayName)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return

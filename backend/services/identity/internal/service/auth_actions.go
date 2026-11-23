@@ -197,6 +197,8 @@ func (s *Service) ConfirmEmailVerification(ctx context.Context, rawToken string)
 		return apperr.Internal(err)
 	}
 	_ = s.security(ctx, &tok.UserID, "email_verify.completed", map[string]any{})
+	// Referral qualification is idempotent; missing link is a no-op.
+	_ = s.TryQualifyInvitee(ctx, tok.UserID)
 	return nil
 }
 

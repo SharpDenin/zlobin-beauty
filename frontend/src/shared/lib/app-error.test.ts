@@ -14,6 +14,16 @@ describe('normalizeError', () => {
     expect(formatUserError(n)).toContain('Это время уже занято')
   })
 
+  it('maps client_card_view_required', () => {
+    const n = normalizeError({
+      code: 'client_card_view_required',
+      status: 409,
+      message: 'просмотрите карточку клиента перед подтверждением записи',
+    })
+    expect(n.title).toContain('карточку клиента')
+    expect(formatUserError(n)).toContain('Просмотрите паспорт')
+  })
+
   it('maps self_booking_forbidden and master_unavailable', () => {
     expect(formatUserError({ code: 'self_booking_forbidden', status: 403, message: 'cannot book an appointment with yourself' })).toContain(
       'самому себе',

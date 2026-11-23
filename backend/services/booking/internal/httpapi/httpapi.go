@@ -37,6 +37,8 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.HandleFunc("GET /v1/internal/appointments", a.internalAppointments)
 	mux.HandleFunc("GET /v1/internal/media/{id}/access", a.internalMediaAccess)
 	mux.HandleFunc("GET /v1/internal/client-master-relationship", a.internalClientMasterRelationship)
+	mux.HandleFunc("GET /v1/internal/branches/{branchID}/close-stats", a.internalBranchCloseStats)
+	mux.HandleFunc("POST /v1/internal/branches/{branchID}/close", a.internalBranchClose)
 	mux.Handle("PUT /v1/me/working-hours", auth(http.HandlerFunc(a.setHours)))
 	mux.Handle("PUT /v1/calendar/working-hours", auth(http.HandlerFunc(a.setStaffHours)))
 	mux.Handle("GET /v1/me/working-hours", auth(http.HandlerFunc(a.getHours)))
@@ -52,10 +54,13 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	mux.Handle("POST /v1/appointments/plans/confirm", auth(http.HandlerFunc(a.confirmVisitPlan)))
 	mux.Handle("GET /v1/appointments/mine", auth(http.HandlerFunc(a.mine)))
 	mux.Handle("GET /v1/calendar/appointments", auth(http.HandlerFunc(a.calendarAppointments)))
+	mux.Handle("POST /v1/appointments/{id}/hide", auth(http.HandlerFunc(a.hideAppointment)))
+	mux.Handle("POST /v1/appointments/{id}/unhide", auth(http.HandlerFunc(a.unhideAppointment)))
 	mux.Handle("GET /v1/appointments/{id}", auth(http.HandlerFunc(a.get)))
 	mux.Handle("GET /v1/appointments/{id}/group", auth(http.HandlerFunc(a.visitGroup)))
 	mux.Handle("GET /v1/appointments/{id}/history", auth(http.HandlerFunc(a.history)))
 	mux.Handle("POST /v1/appointments/{id}/confirm", auth(http.HandlerFunc(a.confirm)))
+	mux.Handle("POST /v1/appointments/{id}/view-client-card", auth(http.HandlerFunc(a.viewClientCard)))
 	mux.Handle("POST /v1/appointments/{id}/reject", auth(http.HandlerFunc(a.reject)))
 	mux.Handle("POST /v1/appointments/{id}/cancel", auth(http.HandlerFunc(a.cancel)))
 	mux.Handle("POST /v1/appointments/{id}/reschedule", auth(http.HandlerFunc(a.reschedule)))
@@ -82,6 +87,75 @@ func (a *API) Routes(mux *http.ServeMux, jwtSecret string) {
 	a.registerReportRoutes(mux, auth)
 	a.registerWorkModeRoutes(mux, auth)
 	a.registerAdminRoutes(mux, auth)
+}
+
+func (a *API) internalBranchCloseStats(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	orgID, _ := uuid.Parse(r.URL.Query().Get("organization_id"))
+	stats, err := a.svc.BranchCloseStats(r.Context(), branchID, orgID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, stats)
+}
+
+func (a *API) internalBranchClose(w http.ResponseWriter, r *http.Request) {
+	if a.internalToken == "" || r.Header.Get("X-Internal-Token") != a.internalToken {
+		httpx.WriteError(w, r, a.log, apperr.Unauthorized("invalid internal token"))
+		return
+	}
+	branchID, err := uuid.Parse(r.PathValue("branchID"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid branch id"))
+		return
+	}
+	var req struct {
+		OrganizationID string `json:"organization_id"`
+		JobID          string `json:"job_id"`
+		ContactPhone   string `json:"contact_phone"`
+		ContactSource  string `json:"contact_source"`
+		BranchName     string `json:"branch_name"`
+		Reason         string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid json body"))
+		return
+	}
+	orgID, _ := uuid.Parse(req.OrganizationID)
+	jobID, _ := uuid.Parse(req.JobID)
+	out, err := a.svc.CloseBranch(r.Context(), branchID, service.BranchCloseInput{
+		OrganizationID: orgID, JobID: jobID, ContactPhone: req.ContactPhone,
+		ContactSource: req.ContactSource, BranchName: req.BranchName, Reason: req.Reason,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	priv := make([]string, 0, len(out.PrivateMasterUserIDs))
+	for _, id := range out.PrivateMasterUserIDs {
+		priv = append(priv, id.String())
+	}
+	unlink := make([]string, 0, len(out.UnlinkMasterUserIDs))
+	for _, id := range out.UnlinkMasterUserIDs {
+		unlink = append(unlink, id.String())
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"cancelled_count":          out.CancelledCount,
+		"private_master_user_ids":  priv,
+		"unlink_master_user_ids":   unlink,
+		"chairs_deactivated":       out.ChairsDeactivated,
+		"intervals_cleared":        out.IntervalsCleared,
+		"occurrences_cancelled":    out.OccurrencesCancelled,
+	})
 }
 
 func (a *API) internalAppointments(w http.ResponseWriter, r *http.Request) {
@@ -559,12 +633,50 @@ func (a *API) mine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("from and to must be provided together"))
 		return
 	}
-	items, err := a.svc.ListMine(r.Context(), claims.UserID, role, fromPtr, toPtr)
+	hiddenOnly := false
+	if v := strings.TrimSpace(r.URL.Query().Get("hidden")); v == "1" || strings.EqualFold(v, "true") {
+		hiddenOnly = true
+	}
+	items, err := a.svc.ListMine(r.Context(), claims.UserID, role, fromPtr, toPtr, hiddenOnly)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": a.appointmentDTOs(r, items)})
+	out := a.appointmentDTOs(r, items)
+	if role == "master" {
+		for i := range items {
+			a.enrichMasterAppointmentFlags(r, out[i], items[i], claims.UserID)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (a *API) hideAppointment(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.HideAppointment(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) unhideAppointment(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	if err := a.svc.UnhideAppointment(r.Context(), id, claims.UserID); err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
@@ -584,7 +696,16 @@ func (a *API) calendarAppointments(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, apperr.Validation("to must be RFC3339 and after from"))
 		return
 	}
-	items, err := a.svc.ListOrgCalendar(r.Context(), claims.UserID, orgID, from, to)
+	var branchID *uuid.UUID
+	if raw := strings.TrimSpace(r.URL.Query().Get("branch_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, a.log, apperr.Validation("branch_id must be a UUID"))
+			return
+		}
+		branchID = &id
+	}
+	items, err := a.svc.ListOrgCalendar(r.Context(), claims.UserID, orgID, from, to, branchID)
 	if err != nil {
 		httpx.WriteError(w, r, a.log, err)
 		return
@@ -604,7 +725,12 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, a.log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, a.namedAppointment(r, *item))
+	dto := a.namedAppointment(r, *item)
+	if hidden, herr := a.svc.IsHiddenForUser(r.Context(), id, claims.UserID); herr == nil {
+		dto["hidden_for_me"] = hidden
+	}
+	a.enrichMasterAppointmentFlags(r, dto, *item, claims.UserID)
+	httpx.JSON(w, http.StatusOK, dto)
 }
 
 func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +746,36 @@ func (a *API) confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, appointmentDTO(*item))
+}
+
+func (a *API) viewClientCard(w http.ResponseWriter, r *http.Request) {
+	claims, _ := httpx.ClaimsFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteError(w, r, a.log, apperr.Validation("invalid id"))
+		return
+	}
+	cardID, err := a.svc.ViewClientCard(r.Context(), id, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, a.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"client_card_id":      cardID.String(),
+		"client_card_viewed":  true,
+		"appointment_id":      id.String(),
+	})
+}
+
+func (a *API) enrichMasterAppointmentFlags(r *http.Request, dto map[string]any, item domain.Appointment, actor uuid.UUID) {
+	viewed, requires, allergy, first := a.svc.AppointmentMasterFlags(r.Context(), item, actor)
+	if item.MasterUserID != actor {
+		return
+	}
+	dto["client_card_viewed"] = viewed
+	dto["requires_client_card_view"] = requires
+	dto["allergy_test_recommended"] = allergy
+	dto["first_visit_with_master"] = first
 }
 
 func (a *API) reject(w http.ResponseWriter, r *http.Request) {

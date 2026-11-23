@@ -272,9 +272,10 @@ func (s *Store) InsertMessage(ctx context.Context, m domain.Message) error {
 		kind = domain.MessageKindText
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO messages(id, conversation_id, sender_user_id, kind, body, media_id, client_id, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		m.ID, m.ConversationID, m.SenderUserID, kind, m.Body, m.MediaID, m.ClientID, m.CreatedAt); err != nil {
+INSERT INTO messages(id, conversation_id, sender_user_id, kind, body, media_id, client_id, created_at, forwarded_from_message_id, forwarded_from_sender_user_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		m.ID, m.ConversationID, m.SenderUserID, kind, m.Body, m.MediaID, m.ClientID, m.CreatedAt,
+		m.ForwardedFromMessageID, m.ForwardedFromSenderUserID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE conversations SET updated_at=$2 WHERE id=$1`, m.ConversationID, m.CreatedAt); err != nil {
@@ -283,9 +284,9 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 	return tx.Commit(ctx)
 }
 
-const messageSelectCols = `id, conversation_id, sender_user_id, kind, body, media_id, client_id, created_at, edited_at, deleted_at`
+const messageSelectCols = `id, conversation_id, sender_user_id, kind, body, media_id, client_id, created_at, edited_at, deleted_at, forwarded_from_message_id, forwarded_from_sender_user_id`
 
-func (s *Store) ListMessages(ctx context.Context, conversationID uuid.UUID, limit int, before *time.Time, beforeID *uuid.UUID) ([]domain.Message, error) {
+func (s *Store) ListMessages(ctx context.Context, conversationID, viewer uuid.UUID, limit int, before *time.Time, beforeID *uuid.UUID) ([]domain.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -299,22 +300,25 @@ func (s *Store) ListMessages(ctx context.Context, conversationID uuid.UUID, limi
 SELECT `+messageSelectCols+`
 FROM messages
 WHERE conversation_id=$1 AND (created_at < $2 OR (created_at = $2 AND id < $3))
+  AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id = messages.id AND h.user_id = $4)
 ORDER BY created_at DESC, id DESC
-LIMIT $4`, conversationID, *before, *beforeID, limit)
+LIMIT $5`, conversationID, *before, *beforeID, viewer, limit)
 	} else if before != nil {
 		rows, err = s.pool.Query(ctx, `
 SELECT `+messageSelectCols+`
 FROM messages
 WHERE conversation_id=$1 AND created_at < $2
+  AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id = messages.id AND h.user_id = $3)
 ORDER BY created_at DESC, id DESC
-LIMIT $3`, conversationID, *before, limit)
+LIMIT $4`, conversationID, *before, viewer, limit)
 	} else {
 		rows, err = s.pool.Query(ctx, `
 SELECT `+messageSelectCols+`
 FROM messages
 WHERE conversation_id=$1
+  AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id = messages.id AND h.user_id = $2)
 ORDER BY created_at DESC, id DESC
-LIMIT $2`, conversationID, limit)
+LIMIT $3`, conversationID, viewer, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -338,10 +342,13 @@ LIMIT $2`, conversationID, limit)
 	return out, nil
 }
 
-func (s *Store) LastMessage(ctx context.Context, conversationID uuid.UUID) (*domain.Message, error) {
+func (s *Store) LastMessage(ctx context.Context, conversationID, viewer uuid.UUID) (*domain.Message, error) {
 	row := s.pool.QueryRow(ctx, `
 SELECT `+messageSelectCols+`
-FROM messages WHERE conversation_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1`, conversationID)
+FROM messages
+WHERE conversation_id=$1
+  AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id = messages.id AND h.user_id = $2)
+ORDER BY created_at DESC, id DESC LIMIT 1`, conversationID, viewer)
 	m, err := scanMessage(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -352,6 +359,47 @@ FROM messages WHERE conversation_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1
 	return m, nil
 }
 
+func (s *Store) GetMessage(ctx context.Context, conversationID, messageID uuid.UUID) (*domain.Message, error) {
+	row := s.pool.QueryRow(ctx, `
+SELECT `+messageSelectCols+`
+FROM messages WHERE conversation_id=$1 AND id=$2`, conversationID, messageID)
+	m, err := scanMessage(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return m, nil
+}
+
+func (s *Store) HideMessageForUser(ctx context.Context, messageID, userID uuid.UUID, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO message_hides(message_id, user_id, hidden_at)
+VALUES ($1,$2,$3)
+ON CONFLICT (message_id, user_id) DO UPDATE SET hidden_at=EXCLUDED.hidden_at`, messageID, userID, at)
+	return err
+}
+
+// SoftDeleteMessage marks a message deleted for all participants (product delete-for-all).
+// Body is cleared so leftovers cannot leak through accidental reads; row is kept for audit/FKs.
+func (s *Store) SoftDeleteMessage(ctx context.Context, messageID uuid.UUID, at time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE messages SET deleted_at = $2, body = '', media_id = NULL
+WHERE id = $1 AND deleted_at IS NULL`, messageID, at)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (s *Store) IsMessageHiddenForUser(ctx context.Context, messageID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM message_hides WHERE message_id=$1 AND user_id=$2)`, messageID, userID).Scan(&ok)
+	return ok, err
+}
+
 func (s *Store) FindMessageByClientID(ctx context.Context, conversationID, sender uuid.UUID, clientID string) (*domain.Message, error) {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {
@@ -360,7 +408,7 @@ func (s *Store) FindMessageByClientID(ctx context.Context, conversationID, sende
 	row := s.pool.QueryRow(ctx, `
 SELECT `+messageSelectCols+`
 FROM messages
-WHERE conversation_id=$1 AND sender_user_id=$2 AND client_id=$3
+WHERE conversation_id=$1 AND sender_user_id=$2 AND client_id=$3 AND deleted_at IS NULL
 LIMIT 1`, conversationID, sender, clientID)
 	m, err := scanMessage(row)
 	if err != nil {
@@ -422,7 +470,10 @@ func scanConversation(row interface{ Scan(dest ...any) error }) (*domain.Convers
 
 func scanMessage(row interface{ Scan(dest ...any) error }) (*domain.Message, error) {
 	var m domain.Message
-	if err := row.Scan(&m.ID, &m.ConversationID, &m.SenderUserID, &m.Kind, &m.Body, &m.MediaID, &m.ClientID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+	if err := row.Scan(
+		&m.ID, &m.ConversationID, &m.SenderUserID, &m.Kind, &m.Body, &m.MediaID, &m.ClientID,
+		&m.CreatedAt, &m.EditedAt, &m.DeletedAt, &m.ForwardedFromMessageID, &m.ForwardedFromSenderUserID,
+	); err != nil {
 		return nil, err
 	}
 	if m.Kind == "" {

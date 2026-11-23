@@ -13,6 +13,7 @@ import { Modal } from '@/shared/ui/Modal'
 import { useMessenger } from '@/features/messenger/MessengerProvider'
 import { openConversation } from '@/features/messenger/api'
 import { toast } from '@/shared/ui/Toast'
+import { BackButton } from '@/shared/ui/BackButton'
 
 type MediaRow = { id: string; media_id: string; slot: string; uploaded_by: string; created_at: string }
 
@@ -386,9 +387,10 @@ export function HairConsultationsPage() {
 
   return (
     <div className="page stack-gap" data-testid="hair-consultations-page">
+      <BackButton />
       <header className="page-header">
-        <h1>Консультации по волосам</h1>
-        <p className="muted">Анкета, профессиональная оценка и согласование плана окрашивания</p>
+        <h1>Консультации</h1>
+        <p className="muted">Анкета, профессиональная оценка и согласование плана услуги</p>
       </header>
       {error && <ErrorBanner error={error} />}
 
@@ -735,10 +737,10 @@ export function HairConsultationDetailPage() {
 
   return (
     <div className="page stack-gap consult-detail" data-testid="hair-consultation-detail">
-      <Link className="btn btn-ghost btn-compact" to="/consultations">← К консультациям</Link>
+      <BackButton />
       <header className="page-header row between">
         <div>
-          <h1>Диагностика волос</h1>
+          <h1>Диагностика услуги</h1>
           <p className="muted">
             {statusLabel(c.status)} · версия {current?.version_no ?? '—'}
             {c.client_card_id ? (
@@ -772,7 +774,7 @@ export function HairConsultationDetailPage() {
         )}
         {(isMaster || isClient) && (
           <button type="button" className="btn btn-secondary btn-compact" data-testid="consult-open-services" onClick={() => setServicesOpen(true)}>
-            Услуги для волос
+            Услуги
           </button>
         )}
       </div>
@@ -829,7 +831,7 @@ export function HairConsultationDetailPage() {
       </section>
 
       <section className="card stack-gap" data-testid="consult-questionnaire">
-        <h2>Параметры волос</h2>
+        <h2>Параметры услуги</h2>
         <fieldset className="consult-param-list" disabled={!clientEditable && !masterEditable}>
           <label className="consult-param-row">
             <span>Уровень глубины тона корней</span>
@@ -1016,8 +1018,8 @@ export function HairConsultationDetailPage() {
         </section>
       )}
 
-      {(isMaster || showPlanToClient || (viewing && Object.keys(viewing.master_assessment || {}).length > 0)) && (
-        <details className="card stack-gap" data-testid="consult-assessment">
+      {((isMaster || showPlanToClient || (viewing && Object.keys(viewing.master_assessment || {}).length > 0) || Boolean(slotMedia('cutting_scheme')))) && (
+        <details className="card stack-gap" data-testid="consult-assessment" open={Boolean(masterEditable || slotMedia('cutting_scheme'))}>
           <summary>Профессиональная оценка (подробно)</summary>
           <fieldset className="stack-gap" disabled={!masterEditable}>
             <label className="field"><span>Искусственные красители</span>
@@ -1026,7 +1028,60 @@ export function HairConsultationDetailPage() {
               <input value={a.lightened_areas} onChange={(e) => setA({ ...a, lightened_areas: e.target.value })} /></label>
             <label className="field"><span>Заметки</span><textarea value={a.notes} onChange={(e) => setA({ ...a, notes: e.target.value })} rows={2} /></label>
           </fieldset>
+          <div className="stack-gap" data-testid="consult-cutting-scheme">
+            <h3>Схема стрижки</h3>
+            <p className="muted">Загрузите изображение схемы стрижки. Конструктор схемы — отдельная задача.</p>
+            <MediaDropzone
+              purpose="hair_consultation"
+              value={slotMedia('cutting_scheme')}
+              allowGif={false}
+              label="Схема стрижки"
+              disabled={!masterEditable}
+              onChange={(mediaId) => {
+                const mid = slotMedia('cutting_scheme')
+                if (!mediaId) {
+                  if (mid) detach.mutate(mid)
+                  return
+                }
+                attach.mutate({ mediaId, slot: 'cutting_scheme' })
+              }}
+            />
+          </div>
         </details>
+      )}
+
+      {(isMaster || Boolean(p.allergy_test) || showPlanToClient) && (
+        <section className="card stack-gap consult-allergy-test" data-testid="consult-allergy-test">
+          <h2>Аллерго-проба</h2>
+          <div className="state-box" data-testid="consult-allergy-test-instruction" role="note">
+            <p>
+              <strong>Инструкция для мастера.</strong> Текст порядка проведения аллерго-пробы ожидает
+              согласования с заказчиком. Не подставляйте неподтверждённые сроки, дозировки или медицинские рекомендации.
+            </p>
+            <p className="muted">После утверждения инструкция будет размещена здесь.</p>
+          </div>
+          <label className="field">
+            <span>Описание проведения пробы</span>
+            <textarea
+              value={p.allergy_test}
+              onChange={(e) => setP({ ...p, allergy_test: e.target.value })}
+              rows={3}
+              disabled={!masterEditable}
+              data-testid="p-allergy-test"
+              placeholder="Зафиксируйте факт и результат проведения пробы"
+            />
+          </label>
+          {masterEditable && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => savePlan.mutate()}
+              disabled={savePlan.isPending}
+            >
+              Сохранить аллерго-пробу
+            </button>
+          )}
+        </section>
       )}
 
       <section className="card consult-price-card" data-testid="consult-price">
@@ -1100,8 +1155,6 @@ export function HairConsultationDetailPage() {
             <textarea value={p.shades_ratios} onChange={(e) => setP({ ...p, shades_ratios: e.target.value })} rows={2} /></label>
           <label className="field"><span>Тест пряди</span>
             <textarea value={p.strand_test} onChange={(e) => setP({ ...p, strand_test: e.target.value })} rows={2} data-testid="p-strand-test" /></label>
-          <label className="field"><span>Аллергопроба</span>
-            <textarea value={p.allergy_test} onChange={(e) => setP({ ...p, allergy_test: e.target.value })} rows={2} data-testid="p-allergy-test" /></label>
         </fieldset>
         {masterEditable && (
           <button type="button" className="btn btn-primary" onClick={() => { savePlan.mutate(); setSchemeOpen(false) }}>
@@ -1110,7 +1163,7 @@ export function HairConsultationDetailPage() {
         )}
       </Modal>
 
-      <Modal open={servicesOpen} onClose={() => setServicesOpen(false)} title="Услуги для волос" size="lg">
+      <Modal open={servicesOpen} onClose={() => setServicesOpen(false)} title="Услуги" size="lg">
         <p className="muted">Выберите услуги из каталога. Итоговая сумма попадёт в диагностику.</p>
         <label className="field">
           <span className="visually-hidden">Поиск</span>

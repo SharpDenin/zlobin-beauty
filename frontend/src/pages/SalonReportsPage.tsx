@@ -130,8 +130,10 @@ export function SalonReportsPage() {
         const items = (data.items ?? []).filter((a) => a.branch_id === b.id)
         const completed = items.filter((a) => a.status === 'completed')
         const masters = new Set(items.map((a) => a.master_user_id).filter(Boolean))
+        const closed = b.active === false
         return {
-          name: b.name,
+          name: closed ? `${b.name} · Закрыт` : b.name,
+          closed,
           report: {
             current: {
               turnover_minor: completed.reduce((s, a) => s + (a.price_minor ?? 0), 0),
@@ -288,6 +290,13 @@ export function SalonReportsPage() {
         <section className="card stack">
           <h2>Сравнение филиалов</h2>
           {network.isLoading && <div className="state-box">Сравниваем салоны…</div>}
+          {(network.data ?? []).length > 0 && (
+            <ul className="stack-sm" data-testid="salon-report-branches" style={{ margin: 0, paddingLeft: 18 }}>
+              {(network.data ?? []).map((row) => (
+                <li key={row.name}>{row.name}</li>
+              ))}
+            </ul>
+          )}
           {networkChart.length > 0 && (
             <div className="dashboard-chart">
               <ResponsiveContainer width="100%" height="100%">

@@ -17,6 +17,13 @@ func (s *Service) WithAudit(identityURL, internalToken string) *Service {
 	return s
 }
 
+func (s *Service) WithCloseIntegrations(bookingURL, marketplaceURL, commerceURL string) *Service {
+	s.bookingURL = strings.TrimRight(bookingURL, "/")
+	s.marketplaceURL = strings.TrimRight(marketplaceURL, "/")
+	s.commerceURL = strings.TrimRight(commerceURL, "/")
+	return s
+}
+
 func (s *Service) AdminListOrgs(ctx context.Context, f store.OrgListFilter) ([]store.OrgListItem, int, error) {
 	items, err := s.store.ListOrgsAdmin(ctx, f)
 	if err != nil {

@@ -257,7 +257,7 @@ export function ContactsPage() {
             className="contacts-search-field"
           />
           <button className="btn btn-primary" type="button" onClick={() => setAddOpen(true)}>
-            Добавить контакт
+            Добавить
           </button>
         </div>
       </div>
@@ -276,7 +276,7 @@ export function ContactsPage() {
           action={
             !q.trim() ? (
               <button className="btn btn-primary" type="button" onClick={() => setAddOpen(true)}>
-                Добавить контакт
+                Добавить
               </button>
             ) : undefined
           }
@@ -336,7 +336,7 @@ export function ContactsPage() {
       <Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Добавить контакт"
+        title="Добавить"
         footer={
           looksLikeEmail(addQuery || '') || looksLikePhone(addQuery || '') ? (
             <button className="btn btn-primary" type="button" disabled={addMut.isPending} onClick={onAddByQuery}>
@@ -356,7 +356,7 @@ export function ContactsPage() {
               autoComplete="off"
             />
           </label>
-          <p className="muted">Можно искать по имени, email или телефону.</p>
+          <p className="muted">Можно искать по имени, email или телефону. Добавить в контакты можно только зарегистрированных пользователей.</p>
           <label className="field">
             <span>Заметка</span>
             <textarea {...addForm.register('note')} rows={2} maxLength={200} />

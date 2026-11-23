@@ -7,17 +7,20 @@ import (
 )
 
 type Notification struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	Type       string
-	Title      string
-	Body       string
-	EntityType string
-	EntityID   *uuid.UUID
-	ReadAt     *time.Time
-	HiddenAt   *time.Time
-	DeletedAt  *time.Time
-	CreatedAt  time.Time
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Type             string
+	Title            string
+	Body             string
+	EntityType       string
+	EntityID         *uuid.UUID
+	MessageID        *uuid.UUID
+	IdempotencyKey   string
+	PushDispatchedAt *time.Time
+	ReadAt           *time.Time
+	HiddenAt         *time.Time
+	DeletedAt        *time.Time
+	CreatedAt        time.Time
 }
 
 type Review struct {

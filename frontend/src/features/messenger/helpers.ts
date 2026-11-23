@@ -10,7 +10,7 @@ export function conversationTypeLabel(type: string) {
     case 'master_supplier':
       return 'Мастер и поставщик'
     case 'masterclass':
-      return 'Мастер-класс'
+      return 'Обучение'
     case 'model_request':
       return 'Модели'
     default:
@@ -18,11 +18,13 @@ export function conversationTypeLabel(type: string) {
   }
 }
 
-export function lastMessagePreview(msg?: Pick<ChatMessage, 'body' | 'kind'> | null) {
+export function lastMessagePreview(msg?: Pick<ChatMessage, 'body' | 'kind' | 'deleted_at' | 'forwarded_from_message_id'> | null) {
+  if (msg?.deleted_at) return 'Сообщение удалено'
   const body = msg?.body?.trim() ?? ''
-  if (body) return body
-  if (msg?.kind === 'video') return 'Видео'
-  if (msg?.kind === 'image') return 'Фото'
+  const fwd = msg?.forwarded_from_message_id ? 'Переслано · ' : ''
+  if (body) return `${fwd}${body}`
+  if (msg?.kind === 'video') return `${fwd}Видео`
+  if (msg?.kind === 'image') return `${fwd}Фото`
   return 'Нет сообщений'
 }
 

@@ -1,11 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { ApiError, apiRequest } from '@/shared/api/client'
 import { userError } from '@/shared/lib/app-error'
 import { disableDevicePush } from '@/features/pwa/push'
 import { ErrorBanner } from '@/shared/ui/ErrorBanner'
 import { Modal } from '@/shared/ui/Modal'
+
+type UserCounters = {
+  clients: number
+  masters: number
+  suppliers: number
+  owners: number
+}
 
 function ownedOrgMessage(err: unknown): string | null {
   if (!(err instanceof ApiError) || err.code !== 'account_owned_organizations') return null
@@ -38,6 +46,12 @@ export function SettingsAccountPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+
+  const counters = useQuery({
+    queryKey: ['user-counters'],
+    queryFn: () => apiRequest<UserCounters>('/v1/me/user-counters', { token: accessToken }),
+    enabled: Boolean(accessToken),
+  })
 
   function openConfirm() {
     setError(null)
@@ -95,6 +109,23 @@ export function SettingsAccountPage() {
 
   return (
     <div className="stack" data-testid="settings-account-page">
+      <section className="card stack" data-testid="settings-account-counters">
+        <h2 style={{ margin: 0 }}>Пользователи платформы</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          Уникальные аккаунты по категориям. Один человек может входить в несколько категорий; итог по сумме не считается.
+        </p>
+        {counters.isLoading && <div className="state-box">Считаем…</div>}
+        {counters.isError && <ErrorBanner error={counters.error} fallbackTitle="Не удалось загрузить счётчики" />}
+        {counters.data && (
+          <ul className="stack-sm" style={{ margin: 0, paddingLeft: 18 }} data-testid="settings-account-counters-list">
+            <li>Клиенты: {counters.data.clients}</li>
+            <li>Мастера: {counters.data.masters}</li>
+            <li>Поставщики: {counters.data.suppliers}</li>
+            <li>Владельцы: {counters.data.owners}</li>
+          </ul>
+        )}
+      </section>
+
       <section className="card stack" data-testid="settings-account-session">
         <h2 style={{ margin: 0 }}>Сессия</h2>
         {user?.email || user?.display_name ? (

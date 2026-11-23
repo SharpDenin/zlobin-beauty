@@ -498,6 +498,9 @@ func (s *Service) composeFlexibleLeg(ctx context.Context, in CreateInput, known 
 	if known != nil && orgID != known.OrganizationID {
 		return nil, apperr.Forbidden("master does not belong to the service salon")
 	}
+	if err := s.requireBranchBookable(ctx, branchID); err != nil {
+		return nil, err
+	}
 	svcName := ws.ServiceName
 	duration := ws.DurationMinutes
 	price := ws.PriceMinor

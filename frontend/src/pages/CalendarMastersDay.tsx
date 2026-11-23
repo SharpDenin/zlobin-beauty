@@ -40,6 +40,8 @@ type Props = {
   onCreateSlot?: (start: Date, masterUserId: string) => void
   onEventResize?: (id: string, startMin: number, endMin: number) => void | Promise<void>
   canResizeEvent?: (event: EventInput) => boolean
+  /** Owner-only: open existing master card. Optional so master calendar stays untouched. */
+  onMasterClick?: (masterUserId: string) => void
 }
 
 const SLOT_PX = 44
@@ -105,6 +107,7 @@ export function CalendarMastersDay({
   onCreateSlot,
   onEventResize,
   canResizeEvent,
+  onMasterClick,
 }: Props) {
   const longPressTimer = useRef<number | null>(null)
   const longPressFired = useRef(false)
@@ -305,10 +308,20 @@ export function CalendarMastersDay({
     )
   }
 
+  if (masters.length === 0) {
+    return (
+      <div className="cal-masters-day state-box" data-testid="calendar-masters-day">
+        Нет мастеров для выбранного фильтра.
+      </div>
+    )
+  }
+
+  const singleCol = masters.length === 1
+
   return (
     <div
       ref={rootRef}
-      className={`cal-masters-day${resizeDraft ? ' is-cal-resizing' : ''}`}
+      className={`cal-masters-day${resizeDraft ? ' is-cal-resizing' : ''}${singleCol ? ' is-single-col' : ''}`}
       data-testid="calendar-masters-day"
       style={{ ['--cal-masters-slot-h' as string]: `${SLOT_PX}px`, ['--cal-masters-board-h' as string]: `${boardHeight}px` } as CSSProperties}
     >
@@ -323,14 +336,35 @@ export function CalendarMastersDay({
             <div className="cal-masters-gutter cal-masters-head-gutter" role="columnheader" aria-hidden />
             {masters.map((m) => (
               <div key={m.userId} className="cal-masters-col-head" role="columnheader">
-                {m.photoUrl ? (
-                  <img className="cal-masters-avatar" src={m.photoUrl} alt="" loading="lazy" decoding="async" />
+                {onMasterClick ? (
+                  <button
+                    type="button"
+                    className="cal-masters-master-btn cal-touch"
+                    data-testid={`calendar-master-open-${m.userId}`}
+                    onClick={() => onMasterClick(m.userId)}
+                    aria-label={`Открыть карточку мастера ${m.name}`}
+                  >
+                    {m.photoUrl ? (
+                      <img className="cal-masters-avatar" src={m.photoUrl} alt="" loading="lazy" decoding="async" />
+                    ) : (
+                      <span className="cal-masters-avatar cal-masters-avatar--initials" aria-hidden>
+                        {initials(m.name)}
+                      </span>
+                    )}
+                    <span className="cal-masters-name">{m.name}</span>
+                  </button>
                 ) : (
-                  <span className="cal-masters-avatar cal-masters-avatar--initials" aria-hidden>
-                    {initials(m.name)}
-                  </span>
+                  <>
+                    {m.photoUrl ? (
+                      <img className="cal-masters-avatar" src={m.photoUrl} alt="" loading="lazy" decoding="async" />
+                    ) : (
+                      <span className="cal-masters-avatar cal-masters-avatar--initials" aria-hidden>
+                        {initials(m.name)}
+                      </span>
+                    )}
+                    <span className="cal-masters-name">{m.name}</span>
+                  </>
                 )}
-                <span className="cal-masters-name">{m.name}</span>
               </div>
             ))}
           </div>

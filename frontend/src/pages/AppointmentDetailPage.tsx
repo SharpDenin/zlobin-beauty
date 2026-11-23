@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -46,6 +46,11 @@ type Appointment = {
   location_city?: string
   booking_mode?: string
   visit_group_id?: string | null
+  hidden_for_me?: boolean
+  client_card_viewed?: boolean
+  requires_client_card_view?: boolean
+  allergy_test_recommended?: boolean
+  first_visit_with_master?: boolean
 }
 
 const cancelSchema = z.object({ reason: z.string().min(2, 'Укажите причину') })
@@ -58,12 +63,17 @@ const reviewSchema = z.object({
 
 export function AppointmentDetailPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const fromArchive = searchParams.get('from') === 'archive'
   const { accessToken, user } = useAuth()
   const messenger = useMessenger()
   const qc = useQueryClient()
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [cardBusy, setCardBusy] = useState(false)
+  const [hiddenView, setHiddenView] = useState(fromArchive)
   const [beforeDraft, setBeforeDraft] = useState<string | null>(null)
   const [afterDraft, setAfterDraft] = useState<string | null>(null)
   const [technique, setTechnique] = useState('')
@@ -153,6 +163,23 @@ export function AppointmentDetailPage() {
     },
   })
 
+  const hideMut = useMutation({
+    mutationFn: (mode: 'hide' | 'unhide') =>
+      apiRequest(`/v1/appointments/${id}/${mode}`, { method: 'POST', token: accessToken }),
+    onSuccess: async (_data, mode) => {
+      setHiddenView(mode === 'hide')
+      setOk(mode === 'hide' ? 'Запись скрыта в архив' : 'Запись возвращена из архива')
+      toast.success(mode === 'hide' ? 'Запись скрыта' : 'Запись возвращена')
+      await qc.invalidateQueries({ queryKey: ['appointment', id] })
+      await qc.invalidateQueries({ queryKey: ['appointments'] })
+      await qc.invalidateQueries({ queryKey: ['calendar-appointments'] })
+    },
+    onError: (e) => {
+      setError(userError(e, 'Не удалось изменить видимость записи'))
+      toast.error(userError(e, 'Не удалось изменить видимость записи'))
+    },
+  })
+
   if (query.isLoading) return <div className="page state-box">Загрузка записи…</div>
   if (query.isError) {
     return (
@@ -170,6 +197,7 @@ export function AppointmentDetailPage() {
   }
 
   const a = query.data
+  const isHidden = hiddenView || Boolean(a.hidden_for_me)
   const isMaster = user?.id === a.master_user_id
   const isClient = user?.id === a.client_user_id
   const cancellable = ['pending_confirmation', 'confirmed'].includes(a.status)
@@ -179,8 +207,29 @@ export function AppointmentDetailPage() {
   const canNoShow = isMaster && a.status === 'confirmed'
   const canReview = isClient && a.status === 'completed'
   const canUploadPhotos = isMaster && ['confirmed', 'in_progress', 'completed'].includes(a.status)
+  const canConfirm = isMaster && a.status === 'pending_confirmation'
+  const needsCardView = Boolean(a.requires_client_card_view)
   const hasFormula = hasColorFormulaInput(schemeFields, productName)
   const canOmitFormula = isPremium && hasFormula
+
+  async function openClientCard() {
+    if (!accessToken || !id) return
+    setCardBusy(true)
+    setError(null)
+    try {
+      const res = await apiRequest<{ client_card_id: string }>(`/v1/appointments/${id}/view-client-card`, {
+        method: 'POST',
+        token: accessToken,
+        body: {},
+      })
+      await qc.invalidateQueries({ queryKey: ['appointment', id] })
+      navigate(`/clients/${res.client_card_id}?fromAppointment=${id}&returnTo=${encodeURIComponent(`/appointments/${id}`)}`)
+    } catch (e) {
+      setError(userError(e, 'Не удалось открыть карточку клиента'))
+    } finally {
+      setCardBusy(false)
+    }
+  }
 
   async function attachVisitPhoto(mediaId: string | null, kind: 'before' | 'after') {
     if (!mediaId) {
@@ -299,6 +348,55 @@ export function AppointmentDetailPage() {
 
       {error && <ErrorBanner error={error} />}
       {ok && <div className="state-box success">{ok}</div>}
+
+      {isMaster && a.allergy_test_recommended && (
+        <section className="card stack-sm" data-testid="allergy-test-warning" role="status">
+          <h2>Аллерго-проба</h2>
+          <p>
+            {a.first_visit_with_master
+              ? 'Первая запись клиента к вам: проведите аллерго-пробу по утверждённому протоколу салона/бренда перед окрашиванием.'
+              : 'Рекомендуется провести аллерго-пробу по утверждённому протоколу салона/бренда при необходимости.'}
+          </p>
+          <p className="muted">
+            Отсутствие отмеченных аллергий в паспорте клиента не означает, что проба уже проведена.
+          </p>
+        </section>
+      )}
+
+      {canConfirm && (
+        <section className="card stack-sm" data-testid="appointment-confirm-block">
+          <h2>Подтверждение</h2>
+          {needsCardView ? (
+            <>
+              <p data-testid="confirm-blocked-hint">
+                Сначала просмотрите карточку клиента. Подтверждение станет доступно после просмотра.
+              </p>
+              <button
+                className="btn btn-secondary btn-block"
+                type="button"
+                data-testid="open-client-card-before-confirm"
+                disabled={cardBusy || act.isPending}
+                onClick={() => void openClientCard()}
+              >
+                {cardBusy ? 'Открываем…' : 'Открыть карточку клиента'}
+              </button>
+              <button className="btn btn-primary btn-block" type="button" disabled data-testid="confirm-appointment-disabled">
+                Подтвердить
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn-primary btn-block"
+              type="button"
+              data-testid="confirm-appointment"
+              disabled={act.isPending}
+              onClick={() => act.mutate({ path: `/v1/appointments/${a.id}/confirm` })}
+            >
+              Подтвердить запись
+            </button>
+          )}
+        </section>
+      )}
 
       <button
         className="btn btn-ghost"
@@ -428,9 +526,39 @@ export function AppointmentDetailPage() {
             </button>
           )}
           {isMaster && (
-            <Link className="btn btn-secondary" to={`/clients/by-appointment/${a.id}`}>Карточка клиента</Link>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              data-testid="open-client-card"
+              disabled={cardBusy}
+              onClick={() => void openClientCard()}
+            >
+              Карточка клиента
+            </button>
           )}
         </div>
+
+        {(isMaster || isClient) && (
+          <div className="stack-sm">
+            <p className="muted">
+              {isHidden
+                ? 'Запись в архиве: скрыта из обычного списка и календаря. Статус и история сохранены.'
+                : 'Можно скрыть запись в архив — без отмены и без удаления данных.'}
+            </p>
+            <button
+              type="button"
+              className={`btn btn-block ${isHidden ? 'btn-primary' : 'btn-secondary'}`}
+              data-testid="appointment-hide-toggle"
+              disabled={hideMut.isPending}
+              onClick={() => hideMut.mutate(isHidden ? 'unhide' : 'hide')}
+            >
+              {isHidden ? 'Вернуть из архива' : 'Скрыть в архив'}
+            </button>
+            <Link className="btn btn-ghost btn-compact" to="/appointments">
+              К списку записей
+            </Link>
+          </div>
+        )}
 
         {cancellable && (
           <form className="stack" onSubmit={cancelForm.handleSubmit((v) => act.mutate({ path: `/v1/appointments/${a.id}/cancel`, body: v }))}>

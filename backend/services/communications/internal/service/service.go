@@ -46,16 +46,39 @@ func New(st *store.Store, bookingURL string) *Service {
 }
 
 func (s *Service) CreateNotification(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID *uuid.UUID) error {
-	if err := wrap(s.store.CreateNotification(ctx, domain.Notification{
-		ID: ids.New(), UserID: userID, Type: typ, Title: title, Body: body, EntityType: entityType, EntityID: entityID, CreatedAt: s.now().UTC(),
-	})); err != nil {
-		return err
+	return s.CreateNotificationWithMessage(ctx, userID, typ, title, body, entityType, entityID, nil)
+}
+
+func (s *Service) CreateNotificationWithMessage(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID, messageID *uuid.UUID) error {
+	return s.CreateNotificationIdempotent(ctx, userID, typ, title, body, entityType, entityID, messageID, "")
+}
+
+// CreateNotificationIdempotent persists an in-app notification once per key and
+// schedules Web Push only when the in-app row is new or push was never marked.
+func (s *Service) CreateNotificationIdempotent(ctx context.Context, userID uuid.UUID, typ, title, body, entityType string, entityID, messageID *uuid.UUID, idemKey string) error {
+	n := domain.Notification{
+		ID: ids.New(), UserID: userID, Type: typ, Title: title, Body: body,
+		EntityType: entityType, EntityID: entityID, MessageID: messageID,
+		IdempotencyKey: strings.TrimSpace(idemKey), CreatedAt: s.now().UTC(),
 	}
-	// Push is best-effort and must not fail or delay the in-app notification path.
+	created, needsPush, err := s.store.UpsertNotificationIdempotent(ctx, n)
+	if err != nil {
+		return wrap(err)
+	}
+	if !needsPush {
+		return nil
+	}
+	_ = created // created vs resume-retry: both may need push when needsPush
+	// In-app row is already durable (unique idempotency_key). Mark push only after
+	// we have handed work to the dispatcher so a crash before enqueue leaves
+	// push_dispatched_at NULL and resume can retry without recreating in-app.
 	if s.syncPush {
 		s.dispatchPush(ctx, userID, title, body, entityType, entityID)
 	} else {
 		s.schedulePush(userID, title, body, entityType, entityID)
+	}
+	if n.IdempotencyKey != "" {
+		_ = s.store.MarkPushDispatched(ctx, n.IdempotencyKey, s.now().UTC())
 	}
 	return nil
 }

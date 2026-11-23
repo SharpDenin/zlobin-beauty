@@ -52,7 +52,7 @@ func TestVersionImmutable(t *testing.T) {
 }
 
 func TestValidMediaSlots(t *testing.T) {
-	for _, s := range []string{"overview", "roots", "length", "ends", "strand_a4", "reference"} {
+	for _, s := range []string{"overview", "roots", "length", "ends", "strand_a4", "reference", "cutting_scheme"} {
 		if !domain.ValidMediaSlot(s) {
 			t.Fatalf("slot %s should be valid", s)
 		}

@@ -19,9 +19,65 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 func (s *Store) CreateNotification(ctx context.Context, n domain.Notification) error {
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO notifications(id, user_id, type, title, body, entity_type, entity_id, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, n.ID, n.UserID, n.Type, n.Title, n.Body, n.EntityType, n.EntityID, n.CreatedAt)
+INSERT INTO notifications(id, user_id, type, title, body, entity_type, entity_id, message_id, idempotency_key, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10)`,
+		n.ID, n.UserID, n.Type, n.Title, n.Body, n.EntityType, n.EntityID, n.MessageID, n.IdempotencyKey, n.CreatedAt)
 	return err
+}
+
+// UpsertNotificationIdempotent inserts a notification when the key is new.
+// Returns (created, needsPush, error). needsPush is true when the row was
+// created or an existing row has never had push dispatch marked.
+func (s *Store) UpsertNotificationIdempotent(ctx context.Context, n domain.Notification) (created, needsPush bool, err error) {
+	key := n.IdempotencyKey
+	if key == "" {
+		if err := s.CreateNotification(ctx, n); err != nil {
+			return false, false, err
+		}
+		return true, true, nil
+	}
+	_, err = s.pool.Exec(ctx, `
+INSERT INTO notifications(id, user_id, type, title, body, entity_type, entity_id, message_id, idempotency_key, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		n.ID, n.UserID, n.Type, n.Title, n.Body, n.EntityType, n.EntityID, n.MessageID, key, n.CreatedAt)
+	if err == nil {
+		return true, true, nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		var pushAt *time.Time
+		qerr := s.pool.QueryRow(ctx, `
+SELECT push_dispatched_at FROM notifications WHERE idempotency_key=$1`, key).Scan(&pushAt)
+		if qerr != nil {
+			return false, false, qerr
+		}
+		return false, pushAt == nil, nil
+	}
+	return false, false, err
+}
+
+func (s *Store) MarkPushDispatched(ctx context.Context, idempotencyKey string, at time.Time) error {
+	if idempotencyKey == "" {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE notifications SET push_dispatched_at=COALESCE(push_dispatched_at, $2)
+WHERE idempotency_key=$1`, idempotencyKey, at)
+	return err
+}
+
+// SoftDeleteNotificationsForMessage redacts and soft-deletes in-app notifications tied to a message.
+func (s *Store) SoftDeleteNotificationsForMessage(ctx context.Context, messageID uuid.UUID, at time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE notifications SET
+  deleted_at = COALESCE(deleted_at, $2),
+  body = '',
+  title = CASE WHEN type = 'new_message' THEN 'Сообщение удалено' ELSE title END
+WHERE message_id = $1 AND deleted_at IS NULL`, messageID, at)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *Store) ListNotifications(ctx context.Context, userID uuid.UUID) ([]domain.Notification, error) {

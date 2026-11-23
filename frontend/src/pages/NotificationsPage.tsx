@@ -85,7 +85,7 @@ export function NotificationsPage() {
               <Link className="btn btn-secondary btn-compact" to={`/messages/${n.entity_id}`}>Открыть сообщение</Link>
             )}
             {n.entity_type === 'masterclass' && n.entity_id && (
-              <Link className="btn btn-secondary btn-compact" to={`/masterclasses/${n.entity_id}`}>Открыть мастер-класс</Link>
+              <Link className="btn btn-secondary btn-compact" to={`/masterclasses/${n.entity_id}`}>Открыть обучение</Link>
             )}
             {n.entity_type === 'model_request' && n.entity_id && (
               <Link className="btn btn-secondary btn-compact" to={`/models/${n.entity_id}`}>Открыть запрос модели</Link>

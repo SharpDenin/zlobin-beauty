@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -17,14 +18,22 @@ import (
 )
 
 type Service struct {
-	store         *store.Store
-	identityURL   string
-	internalToken string
-	now           func() time.Time
+	store            *store.Store
+	identityURL      string
+	bookingURL       string
+	marketplaceURL   string
+	commerceURL      string
+	internalToken    string
+	httpClient       *http.Client
+	now              func() time.Time
 }
 
 func New(st *store.Store) *Service {
-	return &Service{store: st, now: time.Now}
+	return &Service{
+		store:      st,
+		now:        time.Now,
+		httpClient: &http.Client{Timeout: 20 * time.Second},
+	}
 }
 
 type CreateOrgInput struct {
@@ -280,6 +289,14 @@ func (s *Service) AddMasterMembership(ctx context.Context, orgID, actorID, maste
 	}))
 }
 
+func (s *Service) CountDistinctActiveOwners(ctx context.Context) (int, error) {
+	n, err := s.store.CountDistinctActiveOwners(ctx)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	return n, nil
+}
+
 func (s *Service) GetOrg(ctx context.Context, id uuid.UUID) (*domain.Organization, error) {
 	o, err := s.store.GetOrg(ctx, id)
 	if err != nil {
@@ -528,6 +545,9 @@ func (s *Service) UpdateBranch(ctx context.Context, in UpdateBranchInput) (*doma
 	}
 	if in.Published != nil {
 		if *in.Published {
+			if !b.Active {
+				return nil, apperr.Conflict("closed branch cannot be published")
+			}
 			ready := evaluateBranchReadiness(*b)
 			if !ready.Ready {
 				return nil, apperr.Validation("branch is not ready for publication: " + strings.Join(ready.Missing, ", "))
@@ -585,12 +605,21 @@ func evaluateBranchReadiness(b domain.Branch) *domain.Readiness {
 }
 
 func evaluateOrgReadiness(org domain.Organization, branches []domain.Branch) *domain.Readiness {
+	active := 0
+	for _, b := range branches {
+		if b.Active {
+			active++
+		}
+	}
 	checks := []domain.ReadinessCheck{
 		{Key: "org_name", Label: "Название салона", OK: nonEmpty(org.Name)},
-		{Key: "org_branch", Label: "Хотя бы один филиал", OK: len(branches) > 0},
+		{Key: "org_branch", Label: "Хотя бы один активный филиал", OK: active > 0},
 	}
 	branchReady := false
 	for _, b := range branches {
+		if !b.Active {
+			continue
+		}
 		br := evaluateBranchReadiness(b)
 		if br.Ready {
 			branchReady = true

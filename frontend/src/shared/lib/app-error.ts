@@ -180,6 +180,11 @@ const CATALOG: Record<string, CatalogEntry> = {
     title: 'Нельзя изменить эту запись',
     hint: 'Запись уже в другом статусе. Обновите страницу.',
   },
+  client_card_view_required: {
+    kind: 'conflict',
+    title: 'Сначала откройте карточку клиента',
+    hint: 'Просмотрите паспорт клиента, затем подтвердите запись.',
+  },
   appointment_concurrent_update: {
     kind: 'conflict',
     title: 'Запись только что изменилась',

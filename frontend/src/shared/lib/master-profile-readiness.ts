@@ -13,7 +13,7 @@ const FIELD_BY_KEY: Record<string, { anchor: string; hint: string }> = {
   bio: { anchor: 'master-bio', hint: 'Описание от 10 символов' },
   specializations: { anchor: 'master-specializations', hint: 'Выберите хотя бы одну специализацию из списка' },
   profession_types: { anchor: 'master-profession-types', hint: 'Выберите тип мастера' },
-  experience: { anchor: 'master-experience', hint: 'Укажите опыт больше 0 лет' },
+  experience: { anchor: 'master-experience', hint: 'Стаж необязателен' },
   service: { anchor: 'master-services', hint: 'Добавьте хотя бы одну услугу' },
   schedule: { anchor: 'master-schedule', hint: 'Задайте рабочее расписание' },
   profile: { anchor: 'master-profile', hint: 'Создайте профиль мастера' },
